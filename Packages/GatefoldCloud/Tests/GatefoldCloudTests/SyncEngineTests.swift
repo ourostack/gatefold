@@ -27,7 +27,7 @@ private struct Harness {
         return PocketBookCloud(
             configuration: .init(storageDirectory: directory, autoFlush: false),
             transport: transport, credentials: creds, tokenStore: tokens,
-            now: { clock.now }, jitter: { 1.0 }
+            now: { clock.now }, jitter: { 1.0 }, sleep: { _ in }
         )
     }
 }
@@ -141,6 +141,7 @@ struct FileTests {
         let file = h.directory.appendingPathComponent("Alice's Adventures.epub")
         try bytes.write(to: file)
         await h.transport.on("GET", "/books", .json(page([])), .json(page([book("ab12", md5: md5Base64(bytes))])))
+        await h.transport.on("GET", "/fileops/info", .json(#"{"error_code":311}"#, status: 404), .json(#"{"fast_hash":"ab12","name":"x"}"#))
         await h.transport.on("PUT", "/api/v1.1/files/", .json(#"{"id":7,"name":"Alice's Adventures.epub","bytes":"8000","fast_hash":"ab12","md5_hash":"\#(md5Base64(bytes))","mtime":"2026-10-31 21:56:29"}"#))
         let uploaded = try await h.cloud().upload(fileAt: file)
         #expect(uploaded.fastHash == "ab12")
@@ -148,6 +149,8 @@ struct FileTests {
         #expect(put.url.absoluteString.hasSuffix("/api/v1.1/files/Alice%27s%20Adventures.epub"))
         #expect(put.headers["Content-Type"] == "application/epub+zip")
         #expect(put.body == bytes)
+        #expect(await h.transport.requests("GET", "/fileops/info").count == 2, "waited until the Cloud could serve the new book")
+        #expect(uploaded.title == "T ab12", "returns the indexed library entry")
     }
 
     @Test func doesNotUploadABookTheCloudAlreadyHas() async throws {
@@ -328,6 +331,8 @@ struct AnnotationSyncTests {
         let list = try await h.cloud().annotations(for: CloudBook(fastHash: frankenstein))
         #expect(list.map(\.uuid) == ["d1c0a338-a35f-4e57-8104-3f8bd5a09820"])
         #expect(list.first?.note?.value == "partial update")
+        let detail = try #require(await h.transport.requests("GET", "/notes/d1c0a338").first)
+        #expect(detail.query["fast_hash"] == frankenstein, "the Cloud answers 404 for a note without its book")
     }
 
     @Test func createsANewHighlightThroughTheOutbox() async throws {
@@ -371,9 +376,11 @@ struct AnnotationSyncTests {
         await cloud.flushOutbox()
         let update = try #require(await h.transport.requests("POST", "/notes/d1c0a338").first)
         #expect((update.json["note"] as? [String: Any])?["text"] as? String == "edited")
+        #expect(update.query["fast_hash"] == frankenstein)
         await cloud.deleteAnnotation(edited, for: CloudBook(fastHash: frankenstein))
         await cloud.flushOutbox()
-        #expect(await h.transport.requests("DELETE", "/notes/d1c0a338").count == 1)
+        let deletion = try #require(await h.transport.requests("DELETE", "/notes/d1c0a338").first)
+        #expect(deletion.query["fast_hash"] == frankenstein)
     }
 
     @Test func neverSendsATimestampFromTheFuture() async throws {

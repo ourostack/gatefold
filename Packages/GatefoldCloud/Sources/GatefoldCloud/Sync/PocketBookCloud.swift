@@ -24,11 +24,12 @@ public actor PocketBookCloud: SyncService {
     public static let minimumUploadBytes: Int64 = 4096
     static let maxAttempts = 12
 
-    public let session: CloudSession
+    public nonisolated let session: CloudSession
     let configuration: Configuration
     let transport: HTTPTransport
     let now: @Sendable () -> Date
     let jitter: @Sendable () -> Double
+    let sleep: @Sendable (Duration) async throws -> Void
     private let broadcaster = ChangeBroadcaster()
 
     private var books: [CloudBook]
@@ -50,11 +51,13 @@ public actor PocketBookCloud: SyncService {
                 tokenStore: TokenStore = KeychainTokenStore(),
                 base: URL = CloudSession.defaultBase,
                 now: @escaping @Sendable () -> Date = { Date() },
-                jitter: @escaping @Sendable () -> Double = { Double.random(in: 0.8...1.2) }) {
+                jitter: @escaping @Sendable () -> Double = { Double.random(in: 0.8...1.2) },
+                sleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) }) {
         self.configuration = configuration
         self.transport = transport
         self.now = now
         self.jitter = jitter
+        self.sleep = sleep
         self.session = CloudSession(transport: transport, credentials: credentials ?? WebBundleCredentials(transport: transport),
                                     tokenStore: tokenStore, base: base, now: now)
         let fm = FileManager.default
@@ -231,6 +234,17 @@ public actor PocketBookCloud: SyncService {
         let (body, _) = try await session.send(Endpoint(method: "PUT", path: "/files/\(Endpoint.pathSegment(name))",
                                                         body: .raw(data, contentType: type), version: .v1_1))
         let uploaded = try WireDecoder.uploadResponse(body)
+        // The Cloud indexes a new file for a few seconds (live: /books after ~3 s, fileops/info after ~5 s)
+        // and answers 404 for it until then. Return once other calls can use it.
+        for wait in [1, 1, 2, 2, 3, 4, 5, 6] {
+            try await sleep(.seconds(wait))
+            do {
+                try await session.send(.get("/fileops/info/", query: ["fast_hash": uploaded.fastHash]))
+                break
+            } catch CloudError.notFound {
+                continue
+            }
+        }
         let refreshed = try? await library()
         return refreshed?.first(where: { $0.fastHash == uploaded.fastHash }) ?? uploaded
     }
@@ -309,7 +323,7 @@ public actor PocketBookCloud: SyncService {
         let (data, _) = try await session.send(.get("/notes", query: ["fast_hash": fastHash]))
         var list: [CloudAnnotation] = []
         for summary in try WireDecoder.annotationList(data) {
-            let (detail, _) = try await session.send(.get("/notes/\(Endpoint.pathSegment(summary.uuid))"))
+            let (detail, _) = try await session.send(.get("/notes/\(Endpoint.pathSegment(summary.uuid))", query: ["fast_hash": fastHash]))
             if var a = try? WireDecoder.annotation(detail) {
                 if a.uuid == nil { a.uuid = summary.uuid }
                 list.append(a)
@@ -478,7 +492,7 @@ public actor PocketBookCloud: SyncService {
                let uuid = existing.uuid {
                 var update = body
                 update.uuid = uuid
-                try await session.send(Endpoint(method: "POST", path: "/notes/\(Endpoint.pathSegment(uuid))",
+                try await session.send(Endpoint(method: "POST", path: "/notes/\(Endpoint.pathSegment(uuid))", query: ["fast_hash": item.fastHash],
                                                 body: .json(WireEncoder.annotationBody(update))))
                 return .done
             }
@@ -494,11 +508,11 @@ public actor PocketBookCloud: SyncService {
         case let .updateAnnotation(annotation):
             guard let uuid = annotation.uuid else { return .done }
             let body = await clampToServerNow(annotation)
-            try await session.send(Endpoint(method: "POST", path: "/notes/\(Endpoint.pathSegment(uuid))",
+            try await session.send(Endpoint(method: "POST", path: "/notes/\(Endpoint.pathSegment(uuid))", query: ["fast_hash": item.fastHash],
                                             body: .json(WireEncoder.annotationBody(body))))
             return .done
         case let .deleteAnnotation(uuid):
-            try await session.send(Endpoint(method: "DELETE", path: "/notes/\(Endpoint.pathSegment(uuid))"))
+            try await session.send(Endpoint(method: "DELETE", path: "/notes/\(Endpoint.pathSegment(uuid))", query: ["fast_hash": item.fastHash]))
             return .done
         }
     }

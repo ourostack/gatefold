@@ -26,7 +26,7 @@ public struct BookLocation: Sendable, Hashable {
 /// Maps between where the reader is (`BookLocation`) and what the Cloud stores (`ReadingPosition`),
 /// using the book's own spine and XHTML so the CFI is exact.
 public actor PositionMapper {
-    public let spine: SpineMap
+    public nonisolated let spine: SpineMap
     private let load: @Sendable (String) async throws -> Data
     private var documents: [String: CFIDocument] = [:]
 
