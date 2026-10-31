@@ -1,0 +1,94 @@
+name: Gatefold
+options:
+  bundleIdPrefix: bot.ouro
+  deploymentTarget:
+    iOS: "27.0"
+  createIntermediateGroups: true
+  developmentLanguage: en
+  groupSortPosition: top
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    DEVELOPMENT_TEAM: 743GT2AJ24
+    CODE_SIGN_STYLE: Automatic
+    MARKETING_VERSION: "0.1"
+    CURRENT_PROJECT_VERSION: "1"
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
+    SWIFT_STRICT_CONCURRENCY: complete
+packages:
+  Readium:
+    url: https://github.com/readium/swift-toolkit
+    exactVersion: 3.11.1
+  GatefoldCore:
+    path: Packages/GatefoldCore
+targets:
+  Gatefold:
+    type: application
+    platform: iOS
+    sources:
+      - path: Gatefold
+        excludes:
+          - "**/.DS_Store"
+    resources: []
+    dependencies:
+      - package: Readium
+        product: ReadiumShared
+      - package: Readium
+        product: ReadiumStreamer
+      - package: Readium
+        product: ReadiumNavigator
+      - package: GatefoldCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: bot.ouro.gatefold
+        PRODUCT_NAME: Gatefold
+        INFOPLIST_FILE: Gatefold/Support/Info.plist
+        TARGETED_DEVICE_FAMILY: "1,2"
+        SUPPORTS_MACCATALYST: NO
+        SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: YES
+        SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD: NO
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        ENABLE_PREVIEWS: YES
+        MTL_ENABLE_DEBUG_INFO: NO
+        LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/Frameworks"
+  GatefoldTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources: [GatefoldTests]
+    dependencies:
+      - target: Gatefold
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: bot.ouro.gatefold.tests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Gatefold.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Gatefold"
+        BUNDLE_LOADER: "$(TEST_HOST)"
+  GatefoldUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources: [GatefoldUITests]
+    dependencies:
+      - target: Gatefold
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: bot.ouro.gatefold.uitests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_TARGET_NAME: Gatefold
+schemes:
+  Gatefold:
+    build:
+      targets:
+        Gatefold: all
+        GatefoldTests: [test]
+        GatefoldUITests: [test]
+    run:
+      config: Debug
+    test:
+      config: Debug
+      gatherCoverageData: false
+      targets:
+        - name: GatefoldTests
+        - name: GatefoldUITests
+    archive:
+      config: Release

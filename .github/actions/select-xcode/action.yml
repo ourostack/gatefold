@@ -1,0 +1,18 @@
+name: Select and verify Xcode 27
+description: Selects Xcode 27.1 (the first SDK with the iPhone Duo hinge APIs) on an xcode-27 runner and fails unless the selected Xcode is at least the minimum version.
+runs:
+  using: composite
+  steps:
+    - name: Select and verify Xcode 27 runner
+      shell: bash
+      run: |
+        set -euo pipefail
+        sudo xcode-select -s /Applications/Xcode_27.1.app
+        echo "DEVELOPER_DIR=$(xcode-select -p)"
+        xcrun --sdk iphonesimulator --show-sdk-version
+        xcode_version="$(xcodebuild -version)"
+        printf '%s\n' "$xcode_version"
+        first_line="$(printf '%s\n' "$xcode_version" | sed -n '1p')"
+        minimum_xcode_version="27.1"
+        version="${first_line#Xcode }"
+        awk -v version="$version" -v minimum="$minimum_xcode_version" 'BEGIN { split(version, actual, "."); split(minimum, required, "."); exit !((actual[1] + 0) > (required[1] + 0) || ((actual[1] + 0) == (required[1] + 0) && (actual[2] + 0) >= (required[2] + 0))) }'

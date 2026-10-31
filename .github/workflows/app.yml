@@ -1,0 +1,64 @@
+name: App
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: app-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  core:
+    name: GatefoldCore tests
+    # xcode-27 is the newest macOS image (macOS 27, Xcode 27.1): the first SDK with the iPhone Duo
+    # fold APIs and the iOS 27 deployment target. macos-26 has only Xcode 26.
+    runs-on: xcode-27
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/select-xcode
+      - name: swift test
+        run: swift test --package-path Packages/GatefoldCore
+
+  app:
+    name: Build and unit-test the app
+    runs-on: xcode-27
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/select-xcode
+      - name: Install the Metal toolchain (the page curl is a Metal shader)
+        run: xcodebuild -downloadComponent MetalToolchain
+      - name: Generate the Xcode project from project.yml
+        run: |
+          brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
+          xcodegen generate
+      - name: Create and boot an iPhone Duo
+        id: sim
+        run: |
+          set -euo pipefail
+          runtime="$(xcrun simctl list runtimes --json | python3 -c 'import json,sys; r=[x for x in json.load(sys.stdin)["runtimes"] if x["platform"]=="iOS" and x["isAvailable"] and any(d["name"].startswith("iPhone Duo") for d in x.get("supportedDeviceTypes",[]))]; print(max(r, key=lambda x: [int(p) for p in x["version"].split(".")])["identifier"])')"
+          udid="$(xcrun simctl create gatefold-duo com.apple.CoreSimulator.SimDeviceType.iPhone-Duo "$runtime")"
+          xcrun simctl boot "$udid"
+          xcrun simctl bootstatus "$udid" -b
+          echo "destination=platform=iOS Simulator,arch=$(uname -m),id=$udid" >> "$GITHUB_OUTPUT"
+      - name: Build and run unit tests
+        run: |
+          set -o pipefail
+          xcodebuild test -project Gatefold.xcodeproj -scheme Gatefold \
+            -destination "${{ steps.sim.outputs.destination }}" \
+            -only-testing:GatefoldTests \
+            -resultBundlePath "$RUNNER_TEMP/unit.xcresult" 2>&1 | tail -200
+      - name: Build for the Mac (Designed for iPad) and a Release device archive check
+        run: |
+          set -o pipefail
+          xcodebuild build -project Gatefold.xcodeproj -scheme Gatefold -configuration Release \
+            -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO 2>&1 | tail -50
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: unit-xcresult
+          path: ${{ runner.temp }}/unit.xcresult
