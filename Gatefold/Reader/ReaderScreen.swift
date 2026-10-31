@@ -11,6 +11,8 @@ struct ReaderScreen: View {
     @State private var hinge: HingeState = .none
     @State private var showAppearance = LaunchOptions.sheet == "appearance"
     @State private var showContents = LaunchOptions.sheet == "contents"
+    /// A posture forced for screenshots and UI tests; nil follows the device.
+    @State private var forced: Posture? = LaunchOptions.forcedPosture
 
     var body: some View {
         GeometryReader { proxy in
@@ -18,7 +20,7 @@ struct ReaderScreen: View {
                 containerSize: proxy.size,
                 division: FoldReader.division(in: proxy),
                 hinge: hinge,
-                forced: LaunchOptions.forcedPosture
+                forced: forced
             ))
             ZStack(alignment: .topLeading) {
                 model.theme.background
@@ -74,6 +76,23 @@ struct ReaderScreen: View {
                     .accessibilityIdentifier("reader.anchorCheck")
                     .accessibilityLabel(model.anchorCheck)
                     .allowsHitTesting(false)
+
+                if LaunchOptions.isUITest {
+                    // UI tests switch posture at runtime, so one test can walk every posture.
+                    HStack(spacing: 0) {
+                        ForEach(Posture.allCases, id: \.self) { posture in
+                            Button {
+                                readerLog.notice("debug posture \(posture.rawValue, privacy: .public)")
+                                forced = posture
+                            } label: {
+                                Color.clear.frame(width: 44, height: 44).contentShape(Rectangle())
+                            }
+                            .accessibilityLabel(posture.rawValue)
+                            .accessibilityIdentifier("debug.posture.\(posture.rawValue)")
+                        }
+                    }
+                    .offset(y: proxy.size.height * 0.45)
+                }
             }
             .onChange(of: layout, initial: true) { old, new in
                 let reason: ReflowReason = old.posture != new.posture ? .posture : .rotation

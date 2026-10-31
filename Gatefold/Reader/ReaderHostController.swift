@@ -248,6 +248,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         let moved = forward
             ? await navigator.goForward(options: .init(animated: false))
             : await navigator.goBackward(options: .init(animated: false))
+        readerLog.notice("turn moved=\(moved, privacy: .public)")
         guard moved else {
             curl.reset()
             turning = false

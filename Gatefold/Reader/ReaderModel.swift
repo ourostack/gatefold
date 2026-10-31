@@ -34,7 +34,7 @@ final class ReaderModel {
     private(set) var backPage: Int?
     var errorMessage: String?
     /// Set once the reader has settled after a reflow (for UI tests): whether the anchor is on screen.
-    private(set) var anchorCheck = "pending"
+    private(set) var anchorCheck = "pending 0"
 
     var keeper = AnchorKeeper()
     private var anchorLocator: Locator?
@@ -115,12 +115,15 @@ final class ReaderModel {
         if let goTo = LaunchOptions.goTo, let locator = await publication.locate(progression: goTo) {
             await host?.go(to: locator)
         }
+        try? await Task.sleep(for: .milliseconds(300))
+        await captureAnchor()
         await checkRemote()
     }
 
     /// Ask the other device where it is; offer a jump if it's further ahead.
     func checkRemote() async {
-        guard let book = app.library.book(bookID), let remote = await app.library.remotePosition(for: book) else { return }
+        guard let book = app.library.book(bookID), let remote = await app.library.remotePosition(for: book),
+              remote.totalProgression > totalProgression + JumpSuggestion.threshold else { return }
         let made = JumpSuggestion.make(
             local: hasMoved ? app.library.book(bookID)?.localSnapshot : openedSnapshot,
             remote: ProgressSnapshot(totalProgression: remote.totalProgression, updated: remote.updated, device: remote.device),
@@ -144,6 +147,7 @@ final class ReaderModel {
 
     func updateLayout(_ new: ReaderLayout, reason: ReflowReason) {
         guard new != layout else { return }
+        readerLog.notice("layout \(new.posture.rawValue, privacy: .public) \(new.pageFrame.width, privacy: .public)x\(new.pageFrame.height, privacy: .public)")
         let columnsChanged = new.columns != layout.columns
         if new.posture != layout.posture || new.pageFrame.size != layout.pageFrame.size {
             pendingReflowReason = reason
@@ -157,15 +161,21 @@ final class ReaderModel {
         return pendingReflowReason
     }
 
+    private var reflowCount = 0
+
     func reflowDidBegin() {
-        anchorCheck = "settling"
+        reflowCount += 1
+        anchorCheck = "settling \(reflowCount)"
     }
 
+    private var reflowSettledAt: Date?
+
     func reflowDidFinish(visible: VisibleRange?) {
+        reflowSettledAt = Date()
         if let visible, let anchor = keeper.anchor {
-            anchorCheck = visible.contains(anchor) ? "anchor-visible" : "anchor-lost"
+            anchorCheck = (visible.contains(anchor) ? "anchor-visible " : "anchor-lost ") + "\(reflowCount)"
         } else {
-            anchorCheck = "no-anchor"
+            anchorCheck = "no-anchor \(reflowCount)"
         }
         refreshBookmarkState(visible)
     }
@@ -179,9 +189,12 @@ final class ReaderModel {
     func locationDidChange(_ locator: Locator) async {
         location = locator
         guard keeper.reflowing == nil else { return }
-        if let (anchor, anchorLoc) = await host?.currentAnchor() {
-            keeper.userSettled(on: anchor)
-            if keeper.anchor == anchor { anchorLocator = anchorLoc }
+        // A location that arrives as a reflow lands is the restore, not the reader moving: keep the
+        // anchor, or repeated reflows would walk it backward a page at a time.
+        if let settled = reflowSettledAt, Date().timeIntervalSince(settled) < 1.2 {
+            readerLog.notice("location after reflow; anchor kept")
+        } else {
+            await captureAnchor()
         }
         let total = locator.locations.totalProgression ?? 0
         if !hasMoved {
@@ -203,7 +216,18 @@ final class ReaderModel {
         }
     }
 
-    func userTurnedPage() {}
+    func userTurnedPage() {
+        Task { await captureAnchor() }
+    }
+
+    /// Takes the first words on screen as the reader's place, unless a reflow is moving the page.
+    func captureAnchor() async {
+        guard keeper.reflowing == nil, let (anchor, anchorLoc) = await host?.currentAnchor(), keeper.reflowing == nil else { return }
+        readerLog.notice("anchor \(anchor.text ?? "nil", privacy: .public)")
+        keeper.userSettled(on: anchor)
+        if keeper.anchor == anchor { anchorLocator = anchorLoc }
+        if anchorCheck == "pending 0", anchor.text != nil { anchorCheck = "ready 0" }
+    }
 
     // MARK: Chrome
 
@@ -217,12 +241,14 @@ final class ReaderModel {
         if rememberBack { rememberPlace() }
         if let locator = await publication.locate(progression: progression) {
             await host?.go(to: locator)
+            await captureAnchor()
         }
     }
 
     func go(to entry: TOCEntry) async {
         rememberPlace()
         await host?.go(to: entry.link)
+        await captureAnchor()
     }
 
     func go(to bookmark: Bookmark) async {
@@ -234,6 +260,7 @@ final class ReaderModel {
         guard let back = backLocator else { return }
         backLocator = nil
         await host?.go(to: back)
+        await captureAnchor()
     }
 
     private func rememberPlace() {

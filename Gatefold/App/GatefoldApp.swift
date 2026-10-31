@@ -20,6 +20,7 @@ struct RootView: View {
     @Namespace private var covers
     @State private var reader: ReaderModel?
     @State private var openError: String?
+    @State private var opening = false
 
     var body: some View {
         ZStack {
@@ -40,7 +41,7 @@ struct RootView: View {
             .navigationTransition(.zoom(sourceID: model.bookID, in: covers))
         }
         .onChange(of: app.library.books.filter(\.isOnDevice).count, initial: true) { _, _ in
-            if reader == nil, let id = app.openBookID, let book = app.library.book(id), book.isOnDevice {
+            if reader == nil, !opening, let id = app.openBookID, let book = app.library.book(id), book.isOnDevice {
                 open(book)
             }
         }
@@ -52,8 +53,10 @@ struct RootView: View {
     }
 
     private func open(_ book: LibraryBook) {
-        guard let url = app.library.fileURL(of: book) else { return }
+        guard !opening, let url = app.library.fileURL(of: book) else { return }
+        opening = true
         Task {
+            defer { opening = false }
             do {
                 let publication = try await BookOpener.shared.open(url)
                 reader = ReaderModel(book: book, publication: publication, app: app)
