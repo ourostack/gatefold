@@ -542,6 +542,71 @@ struct OutboxRaceTests {
         #expect(u1 == u2)
     }
 
+    @Test func highlightingAPassageAgainAfterDeletingItCreatesANewNote() async throws {
+        let h = Harness()
+        await h.transport.on("POST", "/notes?fast_hash=", .json(#"{"uuid":"new-1"}"#), .json(#"{"uuid":"new-2"}"#))
+        await h.transport.on("DELETE", "/notes/new-1", .ok)
+        let cloud = h.cloud()
+        let book = CloudBook(fastHash: frankenstein)
+        await cloud.save(highlight, for: book)
+        await cloud.flushOutbox()
+        await cloud.deleteAnnotation(highlight, for: book)
+        await cloud.flushOutbox()
+        await cloud.save(highlight, for: book)
+        await cloud.flushOutbox()
+        #expect(await h.transport.requests("POST", "/notes?fast_hash=").count == 2)
+        #expect(await h.transport.requests("POST", "/notes/new-1").isEmpty)
+    }
+
+    @Test func anUpdateToANoteThatIsGoneOnTheServerBecomesACreate() async throws {
+        let h = Harness()
+        await h.transport.on("POST", "/notes?fast_hash=", .json(#"{"uuid":"new-1"}"#), .json(#"{"uuid":"new-2"}"#))
+        await h.transport.on("POST", "/notes/new-1", .json(#"{"error":"File not found"}"#, status: 404))
+        let cloud = h.cloud()
+        let book = CloudBook(fastHash: frankenstein)
+        await cloud.save(highlight, for: book)
+        await cloud.flushOutbox()
+        // Deleted elsewhere (the web reader); we still remember new-1.
+        var recoloured = highlight
+        recoloured.color = .init(.green, updated: utc("2026-10-31T21:59:50Z"))
+        await cloud.save(recoloured, for: book)
+        await cloud.flushOutbox()
+        #expect(await h.transport.requests("POST", "/notes?fast_hash=").count == 2)
+        #expect(await cloud.pendingChanges() == 0)
+    }
+
+    @Test func savingAgainAfterDeletingAnInFlightCreateKeepsIt() async throws {
+        let h = Harness()
+        await h.transport.on("POST", "/notes?fast_hash=", .json(#"{"uuid":"new-1"}"#))
+        await h.transport.on("DELETE", "/notes/new-1", .ok)
+        await h.transport.setDelay(.milliseconds(300))
+        let cloud = h.cloud()
+        let book = CloudBook(fastHash: frankenstein)
+        await cloud.save(highlight, for: book)
+        let flush = Task { await cloud.flushOutbox() }
+        try await Task.sleep(for: .milliseconds(100))
+        await cloud.deleteAnnotation(highlight, for: book) // and then undo
+        await cloud.save(highlight, for: book)
+        await flush.value
+        await cloud.flushOutbox()
+        #expect(await h.transport.requests("DELETE", "/notes/new-1").isEmpty)
+    }
+
+    @Test func aCreateInterruptedByARestartLooksBeforePostingAgain() async throws {
+        let h = Harness()
+        await h.transport.on("POST", "/notes?fast_hash=", .json(#"{"uuid":"new-1"}"#))
+        await h.transport.on("GET", "/notes?fast_hash=", .data(try Fixture.data("notes-list.json")))
+        await h.transport.setDelay(.milliseconds(300))
+        let first = h.cloud()
+        await first.save(highlight, for: CloudBook(fastHash: frankenstein))
+        let flush = Task { await first.flushOutbox() }
+        try await Task.sleep(for: .milliseconds(450)) // past the clock check, the POST is on the wire; the app is killed
+        let relaunched = h.cloud()
+        await relaunched.flushOutbox()
+        _ = await flush.value
+        #expect(await !h.transport.requests("GET", "/notes?fast_hash=").isEmpty)
+    }
+
     @Test func anUnreadableOutboxIsKeptAside() async throws {
         let h = Harness()
         try Data("{not json".utf8).write(to: h.directory.appendingPathComponent("outbox.json"))

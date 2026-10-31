@@ -177,9 +177,10 @@ public actor CloudSession {
         session.token = token
         stored = session
         await persist(session)
+        // The write above may have landed after a newer sign-in's: re-assert whatever is current.
         guard generation == startedIn else {
             // Signed out (or in again) while saving: undo our write unless a newer session owns the store.
-            if stored == nil { await tokenStore.clear() }
+            if let newer = stored { await persist(newer) } else { await tokenStore.clear() }
             throw CloudError.notSignedIn
         }
         return token

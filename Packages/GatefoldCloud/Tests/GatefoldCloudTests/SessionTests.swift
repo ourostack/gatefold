@@ -4,11 +4,11 @@ import Testing
 
 private let fakeCredentials = StaticCredentials(ClientCredentials(id: "test-id", secret: "test-secret"))
 
-private func makeSession(_ transport: ScriptedTransport, store: InMemoryTokenStore = InMemoryTokenStore(), clock: TestClock = TestClock()) -> CloudSession {
+private func makeSession(_ transport: ScriptedTransport, store: any TokenStore = InMemoryTokenStore(), clock: TestClock = TestClock()) -> CloudSession {
     CloudSession(transport: transport, credentials: fakeCredentials, tokenStore: store, now: { clock.now })
 }
 
-private func signedIn(_ transport: ScriptedTransport, clock: TestClock = TestClock(), store: InMemoryTokenStore = InMemoryTokenStore()) async throws -> CloudSession {
+private func signedIn(_ transport: ScriptedTransport, clock: TestClock = TestClock(), store: any TokenStore = InMemoryTokenStore()) async throws -> CloudSession {
     await transport.on("POST", "/auth/login/pocketbook_de", .json(tokenJSON("a1")))
     await transport.on("GET", "/api/v1.0/user", .data(try Fixture.data("user.json")))
     let session = makeSession(transport, store: store, clock: clock)
@@ -191,6 +191,22 @@ struct SessionTests {
         #expect(await session.account?.email == "reader@example.com")
     }
 
+    @Test func aLateRefreshDoesNotOverwriteANewerSignIn() async throws {
+        let t = ScriptedTransport()
+        let store = SlowSaveStore(delay: .milliseconds(300))
+        let clock = TestClock()
+        let session = try await signedIn(t, clock: clock, store: store)
+        clock.advance(8000)
+        await t.on("POST", "/auth/renew-token", .json(tokenJSON("a2")))
+        let call = Task { try await session.send(.get("/books")) }
+        try await Task.sleep(for: .milliseconds(100)) // refresh is saving
+        await store.setDelay(.zero)
+        await t.on("POST", "/auth/login/pocketbook_de", .json(tokenJSON("b1")))
+        _ = try await session.signIn(email: "reader@example.com", password: "pw", store: testStore())
+        _ = try? await call.value
+        #expect(await store.load()?.token.accessToken == "b1")
+    }
+
     @Test func restoresASavedSessionWithoutSigningIn() async throws {
         let t = ScriptedTransport()
         let store = InMemoryTokenStore()
@@ -244,4 +260,19 @@ struct KeychainTokenStoreTests {
         await store.clear()
         #expect(await store.load() == nil)
     }
+}
+
+/// A token store whose saves take a while, to hold a refresh in the middle of persisting.
+actor SlowSaveStore: TokenStore {
+    private var session: StoredSession?
+    private var delay: Duration
+    init(delay: Duration) { self.delay = delay }
+    func setDelay(_ d: Duration) { delay = d }
+    func load() async -> StoredSession? { session }
+    func save(_ s: StoredSession) async throws {
+        let d = delay
+        if d > .zero { try? await Task.sleep(for: d) }
+        session = s
+    }
+    func clear() async { session = nil }
 }

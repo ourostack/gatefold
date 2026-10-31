@@ -44,6 +44,11 @@ struct OutboxState: Codable, Sendable {
     /// can still be edited or deleted after the create lands.
     var createdUUIDs: [String: String] = [:]
 
+    /// Forgets a uuid we created, once its note is deleted, so the same passage can be highlighted anew.
+    mutating func forgetCreated(uuid: String) {
+        createdUUIDs = createdUUIDs.filter { $0.value != uuid }
+    }
+
     static func annotationKey(_ fastHash: String, _ annotation: CloudAnnotation) -> String { "\(fastHash)|\(annotation.dedupeKey)" }
 
     mutating func enqueue(_ item: OutboxItem) {
@@ -51,6 +56,7 @@ struct OutboxState: Codable, Sendable {
             var merged = items[i]
             merged.operation = Self.combine(merged.operation, item.operation)
             merged.revision += 1
+            if case .createAnnotation = item.operation { merged.deleteAfterCreate = false } // saved again: an undo
             items[i] = merged
         } else {
             items.append(item)

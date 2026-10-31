@@ -283,6 +283,7 @@ public actor PocketBookCloud: SyncService {
         books.removeAll { $0.fastHash == fastHash }
         state.items.removeAll { $0.fastHash == fastHash }
         state.pushedPointers[fastHash] = nil
+        state.createdUUIDs = state.createdUUIDs.filter { !$0.key.hasPrefix("\(fastHash)|") }
         JSONFile.write(books, to: libraryFile)
         saveOutbox()
         broadcaster.emit(.bookRemoved(fastHash: fastHash))
@@ -376,6 +377,7 @@ public actor PocketBookCloud: SyncService {
             broadcaster.emit(.outbox(pending: state.items.count))
             return
         }
+        state.forgetCreated(uuid: uuid)
         enqueue(OutboxItem(fastHash: book.fastHash, operation: .deleteAnnotation(uuid: uuid)))
     }
 
@@ -538,8 +540,17 @@ public actor PocketBookCloud: SyncService {
             guard let uuid = annotation.uuid else { return .done }
             await session.syncClock()
             let body = await clampToServerNow(annotation)
-            try await session.send(Endpoint(method: "POST", path: "/notes/\(Endpoint.pathSegment(uuid))", query: ["fast_hash": item.fastHash],
-                                            body: .json(WireEncoder.annotationBody(body))))
+            do {
+                try await session.send(Endpoint(method: "POST", path: "/notes/\(Endpoint.pathSegment(uuid))", query: ["fast_hash": item.fastHash],
+                                                body: .json(WireEncoder.annotationBody(body))))
+            } catch CloudError.notFound where state.createdUUIDs.values.contains(uuid) {
+                // We filled in this uuid from memory, and the note has since been deleted elsewhere:
+                // the user's save is a new highlight, so create it.
+                state.forgetCreated(uuid: uuid)
+                var fresh = annotation
+                fresh.uuid = nil
+                return .replace(.createAnnotation(fresh))
+            }
             return .done
         case let .deleteAnnotation(uuid):
             try await session.send(Endpoint(method: "DELETE", path: "/notes/\(Endpoint.pathSegment(uuid))", query: ["fast_hash": item.fastHash]))
