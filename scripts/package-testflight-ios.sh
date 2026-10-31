@@ -13,8 +13,8 @@ fi
 xcodegen generate
 xcodebuild archive -project Gatefold.xcodeproj -scheme Gatefold -configuration Release \
   -destination 'generic/platform=iOS' -archivePath "$out/Gatefold.xcarchive" \
-  -allowProvisioningUpdates "${auth[@]}"
+  -allowProvisioningUpdates ${auth[@]+"${auth[@]}"}
 xcodebuild -exportArchive -archivePath "$out/Gatefold.xcarchive" \
   -exportOptionsPlist distribution/ExportOptions.testflight.plist -exportPath "$out/export" \
-  -allowProvisioningUpdates "${auth[@]}"
+  -allowProvisioningUpdates ${auth[@]+"${auth[@]}"}
 echo "$out/export/Gatefold.ipa"

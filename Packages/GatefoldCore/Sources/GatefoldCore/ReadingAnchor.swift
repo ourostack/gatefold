@@ -32,7 +32,8 @@ public struct VisibleRange: Equatable, Sendable {
 
     public func contains(_ anchor: ReadingAnchor) -> Bool {
         guard anchor.href == href else { return false }
-        if let needle = anchor.text?.trimmingWhitespace, !needle.isEmpty, let text {
+        if let needle = anchor.text?.openingWords, !needle.isEmpty, let text {
+            // The opening words only: the anchor's line can be the last on the page.
             return text.contains(needle)
         }
         // Half-open, so a page that starts exactly where the anchor is counts and the next one doesn't.
@@ -92,6 +93,11 @@ public struct AnchorKeeper: Sendable {
 }
 
 extension String {
+    /// The first four words, enough to be distinctive and short enough to fit on one line.
+    var openingWords: String {
+        split(whereSeparator: \.isWhitespace).prefix(4).joined(separator: " ")
+    }
+
     var trimmingWhitespace: String {
         var s = Substring(self)
         while let f = s.first, f.isWhitespace { s.removeFirst() }

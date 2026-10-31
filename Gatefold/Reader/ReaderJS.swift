@@ -48,17 +48,25 @@ enum ReaderJS {
           if (!norm(highlight)) { return null; }
           return { highlight: highlight, before: text.substr(Math.max(0, start - 32), Math.min(32, start)) };
         },
+        // Where the page ends in the resource, as a progression (paginated and scrolled).
+        pageEnd: function () {
+          const se = document.scrollingElement;
+          if (se.scrollWidth > window.innerWidth + 1) { return Math.min(1, (se.scrollLeft + window.innerWidth) / se.scrollWidth); }
+          if (se.scrollHeight > window.innerHeight + 1) { return Math.min(1, (se.scrollTop + window.innerHeight) / se.scrollHeight); }
+          return 1;
+        },
         // All the text on screen, whitespace collapsed.
         visibleText: function () {
           const w = window.innerWidth;
           const a = first(0, w), b = last(0, w);
-          if (!a || !b) { return ""; }
+          if (!a || !b) { return null; }
           const range = document.createRange();
           try {
             range.setStart(a.startContainer, a.startOffset);
             range.setEnd(b.startContainer, b.startOffset);
-          } catch (e) { return ""; }
-          return norm(range.toString());
+          } catch (e) { return null; }
+          const text = norm(range.toString());
+          return text ? text : null;
         },
       };
       return true;
@@ -69,7 +77,9 @@ enum ReaderJS {
         "JSON.stringify(window.gatefold ? window.gatefold.anchor(\(column == 1 ? "0.5" : "0")) : null)"
     }
 
-    static let visibleText = "window.gatefold ? window.gatefold.visibleText() : ''"
+    static let visibleText = "window.gatefold ? window.gatefold.visibleText() : null"
+
+    static let pageEnd = "window.gatefold ? window.gatefold.pageEnd() : null"
 
     static func setColumns(_ n: Int) -> String { "window.gatefoldColumns = \(n); true" }
 

@@ -13,20 +13,26 @@ let readerLog = Logger(subsystem: "bot.ouro.gatefold", category: "reader")
 @MainActor
 final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGestureRecognizerDelegate {
     let navigator: EPUBNavigatorViewController
-    private unowned let model: ReaderModel
+    private weak var weakModel: ReaderModel?
+    /// The reader outlives this controller in every path but a mid-turn close; callers in tasks guard `weakModel`.
+    private var model: ReaderModel { weakModel! }
     private let curl = CurlModel()
     private lazy var curlHost = UIHostingController(rootView: CurlOverlay(model: curl))
     private var observers: [Any] = []
 
     private var lastSize: CGSize = .zero
     private var reflowTask: Task<Void, Never>?
-    private var turning = false
+    private var reflowGeneration = 0
+    /// True from the moment a turn begins until it lands or springs back.
+    private(set) var isTurning = false
     private var panStart: CGPoint = .zero
     private var panForward = true
+    /// Set when the pan ends before the turn is ready; the preparing task finishes with it.
+    private var panEnded: Bool?
     private var columns = 1
 
     init(model: ReaderModel, publication: Publication, initialLocation: Locator?, preferences: EPUBPreferences) throws {
-        self.model = model
+        self.weakModel = model
         navigator = try EPUBNavigatorViewController(
             publication: publication,
             initialLocation: initialLocation,
@@ -52,6 +58,12 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         navigator.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         view.addSubview(navigator.view)
         navigator.didMove(toParent: self)
+
+        // Any touch on the page means the next location is the reader's own (slide and scroll swipes
+        // belong to Readium, so they're noticed here rather than in the pan handler).
+        let noticer = TouchNoticer { [weak self] in self?.weakModel?.noteInteraction() }
+        noticer.delegate = self
+        navigator.view.addGestureRecognizer(noticer)
 
         addChild(curlHost)
         curlHost.view.backgroundColor = .clear
@@ -109,25 +121,34 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
 
     private func settleReflowSoon() {
         reflowTask?.cancel()
+        reflowGeneration += 1
+        let generation = reflowGeneration
         reflowTask = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(550))
-            guard !Task.isCancelled, let self else { return }
-            await self.restoreAnchor()
+            guard !Task.isCancelled, let self, self.weakModel != nil else { return }
+            await self.restoreAnchor(generation: generation)
         }
     }
 
-    private func restoreAnchor() async {
+    private func restoreAnchor(generation: Int) async {
+        // A newer reflow may begin during any await below; it owns the restore from then on.
+        func current() -> Bool { generation == reflowGeneration && weakModel != nil }
         _ = await navigator.evaluateJavaScript(ReaderJS.install)
         _ = await navigator.evaluateJavaScript(ReaderJS.setColumns(columns))
-        if let visible = await visibleRange(),
+        guard current() else { return }
+        let visible = await visibleRange()
+        guard current() else { return }
+        if let visible,
            case let .jump(anchor) = model.keeper.reflowDidSettle(visible: visible),
            let locator = model.locator(for: anchor) {
             _ = await navigator.go(to: locator, options: .init(animated: false))
             try? await Task.sleep(for: .milliseconds(160))
+            guard current() else { return }
         }
-        readerLog.notice("reflow settled; anchor \(String(describing: self.model.keeper.anchor), privacy: .public)")
+        let after = await visibleRange()
+        guard current() else { return }
         model.keeper.restoreDidComplete()
-        model.reflowDidFinish(visible: await visibleRange())
+        model.reflowDidFinish(visible: after)
         disablePanningIfNeeded()
         UIView.animate(withDuration: 0.25) { self.navigator.view.alpha = 1 }
     }
@@ -138,7 +159,8 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         _ = await navigator.evaluateJavaScript(ReaderJS.install)
         let text = (try? await navigator.evaluateJavaScript(ReaderJS.visibleText).get()) as? String
         let start = location.locations.progression ?? 0
-        return VisibleRange(href: location.href.string, start: start, end: min(1, start + 0.0001), text: text)
+        let end = (try? await navigator.evaluateJavaScript(ReaderJS.pageEnd).get()) as? Double
+        return VisibleRange(href: location.href.string, start: start, end: max(start, min(1, end ?? start + 0.0001)), text: text)
     }
 
     /// The first words on the page the reader is on.
@@ -162,8 +184,9 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     // MARK: EPUBNavigatorDelegate
 
     func navigator(_ navigator: Navigator, locationDidChange locator: Locator) {
+        guard let model = weakModel else { return }
         disablePanningIfNeeded()
-        Task { await model.locationDidChange(locator) }
+        Task { await model.locationDidChange(locator, duringTurn: isTurning) }
     }
 
     func navigator(_ navigator: Navigator, presentError error: NavigatorError) {
@@ -201,15 +224,16 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
 
     @discardableResult
     func turn(forward: Bool) -> Bool {
-        guard !turning else { return true }
+        guard !isTurning else { return true }
         switch model.pageTurn {
         case .scroll:
             return false
         case .slide:
-            turning = true
+            isTurning = true
             Task {
-                _ = forward ? await navigator.goForward(options: .init(animated: true)) : await navigator.goBackward(options: .init(animated: true))
-                turning = false
+                let moved = forward ? await navigator.goForward(options: .init(animated: true)) : await navigator.goBackward(options: .init(animated: true))
+                isTurning = false
+                if moved { weakModel?.userTurnedPage() }
             }
         case .curl, .fade:
             Task { await animatedTurn(forward: forward, from: nil) }
@@ -226,8 +250,8 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     /// Snapshots the current page, moves the navigator underneath the overlay and snapshots the
     /// destination. Returns false at the start or end of the book.
     private func prepareTurn(forward: Bool, startingAt point: CGPoint) async -> Bool {
-        guard !turning else { return false }
-        turning = true
+        guard !isTurning, weakModel != nil else { return false }
+        isTurning = true
         let size = navigator.view.bounds.size
         let top = snapshot()
         curl.size = size
@@ -249,9 +273,9 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             ? await navigator.goForward(options: .init(animated: false))
             : await navigator.goBackward(options: .init(animated: false))
         readerLog.notice("turn moved=\(moved, privacy: .public)")
-        guard moved else {
+        guard moved, weakModel != nil else {
             curl.reset()
-            turning = false
+            isTurning = false
             UIImpactFeedbackGenerator(style: .soft).impactOccurred(intensity: 0.4)
             return false
         }
@@ -278,8 +302,9 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             try? await Task.sleep(for: .milliseconds(120))
         }
         curl.reset()
-        turning = false
-        if complete { model.userTurnedPage() }
+        isTurning = false
+        // Record the place once the turn has landed (or sprung back), not while the overlay hid it.
+        weakModel?.userTurnedPage()
     }
 
     private func turnedTarget() -> CGPoint {
@@ -290,6 +315,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     // MARK: Pan
 
     @objc private func handlePan(_ pan: UIPanGestureRecognizer) {
+        guard let model = weakModel else { return }
         guard model.pageTurn == .curl || model.pageTurn == .fade else { return }
         let point = pan.location(in: view)
         switch pan.state {
@@ -298,18 +324,16 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             panForward = v.x < 0
             panStart = point
             if model.chromeVisible { model.setChrome(false) }
+            panEnded = nil
             Task {
                 guard await prepareTurn(forward: panForward, startingAt: point) else { return }
                 updateFinger(pan.location(in: view))
-                if pan.state == .ended || pan.state == .cancelled || pan.state == .possible {
-                    let complete = panForward ? pan.velocity(in: view).x < 200 : pan.velocity(in: view).x > -200
-                    await finish(complete: complete, velocity: 0)
-                }
+                // The finger lifted while the destination was still being prepared.
+                if let ended = panEnded { await finish(complete: ended, velocity: 0) }
             }
         case .changed:
             updateFinger(point)
         case .ended, .cancelled:
-            guard curl.isActive, curl.top != nil, curl.beneath != nil else { return }
             let v = pan.velocity(in: view).x
             let dx = point.x - panStart.x
             let width = view.bounds.width
@@ -320,6 +344,10 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
                 complete = v < -250 || (v < 250 && dx < -width * 0.25)
             } else {
                 complete = v > 250 || (v > -250 && dx > width * 0.25)
+            }
+            guard curl.isActive, curl.top != nil, curl.beneath != nil else {
+                panEnded = complete
+                return
             }
             Task { await finish(complete: complete, velocity: v) }
         default:
@@ -340,8 +368,9 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     }
 
     func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        if gestureRecognizer is TouchNoticer { return true }
         guard let pan = gestureRecognizer as? UIPanGestureRecognizer else { return true }
-        guard model.pageTurn == .curl || model.pageTurn == .fade, !turning else { return false }
+        guard model.pageTurn == .curl || model.pageTurn == .fade, !isTurning else { return false }
         let v = pan.velocity(in: view)
         return abs(v.x) > abs(v.y) * 1.2
     }
@@ -397,4 +426,22 @@ struct ReaderHostView: UIViewControllerRepresentable {
 
     func makeUIViewController(context: Context) -> ReaderHostController { controller }
     func updateUIViewController(_ controller: ReaderHostController, context: Context) {}
+}
+
+/// Reports that a touch began, then steps aside without claiming it.
+private final class TouchNoticer: UIGestureRecognizer {
+    private let onTouch: () -> Void
+
+    init(onTouch: @escaping () -> Void) {
+        self.onTouch = onTouch
+        super.init(target: nil, action: nil)
+        cancelsTouchesInView = false
+        delaysTouchesBegan = false
+        delaysTouchesEnded = false
+    }
+
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
+        onTouch()
+        state = .failed
+    }
 }

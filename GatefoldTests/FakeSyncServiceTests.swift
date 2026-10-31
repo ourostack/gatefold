@@ -89,6 +89,19 @@ import Testing
         #expect(store.book(emma.id)?.totalProgression == 0.3)
     }
 
+    @Test func rapidPlacesLandInOrderLatestWins() async throws {
+        let sync = FakeSyncService(signedIn: true, latency: .zero)
+        let store = LibraryStore(sync: sync, root: URL.temporaryDirectory.appending(path: "library-tests-\(UUID().uuidString)"))
+        await store.refresh()
+        let emma = try #require(store.books.first { $0.title == "Emma" })
+        let cloud = try #require(emma.cloud)
+        for p in [0.31, 0.32, 0.33, 0.32] {
+            store.recordPlace(bookID: emma.id, locatorJSON: "{}", totalProgression: p, progression: p)
+        }
+        try await Task.sleep(for: .milliseconds(900))
+        #expect(try await sync.remotePosition(for: cloud)?.totalProgression == 0.32)
+    }
+
     @Test func importAddsALocalEPUB() async throws {
         let (store, _) = makeStore(signedIn: false)
         let source = try #require(Bundle.main.url(forResource: "frankenstein", withExtension: "epub"))

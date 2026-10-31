@@ -70,12 +70,14 @@ struct ReaderScreen: View {
                     .transition(.move(edge: .top).combined(with: .opacity))
                 }
 
+                if LaunchOptions.isUITest {
                 Text(model.anchorCheck)
                     .font(.system(size: 1))
                     .opacity(0.01)
                     .accessibilityIdentifier("reader.anchorCheck")
                     .accessibilityLabel(model.anchorCheck)
                     .allowsHitTesting(false)
+                }
 
                 if LaunchOptions.isUITest {
                     // UI tests switch posture at runtime, so one test can walk every posture.

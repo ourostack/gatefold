@@ -26,7 +26,7 @@ jobs:
   app:
     name: Build and unit-test the app
     runs-on: xcode-27
-    timeout-minutes: 45
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/select-xcode
@@ -52,7 +52,14 @@ jobs:
             -destination "${{ steps.sim.outputs.destination }}" \
             -only-testing:GatefoldTests \
             -resultBundlePath "$RUNNER_TEMP/unit.xcresult" 2>&1 | tail -200
-      - name: Build for the Mac (Designed for iPad) and a Release device archive check
+      - name: Reading position survives posture and font changes (UI tests)
+        run: |
+          set -o pipefail
+          xcodebuild test -project Gatefold.xcodeproj -scheme Gatefold \
+            -destination "${{ steps.sim.outputs.destination }}" \
+            -only-testing:GatefoldUITests/PositionUITests \
+            -resultBundlePath "$RUNNER_TEMP/ui.xcresult" 2>&1 | tail -200
+      - name: Release build for devices (the same binary runs on the Mac as Designed for iPad)
         run: |
           set -o pipefail
           xcodebuild build -project Gatefold.xcodeproj -scheme Gatefold -configuration Release \
@@ -60,5 +67,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
-          name: unit-xcresult
-          path: ${{ runner.temp }}/unit.xcresult
+          name: xcresults
+          path: |
+            ${{ runner.temp }}/unit.xcresult
+            ${{ runner.temp }}/ui.xcresult

@@ -45,7 +45,6 @@ final class ReaderModel {
     private let openedSnapshot: ProgressSnapshot?
     /// Where the book opened; nothing is recorded or pushed until the reader moves from it,
     /// so opening a book never overwrites a further-ahead place on the other device.
-    private var openedProgression: Double?
     private var hasMoved = false
 
     init(book: LibraryBook, publication: Publication, app: AppModel) {
@@ -55,15 +54,18 @@ final class ReaderModel {
         self.app = app
         self.bookmarks = book.bookmarks
         self.openedSnapshot = book.localSnapshot
-        self.openedProgression = book.lastOpened == nil ? nil : book.totalProgression
         let initial = book.locatorJSON.flatMap { try? Locator(jsonString: $0) }
         let prefs = app.preferences.effective(for: book.id)
-        hostController = try? ReaderHostController(
-            model: self,
-            publication: publication,
-            initialLocation: initial,
-            preferences: Self.epubPreferences(prefs, theme: prefs.resolvedTheme(systemIsDark: false), columns: .one)
-        )
+        do {
+            hostController = try ReaderHostController(
+                model: self,
+                publication: publication,
+                initialLocation: initial,
+                preferences: Self.epubPreferences(prefs, theme: prefs.resolvedTheme(systemIsDark: false), columns: .one)
+            )
+        } catch {
+            errorMessage = "This book couldn't be opened: \(error.localizedDescription)"
+        }
         if LaunchOptions.showChrome { chromeVisible = true }
     }
 
@@ -113,6 +115,7 @@ final class ReaderModel {
         chapterMap = ChapterMap(chapters: entries.filter { $0.level == 0 }.map { .init(title: $0.title, start: $0.progression) }, positionCount: max(1, count))
 
         if let goTo = LaunchOptions.goTo, let locator = await publication.locate(progression: goTo) {
+            hasMoved = true
             await host?.go(to: locator)
         }
         try? await Task.sleep(for: .milliseconds(300))
@@ -186,9 +189,10 @@ final class ReaderModel {
 
     // MARK: Navigation events
 
-    func locationDidChange(_ locator: Locator) async {
+    func locationDidChange(_ locator: Locator, duringTurn: Bool = false) async {
         location = locator
-        guard keeper.reflowing == nil else { return }
+        // Mid-turn the navigator has moved under the overlay; the turn records the place when it lands.
+        guard keeper.reflowing == nil, !duringTurn else { return }
         // A location that arrives as a reflow lands is the restore, not the reader moving: keep the
         // anchor, or repeated reflows would walk it backward a page at a time.
         if let settled = reflowSettledAt, Date().timeIntervalSince(settled) < 1.2 {
@@ -196,12 +200,9 @@ final class ReaderModel {
         } else {
             await captureAnchor()
         }
-        let total = locator.locations.totalProgression ?? 0
-        if !hasMoved {
-            if let opened = openedProgression, abs(opened - total) < 0.00001 { return refreshBookmarkState(await host?.visibleRange()) }
-            if openedProgression == nil && total < 0.00001 && LaunchOptions.goTo == nil { return refreshBookmarkState(await host?.visibleRange()) }
-            hasMoved = true
-        }
+        // Only the reader moves the place. Readium reopening a page boundary off from the saved one is
+        // not a move, so opening a book never overwrites a further-ahead place on the InkPad.
+        guard hasMoved else { return refreshBookmarkState(await host?.visibleRange()) }
         if let json = try? locator.jsonString() {
             app.library.recordPlace(
                 bookID: bookID,
@@ -216,8 +217,16 @@ final class ReaderModel {
         }
     }
 
+    /// A touch on the page (a swipe in slide or scroll mode): the next location is the reader's own.
+    func noteInteraction() { hasMoved = true }
+
+    /// A turn landed or sprang back: take the place from where the navigator is now.
     func userTurnedPage() {
-        Task { await captureAnchor() }
+        hasMoved = true
+        Task {
+            guard let location = host?.navigator.currentLocation else { return }
+            await locationDidChange(location)
+        }
     }
 
     /// Takes the first words on screen as the reader's place, unless a reflow is moving the page.
@@ -238,6 +247,7 @@ final class ReaderModel {
     // MARK: Jumps
 
     func go(toProgression progression: Double, rememberBack: Bool) async {
+        hasMoved = true
         if rememberBack { rememberPlace() }
         if let locator = await publication.locate(progression: progression) {
             await host?.go(to: locator)
@@ -246,6 +256,7 @@ final class ReaderModel {
     }
 
     func go(to entry: TOCEntry) async {
+        hasMoved = true
         rememberPlace()
         await host?.go(to: entry.link)
         await captureAnchor()
@@ -258,6 +269,7 @@ final class ReaderModel {
 
     func goBack() async {
         guard let back = backLocator else { return }
+        hasMoved = true
         backLocator = nil
         await host?.go(to: back)
         await captureAnchor()

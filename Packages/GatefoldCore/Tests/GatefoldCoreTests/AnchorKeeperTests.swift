@@ -138,3 +138,40 @@ struct AnchorKeeperTests {
         #expect(keeper.reflowDidSettle(visible: visible) == .none)
     }
 }
+
+@Suite struct AnchorTextTests {
+    let anchor = ReadingAnchor(href: "c.xhtml", progression: 0.40, text: "It is a truth universally")
+
+    @Test func textOnScreenIsKept() {
+        let visible = VisibleRange(href: "c.xhtml", start: 0.38, end: 0.41, text: "…in want of a wife. It is a truth universally acknowledged…")
+        #expect(visible.contains(anchor))
+    }
+
+    @Test func textOffScreenIsLostEvenWhenProgressionOverlaps() {
+        let visible = VisibleRange(href: "c.xhtml", start: 0.39, end: 0.42, text: "an entirely different page")
+        #expect(!visible.contains(anchor))
+    }
+
+    @Test func pageWithoutTextFallsBackToProgression() {
+        #expect(VisibleRange(href: "c.xhtml", start: 0.38, end: 0.45, text: nil).contains(anchor))
+        #expect(!VisibleRange(href: "c.xhtml", start: 0.45, end: 0.5, text: nil).contains(anchor))
+    }
+
+    @Test func anchorOnThePagesLastLineCountsWhenItsOpeningWordsShow() {
+        let long = ReadingAnchor(href: "c.xhtml", progression: 0.4, text: "It is a truth universally acknowledged, that a single man in possession")
+        let visible = VisibleRange(href: "c.xhtml", start: 0.38, end: 0.40, text: "…the end of the page. It is a truth universally")
+        #expect(visible.contains(long))
+    }
+
+    @Test func overlappingReflowsKeepTheFirstAnchor() {
+        var keeper = AnchorKeeper(anchor: anchor)
+        keeper.reflowWillBegin(.posture)
+        // A second reflow starts before the first settles; Readium's drifted locations arrive meanwhile.
+        keeper.reflowWillBegin(.typography)
+        keeper.userSettled(on: ReadingAnchor(href: "c.xhtml", progression: 0.37, text: "drifted"))
+        let drifted = VisibleRange(href: "c.xhtml", start: 0.36, end: 0.39, text: "drifted page")
+        #expect(keeper.reflowDidSettle(visible: drifted) == .jump(anchor))
+        keeper.restoreDidComplete()
+        #expect(keeper.anchor == anchor)
+    }
+}
