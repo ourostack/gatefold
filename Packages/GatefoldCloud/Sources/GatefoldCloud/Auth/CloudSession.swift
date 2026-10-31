@@ -40,6 +40,9 @@ public actor CloudSession {
     /// Device time translated to the server's clock.
     public func serverNow() -> Date { now().addingTimeInterval(serverClockOffset) }
 
+    /// A device-clock date on the server's clock.
+    public func serverTime(_ deviceDate: Date) -> Date { deviceDate.addingTimeInterval(serverClockOffset) }
+
     public func stores(forEmail email: String) async throws -> [CloudStore] {
         let creds = try await credentials.credentials(refresh: false)
         let endpoint = Endpoint.get("/auth/login", query: [
@@ -153,17 +156,24 @@ public actor CloudSession {
                 serverClockOffset = serverDate.timeIntervalSince(now()).rounded()
             }
             return (data, response)
-        } catch let error as CloudError {
-            throw error
-        } catch let error as URLError {
+        } catch {
+            throw Self.mapTransportError(error)
+        }
+    }
+
+    /// URLSession failures as `CloudError` (cancellation passes through).
+    static func mapTransportError(_ error: Error) -> Error {
+        switch error {
+        case let error as CloudError: return error
+        case let error as URLError:
             switch error.code {
-            case .notConnectedToInternet, .networkConnectionLost, .timedOut, .cannotConnectToHost, .cannotFindHost, .dataNotAllowed:
-                throw CloudError.offline
-            case .cancelled:
-                throw CancellationError()
-            default:
-                throw CloudError.network(error.localizedDescription)
+            case .notConnectedToInternet, .networkConnectionLost, .timedOut, .cannotConnectToHost, .cannotFindHost, .dataNotAllowed,
+                 .internationalRoamingOff:
+                return CloudError.offline
+            case .cancelled: return CancellationError()
+            default: return CloudError.network(error.localizedDescription)
             }
+        default: return error
         }
     }
 

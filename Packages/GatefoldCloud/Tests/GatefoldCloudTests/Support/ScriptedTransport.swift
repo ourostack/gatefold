@@ -42,7 +42,21 @@ actor ScriptedTransport: HTTPTransport {
     var offline = false
     var delay: Duration = .zero
 
-    init(_ routes: [Route] = []) { self.routes = routes }
+    /// When set, the `Date` header follows this clock (the server and device agree).
+    let clock: TestClock?
+
+    init(_ routes: [Route] = [], clock: TestClock? = nil) {
+        self.routes = routes
+        self.clock = clock
+    }
+
+    static func httpDate(_ date: Date) -> String {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.timeZone = TimeZone(identifier: "GMT")
+        f.dateFormat = "EEE, dd MMM yyyy HH:mm:ss 'GMT'"
+        return f.string(from: date)
+    }
 
     func on(_ method: String, _ pathContains: String, _ responses: Response...) {
         routes.insert(Route(method: method, pathContains: pathContains, responses: responses), at: 0)
@@ -66,7 +80,7 @@ actor ScriptedTransport: HTTPTransport {
         }
         let response = routes[i].responses.count > 1 ? routes[i].responses.removeFirst() : routes[i].responses[0]
         var headers = response.headers
-        headers["Date"] = headers["Date"] ?? "Sat, 31 Oct 2026 22:00:00 GMT"
+        headers["Date"] = headers["Date"] ?? clock.map { Self.httpDate($0.now) } ?? "Sat, 31 Oct 2026 22:00:00 GMT"
         let http = HTTPURLResponse(url: record.url, statusCode: response.status, httpVersion: nil, headerFields: headers)!
         return (response.body, http)
     }
