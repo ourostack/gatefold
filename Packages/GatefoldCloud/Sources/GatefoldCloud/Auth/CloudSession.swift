@@ -17,6 +17,11 @@ public actor CloudSession {
     private var stored: StoredSession?
     private var loaded = false
     private var refreshing: Task<CloudToken, Error>?
+    /// Bumped by sign-in and sign-out so a refresh that finishes afterwards cannot restore an old session.
+    private var generation = 0
+    private var clockKnown = false
+    /// The last Keychain write failure, if any. The session still works for this launch.
+    public private(set) var persistenceError: Error?
     /// Server time minus device time, from the latest `Date` header.
     public private(set) var serverClockOffset: TimeInterval = 0
 
@@ -71,13 +76,16 @@ public actor CloudSession {
         var account = try WireDecoder.account(userData, store: store)
         if account.email.isEmpty { account.email = email }
         let session = StoredSession(account: account, token: token)
+        generation += 1
+        refreshing = nil
         stored = session
         loaded = true
-        try? await tokenStore.save(session)
+        await persist(session)
         return account
     }
 
     public func signOut() async {
+        generation += 1
         refreshing?.cancel()
         refreshing = nil
         stored = nil
@@ -105,10 +113,31 @@ public actor CloudSession {
 
     // MARK: - Internals
 
+    /// A nil load is retried on the next call: before first unlock the Keychain reads as empty,
+    /// and that must not look like a sign-out for the rest of the process.
     private func loadIfNeeded() async {
-        guard !loaded else { return }
-        loaded = true
-        if stored == nil { stored = await tokenStore.load() }
+        guard !loaded, stored == nil else { return }
+        let generationBefore = generation
+        let session = await tokenStore.load()
+        guard generation == generationBefore, !loaded else { return }
+        stored = session
+        loaded = session != nil
+    }
+
+    private func persist(_ session: StoredSession) async {
+        do {
+            try await tokenStore.save(session)
+            persistenceError = nil
+        } catch {
+            persistenceError = error
+        }
+    }
+
+    /// Makes sure `serverClockOffset` reflects the server before a timestamp is sent. Costs one
+    /// unauthenticated request per launch; any response carries a `Date` header.
+    public func syncClock() async {
+        guard !clockKnown else { return }
+        _ = try? await perform(.get("/user"), bearer: nil)
     }
 
     private func validToken() async throws -> CloudToken {
@@ -124,11 +153,12 @@ public actor CloudSession {
            current.expiresAt.timeIntervalSince(now()) > Self.refreshMargin { return current }
         let task = Task { try await self.performRefresh(old) }
         refreshing = task
-        defer { refreshing = nil }
+        defer { if refreshing == task { refreshing = nil } }
         return try await task.value
     }
 
     private func performRefresh(_ old: CloudToken) async throws -> CloudToken {
+        let startedIn = generation
         guard let refreshToken = old.refreshToken, var session = stored else {
             await signOut()
             throw CloudError.authenticationRequired
@@ -136,7 +166,8 @@ public actor CloudSession {
         let endpoint = Endpoint(method: "POST", path: "/auth/renew-token",
                                 body: .form(["grant_type": "refresh_token", "refresh_token": refreshToken]))
         let (data, response) = try await perform(endpoint, bearer: old.accessToken)
-        if (400..<500).contains(response.statusCode) {
+        guard generation == startedIn, !Task.isCancelled else { throw CloudError.notSignedIn }
+        if [400, 401, 403].contains(response.statusCode) { // the grant is dead
             await signOut()
             throw CloudError.authenticationRequired
         }
@@ -145,7 +176,12 @@ public actor CloudSession {
         if token.refreshToken == nil { token.refreshToken = refreshToken }
         session.token = token
         stored = session
-        try? await tokenStore.save(session)
+        await persist(session)
+        guard generation == startedIn else {
+            // Signed out (or in again) while saving: undo our write unless a newer session owns the store.
+            if stored == nil { await tokenStore.clear() }
+            throw CloudError.notSignedIn
+        }
         return token
     }
 
@@ -154,6 +190,7 @@ public actor CloudSession {
             let (data, response) = try await transport.send(endpoint.request(base: base, bearer: bearer))
             if let header = response.value(forHTTPHeaderField: "Date"), let serverDate = Self.httpDate(header) {
                 serverClockOffset = serverDate.timeIntervalSince(now()).rounded()
+                clockKnown = true
             }
             return (data, response)
         } catch {

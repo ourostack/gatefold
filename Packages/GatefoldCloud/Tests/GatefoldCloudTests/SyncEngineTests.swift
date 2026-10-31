@@ -426,3 +426,127 @@ struct ChangeStreamTests {
         #expect(await ib.next() == .signedOut)
     }
 }
+
+@Suite("Outbox races and identity")
+struct OutboxRaceTests {
+    let highlight = CloudAnnotation.highlight(begin: "#epubcfi(/6/8!/4/2/4/1:0)", end: "#epubcfi(/6/8!/4/2/4/1:20)", text: "quoted", at: utc("2026-10-31T21:59:00Z"))
+    let position = ReadingPosition(cfi: "epubcfi(/6/16!/4/2/1:0)", totalProgression: 0.1, updated: utc("2026-10-31T21:59:30Z"))
+
+    @Test func anEditAfterTheCreateLandedUpdatesInsteadOfDuplicating() async throws {
+        let h = Harness()
+        await h.transport.on("POST", "/notes?fast_hash=", .json(#"{"uuid":"new-1","updated":"2026-10-31T22:00:00Z"}"#))
+        await h.transport.on("POST", "/notes/new-1", .json("{}"))
+        let cloud = h.cloud()
+        let stream = cloud.changes()
+        await cloud.save(highlight, for: CloudBook(fastHash: frankenstein))
+        await cloud.flushOutbox()
+        var recoloured = highlight // the app's copy still has no uuid
+        recoloured.color = .init(.green, updated: utc("2026-10-31T21:59:50Z"))
+        await cloud.save(recoloured, for: CloudBook(fastHash: frankenstein))
+        await cloud.flushOutbox()
+        #expect(await h.transport.requests("POST", "/notes?fast_hash=").count == 1)
+        #expect(await h.transport.requests("POST", "/notes/new-1").count == 1)
+        for await change in stream {
+            if case let .annotationSaved(hash, saved) = change { #expect(hash == frankenstein); #expect(saved.uuid == "new-1"); break }
+        }
+    }
+
+    @Test func aDeleteAfterTheCreateLandedDeletesOnTheServer() async throws {
+        let h = Harness()
+        await h.transport.on("POST", "/notes?fast_hash=", .json(#"{"uuid":"new-1"}"#))
+        await h.transport.on("DELETE", "/notes/new-1", .ok)
+        let cloud = h.cloud()
+        await cloud.save(highlight, for: CloudBook(fastHash: frankenstein))
+        await cloud.flushOutbox()
+        await cloud.deleteAnnotation(highlight, for: CloudBook(fastHash: frankenstein))
+        await cloud.flushOutbox()
+        #expect(await h.transport.requests("DELETE", "/notes/new-1").count == 1)
+    }
+
+    @Test func aDeleteDuringTheCreateDeletesItOnceItLands() async throws {
+        let h = Harness()
+        await h.transport.on("POST", "/notes?fast_hash=", .json(#"{"uuid":"new-1"}"#))
+        await h.transport.on("DELETE", "/notes/new-1", .ok)
+        await h.transport.setDelay(.milliseconds(300))
+        let cloud = h.cloud()
+        await cloud.save(highlight, for: CloudBook(fastHash: frankenstein))
+        let flush = Task { await cloud.flushOutbox() }
+        try await Task.sleep(for: .milliseconds(100))
+        await cloud.deleteAnnotation(highlight, for: CloudBook(fastHash: frankenstein))
+        await flush.value
+        await cloud.flushOutbox()
+        #expect(await h.transport.requests("DELETE", "/notes/new-1").count == 1)
+        #expect(await cloud.pendingChanges() == 0)
+    }
+
+    @Test func aPositionPushedMidSendGoesOutInTheSameFlush() async throws {
+        let h = Harness()
+        await h.transport.on("GET", "/fileops/info", .json(#"{"fast_hash":"\#(frankenstein)","name":"x"}"#))
+        await h.transport.on("POST", "/books/read-position", .ok)
+        await h.transport.setDelay(.milliseconds(200))
+        let cloud = h.cloud()
+        await cloud.push(position, for: CloudBook(fastHash: frankenstein))
+        let flush = Task { await cloud.flushOutbox() }
+        try await Task.sleep(for: .milliseconds(300)) // inside the POST
+        var later = position
+        later.cfi = "epubcfi(/6/16!/4/2/1:9)"
+        await cloud.push(later, for: CloudBook(fastHash: frankenstein))
+        await flush.value
+        let posts = await h.transport.requests("POST", "/books/read-position")
+        #expect(posts.count == 2)
+        #expect(posts.last?.json["pointer"] as? String == "#epubcfi(/6/16!/4/2/1:9)")
+        #expect(await cloud.pendingChanges() == 0)
+    }
+
+    @Test func aRejectedSendDoesNotDropANewerPayload() async throws {
+        let h = Harness()
+        await h.transport.on("GET", "/fileops/info", .json(#"{"fast_hash":"\#(frankenstein)","name":"x"}"#))
+        await h.transport.on("POST", "/books/read-position", .json("{}", status: 400), .ok)
+        await h.transport.setDelay(.milliseconds(200))
+        let cloud = h.cloud()
+        await cloud.push(position, for: CloudBook(fastHash: frankenstein))
+        let flush = Task { await cloud.flushOutbox() }
+        try await Task.sleep(for: .milliseconds(300))
+        var later = position
+        later.cfi = "epubcfi(/6/16!/4/2/1:9)"
+        await cloud.push(later, for: CloudBook(fastHash: frankenstein))
+        await flush.value
+        await cloud.flushOutbox()
+        #expect(await h.transport.requests("POST", "/books/read-position").last?.json["pointer"] as? String == "#epubcfi(/6/16!/4/2/1:9)")
+        #expect(await cloud.pendingChanges() == 0)
+    }
+
+    @Test func noteTimesAreOnTheServersClockEvenOnTheFirstSend() async throws {
+        // Fresh launch, device clock an hour fast, nothing has been fetched yet.
+        let clock = TestClock(utc("2026-10-31T23:00:00Z"))
+        let h = Harness(transport: ScriptedTransport(), clock: clock) // server says 22:00:00
+        await h.transport.on("POST", "/notes?fast_hash=", .json(#"{"uuid":"new-1"}"#))
+        let cloud = h.cloud()
+        await cloud.save(CloudAnnotation.highlight(begin: "#epubcfi(/6/8!/4/2/4/1:0)", end: "#epubcfi(/6/8!/4/2/4/1:20)", text: "q", at: clock.now),
+                         for: CloudBook(fastHash: frankenstein))
+        await cloud.flushOutbox()
+        let post = try #require(await h.transport.requests("POST", "/notes?fast_hash=").first)
+        #expect((post.json["color"] as? [String: Any])?["updated"] as? String == "2026-10-31T22:00:00Z")
+    }
+
+    @Test func concurrentDownloadsOfOneBookBothSucceed() async throws {
+        let h = Harness()
+        let bytes = Data(repeating: 5, count: 5000)
+        await h.transport.on("GET", "signature-download", .data(bytes))
+        await h.transport.setDelay(.milliseconds(30))
+        let b = try WireDecoder.book(WireDecoder.loose(Data(book(md5: md5Base64(bytes)).utf8)))!
+        let cloud = h.cloud()
+        async let first = cloud.download(b)
+        async let second = cloud.download(b)
+        let (u1, u2) = try await (first, second)
+        #expect(u1 == u2)
+    }
+
+    @Test func anUnreadableOutboxIsKeptAside() async throws {
+        let h = Harness()
+        try Data("{not json".utf8).write(to: h.directory.appendingPathComponent("outbox.json"))
+        _ = h.cloud()
+        let names = try FileManager.default.contentsOfDirectory(atPath: h.directory.path)
+        #expect(names.contains { $0.hasPrefix("outbox.unreadable-") })
+    }
+}

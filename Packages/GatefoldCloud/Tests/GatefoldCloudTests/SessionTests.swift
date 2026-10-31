@@ -154,6 +154,43 @@ struct SessionTests {
         #expect(await session.account == nil)
     }
 
+    @Test func aRateLimitedRefreshKeepsTheSession() async throws {
+        let t = ScriptedTransport()
+        let store = InMemoryTokenStore()
+        let clock = TestClock()
+        let session = try await signedIn(t, clock: clock, store: store)
+        clock.advance(8000)
+        await t.on("POST", "/auth/renew-token", .json("{}", status: 429))
+        await #expect(throws: CloudError.rateLimited(retryAfter: nil)) { _ = try await session.send(.get("/books")) }
+        #expect(await store.load() != nil)
+    }
+
+    @Test func signingOutDuringARefreshStaysSignedOut() async throws {
+        let t = ScriptedTransport()
+        let store = InMemoryTokenStore()
+        let clock = TestClock()
+        let session = try await signedIn(t, clock: clock, store: store)
+        clock.advance(8000)
+        await t.on("POST", "/auth/renew-token", .json(tokenJSON("a2")))
+        await t.on("GET", "/books", .json(#"{"total":0,"items":[]}"#))
+        await t.setDelay(.milliseconds(300))
+        let call = Task { try await session.send(.get("/books")) }
+        try await Task.sleep(for: .milliseconds(100))
+        await session.signOut()
+        _ = try? await call.value
+        #expect(await store.load() == nil)
+        #expect(await session.account == nil)
+    }
+
+    @Test func aKeychainThatReadsEmptyAtLaunchIsReadAgainLater() async throws {
+        let store = InMemoryTokenStore() // empty, as before first unlock
+        let session = makeSession(ScriptedTransport(), store: store)
+        #expect(await session.account == nil)
+        try await store.save(StoredSession(account: CloudAccount(email: "reader@example.com", store: testStore()),
+                                           token: CloudToken(accessToken: "a", refreshToken: "r", expiresAt: utc("2026-12-01T00:00:00Z"))))
+        #expect(await session.account?.email == "reader@example.com")
+    }
+
     @Test func restoresASavedSessionWithoutSigningIn() async throws {
         let t = ScriptedTransport()
         let store = InMemoryTokenStore()

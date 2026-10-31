@@ -75,7 +75,10 @@ actor ScriptedTransport: HTTPTransport {
         if delay != .zero { try await Task.sleep(for: delay) }
         if offline { throw URLError(.notConnectedToInternet) }
         guard let i = routes.firstIndex(where: { $0.method == record.method && record.url.absoluteString.contains($0.pathContains) }) else {
-            let r = HTTPURLResponse(url: record.url, statusCode: 404, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!
+            let r = HTTPURLResponse(url: record.url, statusCode: 404, httpVersion: nil, headerFields: [
+                "Content-Type": "application/json",
+                "Date": clock.map { Self.httpDate($0.now) } ?? "Sat, 31 Oct 2026 22:00:00 GMT",
+            ])!
             return (Data(#"{"error_code":0,"error_msg":"Page not found."}"#.utf8), r)
         }
         let response = routes[i].responses.count > 1 ? routes[i].responses.removeFirst() : routes[i].responses[0]

@@ -17,6 +17,10 @@ struct OutboxItem: Codable, Sendable, Hashable {
     var notBefore: Date?
     /// Bumped when a newer write replaces the payload while a send is in flight.
     var revision = 0
+    /// A create was handed to the network at least once, so it may exist on the server already.
+    var sendStarted = false
+    /// The user deleted an annotation whose create may already be on its way.
+    var deleteAfterCreate = false
 
     /// Writes with the same key replace each other instead of queueing twice.
     var coalescingKey: String {
@@ -36,6 +40,11 @@ struct OutboxState: Codable, Sendable {
     var items: [OutboxItem] = []
     /// The `pointer_pb` we last wrote per book, to recognise our own position when it comes back.
     var pushedPointers: [String: String] = [:]
+    /// Server uuids of annotations we created, by `fast_hash|dedupeKey`, so the app's uuid-less copy
+    /// can still be edited or deleted after the create lands.
+    var createdUUIDs: [String: String] = [:]
+
+    static func annotationKey(_ fastHash: String, _ annotation: CloudAnnotation) -> String { "\(fastHash)|\(annotation.dedupeKey)" }
 
     mutating func enqueue(_ item: OutboxItem) {
         if let i = items.firstIndex(where: { $0.coalescingKey == item.coalescingKey }) {
@@ -61,6 +70,17 @@ enum JSONFile {
     static func read<T: Decodable>(_ type: T.Type, at url: URL) -> T? {
         guard let data = try? Data(contentsOf: url) else { return nil }
         return try? JSONDecoder().decode(T.self, from: data)
+    }
+
+    /// Like `read`, but an existing file that does not decode is moved aside instead of being
+    /// overwritten later, so queued work is never silently lost.
+    static func readOrSetAside<T: Decodable>(_ type: T.Type, at url: URL, now: Date) -> T? {
+        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+        if let value = read(type, at: url) { return value }
+        let stamp = Int(now.timeIntervalSince1970)
+        let aside = url.deletingLastPathComponent().appendingPathComponent("\(url.deletingPathExtension().lastPathComponent).unreadable-\(stamp).json")
+        try? FileManager.default.moveItem(at: url, to: aside)
+        return nil
     }
 
     static func write<T: Encodable>(_ value: T, to url: URL) {

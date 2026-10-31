@@ -333,6 +333,8 @@ public enum CloudChange: Sendable, Hashable {
     /// Our queued position lost to a newer one from another client and was dropped.
     case positionSuperseded(fastHash: String, remote: ReadingPosition)
     case annotations(fastHash: String, [CloudAnnotation])
+    /// A queued annotation reached the Cloud; carries its server `uuid`. Update the app's copy with it.
+    case annotationSaved(fastHash: String, CloudAnnotation)
     case outbox(pending: Int)
     case signedIn(CloudAccount)
     case signedOut

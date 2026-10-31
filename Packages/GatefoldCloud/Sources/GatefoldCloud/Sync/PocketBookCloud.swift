@@ -39,6 +39,10 @@ public actor PocketBookCloud: SyncService {
     private var timer: Task<Void, Never>?
     private var timerDue: Date?
     private var blockedOnSignIn = false
+    /// The outbox item being sent right now.
+    private var inFlight: UUID?
+    /// Bumped on sign-in and sign-out; a send that straddles one must not touch the new state.
+    private var accountGeneration = 0
 
     private var booksDirectory: URL { configuration.storageDirectory.appendingPathComponent("Books", isDirectory: true) }
     private var partialDirectory: URL { configuration.storageDirectory.appendingPathComponent("Partial", isDirectory: true) }
@@ -65,8 +69,11 @@ public actor PocketBookCloud: SyncService {
         for sub in ["Books", "Partial"] {
             try? fm.createDirectory(at: dir.appendingPathComponent(sub, isDirectory: true), withIntermediateDirectories: true)
         }
+        // Leftovers from downloads a previous launch did not finish.
+        let partial = dir.appendingPathComponent("Partial", isDirectory: true)
+        for file in (try? fm.contentsOfDirectory(at: partial, includingPropertiesForKeys: nil)) ?? [] { try? fm.removeItem(at: file) }
         books = JSONFile.read([CloudBook].self, at: dir.appendingPathComponent("library.json")) ?? []
-        state = JSONFile.read(OutboxState.self, at: dir.appendingPathComponent("outbox.json")) ?? OutboxState()
+        state = JSONFile.readOrSetAside(OutboxState.self, at: dir.appendingPathComponent("outbox.json"), now: now()) ?? OutboxState()
     }
 
     public nonisolated func changes() -> AsyncStream<CloudChange> { broadcaster.stream() }
@@ -89,6 +96,7 @@ public actor PocketBookCloud: SyncService {
             JSONFile.write(books, to: libraryFile)
         }
         state.owner = account.email
+        accountGeneration += 1
         saveOutbox()
         blockedOnSignIn = false
         broadcaster.emit(.signedIn(account))
@@ -100,6 +108,7 @@ public actor PocketBookCloud: SyncService {
         timer?.cancel()
         timer = nil
         await session.signOut()
+        accountGeneration += 1
         state = OutboxState()
         books = []
         saveOutbox()
@@ -176,7 +185,7 @@ public actor PocketBookCloud: SyncService {
         let destination = booksDirectory.appendingPathComponent("\(book.fastHash).\(ext.isEmpty ? "epub" : ext)")
         let fm = FileManager.default
         if fm.fileExists(atPath: destination.path) {
-            if try book.md5Base64 == nil || Self.md5Base64(of: destination) == book.md5Base64 { return destination }
+            if try await Self.matches(destination, md5: book.md5Base64) { return destination }
             try? fm.removeItem(at: destination)
         }
 
@@ -204,10 +213,12 @@ public actor PocketBookCloud: SyncService {
             }
             do {
                 try CloudSession.check(response, Data())
-                if let expected = book.md5Base64, try Self.md5Base64(of: partial) != expected { throw CloudError.checksumMismatch }
+                if let expected = book.md5Base64, try await Self.md5OffActor(partial) != expected { throw CloudError.checksumMismatch }
                 try fm.moveItem(at: partial, to: destination)
             } catch {
                 try? fm.removeItem(at: partial)
+                // Another download of the same book may have finished first.
+                if fm.fileExists(atPath: destination.path), (try? await Self.matches(destination, md5: book.md5Base64)) == true { return destination }
                 throw error
             }
             return destination
@@ -278,6 +289,17 @@ public actor PocketBookCloud: SyncService {
         broadcaster.emit(.outbox(pending: state.items.count))
     }
 
+    /// True when `file` has the expected md5, or when the Cloud gave none to check against.
+    static func matches(_ file: URL, md5: String?) async throws -> Bool {
+        guard let md5 else { return true }
+        return try await md5OffActor(file) == md5
+    }
+
+    /// Hashes off the actor so a large book does not stall the outbox.
+    static func md5OffActor(_ file: URL) async throws -> String {
+        try await Task.detached(priority: .utility) { try md5Base64(of: file) }.value
+    }
+
     static func md5Base64(of file: URL) throws -> String {
         let handle = try FileHandle(forReadingFrom: file)
         defer { try? handle.close() }
@@ -333,14 +355,23 @@ public actor PocketBookCloud: SyncService {
     }
 
     public func save(_ annotation: CloudAnnotation, for book: CloudBook) async {
-        let stamped = stampMissing(annotation, at: now())
+        var stamped = stampMissing(annotation, at: now())
+        if stamped.uuid == nil { stamped.uuid = state.createdUUIDs[OutboxState.annotationKey(book.fastHash, stamped)] }
         enqueue(OutboxItem(fastHash: book.fastHash, operation: stamped.uuid == nil ? .createAnnotation(stamped) : .updateAnnotation(stamped)))
     }
 
     public func deleteAnnotation(_ annotation: CloudAnnotation, for book: CloudBook) async {
-        guard let uuid = annotation.uuid else {
+        guard let uuid = annotation.uuid ?? state.createdUUIDs[OutboxState.annotationKey(book.fastHash, annotation)] else {
+            // Never reached the server, or is on its way there right now.
             let key = "create|\(book.fastHash)|\(annotation.dedupeKey)"
-            state.items.removeAll { $0.coalescingKey == key }
+            if let i = state.items.firstIndex(where: { $0.coalescingKey == key }) {
+                if state.items[i].id == inFlight || state.items[i].sendStarted {
+                    state.items[i].deleteAfterCreate = true
+                    state.items[i].notBefore = nil
+                } else {
+                    state.items.remove(at: i)
+                }
+            }
             saveOutbox()
             broadcaster.emit(.outbox(pending: state.items.count))
             return
@@ -403,8 +434,11 @@ public actor PocketBookCloud: SyncService {
     }
 
     private enum Outcome {
+        /// Sent. A newer payload that arrived meanwhile still goes out.
         case done
-        /// The send succeeded but turned the item into another one (a replayed create into an update).
+        /// Nothing left to send for this item, whatever arrived meanwhile.
+        case finished
+        /// The send succeeded but turned the item into another one (a create into an update).
         case replace(OutboxItem.Operation)
     }
 
@@ -416,16 +450,22 @@ public actor PocketBookCloud: SyncService {
                 index += 1
                 continue
             }
+            let generation = accountGeneration
+            inFlight = item.id
+            defer { inFlight = nil }
             do {
                 let outcome = try await send(item)
+                guard generation == accountGeneration else { return }
                 guard let i = state.items.firstIndex(where: { $0.id == item.id }) else { continue }
                 switch outcome {
+                case .finished:
+                    state.items.remove(at: i)
                 case .done:
                     if state.items[i].revision == item.revision {
                         state.items.remove(at: i)
                     } else {
-                        state.items[i].notBefore = nil // a newer write arrived meanwhile; send it next
-                        index = i + 1
+                        state.items[i].notBefore = nil // a newer write arrived meanwhile: send it now
+                        index = i
                     }
                 case let .replace(operation):
                     state.items[i].operation = operation
@@ -434,13 +474,20 @@ public actor PocketBookCloud: SyncService {
                 }
                 blockedOnSignIn = false
             } catch {
+                guard generation == accountGeneration else { return }
                 guard let i = state.items.firstIndex(where: { $0.id == item.id }) else { continue }
+                let newerArrived = state.items[i].revision != item.revision
                 switch Self.disposition(of: error) {
+                case .drop where newerArrived:
+                    // The rejection was for the older payload; give the newer one its own chance.
+                    state.items[i].attempts = 0
+                    state.items[i].notBefore = nil
+                    index = i
                 case .drop:
                     state.items.remove(at: i)
                 case .retry(let retryAfter):
                     state.items[i].attempts += 1
-                    if state.items[i].attempts >= Self.maxAttempts, !(error as? CloudError).map(\.isTransient).orFalse {
+                    if state.items[i].attempts >= Self.maxAttempts, !(error as? CloudError).map(\.isTransient).orFalse, !newerArrived {
                         state.items.remove(at: i)
                         break
                     }
@@ -486,27 +533,10 @@ public actor PocketBookCloud: SyncService {
         case let .position(position):
             return try await sendPosition(position, fastHash: item.fastHash)
         case let .createAnnotation(annotation):
-            let body = await clampToServerNow(annotation)
-            if item.attempts > 0,
-               let existing = try await serverAnnotations(fastHash: item.fastHash).first(where: { $0.dedupeKey == annotation.dedupeKey }),
-               let uuid = existing.uuid {
-                var update = body
-                update.uuid = uuid
-                try await session.send(Endpoint(method: "POST", path: "/notes/\(Endpoint.pathSegment(uuid))", query: ["fast_hash": item.fastHash],
-                                                body: .json(WireEncoder.annotationBody(update))))
-                return .done
-            }
-            let (data, _) = try await session.send(Endpoint(method: "POST", path: "/notes", query: ["fast_hash": item.fastHash],
-                                                            body: .json(WireEncoder.annotationBody(body))))
-            guard let uuid = try WireDecoder.loose(data)["uuid"]?.string else { throw CloudError.unexpectedResponse("note uuid") }
-            if let current = state.items.first(where: { $0.id == item.id }), current.revision != item.revision,
-               case var .createAnnotation(newer) = current.operation {
-                newer.uuid = uuid
-                return .replace(.updateAnnotation(newer))
-            }
-            return .done
+            return try await sendCreate(annotation, item: item)
         case let .updateAnnotation(annotation):
             guard let uuid = annotation.uuid else { return .done }
+            await session.syncClock()
             let body = await clampToServerNow(annotation)
             try await session.send(Endpoint(method: "POST", path: "/notes/\(Endpoint.pathSegment(uuid))", query: ["fast_hash": item.fastHash],
                                             body: .json(WireEncoder.annotationBody(body))))
@@ -515,6 +545,46 @@ public actor PocketBookCloud: SyncService {
             try await session.send(Endpoint(method: "DELETE", path: "/notes/\(Endpoint.pathSegment(uuid))", query: ["fast_hash": item.fastHash]))
             return .done
         }
+    }
+
+    /// A create is not idempotent on the server, so once one may have been sent, look for it before
+    /// sending again. Remembers the server uuid so later edits and deletes of the app's copy find it.
+    private func sendCreate(_ annotation: CloudAnnotation, item: OutboxItem) async throws -> Outcome {
+        let key = OutboxState.annotationKey(item.fastHash, annotation)
+        var uuid: String?
+        if item.sendStarted || item.attempts > 0 {
+            uuid = try await serverAnnotations(fastHash: item.fastHash).first(where: { $0.dedupeKey == annotation.dedupeKey })?.uuid
+        }
+        let foundExisting = uuid != nil
+        if uuid == nil {
+            if item.deleteAfterCreate { return .finished } // never reached the server
+            await session.syncClock()
+            let body = await clampToServerNow(annotation)
+            if let i = state.items.firstIndex(where: { $0.id == item.id }) {
+                state.items[i].sendStarted = true
+                saveOutbox()
+            }
+            let (data, _) = try await session.send(Endpoint(method: "POST", path: "/notes", query: ["fast_hash": item.fastHash],
+                                                            body: .json(WireEncoder.annotationBody(body))))
+            guard let created = try WireDecoder.loose(data)["uuid"]?.string else { throw CloudError.unexpectedResponse("note uuid") }
+            uuid = created
+        }
+        guard let uuid else { return .done }
+        state.createdUUIDs[key] = uuid
+        let current = state.items.first(where: { $0.id == item.id })
+        if current?.deleteAfterCreate == true {
+            try await session.send(Endpoint(method: "DELETE", path: "/notes/\(Endpoint.pathSegment(uuid))", query: ["fast_hash": item.fastHash]))
+            return .finished
+        }
+        var latest = annotation
+        if let current, case let .createAnnotation(newer) = current.operation { latest = newer }
+        latest.uuid = uuid
+        broadcaster.emit(.annotationSaved(fastHash: item.fastHash, latest))
+        // A replayed create found on the server, or edits made while it was in flight, go out as an update.
+        if foundExisting || current.map({ $0.revision != item.revision }) == true {
+            return .replace(.updateAnnotation(latest))
+        }
+        return .finished
     }
 
     /// The Cloud stamps a position with its arrival time and keeps the last one to arrive, so a
@@ -566,7 +636,7 @@ public actor PocketBookCloud: SyncService {
     }
 
     private func rescheduleAfterDrain() {
-        guard let next = state.items.compactMap(\.notBefore).min() ?? (state.items.isEmpty ? nil : now()) else { return }
+        guard let next = state.items.map({ $0.notBefore ?? now() }).min() else { return }
         scheduleFlush(after: max(1, next.timeIntervalSince(now())))
     }
 }
