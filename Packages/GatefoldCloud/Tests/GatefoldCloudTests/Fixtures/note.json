@@ -1,0 +1,26 @@
+{
+  "type": {
+    "value": "highlight",
+    "updated": "2026-10-31T22:00:31Z"
+  },
+  "color": {
+    "value": "yellow",
+    "updated": "2026-10-31T22:00:31Z"
+  },
+  "note": {
+    "text": "partial update",
+    "updated": "2026-10-31T22:00:59Z"
+  },
+  "quotation": {
+    "begin": "#epubcfi(/6/8!/4/2/4/1:0)",
+    "end": "#epubcfi(/6/8!/4/2/4/1:20)",
+    "text": "probe text",
+    "updated": "2026-10-31T22:00:31Z"
+  },
+  "mark": {
+    "anchor": "#epubcfi(/6/8!/4/2/4/1:0)",
+    "created": 1793484031,
+    "updated": "2026-10-31T22:00:31Z"
+  },
+  "uuid": "d1c0a338-a35f-4e57-8104-3f8bd5a09820"
+}

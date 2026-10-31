@@ -1,0 +1,161 @@
+{
+  "total": 2,
+  "items": [
+    {
+      "id": "104277029",
+      "path": "/Frankenstein - Mary Shelley.epub",
+      "title": "Frankenstein; or, The modern Prometheus",
+      "mime_type": "application/epub+zip",
+      "created_at": "2026-10-31T21:56:29Z",
+      "purchased": false,
+      "resource_id": null,
+      "bytes": 440131,
+      "client_mtime": "2026-10-31T21:56:29Z",
+      "collections": null,
+      "fast_hash": "56f8619536655be4a1541a40c5702d32",
+      "favorite": false,
+      "read_status": null,
+      "link": "https://cloud.pocketbook.digital/api/v1.0/files/56f8619536655be4a1541a40c5702d32/signature-download/f104277029.epub?payload=REDACTED&signature=REDACTED",
+      "hasLinks": true,
+      "format": "epub",
+      "md5_hash": "HpCKqamClMQ9Aai870mKVQ==",
+      "mtime": "2026-10-31T21:56:44Z",
+      "name": "Frankenstein - Mary Shelley.epub",
+      "read_percent": 0,
+      "percent": null,
+      "isDrm": false,
+      "isLcp": false,
+      "isAudioBook": false,
+      "metadata": {
+        "title": "Frankenstein; or, The modern Prometheus",
+        "track_number": null,
+        "authors": "Mary Wollstonecraft Shelley",
+        "cover": [
+          {
+            "width": 261,
+            "height": 400,
+            "path": "https://cloud.pocketbook.digital/api/v1.0/files/56f8619536655be4a1541a40c5702d32/cover/f104277029.cover_s.jpg?payload=REDACTED&signature=REDACTED"
+          },
+          {
+            "width": 522,
+            "height": 800,
+            "path": "https://cloud.pocketbook.digital/api/v1.0/files/56f8619536655be4a1541a40c5702d32/cover/f104277029.cover_b.jpg?payload=REDACTED&signature=REDACTED"
+          }
+        ],
+        "genres": null,
+        "lang": "en",
+        "publisher": null,
+        "size": null,
+        "duration": null,
+        "updated": "2026-10-31T21:56:44Z",
+        "year": 1993,
+        "isbn": null,
+        "series": null,
+        "annotation": null,
+        "book_id": [
+          "http://www.gutenberg.org/84"
+        ],
+        "fixed_layout": false,
+        "series_ord": null
+      },
+      "position": {
+        "pointer": null,
+        "pointer_pb": null,
+        "percent": 0,
+        "page": null,
+        "pages_total": 0,
+        "updated": null,
+        "offs": 0
+      },
+      "read_position": {
+        "pointer": null,
+        "pointer_pb": null,
+        "percent": 0,
+        "page": null,
+        "pages_total": 0,
+        "updated": null,
+        "offs": 0
+      },
+      "action": "create",
+      "action_date": "2026-10-31T21:56:29Z"
+    },
+    {
+      "id": "104277033",
+      "path": "/Alice's Adventures in Wonderland.epub",
+      "title": "Alice's Adventures in Wonderland",
+      "mime_type": "application/epub+zip",
+      "created_at": "2026-10-31T21:56:41Z",
+      "purchased": false,
+      "resource_id": null,
+      "bytes": 189249,
+      "client_mtime": "2026-10-31T21:56:41Z",
+      "collections": null,
+      "fast_hash": "a175f17a20815132f3d3211d7f67bd34",
+      "favorite": false,
+      "read_status": null,
+      "link": "https://cloud.pocketbook.digital/api/v1.0/files/a175f17a20815132f3d3211d7f67bd34/signature-download/f104277033.epub?payload=REDACTED&signature=REDACTED",
+      "hasLinks": true,
+      "format": "epub",
+      "md5_hash": "Qj3ERv5IhkUBmOsXi5j++g==",
+      "mtime": "2026-10-31T21:56:43Z",
+      "name": "Alice's Adventures in Wonderland.epub",
+      "read_percent": 0,
+      "percent": null,
+      "isDrm": false,
+      "isLcp": false,
+      "isAudioBook": false,
+      "metadata": {
+        "title": "Alice's Adventures in Wonderland",
+        "track_number": null,
+        "authors": "Lewis Carroll",
+        "cover": [
+          {
+            "width": 289,
+            "height": 400,
+            "path": "https://cloud.pocketbook.digital/api/v1.0/files/a175f17a20815132f3d3211d7f67bd34/cover/f104277033.cover_s.jpg?payload=REDACTED&signature=REDACTED"
+          },
+          {
+            "width": 579,
+            "height": 800,
+            "path": "https://cloud.pocketbook.digital/api/v1.0/files/a175f17a20815132f3d3211d7f67bd34/cover/f104277033.cover_b.jpg?payload=REDACTED&signature=REDACTED"
+          }
+        ],
+        "genres": null,
+        "lang": "en",
+        "publisher": null,
+        "size": null,
+        "duration": null,
+        "updated": "2026-10-31T21:56:43Z",
+        "year": 2008,
+        "isbn": null,
+        "series": null,
+        "annotation": null,
+        "book_id": [
+          "http://www.gutenberg.org/11"
+        ],
+        "fixed_layout": false,
+        "series_ord": null
+      },
+      "position": {
+        "pointer": null,
+        "pointer_pb": null,
+        "percent": 0,
+        "page": null,
+        "pages_total": 0,
+        "updated": null,
+        "offs": 0
+      },
+      "read_position": {
+        "pointer": null,
+        "pointer_pb": null,
+        "percent": 0,
+        "page": null,
+        "pages_total": 0,
+        "updated": null,
+        "offs": 0
+      },
+      "action": "create",
+      "action_date": "2026-10-31T21:56:41Z"
+    }
+  ]
+}

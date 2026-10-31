@@ -1,0 +1,50 @@
+{
+  "id": 104277061,
+  "path": "/frank-renamed.epub",
+  "name": "frank-renamed.epub",
+  "is_folder": false,
+  "mtime": "2026-10-31T22:05:43Z",
+  "has_file": true,
+  "download_link": "https://cloud.pocketbook.digital/api/v1.0/files/56f8619536655be4a1541a40c5702d32/signature-download/f104277061.epub?payload=REDACTED&signature=REDACTED",
+  "resource_id": null,
+  "created_at": "2026-10-31T21:57:28Z",
+  "mime_type": "application/epub+zip",
+  "bytes": 440131,
+  "md5_hash": "HpCKqamClMQ9Aai870mKVQ==",
+  "fast_hash": "56f8619536655be4a1541a40c5702d32",
+  "client_mtime": "2026-10-31T21:57:28Z",
+  "favorite": false,
+  "metadata": {
+    "title": "Frankenstein; or, The modern Prometheus",
+    "authors": "Mary Wollstonecraft Shelley",
+    "genres": null,
+    "publisher": null,
+    "year": "1993",
+    "lang": "en",
+    "isbn": null,
+    "series": null,
+    "series_ord": null,
+    "annotation": null,
+    "book_id": [
+      "http://www.gutenberg.org/84"
+    ],
+    "cover": [
+      {
+        "path": "https://cloud.pocketbook.digital/api/v1.0/files/56f8619536655be4a1541a40c5702d32/cover/f104277061.cover_s.jpg?payload=REDACTED&signature=REDACTED",
+        "width": 261,
+        "height": 400
+      },
+      {
+        "path": "https://cloud.pocketbook.digital/api/v1.0/files/56f8619536655be4a1541a40c5702d32/cover/f104277061.cover_b.jpg?payload=REDACTED&signature=REDACTED",
+        "width": 522,
+        "height": 800
+      }
+    ]
+  },
+  "position": {
+    "pointer": "#epubcfi(/6/8!/4/2/4/1:0)",
+    "pointer_pb": "pbr:/external##epubcfi(/6/8!/4/2/4/1:0)",
+    "percent": 5,
+    "updated": "2026-10-31T21:59:16Z"
+  }
+}

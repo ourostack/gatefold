@@ -1,0 +1,135 @@
+<?xml version='1.0' encoding='UTF-8'?>
+
+<package xmlns:opf="http://www.idpf.org/2007/opf" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="id" xml:lang="en">
+  <metadata>
+    <dc:rights>Public domain in the USA.</dc:rights>
+    <dc:identifier id="id">http://www.gutenberg.org/84</dc:identifier>
+    <dc:creator id="author_0">Mary Wollstonecraft Shelley</dc:creator>
+    <meta property="file-as" refines="#author_0">Shelley, Mary Wollstonecraft</meta>
+    <meta property="role" refines="#author_0" scheme="marc:relators">aut</meta>
+    <dc:title>Frankenstein; or, The modern Prometheus</dc:title>
+    <dc:language>en</dc:language>
+    <dc:subject>Science fiction</dc:subject>
+    <dc:subject>Horror tales</dc:subject>
+    <dc:subject>Gothic fiction</dc:subject>
+    <dc:subject>Scientists -- Fiction</dc:subject>
+    <dc:subject>Monsters -- Fiction</dc:subject>
+    <dc:subject>Frankenstein, Victor (Fictitious character) -- Fiction</dc:subject>
+    <dc:subject>Frankenstein's monster (Fictitious character) -- Fiction</dc:subject>
+    <dc:date>1993-10-01</dc:date>
+    <meta property="dcterms:modified">2026-10-23T22:00:24Z</meta>
+    <dc:source>https://www.gutenberg.org/files/84/84-h/84-h.htm</dc:source>
+    <meta property="schema:accessMode">textual</meta>
+    <meta property="schema:accessibilityFeature">readingOrder</meta>
+    <meta property="schema:accessibilityHazard">none</meta>
+    <meta property="schema:accessModeSufficient">textual,visual</meta>
+    <meta property="schema:accessibilitySummary">This publication may not have complete alternative text descriptions.</meta>
+    <meta name="cover" content="id-5164725811184219298"/>
+  </metadata>
+  <manifest>
+    <!--Image: 1125 x 1724 size=224340 -->
+    <item href="7423641491831241083_cover.jpg" id="id-5164725811184219298" media-type="image/jpeg" properties="cover-image"/>
+    <item href="pgepub.css" id="item1" media-type="text/css"/>
+    <item href="0.css" id="item2" media-type="text/css"/>
+    <item href="1.css" id="item3" media-type="text/css"/>
+    <!--Chunk: size=2268 Split on div.chapter-->
+    <item href="4328224471496264690_84-h-0.htm.xhtml" id="pg-header" media-type="application/xhtml+xml"/>
+    <!--Chunk: size=3993 Split on div.chapter-->
+    <item href="4328224471496264690_84-h-1.htm.xhtml" id="item4" media-type="application/xhtml+xml"/>
+    <!--Chunk: size=7176 Split on div.chapter-->
+    <item href="4328224471496264690_84-h-2.htm.xhtml" id="item5" media-type="application/xhtml+xml"/>
+    <!--Chunk: size=7681 Split on div.chapter-->
+    <item href="4328224471496264690_84-h-3.htm.xhtml" id="item6" media-type="application/xhtml+xml"/>
+    <!--Chunk: size=2000 Split on div.chapter-->
+    <item href="4328224471496264690_84-h-4.htm.xhtml" id="item7" media-type="application/xhtml+xml"/>
+    <!--Chunk: size=15838 Split on div.chapter-->
+    <item href="4328224471496264690_84-h-5.htm.xhtml" id="item8" media-type="application/xhtml+xml"/>
+    <!--Chunk: size=10447 Split on div.chapter-->
+    <item href="4328224471496264690_84-h-6.htm.xhtml" id="item9" media-type="application/xhtml+xml"/>
+    <!--Chunk: size=13028 Split on div.chapter-->
+    <item href="4328224471496264690_84-h-7.htm.xhtml" id="item10" media-type="application/xhtml+xml"/>
+    <!--Chunk: size=15694 Split on div.chapter-->
+    <item href="4328224471496264690_84-h-8.htm.xhtml" id="item11" media-type="application/xhtml+xml"/>
+    <!--Chunk: size=14720 Split on div.chapter-->
+    <item href="4328224471496264690_84-h-9.htm.xhtml" id="item12" media-type="application/xhtml+xml"/>
+    <!--Chunk: size=13520 Split on div.chapter-->
+    <item href="4328224471496264690_84-h-10.htm.xhtml" id="item13" media-type="application/xhtml+xml"/>
+    <!--Chunk: size=15994 Split on div.chapter-->
+    <item href="4328224471496264690_84-h-11.htm.xhtml" id="item14" media-type="application/xhtml+xml"/>
+    <!--Chunk: size=20700 Split on div.chapter-->
+    <item href="4328224471496264690_84-h-12.htm.xhtml" id="item15" media-type="application/xhtml+xml"/>
+    <!--Chunk: size=17866 Split on div.chapter-->
+    <item href="4328224471496264690_84-h-13.htm.xhtml" id="item16" media-type="application/xhtml+xml"/>
+    <!--Chunk: size=12802 Split on div.chapter-->
+    <item href="4328224471496264690_84-h-14.htm.xhtml" id="item17" media-type="application/xhtml+xml"/>
+    <!--Chunk: size=13416 Split on div.chapter-->
+    <item href="4328224471496264690_84-h-15.htm.xhtml" id="item18" media-type="application/xhtml+xml"/>
+    <!--Chunk: size=16283 Split on div.chapter-->
+    <item href="4328224471496264690_84-h-16.htm.xhtml" id="item19" media-type="application/xhtml+xml"/>
+    <!--Chunk: size=12396 Split on div.chapter-->
+    <item href="4328224471496264690_84-h-17.htm.xhtml" id="item20" media-type="application/xhtml+xml"/>
+    <!--Chunk: size=12001 Split on div.chapter-->
+    <item href="4328224471496264690_84-h-18.htm.xhtml" id="item21" media-type="application/xhtml+xml"/>
+    <!--Chunk: size=10822 Split on div.chapter-->
+    <item href="4328224471496264690_84-h-19.htm.xhtml" id="item22" media-type="application/xhtml+xml"/>
+    <!--Chunk: size=17867 Split on div.chapter-->
+    <item href="4328224471496264690_84-h-20.htm.xhtml" id="item23" media-type="application/xhtml+xml"/>
+    <!--Chunk: size=18177 Split on div.chapter-->
+    <item href="4328224471496264690_84-h-21.htm.xhtml" id="item24" media-type="application/xhtml+xml"/>
+    <!--Chunk: size=10682 Split on div.chapter-->
+    <item href="4328224471496264690_84-h-22.htm.xhtml" id="item25" media-type="application/xhtml+xml"/>
+    <!--Chunk: size=16639 Split on div.chapter-->
+    <item href="4328224471496264690_84-h-23.htm.xhtml" id="item26" media-type="application/xhtml+xml"/>
+    <!--Chunk: size=15218 Split on div.chapter-->
+    <item href="4328224471496264690_84-h-24.htm.xhtml" id="item27" media-type="application/xhtml+xml"/>
+    <!--Chunk: size=19633 Split on div.chapter-->
+    <item href="4328224471496264690_84-h-25.htm.xhtml" id="item28" media-type="application/xhtml+xml"/>
+    <!--Chunk: size=21169 Split on div.chapter-->
+    <item href="4328224471496264690_84-h-26.htm.xhtml" id="item29" media-type="application/xhtml+xml"/>
+    <!--Chunk: size=19728 Split on div.chapter-->
+    <item href="4328224471496264690_84-h-27.htm.xhtml" id="item30" media-type="application/xhtml+xml"/>
+    <!--Chunk: size=14540 Split on div.chapter-->
+    <item href="4328224471496264690_84-h-28.htm.xhtml" id="item31" media-type="application/xhtml+xml"/>
+    <!--Chunk: size=46915 Split on footer-->
+    <item href="4328224471496264690_84-h-29.htm.xhtml" id="item32" media-type="application/xhtml+xml"/>
+    <!--Chunk: size=19631-->
+    <item href="4328224471496264690_84-h-30.htm.xhtml" id="pg-footer" media-type="application/xhtml+xml"/>
+    <item href="toc.xhtml" id="ncx" media-type="application/xhtml+xml" properties="nav"/>
+    <item href="toc.ncx" id="ncx2" media-type="application/x-dtbncx+xml"/>
+    <item href="wrap0000.xhtml" id="coverpage-wrapper" media-type="application/xhtml+xml" properties="svg"/>
+  </manifest>
+  <spine toc="ncx2">
+    <itemref idref="coverpage-wrapper"/>
+    <itemref idref="pg-header"/>
+    <itemref idref="item4"/>
+    <itemref idref="item5"/>
+    <itemref idref="item6"/>
+    <itemref idref="item7"/>
+    <itemref idref="item8"/>
+    <itemref idref="item9"/>
+    <itemref idref="item10"/>
+    <itemref idref="item11"/>
+    <itemref idref="item12"/>
+    <itemref idref="item13"/>
+    <itemref idref="item14"/>
+    <itemref idref="item15"/>
+    <itemref idref="item16"/>
+    <itemref idref="item17"/>
+    <itemref idref="item18"/>
+    <itemref idref="item19"/>
+    <itemref idref="item20"/>
+    <itemref idref="item21"/>
+    <itemref idref="item22"/>
+    <itemref idref="item23"/>
+    <itemref idref="item24"/>
+    <itemref idref="item25"/>
+    <itemref idref="item26"/>
+    <itemref idref="item27"/>
+    <itemref idref="item28"/>
+    <itemref idref="item29"/>
+    <itemref idref="item30"/>
+    <itemref idref="item31"/>
+    <itemref idref="item32"/>
+    <itemref idref="pg-footer"/>
+  </spine>
+</package>

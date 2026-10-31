@@ -1,0 +1,44 @@
+{
+  "login": "reader@example.com",
+  "vendor_login": "reader@example.com",
+  "email": "reader@example.com",
+  "first_name": "Gatefold",
+  "last_name": "Test One",
+  "full_name": "Gatefold Test One",
+  "register_date": "2026-10-31T21:55:41Z",
+  "role": "USER",
+  "recommendations": [
+    "personal",
+    "new",
+    "bestsellers"
+  ],
+  "user_id": 1000001,
+  "provider_id": 16,
+  "provider_user_id": 1000001,
+  "provider_name": "Pocketbook.de",
+  "partner_shop_id": 1,
+  "partner_shop_name": "Bookland",
+  "language": null,
+  "files_size_limit": 5368709120,
+  "files_size": 629380,
+  "books_size": 629380,
+  "audio_books_size": 0,
+  "internal_account": {
+    "vendor_id": "pocketbook",
+    "email": "user1000001.pbookde@pbsync.com",
+    "password": "REDACTED",
+    "adobe_uuid": "0d6a2f1c-d575-11f1-a7aa-8ecd8f5cd1a8",
+    "serial": "CE79-8057-CEA2-3994",
+    "is_main": true,
+    "is_activated": true
+  },
+  "shop": {
+    "id": "1",
+    "name": "Pocketbook.de",
+    "icon": "https://pocketbook.de/static/version1728478203/webapi_rest/_view/de_DE/images/logo.svg",
+    "home_url": "https://pocketbook.de",
+    "reset_password_url": null,
+    "login_url": "https://pocketbook.de/de_de/",
+    "isbn_search_url": ""
+  }
+}
