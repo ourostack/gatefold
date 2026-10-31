@@ -175,7 +175,7 @@ struct SessionTests {
         await t.on("GET", "/books", .json(#"{"total":0,"items":[]}"#))
         await t.setDelay(.milliseconds(300))
         let call = Task { try await session.send(.get("/books")) }
-        try await Task.sleep(for: .milliseconds(100))
+        try await waitForRequest(t, "POST", "/auth/renew-token")
         await session.signOut()
         _ = try? await call.value
         #expect(await store.load() == nil)
@@ -193,13 +193,14 @@ struct SessionTests {
 
     @Test func aLateRefreshDoesNotOverwriteANewerSignIn() async throws {
         let t = ScriptedTransport()
-        let store = SlowSaveStore(delay: .milliseconds(300))
+        let store = SlowSaveStore(delay: .milliseconds(800))
         let clock = TestClock()
         let session = try await signedIn(t, clock: clock, store: store)
         clock.advance(8000)
         await t.on("POST", "/auth/renew-token", .json(tokenJSON("a2")))
         let call = Task { try await session.send(.get("/books")) }
-        try await Task.sleep(for: .milliseconds(100)) // refresh is saving
+        let deadline = ContinuousClock.now + .seconds(20)
+        while await store.savesStarted < 2, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) } // refresh is saving
         await store.setDelay(.zero)
         await t.on("POST", "/auth/login/pocketbook_de", .json(tokenJSON("b1")))
         _ = try await session.signIn(email: "reader@example.com", password: "pw", store: testStore())
@@ -269,7 +270,9 @@ actor SlowSaveStore: TokenStore {
     init(delay: Duration) { self.delay = delay }
     func setDelay(_ d: Duration) { delay = d }
     func load() async -> StoredSession? { session }
+    private(set) var savesStarted = 0
     func save(_ s: StoredSession) async throws {
+        savesStarted += 1
         let d = delay
         if d > .zero { try? await Task.sleep(for: d) }
         session = s

@@ -467,11 +467,11 @@ struct OutboxRaceTests {
         let h = Harness()
         await h.transport.on("POST", "/notes?fast_hash=", .json(#"{"uuid":"new-1"}"#))
         await h.transport.on("DELETE", "/notes/new-1", .ok)
-        await h.transport.setDelay(.milliseconds(300))
+        await h.transport.setDelay(.milliseconds(800))
         let cloud = h.cloud()
         await cloud.save(highlight, for: CloudBook(fastHash: frankenstein))
         let flush = Task { await cloud.flushOutbox() }
-        try await Task.sleep(for: .milliseconds(100))
+        try await waitForRequest(h.transport, "POST", "/notes?fast_hash=")
         await cloud.deleteAnnotation(highlight, for: CloudBook(fastHash: frankenstein))
         await flush.value
         await cloud.flushOutbox()
@@ -483,11 +483,11 @@ struct OutboxRaceTests {
         let h = Harness()
         await h.transport.on("GET", "/fileops/info", .json(#"{"fast_hash":"\#(frankenstein)","name":"x"}"#))
         await h.transport.on("POST", "/books/read-position", .ok)
-        await h.transport.setDelay(.milliseconds(200))
+        await h.transport.setDelay(.milliseconds(800))
         let cloud = h.cloud()
         await cloud.push(position, for: CloudBook(fastHash: frankenstein))
         let flush = Task { await cloud.flushOutbox() }
-        try await Task.sleep(for: .milliseconds(300)) // inside the POST
+        try await waitForRequest(h.transport, "POST", "/books/read-position")
         var later = position
         later.cfi = "epubcfi(/6/16!/4/2/1:9)"
         await cloud.push(later, for: CloudBook(fastHash: frankenstein))
@@ -502,11 +502,11 @@ struct OutboxRaceTests {
         let h = Harness()
         await h.transport.on("GET", "/fileops/info", .json(#"{"fast_hash":"\#(frankenstein)","name":"x"}"#))
         await h.transport.on("POST", "/books/read-position", .json("{}", status: 400), .ok)
-        await h.transport.setDelay(.milliseconds(200))
+        await h.transport.setDelay(.milliseconds(800))
         let cloud = h.cloud()
         await cloud.push(position, for: CloudBook(fastHash: frankenstein))
         let flush = Task { await cloud.flushOutbox() }
-        try await Task.sleep(for: .milliseconds(300))
+        try await waitForRequest(h.transport, "POST", "/books/read-position")
         var later = position
         later.cfi = "epubcfi(/6/16!/4/2/1:9)"
         await cloud.push(later, for: CloudBook(fastHash: frankenstein))
@@ -579,12 +579,12 @@ struct OutboxRaceTests {
         let h = Harness()
         await h.transport.on("POST", "/notes?fast_hash=", .json(#"{"uuid":"new-1"}"#))
         await h.transport.on("DELETE", "/notes/new-1", .ok)
-        await h.transport.setDelay(.milliseconds(300))
+        await h.transport.setDelay(.milliseconds(800))
         let cloud = h.cloud()
         let book = CloudBook(fastHash: frankenstein)
         await cloud.save(highlight, for: book)
         let flush = Task { await cloud.flushOutbox() }
-        try await Task.sleep(for: .milliseconds(100))
+        try await waitForRequest(h.transport, "POST", "/notes?fast_hash=")
         await cloud.deleteAnnotation(highlight, for: book) // and then undo
         await cloud.save(highlight, for: book)
         await flush.value
@@ -596,11 +596,13 @@ struct OutboxRaceTests {
         let h = Harness()
         await h.transport.on("POST", "/notes?fast_hash=", .json(#"{"uuid":"new-1"}"#))
         await h.transport.on("GET", "/notes?fast_hash=", .data(try Fixture.data("notes-list.json")))
-        await h.transport.setDelay(.milliseconds(300))
+        await h.transport.setDelay(.milliseconds(800))
         let first = h.cloud()
         await first.save(highlight, for: CloudBook(fastHash: frankenstein))
         let flush = Task { await first.flushOutbox() }
-        try await Task.sleep(for: .milliseconds(450)) // past the clock check, the POST is on the wire; the app is killed
+        // Wait until the POST is on the wire, then "kill" the app by starting a second instance.
+        try await waitForRequest(h.transport, "POST", "/notes?fast_hash=")
+        await h.transport.setDelay(.zero)
         let relaunched = h.cloud()
         await relaunched.flushOutbox()
         _ = await flush.value
@@ -614,4 +616,14 @@ struct OutboxRaceTests {
         let names = try FileManager.default.contentsOfDirectory(atPath: h.directory.path)
         #expect(names.contains { $0.hasPrefix("outbox.unreadable-") })
     }
+}
+
+/// Waits until the fake has received a matching request, which it records before its delay, so the
+/// request is known to be in flight. Avoids fixed sleeps that flake on slow CI runners.
+func waitForRequest(_ transport: ScriptedTransport, _ method: String, _ path: String) async throws {
+    let deadline = ContinuousClock.now + .seconds(20)
+    while await transport.requests(method, path).isEmpty, ContinuousClock.now < deadline {
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    try #require(await !transport.requests(method, path).isEmpty)
 }
