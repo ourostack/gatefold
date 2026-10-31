@@ -1,0 +1,48 @@
+name: GatefoldCloud package
+
+on:
+  pull_request:
+    paths:
+      - "Packages/GatefoldCloud/**"
+      - ".github/workflows/cloud-package.yml"
+  push:
+    branches: [main]
+    paths:
+      - "Packages/GatefoldCloud/**"
+      - ".github/workflows/cloud-package.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cloud-package-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    # Newest hosted image with an Xcode that has the iOS 27 SDK. Live tests stay off (no GATEFOLD_LIVE).
+    runs-on: xcode-27
+    timeout-minutes: 40
+    defaults:
+      run:
+        working-directory: Packages/GatefoldCloud
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Toolchain
+        run: xcodebuild -version && swift --version
+
+      - name: Build and unit tests (macOS)
+        run: swift test
+
+      - name: Unit tests on the iOS Simulator (includes the Readium adapter)
+        run: |
+          set -euo pipefail
+          udid=$(xcrun simctl list devices available -j | python3 -c '
+          import json, sys
+          devices = json.load(sys.stdin)["devices"]
+          ios = sorted((r for r in devices if ".iOS-27" in r), reverse=True)
+          print(next(d["udid"] for r in ios for d in devices[r] if d["name"].startswith("iPhone")))')
+          echo "Simulator: $udid"
+          xcodebuild test -scheme GatefoldCloud-Package -destination "platform=iOS Simulator,id=$udid" \
+            -derivedDataPath "$RUNNER_TEMP/dd" | tail -n 40
