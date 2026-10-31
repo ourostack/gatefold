@@ -303,8 +303,13 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         }
         curl.reset()
         isTurning = false
-        // Record the place once the turn has landed (or sprung back), not while the overlay hid it.
-        weakModel?.userTurnedPage()
+        // Record the place once the turn has landed, not while the overlay hid it. A turn that sprang
+        // back is no move: just take the anchor again from the page that's showing.
+        if complete {
+            weakModel?.userTurnedPage()
+        } else if let model = weakModel {
+            Task { await model.captureAnchor() }
+        }
     }
 
     private func turnedTarget() -> CGPoint {
@@ -405,10 +410,11 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
 
     private func snapshot() -> UIImage {
         let bounds = navigator.view.bounds
+        let paper = weakModel?.theme.uiBackground ?? .systemBackground
         let format = UIGraphicsImageRendererFormat.preferred()
         format.opaque = true
         return UIGraphicsImageRenderer(bounds: bounds, format: format).image { ctx in
-            model.theme.uiBackground.setFill()
+            paper.setFill()
             ctx.fill(bounds)
             navigator.view.drawHierarchy(in: bounds, afterScreenUpdates: true)
         }

@@ -199,7 +199,16 @@ final class ReaderModel {
             readerLog.notice("location after reflow; anchor kept")
         } else {
             await captureAnchor()
+            if touchedSinceLocation, !hasMoved {
+                if let opened = openedLocation {
+                    if opened.href != locator.href || opened.locations.progression != locator.locations.progression { hasMoved = true }
+                } else {
+                    openedLocation = locator
+                }
+            }
+            if openedLocation == nil { openedLocation = locator }
         }
+        touchedSinceLocation = false
         // Only the reader moves the place. Readium reopening a page boundary off from the saved one is
         // not a move, so opening a book never overwrites a further-ahead place on the InkPad.
         guard hasMoved else { return refreshBookmarkState(await host?.visibleRange()) }
@@ -217,8 +226,12 @@ final class ReaderModel {
         }
     }
 
-    /// A touch on the page (a swipe in slide or scroll mode): the next location is the reader's own.
-    func noteInteraction() { hasMoved = true }
+    /// A touch on the page. If the next location (outside a reflow) differs from where the book
+    /// opened, it was a swipe in slide or scroll mode and the place is the reader's own. A tap that
+    /// only shows the controls changes no location, so it moves nothing.
+    func noteInteraction() { touchedSinceLocation = true }
+    private var touchedSinceLocation = false
+    private var openedLocation: Locator?
 
     /// A turn landed or sprang back: take the place from where the navigator is now.
     func userTurnedPage() {

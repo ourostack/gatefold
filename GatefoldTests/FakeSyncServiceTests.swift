@@ -102,6 +102,17 @@ import Testing
         #expect(try await sync.remotePosition(for: cloud)?.totalProgression == 0.32)
     }
 
+    @Test func backgroundingSendsTheWaitingPlaceAtOnce() async throws {
+        let sync = FakeSyncService(signedIn: true, latency: .zero)
+        let store = LibraryStore(sync: sync, root: URL.temporaryDirectory.appending(path: "library-tests-\(UUID().uuidString)"))
+        await store.refresh()
+        let emma = try #require(store.books.first { $0.title == "Emma" })
+        store.recordPlace(bookID: emma.id, locatorJSON: "{}", totalProgression: 0.44, progression: 0.44)
+        store.flushPushes()
+        try await Task.sleep(for: .milliseconds(80))
+        #expect(try await sync.remotePosition(for: try #require(emma.cloud))?.totalProgression == 0.44)
+    }
+
     @Test func importAddsALocalEPUB() async throws {
         let (store, _) = makeStore(signedIn: false)
         let source = try #require(Bundle.main.url(forResource: "frankenstein", withExtension: "epub"))

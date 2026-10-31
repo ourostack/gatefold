@@ -13,6 +13,7 @@ final class LibraryStore {
     private(set) var isRefreshing = false
     var lastError: String?
     @ObservationIgnored private var pushes: [String: Task<Void, Never>] = [:]
+    @ObservationIgnored private var pending: [String: (ReadingPosition, CloudBook)] = [:]
 
     private let sync: any SyncService
     private let root: URL
@@ -173,13 +174,23 @@ final class LibraryStore {
         guard let cloud = book(bookID)?.cloud else { return }
         let position = ReadingPosition(cfi: nil, progression: progression, totalProgression: totalProgression, updated: now, device: UIDevice.current.name)
         // One push per book at a time, latest wins: rapid turns settle on the last page, in order.
+        pending[bookID] = (position, cloud)
+        schedulePush(bookID, after: .milliseconds(400))
+    }
+
+    /// Sends waiting places now (the app is going to the background).
+    func flushPushes() {
+        for id in pending.keys { schedulePush(id, after: .zero) }
+    }
+
+    private func schedulePush(_ bookID: String, after delay: Duration) {
         let previous = pushes[bookID]
         previous?.cancel()
-        pushes[bookID] = Task { [sync] in
-            try? await Task.sleep(for: .milliseconds(400))
+        pushes[bookID] = Task { [weak self, sync] in
+            if delay > .zero { try? await Task.sleep(for: delay) }
             guard !Task.isCancelled else { return }
             await previous?.value
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, let self, let (position, cloud) = self.pending.removeValue(forKey: bookID) else { return }
             await sync.push(position, for: cloud)
         }
     }

@@ -5,12 +5,16 @@ import SwiftUI
 @main
 struct GatefoldApp: App {
     @State private var app = AppModel()
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some Scene {
         WindowGroup {
             RootView()
                 .environment(app)
                 .task { await app.start() }
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase != .active { app.library.flushPushes() }
         }
     }
 }
