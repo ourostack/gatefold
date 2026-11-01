@@ -1,0 +1,6 @@
+{
+  "access_token": "REDACTED-access_token",
+  "expires_in": 7200,
+  "refresh_token": "REDACTED-refresh_token",
+  "token_type": "Bearer"
+}
