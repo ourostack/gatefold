@@ -266,7 +266,7 @@ struct SignInFlow: View {
                         store = stores[0]
                         step = .password
                     } else if stores.isEmpty {
-                        throw SyncError.noAccount
+                        throw CloudError.noAccount
                     } else {
                         step = .store
                     }

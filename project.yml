@@ -21,6 +21,8 @@ packages:
     exactVersion: 3.11.1
   GatefoldCore:
     path: Packages/GatefoldCore
+  GatefoldCloud:
+    path: Packages/GatefoldCloud
 targets:
   Gatefold:
     type: application
@@ -31,6 +33,8 @@ targets:
           - "**/.DS_Store"
     resources: []
     dependencies:
+      - package: GatefoldCloud
+        product: GatefoldCloud
       - package: Readium
         product: ReadiumShared
       - package: Readium

@@ -72,11 +72,11 @@ final class LibraryStore {
                     books.append(LibraryBook(
                         id: cloudBook.id,
                         title: cloudBook.title,
-                        author: cloudBook.authors.joined(separator: ", "),
+                        author: cloudBook.authors ?? "",
                         origin: .cloud,
                         cloud: cloudBook,
                         remote: remote,
-                        added: cloudBook.updated ?? Date()
+                        added: cloudBook.createdAt ?? cloudBook.modifiedAt ?? Date()
                     ))
                 }
                 if covers[cloudBook.id] == nil, let url = cloudBook.coverURL {
@@ -172,7 +172,7 @@ final class LibraryStore {
             $0.lastOpened = now
         }
         guard let cloud = book(bookID)?.cloud else { return }
-        let position = ReadingPosition(cfi: nil, progression: progression, totalProgression: totalProgression, updated: now, device: UIDevice.current.name)
+        let position = ReadingPosition(cfi: nil, progression: progression, totalProgression: totalProgression, updated: now, source: .gatefold)
         // One push per book at a time, latest wins: rapid turns settle on the last page, in order.
         pending[bookID] = (position, cloud)
         schedulePush(bookID, after: .milliseconds(400))

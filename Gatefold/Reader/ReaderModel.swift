@@ -146,7 +146,7 @@ final class ReaderModel {
               remote.totalProgression > totalProgression + JumpSuggestion.threshold else { return }
         let made = JumpSuggestion.make(
             local: hasMoved ? app.library.book(bookID)?.localSnapshot : openedSnapshot,
-            remote: ProgressSnapshot(totalProgression: remote.totalProgression, updated: remote.updated, device: remote.device),
+            remote: ProgressSnapshot(totalProgression: remote.totalProgression, updated: remote.updated, device: remote.deviceName),
             totalPages: chapterMap.positionCount > 1 ? chapterMap.positionCount : nil
         )
         withAnimation(Motion.banner) { suggestion = made }

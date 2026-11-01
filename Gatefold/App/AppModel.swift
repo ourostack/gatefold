@@ -70,11 +70,13 @@ final class AppModel {
             guard let self else { return }
             for await change in sync.changes() {
                 switch change {
-                case .library:
+                case .library, .bookAdded, .bookUpdated, .bookRemoved, .signedIn, .signedOut, .authenticationRequired:
                     self.account = await self.sync.account
                     await self.library.refresh()
-                case let .position(bookID, position):
-                    self.library.update(bookID) { $0.remote = position }
+                case let .remotePosition(fastHash, position), let .positionSuperseded(fastHash, position):
+                    self.library.update(fastHash) { $0.remote = position }
+                case .annotations, .annotationSaved, .outbox:
+                    break
                 }
             }
         }

@@ -2,8 +2,8 @@ import Foundation
 import os
 
 /// An in-memory PocketBook Cloud, seeded with public-domain books from Project Gutenberg that ship
-/// in the app bundle. It drives previews, tests and the prototype until stream A's real service
-/// lands. Any email signs in; the password `wrong` fails; an email without `@` has no account.
+/// in the app bundle. It drives previews, tests and the prototype; `PocketBookCloud` is the real one.
+/// Any email signs in; the password `wrong` fails; an email without `@` has no account.
 public actor FakeSyncService: SyncService {
     public struct Seed: Sendable {
         public var resource: String
@@ -26,12 +26,13 @@ public actor FakeSyncService: SyncService {
     ]
 
     public static let stores = [
-        CloudStore(alias: "pbookde", name: "PocketBook.de", shopID: "1"),
-        CloudStore(alias: "pbookint", name: "PocketBook International", shopID: "2"),
+        CloudStore(alias: "pbookde", name: "PocketBook.de", shopID: "1", iconURL: nil, loggedBy: nil),
+        CloudStore(alias: "pbookint", name: "PocketBook International", shopID: "2", iconURL: nil, loggedBy: nil),
     ]
 
     private var signedIn: CloudAccount?
     private var positions: [String: ReadingPosition] = [:]
+    private var annotationsByBook: [String: [CloudAnnotation]] = [:]
     /// Subscribers register synchronously, so no change sent after `changes()` returns is missed.
     private let subscribers = OSAllocatedUnfairLock<[UUID: AsyncStream<CloudChange>.Continuation]>(initialState: [:])
     private let latency: Duration
@@ -48,7 +49,7 @@ public actor FakeSyncService: SyncService {
         let t = now()
         for seed in Self.seeds {
             if let p = seed.remoteProgression {
-                positions[Self.id(for: seed)] = ReadingPosition(cfi: nil, progression: 0, totalProgression: p, updated: t.addingTimeInterval(-seed.remoteAge), device: "PocketBook InkPad 4")
+                positions[Self.id(for: seed)] = ReadingPosition(cfi: nil, progression: 0, totalProgression: p, updated: t.addingTimeInterval(-seed.remoteAge), source: .pocketBookNative)
             }
         }
     }
@@ -59,44 +60,69 @@ public actor FakeSyncService: SyncService {
 
     public func stores(forEmail email: String) async throws -> [CloudStore] {
         try await pause()
-        guard email.contains("@") else { throw SyncError.noAccount }
+        guard email.contains("@") else { throw CloudError.noAccount }
         return Self.stores
     }
 
     public func signIn(email: String, password: String, store: CloudStore) async throws -> CloudAccount {
         try await pause()
-        guard email.contains("@") else { throw SyncError.noAccount }
-        guard password != "wrong", !password.isEmpty else { throw SyncError.wrongPassword }
+        guard email.contains("@") else { throw CloudError.noAccount }
+        guard password != "wrong", !password.isEmpty else { throw CloudError.invalidCredentials }
         let account = CloudAccount(email: email, store: store)
         signedIn = account
-        broadcast(.library)
+        broadcast(.signedIn(account))
         return account
     }
 
     public func signOut() async {
         signedIn = nil
-        broadcast(.library)
+        broadcast(.signedOut)
+    }
+
+    public func cachedLibrary() async -> [CloudBook] {
+        signedIn == nil ? [] : books()
     }
 
     public func library() async throws -> [CloudBook] {
         guard signedIn != nil else { return [] }
         try await pause()
-        return Self.seeds.map { seed in
-            CloudBook(
-                id: Self.id(for: seed),
+        return books()
+    }
+
+    private func books() -> [CloudBook] {
+        Self.seeds.map { seed in
+            let id = Self.id(for: seed)
+            let position = positions[id]
+            return CloudBook(
+                fastHash: id,
+                cloudID: id,
+                path: "/Books/\(seed.resource).epub",
+                name: "\(seed.resource).epub",
                 title: seed.title,
-                authors: seed.authors,
-                fileName: "\(seed.resource).epub",
-                byteCount: (try? bundleURL(seed.resource).resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? nil,
+                authors: seed.authors.joined(separator: ", "),
+                format: "epub",
+                mimeType: "application/epub+zip",
+                bytes: Int64((try? bundleURL(seed.resource).resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0) ?? 0),
+                modifiedAt: position?.updated,
+                readPercent: position.map { Int(($0.totalProgression * 100).rounded()) },
                 coverURL: bundle.url(forResource: seed.resource, withExtension: "jpg"),
-                readProgression: positions[Self.id(for: seed)]?.totalProgression,
-                updated: positions[Self.id(for: seed)]?.updated
+                position: position
             )
         }
     }
 
+    public func upload(fileAt url: URL) async throws -> CloudBook {
+        try await pause()
+        return CloudBook(fastHash: "upload-\(url.lastPathComponent)", name: url.lastPathComponent, title: url.deletingPathExtension().lastPathComponent)
+    }
+
+    public func delete(_ book: CloudBook) async throws {
+        try await pause()
+        broadcast(.bookRemoved(fastHash: book.fastHash))
+    }
+
     public func download(_ book: CloudBook) async throws -> URL {
-        guard let seed = Self.seeds.first(where: { Self.id(for: $0) == book.id }) else { throw SyncError.notFound }
+        guard let seed = Self.seeds.first(where: { Self.id(for: $0) == book.id }) else { throw CloudError.notFound }
         try await Task.sleep(for: latency * 3)
         let source = try bundleURL(seed.resource)
         let dir = FileManager.default.temporaryDirectory.appending(path: "fake-cloud", directoryHint: .isDirectory)
@@ -117,6 +143,25 @@ public actor FakeSyncService: SyncService {
         positions[book.id] = position
     }
 
+    public func annotations(for book: CloudBook) async throws -> [CloudAnnotation] {
+        annotationsByBook[book.id] ?? []
+    }
+
+    public func save(_ annotation: CloudAnnotation, for book: CloudBook) async {
+        var list = annotationsByBook[book.id] ?? []
+        list.removeAll { $0.id == annotation.id }
+        list.append(annotation)
+        annotationsByBook[book.id] = list
+    }
+
+    public func deleteAnnotation(_ annotation: CloudAnnotation, for book: CloudBook) async {
+        annotationsByBook[book.id]?.removeAll { $0.id == annotation.id }
+    }
+
+    public func pendingChanges() async -> Int { 0 }
+
+    public func flushOutbox() async {}
+
     public nonisolated func changes() -> AsyncStream<CloudChange> {
         let (stream, continuation) = AsyncStream<CloudChange>.makeStream()
         let key = UUID()
@@ -126,10 +171,10 @@ public actor FakeSyncService: SyncService {
     }
 
     /// Test hook: another device moved the place.
-    public func simulateRemoteRead(bookID: String, totalProgression: Double, device: String = "PocketBook InkPad 4") {
-        let p = ReadingPosition(cfi: nil, progression: 0, totalProgression: totalProgression, updated: now(), device: device)
+    public func simulateRemoteRead(bookID: String, totalProgression: Double, source: PositionSource = .pocketBookNative) {
+        let p = ReadingPosition(cfi: nil, progression: 0, totalProgression: totalProgression, updated: now(), source: source)
         positions[bookID] = p
-        broadcast(.position(bookID: bookID, p))
+        broadcast(.remotePosition(fastHash: bookID, p))
     }
 
     private func broadcast(_ change: CloudChange) {
@@ -141,7 +186,7 @@ public actor FakeSyncService: SyncService {
     }
 
     private func bundleURL(_ resource: String) throws -> URL {
-        guard let url = bundle.url(forResource: resource, withExtension: "epub") else { throw SyncError.notFound }
+        guard let url = bundle.url(forResource: resource, withExtension: "epub") else { throw CloudError.notFound }
         return url
     }
 }

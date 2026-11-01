@@ -6,10 +6,10 @@ import Testing
     @Test func signInRejectsWrongPasswordAndUnknownEmail() async throws {
         let sync = FakeSyncService(latency: .zero)
         let store = FakeSyncService.stores[0]
-        await #expect(throws: SyncError.wrongPassword) {
+        await #expect(throws: CloudError.invalidCredentials) {
             _ = try await sync.signIn(email: "a@b.c", password: "wrong", store: store)
         }
-        await #expect(throws: SyncError.noAccount) {
+        await #expect(throws: CloudError.noAccount) {
             _ = try await sync.stores(forEmail: "nobody")
         }
         let account = try await sync.signIn(email: "a@b.c", password: "hunter2", store: store)
@@ -33,7 +33,7 @@ import Testing
         let moby = try #require(try await sync.library().first { $0.title == "Moby-Dick" })
         let position = try #require(try await sync.remotePosition(for: moby))
         #expect(position.totalProgression == 0.42)
-        #expect(position.device.contains("InkPad"))
+        #expect(position.source == .pocketBookNative)
     }
 
     @Test func pushedPositionsAreBroadcast() async throws {
@@ -42,7 +42,7 @@ import Testing
         await sync.simulateRemoteRead(bookID: "gutenberg-emma", totalProgression: 0.5)
         var it = stream.makeAsyncIterator()
         let change = await it.next()
-        guard case let .position(id, p)? = change else {
+        guard case let .remotePosition(id, p)? = change else {
             Issue.record("expected a position change, got \(String(describing: change))")
             return
         }
