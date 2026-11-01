@@ -63,7 +63,12 @@ jobs:
       - name: Open DeviceHub
         run: |
           set -euo pipefail
-          swiftc -O .github/scripts/duo/devicehub.swift -o "$RUNNER_TEMP/duo/devicehub"
+          # A busy runner can time the compiler out (signal 14); the helper needs no optimisation, so build it plain and retry.
+          for attempt in 1 2 3; do
+            swiftc -Onone .github/scripts/duo/devicehub.swift -o "$RUNNER_TEMP/duo/devicehub" && break
+            [ "$attempt" = 3 ] && exit 1
+            sleep 10
+          done
           sleep 30
           open -a "$(xcode-select -p)/../Applications/DeviceHub.app"
           sleep 20
