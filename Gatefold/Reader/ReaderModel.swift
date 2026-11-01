@@ -179,6 +179,11 @@ final class ReaderModel {
                 tries += 1
                 try? await Task.sleep(for: .milliseconds(200))
             }
+            // Readium can report the old resource for a moment after the jump; the first place taken
+            // must name the resource whose words are on screen, so wait until it reports the new one.
+            for _ in 0..<25 where page?.currentLocation.map({ !ContentsIndex.sameResource($0.href.string, locator.href.string) }) ?? true {
+                try? await Task.sleep(for: .milliseconds(200))
+            }
         }
         try? await Task.sleep(for: .milliseconds(300))
         await captureAnchor()
