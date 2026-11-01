@@ -60,6 +60,8 @@ final class ReaderModel {
     private var hasMoved = false
     /// The saved place, with the first words that were on screen.
     private let initialLocator: Locator?
+    /// Page turns the reader has made, so a settling jump never pulls them back.
+    private var turns = 0
 
     init(book: LibraryBook, publication: Publication, app: AppModel) {
         self.bookID = book.id
@@ -189,7 +191,7 @@ final class ReaderModel {
             totalPages: chapterMap.positionCount > 1 ? chapterMap.positionCount : nil
         )
         guard let made else { return }
-        readerLog.notice("remote ahead: \(remote.pointer ?? "no pointer", privacy: .public) → \(target.locator?.text.highlight ?? "no text", privacy: .public)")
+        readerLog.notice("remote ahead: \(remote.pointer ?? "no pointer", privacy: .public) → \(target.locator?.text.highlight ?? "no text", privacy: .private)")
         suggestionLocator = target.locator
         withAnimation(Motion.banner) { suggestion = made }
     }
@@ -245,8 +247,11 @@ final class ReaderModel {
     private func settle(on locator: Locator) async {
         guard let words = locator.text.highlight.map(ReaderJS.normalize), words.count >= 8 else { return }
         let probe = String(words.prefix(24))
+        let turnsBefore = turns
         for _ in 0..<4 {
             try? await Task.sleep(for: .milliseconds(250))
+            // The reader has turned a page meanwhile: where they are now is theirs, not ours to fix.
+            guard turns == turnsBefore else { return }
             let onScreen = await host?.visibleRange()?.text.map(ReaderJS.normalize) ?? ""
             if onScreen.contains(probe) { return }
             guard let exact = await host?.progression(of: words) else { continue }
@@ -327,7 +332,11 @@ final class ReaderModel {
         // not a move, so opening a book never overwrites a further-ahead place on the InkPad.
         guard hasMoved else { return refreshBookmarkState(await host?.visibleRange()) }
         // The first words on screen make the place exact; Readium's progression is a page boundary.
-        let here = (anchorLocator?.href == locator.href ? anchorLocator : nil) ?? locator
+        // Only words captured on this very page count; a capture a reflow cut short leaves the last page's.
+        let fresh = anchorLocator.flatMap { a in
+            a.href == locator.href && a.locations.progression == locator.locations.progression ? a : nil
+        }
+        let here = fresh ?? locator
         if let json = try? here.jsonString() {
             let now = Date()
             let exact = await mapper?.position(for: BookLocation(here), at: now)
@@ -356,6 +365,7 @@ final class ReaderModel {
     /// A turn landed or sprang back: take the place from where the navigator is now.
     func userTurnedPage() {
         hasMoved = true
+        turns += 1
         Task {
             guard let first = host?.navigator.currentLocation else { return }
             await locationDidChange(first)
@@ -372,7 +382,7 @@ final class ReaderModel {
     /// Takes the first words on screen as the reader's place, unless a reflow is moving the page.
     func captureAnchor() async {
         guard keeper.reflowing == nil, let (anchor, anchorLoc) = await host?.currentAnchor(), keeper.reflowing == nil else { return }
-        readerLog.notice("anchor \(anchor.text ?? "nil", privacy: .public)")
+        readerLog.notice("anchor \(anchor.text ?? "nil", privacy: .private)")
         keeper.userSettled(on: anchor)
         if keeper.anchor == anchor { anchorLocator = anchorLoc }
         if anchorCheck == "pending 0", anchor.text != nil { anchorCheck = "ready 0" }

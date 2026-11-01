@@ -19,10 +19,13 @@ struct GatefoldApp: App {
                 Task { await app.didBecomeActive() }
             case .background:
                 // Finish sending the place even if the app is suspended mid-request.
-                let task = UIApplication.shared.beginBackgroundTask(withName: "Send reading place")
+                // iOS ends the grace period if the network hangs; whichever comes first ends the task once.
+                let finish = BackgroundTaskEnd()
+                let task = UIApplication.shared.beginBackgroundTask(withName: "Send reading place") { finish.end() }
+                finish.task = task
                 Task {
                     await app.sendPlaceNow()
-                    UIApplication.shared.endBackgroundTask(task)
+                    finish.end()
                 }
             default:
                 app.library.flushPushes()
@@ -92,4 +95,15 @@ struct RootView: View {
 
 extension ReaderModel: Identifiable {
     nonisolated var id: String { bookID }
+}
+
+/// Ends a background task exactly once, from the expiration handler or the finished work.
+@MainActor
+private final class BackgroundTaskEnd {
+    var task: UIBackgroundTaskIdentifier = .invalid
+    func end() {
+        guard task != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(task)
+        task = .invalid
+    }
 }

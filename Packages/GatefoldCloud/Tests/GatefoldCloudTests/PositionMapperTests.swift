@@ -72,6 +72,23 @@ struct PositionMapperTests {
         #expect(back.textAfter?.hasPrefix("Chapter 1") == true)
     }
 
+    /// Words that only turn up deep in the next chapter are a coincidence, not the page on screen.
+    @Test func ignoresTheWordsDeepInTheNextResource() async throws {
+        let m = try mapper()
+        let location = BookLocation(href: "OEBPS/4328224471496264690_84-h-5.htm.xhtml", progression: 0.97, totalProgression: 0.08,
+                                    textHighlight: "evening previous to her being brought")
+        let position = try #require(await m.position(for: location, at: utc("2026-10-31T22:00:00Z")))
+        #expect(position.parsedCFI?.spineItemID == "item8")
+    }
+
+    @Test func onlyLooksAheadFromTheEndOfAResource() async throws {
+        let m = try mapper()
+        let location = BookLocation(href: "OEBPS/4328224471496264690_84-h-5.htm.xhtml", progression: 0.4, totalProgression: 0.07,
+                                    textHighlight: "Chapter 1")
+        let position = try #require(await m.position(for: location, at: utc("2026-10-31T22:00:00Z")))
+        #expect(position.parsedCFI?.spineItemID == "item8")
+    }
+
     @Test func fallsBackToProgressionWhenTheWordsAreNotInTheResource() async throws {
         let m = try mapper()
         let location = BookLocation(href: Fixture.chapter1Href, progression: 0.5, totalProgression: 0.12,

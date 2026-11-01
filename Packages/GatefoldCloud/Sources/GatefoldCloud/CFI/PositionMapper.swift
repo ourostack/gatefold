@@ -56,11 +56,13 @@ public actor PositionMapper {
         var found = Self.anchoredPath(in: here, location: location).map { (index: index, path: $0, progression: location.progression) }
         // Just after a turn into the next resource, the reader can still name the old one while the
         // words on screen come from the new one: look for them at the top of the next resource.
-        if found == nil, location.textHighlight != nil, index + 1 < spine.items.count,
+        // Only from the last stretch of a resource, and only words near the top of the next one: the
+        // same few words deeper in the next chapter are a coincidence, not the page on screen.
+        if found == nil, location.textHighlight != nil, (location.progression ?? 0) >= 0.8, index + 1 < spine.items.count,
            let next = await document(spine.items[index + 1].href) {
             var top = location
             top.progression = 0
-            found = Self.anchoredPath(in: next, location: top).map { (index: index + 1, path: $0, progression: 0) }
+            found = Self.anchoredPath(in: next, location: top, within: 400).map { (index: index + 1, path: $0, progression: 0) }
         }
         guard let place = found ?? here.cfiPath(atProgression: location.progression ?? 0).map({ (index: index, path: $0, progression: location.progression) }) else {
             return ReadingPosition(cfi: nil, progression: location.progression, totalProgression: total, updated: date)
@@ -84,14 +86,17 @@ public actor PositionMapper {
     }
 
     /// The path of the first words on screen, searched near where the progression points.
-    static func anchoredPath(in document: CFIDocument, location: BookLocation) -> CFIDocument.Path? {
+    /// `within` limits how far from the hint a match may be, in characters.
+    static func anchoredPath(in document: CFIDocument, location: BookLocation, within: Int? = nil) -> CFIDocument.Path? {
         guard let quote = location.textHighlight?.trimmingCharacters(in: .whitespacesAndNewlines), quote.count >= 8 else { return nil }
         let hint = Int((min(1, max(0, location.progression ?? 0)) * Double(document.textLength)).rounded())
         // The reader's text comes from the live DOM, the document's from the file; whitespace may differ
         // inside a line, so try the whole quote first, then its first words.
         let words = quote.split(whereSeparator: \.isWhitespace)
         for candidate in [quote, words.prefix(4).joined(separator: " ")] where candidate.count >= 8 {
-            if let point = document.find(candidate, nearTextOffset: hint) { return document.cfiPath(at: point.textOffset) }
+            if let point = document.find(candidate, nearTextOffset: hint), within.map({ abs(point.textOffset - hint) <= $0 }) ?? true {
+                return document.cfiPath(at: point.textOffset)
+            }
         }
         return nil
     }

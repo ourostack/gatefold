@@ -76,7 +76,8 @@ final class AppModel {
 
     func start() async {
         // A clean start forgets the Cloud sign-in too (its tokens live in the Keychain, which survives reinstalls).
-        if LaunchOptions.resetState, await sync.account != nil { await sync.signOut() }
+        // The fake Cloud's sign-in comes from its own launch argument, so a reset leaves it alone.
+        if LaunchOptions.resetState, !LaunchOptions.fakeCloud, await sync.account != nil { await sync.signOut() }
         account = await sync.account
         // Listen before the first fetch, so its announcement lands too.
         let changes = sync.changes()
@@ -86,8 +87,9 @@ final class AppModel {
                 await self.apply(change)
             }
         }
-        await refresh()
+        // Stamp first, so the launch's own `.active` doesn't fetch the library a second time.
         lastForegroundRefresh = Date()
+        await refresh()
         if LaunchOptions.downloadAll {
             for book in library.books where !book.isOnDevice {
                 await library.download(book)

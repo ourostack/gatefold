@@ -182,7 +182,9 @@ import Testing
         await model.start()
         let count = model.library.books.count
         await model.apply(.authenticationRequired)
-        #expect(model.account == nil)
+        // The shelf and the account's name stay; the library offers to sign in again as that account.
+        #expect(model.account?.email == "reader@example.com")
+        #expect(model.needsReconnect == "reader@example.com")
         #expect(model.library.books.count == count)
     }
 }
