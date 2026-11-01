@@ -3,6 +3,10 @@ import XCTest
 /// The reader keeps your place: rotation, posture and type changes never lose the words you were on.
 /// The app exposes a hidden probe, `reader.anchorCheck`, which reads "anchor-visible" once a reflow
 /// settles with the first words of the page you were on still on screen.
+///
+/// The tests don't depend on how the device starts: each launch forces the posture it needs
+/// (`-GatefoldForcePosture`) and checks the reader's `reader.posture` probe before going on, so a Duo
+/// left open, half open or folded runs them the same way.
 @MainActor
 final class PositionUITests: XCTestCase {
     private var app: XCUIApplication!
@@ -17,30 +21,40 @@ final class PositionUITests: XCTestCase {
         XCUIDevice.shared.orientation = .portrait
     }
 
-    private func launch(_ extra: [String] = []) {
+    private func launch(posture: String = "single", _ extra: [String] = []) {
         app.launchArguments = [
             "-GatefoldUITest", "YES", "-GatefoldFakeCloud", "YES", "-GatefoldReset", "YES", "-GatefoldSkipWelcome", "YES",
             "-GatefoldSignedIn", "YES", "-GatefoldDownloadAll", "YES",
             "-GatefoldOpenBook", "gutenberg-pride-and-prejudice", "-GatefoldGoTo", "0.31",
-            "-GatefoldTheme", "vellum",
+            "-GatefoldTheme", "vellum", "-GatefoldForcePosture", posture,
         ] + extra
         app.launch()
         XCTAssertTrue(app.descendants(matching: .any)["reader.page"].waitForExistence(timeout: 30))
+        expectPosture(posture)
         // Wait until the book has laid out and the reader has a place (the first words on the page).
-        waitForProbe("ready 0", timeout: 90, what: "first page")
+        // An unfolded Duo can reflow before the first place is taken, so the number may not be 0.
+        waitForProbe(prefix: "ready", timeout: 90, what: "first page")
         // Turn a page so the place is the reader's own.
         app.descendants(matching: .any)["reader.page"].coordinate(withNormalizedOffset: CGVector(dx: 0.92, dy: 0.5)).tap()
         sleep(2)
     }
 
-    private func waitForProbe(_ value: String, timeout: TimeInterval, what: String, file: StaticString = #filePath, line: UInt = #line) {
+    private func waitForProbe(prefix: String, timeout: TimeInterval, what: String, file: StaticString = #filePath, line: UInt = #line) {
         let probe = app.descendants(matching: .any)["reader.anchorCheck"]
-        let matches = NSPredicate(format: "label == %@", value)
+        let matches = NSPredicate(format: "label BEGINSWITH %@", prefix + " ")
         let result = XCTWaiter.wait(for: [expectation(for: matches, evaluatedWith: probe)], timeout: timeout)
         XCTAssertEqual(result, .completed, "\(what): probe says \(probe.label)", file: file, line: line)
     }
 
     private var probe: XCUIElement { app.descendants(matching: .any)["reader.anchorCheck"] }
+
+    /// The layout the reader is showing, whatever the device's own posture.
+    private func expectPosture(_ posture: String, file: StaticString = #filePath, line: UInt = #line) {
+        let probe = app.descendants(matching: .any)["reader.posture"]
+        let matches = NSPredicate(format: "label == %@", posture)
+        let result = XCTWaiter.wait(for: [expectation(for: matches, evaluatedWith: probe)], timeout: 20)
+        XCTAssertEqual(result, .completed, "posture: probe says \(probe.label), wanted \(posture)", file: file, line: line)
+    }
 
     /// The probe reads "<state> <reflow number>". Returns the reflow number now on screen.
     private func reflowNumber() -> Int {
@@ -68,6 +82,7 @@ final class PositionUITests: XCTestCase {
         launch()
         for posture in ["spread", "tabletop", "single", "spread", "single"] {
             expectAnchorKept("into \(posture)") { app.buttons["debug.posture.\(posture)"].tap() }
+            expectPosture(posture)
         }
     }
 
@@ -101,6 +116,7 @@ final class PositionUITests: XCTestCase {
     func testTabletopDeckTurnsAndResizes() {
         launch()
         expectAnchorKept("into tabletop") { app.buttons["debug.posture.tabletop"].tap() }
+        expectPosture("tabletop")
         let larger = app.buttons["deck.larger"]
         XCTAssertTrue(larger.waitForExistence(timeout: 10))
         expectAnchorKept("tabletop, larger text") { larger.tap() }

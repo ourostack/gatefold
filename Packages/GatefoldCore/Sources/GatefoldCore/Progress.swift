@@ -13,6 +13,28 @@ public struct ProgressSnapshot: Equatable, Sendable {
     }
 }
 
+/// Every whole percent Gatefold sends or shows: the Cloud's `offs` and `read_percent`, the shelf's
+/// "percent read" and the banner's "% through". PocketBook's readers write `ceil(100 × progress)`, so a
+/// started book never reads 0%; using their rule everywhere means our numbers match theirs.
+///
+/// The other two numbers have one meaning each: `totalProgression` is Readium's whole-book scale, 0...1
+/// (another device's place is moved onto it with `ReadingScale` when its CFI resolves), and a page is
+/// `ChapterMap.page(at:)`.
+public enum ReadingPercent {
+    public static func whole(_ totalProgression: Double) -> Int {
+        guard totalProgression.isFinite else { return 0 }
+        let percent = min(1, max(0, totalProgression)) * 100
+        // Floating-point noise (0.07 × 100 = 7.000000000000001) must not add a percent.
+        return min(100, max(0, Int((percent - 1e-9).rounded(.up))))
+    }
+
+    /// The place a Cloud percent stands for.
+    public static func fraction(_ percent: Double) -> Double {
+        guard percent.isFinite else { return 0 }
+        return min(1, max(0, percent / 100))
+    }
+}
+
 /// "Your InkPad is further ahead — jump?"
 public struct JumpSuggestion: Equatable, Sendable {
     public var headline: String
@@ -22,18 +44,25 @@ public struct JumpSuggestion: Equatable, Sendable {
     /// Ignore differences smaller than this (about a page in a long book).
     public static let threshold = 0.002
 
-    public static func make(local: ProgressSnapshot?, remote: ProgressSnapshot?, totalPages: Int?) -> JumpSuggestion? {
+    /// Whether another device's place is further on than ours. A place the Cloud only knows as a whole
+    /// percent is ahead only when its percent is: our own 30.1% reads back as 31%, which is where we are.
+    public static func isAhead(remote: Double, percentOnly: Bool, local: Double) -> Bool {
+        if percentOnly { return ReadingPercent.whole(remote) > ReadingPercent.whole(local) }
+        return remote > local + threshold
+    }
+
+    public static func make(local: ProgressSnapshot?, remote: ProgressSnapshot?, totalPages: Int?, remotePercentOnly: Bool = false) -> JumpSuggestion? {
         guard let remote, remote.totalProgression > threshold else { return nil }
         if let local {
             guard remote.updated > local.updated,
-                  remote.totalProgression > local.totalProgression + threshold else { return nil }
+                  isAhead(remote: remote.totalProgression, percentOnly: remotePercentOnly, local: local.totalProgression) else { return nil }
         }
         let place: String
         if let totalPages, totalPages > 0 {
-            let page = min(totalPages, Int(remote.totalProgression * Double(totalPages)) + 1)
+            let page = ChapterMap(chapters: [], positionCount: totalPages).page(at: remote.totalProgression)
             place = "Page \(page) of \(totalPages)."
         } else {
-            place = "\(Int((remote.totalProgression * 100).rounded()))% through."
+            place = "\(ReadingPercent.whole(remote.totalProgression))% through."
         }
         return JumpSuggestion(
             headline: "Your \(deviceKind(remote.device)) is further ahead",

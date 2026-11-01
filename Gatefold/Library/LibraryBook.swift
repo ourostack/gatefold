@@ -34,6 +34,9 @@ struct LibraryBook: Identifiable, Codable, Equatable {
         max(totalProgression, lastOpened == nil ? (remote?.totalProgression ?? 0) : 0)
     }
 
+    /// The shelf's "percent read": the same whole percent PocketBook's readers show for this place.
+    var displayPercent: Int { ReadingPercent.whole(displayProgression) }
+
     var shelfItem: ShelfItem {
         ShelfItem(id: id, progression: displayProgression, lastOpened: lastOpened, remoteUpdated: remote?.updated)
     }

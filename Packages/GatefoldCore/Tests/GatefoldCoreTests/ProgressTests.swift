@@ -158,3 +158,65 @@ struct SharedFileChapterTests {
         #expect(map.pagesLeftInChapter(at: 0.31) == 27)
     }
 }
+
+/// One definition per number: `totalProgression` is Readium's whole-book scale, the page is
+/// `ChapterMap.page(at:)`, and every whole percent (the Cloud's `offs`/`read_percent`, the shelf, the
+/// banner) is `ReadingPercent.whole`, PocketBook's own `ceil(100 × progress)`.
+@Suite("Percents and pages")
+struct ReadingPercentTests {
+    @Test func aWholePercentIsPocketBooksCeiling() {
+        #expect(ReadingPercent.whole(0) == 0)
+        #expect(ReadingPercent.whole(0.0861) == 9)
+        #expect(ReadingPercent.whole(0.001) == 1, "a started book never reads 0%")
+        #expect(ReadingPercent.whole(1) == 100)
+        #expect(ReadingPercent.whole(1.4) == 100)
+        #expect(ReadingPercent.whole(-0.2) == 0)
+        #expect(ReadingPercent.whole(.nan) == 0)
+    }
+
+    @Test func floatingPointNoiseNeverAddsAPercent() {
+        // 0.07 × 100 is 7.000000000000001 in binary floating point; a plain ceil says 8.
+        for whole in 0...100 {
+            #expect(ReadingPercent.whole(Double(whole) / 100) == whole, "\(whole)%")
+        }
+    }
+
+    @Test func aCloudPercentReadsBackAsTheSameWholePercent() {
+        for whole in 0...100 {
+            #expect(ReadingPercent.whole(ReadingPercent.fraction(Double(whole))) == whole)
+        }
+        #expect(ReadingPercent.fraction(250) == 1)
+        #expect(ReadingPercent.fraction(-3) == 0)
+    }
+
+    @Test func theBannerNamesTheSamePageAndPercentAsTheReader() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let map = ChapterMap(chapters: [], positionCount: 212)
+        for p in [0.0, 0.07, 0.2641, 0.5, 0.999, 1.0] {
+            let remote = ProgressSnapshot(totalProgression: max(p, 0.003), updated: now, device: "web")
+            let paged = try! #require(JumpSuggestion.make(local: nil, remote: remote, totalPages: 212))
+            #expect(paged.detail == "Page \(map.page(at: remote.totalProgression)) of 212. Jump there?")
+            let percent = try! #require(JumpSuggestion.make(local: nil, remote: remote, totalPages: nil))
+            #expect(percent.detail == "\(ReadingPercent.whole(remote.totalProgression))% through. Jump there?")
+        }
+    }
+
+    @Test func ourOwnPercentReadBackIsNotFurtherAhead() {
+        // We push 30.1% as the Cloud's 31; reading 31% back is the same place, not a page ahead.
+        let local = 0.301
+        let readBack = ReadingPercent.fraction(Double(ReadingPercent.whole(local)))
+        #expect(!JumpSuggestion.isAhead(remote: readBack, percentOnly: true, local: local))
+        #expect(JumpSuggestion.isAhead(remote: ReadingPercent.fraction(32), percentOnly: true, local: local))
+        // An exact place compares on the fine scale.
+        #expect(JumpSuggestion.isAhead(remote: 0.31, percentOnly: false, local: local))
+        #expect(!JumpSuggestion.isAhead(remote: 0.302, percentOnly: false, local: local))
+    }
+
+    @Test func aPercentOnlyPlaceIsOfferedOnlyWhenItsPercentIsAhead() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let local = ProgressSnapshot(totalProgression: 0.301, updated: now, device: "iPhone")
+        let same = ProgressSnapshot(totalProgression: 0.31, updated: now.addingTimeInterval(60), device: "InkPad")
+        #expect(JumpSuggestion.make(local: local, remote: same, totalPages: nil, remotePercentOnly: true) == nil)
+        #expect(JumpSuggestion.make(local: local, remote: same, totalPages: nil) != nil, "an exact place 0.9% on is a few pages on")
+    }
+}

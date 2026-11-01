@@ -1,4 +1,5 @@
 import Foundation
+import GatefoldCore
 
 /// Every date form the Cloud sends: ISO-8601 (with or without fractions or offset),
 /// `yyyy-MM-dd HH:mm:ss` (UTC, on upload responses) and unix seconds.
@@ -168,7 +169,7 @@ enum WireDecoder {
         case .pdf?: source = raw?.hasPrefix("pbr:") == true ? .pocketBookNative : .pocketBookWeb
         default: source = .unknown
         }
-        return ReadingPosition(cfi: cfi, pointer: raw, totalProgression: min(1, max(0, percent / 100)), updated: updated, source: source)
+        return ReadingPosition(cfi: cfi, pointer: raw, totalProgression: ReadingPercent.fraction(percent), updated: updated, source: source)
     }
 
     static func annotation(_ data: Data) throws -> CloudAnnotation {
@@ -209,7 +210,7 @@ enum WireDecoder {
 
 enum WireEncoder {
     static func positionBody(_ position: ReadingPosition, pointerStyle: PocketBookAnchor.Style) throws -> Data {
-        var body: [String: Any] = ["offs": Int((position.totalProgression * 100).rounded(.up))]
+        var body: [String: Any] = ["offs": position.wholePercent]
         if let cfi = position.parsedCFI {
             body["pointer"] = PocketBookAnchor.string(for: cfi, style: .web)
             body["pointer_pb"] = PocketBookAnchor.string(for: cfi, style: pointerStyle)

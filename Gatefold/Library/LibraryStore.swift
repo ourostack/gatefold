@@ -15,7 +15,9 @@ final class LibraryStore {
     var lastError: String?
     /// Why the last refresh didn't reach the Cloud (shown quietly on the shelf, never as an alert).
     private(set) var syncProblem: SyncProblem?
-    @ObservationIgnored private var pushes: [String: Task<Void, Never>] = [:]
+    /// The push task waiting or running per book. Each removes itself when it ends, so this holds only
+    /// books with a push in flight.
+    @ObservationIgnored private var pushes: [String: (id: UUID, task: Task<Void, Never>)] = [:]
     @ObservationIgnored private var pending: [String: (ReadingPosition, CloudBook)] = [:]
 
     private let sync: any SyncService
@@ -230,23 +232,29 @@ final class LibraryStore {
     /// leaving). Returns when the service has tried.
     func sendPendingPushes() async {
         flushPushes()
-        for task in Array(pushes.values) { await task.value }
+        for push in Array(pushes.values) { await push.task.value }
         await sync.flushOutbox()
     }
 
     /// The place waiting to go to the Cloud for a book (tests).
     func pendingPush(for bookID: String) -> ReadingPosition? { pending[bookID]?.0 }
 
+    /// Books with a push waiting or running (tests).
+    var pushesInFlight: Int { pushes.count }
+
     private func schedulePush(_ bookID: String, after delay: Duration) {
-        let previous = pushes[bookID]
+        let previous = pushes[bookID]?.task
         previous?.cancel()
-        pushes[bookID] = Task { [weak self, sync] in
+        let id = UUID()
+        pushes[bookID] = (id, Task { [weak self, sync] in
+            // Done, sent or overtaken: leave the table unless a newer push has taken this book's slot.
+            defer { if self?.pushes[bookID]?.id == id { self?.pushes[bookID] = nil } }
             if delay > .zero { try? await Task.sleep(for: delay) }
             guard !Task.isCancelled else { return }
             await previous?.value
             guard !Task.isCancelled, let self, let (position, cloud) = self.pending.removeValue(forKey: bookID) else { return }
             await sync.push(position, for: cloud)
-        }
+        })
     }
 
     func remotePosition(for book: LibraryBook) async -> ReadingPosition? {

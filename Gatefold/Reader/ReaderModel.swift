@@ -45,6 +45,7 @@ final class ReaderModel {
     var errorMessage: String?
     /// Set once the reader has settled after a reflow (for UI tests): whether the anchor is on screen.
     private(set) var anchorCheck = "pending 0"
+    private var anchorReady = false
     /// For UI tests: what the last check compared.
     private(set) var anchorDetail = ""
 
@@ -53,6 +54,9 @@ final class ReaderModel {
     private var pendingReflowReason: ReflowReason?
     weak var host: ReaderHostController?
     private(set) var hostController: ReaderHostController?
+    /// A scripted page for unit tests; the app always reads the host's.
+    @ObservationIgnored private var injectedPage: (any ReaderPage)?
+    private var page: (any ReaderPage)? { injectedPage ?? host }
     /// This device's place when the book was opened, for the "further ahead" comparison.
     private let openedSnapshot: ProgressSnapshot?
     /// Where the book opened; nothing is recorded or pushed until the reader moves from it,
@@ -60,10 +64,22 @@ final class ReaderModel {
     private var hasMoved = false
     /// The saved place, with the first words that were on screen.
     private let initialLocator: Locator?
-    /// Page turns the reader has made, so a settling jump never pulls them back.
-    private var turns = 0
+    /// Counts every move of the page (a turn, a jump, a landing, the close). A settle or a landing
+    /// that started before the latest move has been overtaken and must not move or record anything.
+    private var moves = 0
+    /// Set from the moment the reader closes; nothing moves the page or records a place after it.
+    private(set) var isClosed = false
+    /// While a landing settles, the navigator's in-between locations are not places: the landing
+    /// records once, when it has settled. Any later move ends it.
+    private var landingMove: Int?
+    private var landing: Bool { landingMove == moves }
+    /// The Cloud place behind the banner, so accepting it records that exact place.
+    private var suggestionRemote: ReadingPosition?
+    /// A remote check is running; another request runs once it ends instead of alongside it.
+    private var checkingRemote = false
+    private var recheckRemote = false
 
-    init(book: LibraryBook, publication: Publication, app: AppModel) {
+    init(book: LibraryBook, publication: Publication, app: AppModel, page: (any ReaderPage)? = nil) {
         self.bookID = book.id
         self.title = publication.metadata.title ?? book.title
         self.publication = publication
@@ -73,6 +89,10 @@ final class ReaderModel {
         let initial = book.locatorJSON.flatMap { try? Locator(jsonString: $0) }
         self.initialLocator = initial
         let prefs = app.preferences.effective(for: book.id)
+        if let page {
+            injectedPage = page
+            return
+        }
         do {
             hostController = try ReaderHostController(
                 model: self,
@@ -149,13 +169,19 @@ final class ReaderModel {
         // The first page can take seconds to lay out on a cold web view; nothing below means anything
         // until the navigator reports where it is.
         await waitForLocation()
-        if LaunchOptions.goTo == nil, let initialLocator { await settle(on: initialLocator) }
+        if LaunchOptions.goTo == nil, let initialLocator { await settle(on: initialLocator, move: moves) }
         if let goTo = LaunchOptions.goTo, let locator = await publication.locate(progression: goTo) {
             hasMoved = true
+            moves += 1
             // Readium refuses a jump while it is still loading; try until it takes.
             var tries = 0
-            while await host?.go(to: locator) != true, tries < 50 {
+            while await page?.go(to: locator) != true, tries < 50 {
                 tries += 1
+                try? await Task.sleep(for: .milliseconds(200))
+            }
+            // Readium can report the old resource for a moment after the jump; the first place taken
+            // must name the resource whose words are on screen, so wait until it reports the new one.
+            for _ in 0..<25 where page?.currentLocation.map({ !ContentsIndex.sameResource($0.href.string, locator.href.string) }) ?? true {
                 try? await Task.sleep(for: .milliseconds(200))
             }
         }
@@ -165,35 +191,63 @@ final class ReaderModel {
     }
 
     private func waitForLocation() async {
-        for _ in 0..<150 where host?.navigator.currentLocation == nil {
+        for _ in 0..<150 where page?.currentLocation == nil {
             try? await Task.sleep(for: .milliseconds(200))
         }
-        if location == nil { location = host?.navigator.currentLocation }
+        if location == nil { location = page?.currentLocation }
     }
 
-    /// Ask the other device where it is; offer a jump if it's further ahead.
+    /// Ask the other device where it is; offer a jump if it's further ahead. A request that arrives while
+    /// one is running (the app coming back to the foreground mid-load) runs once that one ends.
     func checkRemote() async {
+        guard !isClosed else { return }
+        if checkingRemote {
+            recheckRemote = true
+            return
+        }
+        checkingRemote = true
+        defer { checkingRemote = false }
+        repeat {
+            recheckRemote = false
+            await checkRemoteOnce()
+        } while recheckRemote && !isClosed
+    }
+
+    private func checkRemoteOnce() async {
         // Our own place coming back is not news.
         guard let book = app.library.book(bookID), let remote = await app.library.remotePosition(for: book),
-              remote.source != .gatefold else { return }
+              remote.source != .gatefold, !isClosed else { return }
         let target = await place(of: remote)
-        guard target.totalProgression > totalProgression + JumpSuggestion.threshold else { return }
+        guard !isClosed else { return }
+        // A place the Cloud only has as a whole percent compares as one: our own 30.1% reads back as 31%.
+        let percentOnly = target.locator == nil
+        guard JumpSuggestion.isAhead(remote: target.totalProgression, percentOnly: percentOnly, local: totalProgression) else { return }
+        let aim = landingTarget(remote, at: target.totalProgression)
         // First time this book opens here: there's no place of ours to protect, so just open where
         // the InkPad is, like picking the book up off the nightstand.
         if openedSnapshot == nil, !hasMoved {
             readerLog.notice("first open: landing on the Cloud place \(remote.pointer ?? "no pointer", privacy: .public)")
-            await land(on: target.locator, progression: target.totalProgression, rememberBack: false)
+            await land(on: target.locator, progression: target.totalProgression, target: aim, rememberBack: false)
             return
         }
         let made = JumpSuggestion.make(
             local: hasMoved ? app.library.book(bookID)?.localSnapshot : openedSnapshot,
             remote: ProgressSnapshot(totalProgression: target.totalProgression, updated: remote.updated, device: remote.deviceName),
-            totalPages: chapterMap.positionCount > 1 ? chapterMap.positionCount : nil
+            totalPages: chapterMap.positionCount > 1 ? chapterMap.positionCount : nil,
+            remotePercentOnly: percentOnly
         )
         guard let made else { return }
         readerLog.notice("remote ahead: \(remote.pointer ?? "no pointer", privacy: .public) → \(target.locator?.text.highlight ?? "no text", privacy: .private)")
         suggestionLocator = target.locator
+        suggestionRemote = aim
         withAnimation(Motion.banner) { suggestion = made }
+    }
+
+    /// The other device's place as we would record it: its own CFI, on our scale.
+    private func landingTarget(_ remote: ReadingPosition, at totalProgression: Double) -> ReadingPosition {
+        var aim = remote
+        aim.totalProgression = totalProgression
+        return aim
     }
 
     /// Where a Cloud position is in this book: the exact spot when its CFI resolves, on Readium's own
@@ -218,49 +272,101 @@ final class ReaderModel {
     }
 
     func acceptSuggestion() async {
-        guard let s = suggestion else { return }
+        guard let s = suggestion, !isClosed else { return }
         withAnimation(Motion.banner) { suggestion = nil }
-        await land(on: suggestionLocator, progression: s.targetProgression, rememberBack: true)
+        let locator = suggestionLocator, aim = suggestionRemote
         suggestionLocator = nil
+        suggestionRemote = nil
+        await land(on: locator, progression: s.targetProgression, target: aim, rememberBack: true)
         UINotificationFeedbackGenerator().notificationOccurred(.success)
     }
 
     /// Goes to another device's place: the exact spot when its CFI resolved, else its percent.
-    private func land(on locator: Locator?, progression: Double, rememberBack: Bool) async {
+    /// Records the place once, when the page has settled, and never earlier than `target`.
+    private func land(on locator: Locator?, progression: Double, target: ReadingPosition?, rememberBack: Bool) async {
+        guard !isClosed else { return }
         guard let locator else {
             await go(toProgression: progression, rememberBack: rememberBack)
             return
         }
         hasMoved = true
         if rememberBack { rememberPlace() }
-        await host?.go(to: locator)
+        moves += 1
+        let move = moves
+        landingMove = move
+        defer { if landingMove == move { landingMove = nil } }
+        await page?.go(to: locator)
         // Opening another chapter, Readium places the page by progression before the chapter has laid
         // out; once it has, the same jump finds the exact words. Retry until they're on screen.
-        await settle(on: locator)
+        await settle(on: locator, move: move)
+        // Overtaken by a turn, another jump or the close: that move owns the place now.
+        guard moves == move, !isClosed else { return }
         await captureAnchor()
+        guard moves == move, !isClosed, let here = page?.currentLocation else { return }
         // Landed on the other device's page: that's the reader's place now.
-        if let here = host?.navigator.currentLocation { await locationDidChange(here) }
+        await recordLanding(here, target: target)
+    }
+
+    /// Records a settled landing. The first words on screen are the place, unless they come before the
+    /// place we landed on (the page starts a few lines above it): then the target itself is, so the
+    /// other device's place comes back unchanged instead of a few lines behind.
+    private func recordLanding(_ here: Locator, target: ReadingPosition?) async {
+        location = here
+        let fresh = anchorLocator.flatMap { a in
+            a.href == here.href && a.locations.progression == here.locations.progression ? a : nil
+        }
+        let settledLocator = fresh ?? here
+        let now = Date()
+        let settled = await mapper?.position(for: BookLocation(settledLocator), at: now)
+            .map { var p = $0; p.totalProgression = here.locations.totalProgression ?? p.totalProgression; return p }
+        guard !isClosed else { return }
+        let chosen = LandingPlace.choose(settled: settled, target: target, at: now)
+        if let json = try? settledLocator.jsonString() {
+            app.library.recordPlace(
+                bookID: bookID,
+                locatorJSON: json,
+                totalProgression: chosen?.totalProgression ?? here.locations.totalProgression ?? 0,
+                progression: here.locations.progression ?? 0,
+                position: chosen,
+                at: now
+            )
+        }
+        openedLocation = here
+        refreshBookmarkState(await page?.visibleRange())
     }
 
     /// Readium places the page by its own progression, which counts layout, not text; once the
-    /// chapter is on screen, find the locator's words in it and turn to their page.
-    private func settle(on locator: Locator) async {
+    /// chapter is on screen, find the locator's words in it and turn to their page. Stops as soon as
+    /// anything else moves the page (`move` is no longer the latest) or the reader closes.
+    private func settle(on locator: Locator, move: Int) async {
         guard let words = locator.text.highlight.map(ReaderJS.normalize), words.count >= 8 else { return }
         let probe = String(words.prefix(24))
-        let turnsBefore = turns
+        func current() -> Bool { moves == move && !isClosed }
         for _ in 0..<4 {
             try? await Task.sleep(for: .milliseconds(250))
-            // The reader has turned a page meanwhile: where they are now is theirs, not ours to fix.
-            guard turns == turnsBefore else { return }
-            let onScreen = await host?.visibleRange()?.text.map(ReaderJS.normalize) ?? ""
+            guard current() else { return }
+            let onScreen = await page?.visibleRange()?.text.map(ReaderJS.normalize) ?? ""
+            guard current() else { return }
             if onScreen.contains(probe) { return }
-            guard let exact = await host?.progression(of: words) else { continue }
-            _ = await host?.go(to: locator.copy(locations: { $0.progression = exact }, text: { $0 = Locator.Text() }))
+            guard let exact = await page?.progression(of: words) else { continue }
+            guard current() else { return }
+            _ = await page?.go(to: locator.copy(locations: { $0.progression = exact }, text: { $0 = Locator.Text() }))
         }
+    }
+
+    /// The reader closed the book: whatever is still settling or landing stops here, so nothing moves
+    /// the page or records a place after the close has sent the last one.
+    func close() {
+        isClosed = true
+        moves += 1
+        suggestion = nil
+        suggestionLocator = nil
+        suggestionRemote = nil
     }
 
     func dismissSuggestion() {
         suggestionLocator = nil
+        suggestionRemote = nil
         withAnimation(Motion.banner) { suggestion = nil }
     }
 
@@ -309,7 +415,10 @@ final class ReaderModel {
     // MARK: Navigation events
 
     func locationDidChange(_ locator: Locator, duringTurn: Bool = false) async {
+        guard !isClosed else { return }
         location = locator
+        // A landing records its place once it has settled; the steps on the way are not places.
+        guard !landing else { return }
         // Mid-turn the navigator has moved under the overlay; the turn records the place when it lands.
         guard keeper.reflowing == nil, !duringTurn else { return }
         // A location that arrives as a reflow lands is the restore, not the reader moving: keep the
@@ -330,7 +439,7 @@ final class ReaderModel {
         touchedSinceLocation = false
         // Only the reader moves the place. Readium reopening a page boundary off from the saved one is
         // not a move, so opening a book never overwrites a further-ahead place on the InkPad.
-        guard hasMoved else { return refreshBookmarkState(await host?.visibleRange()) }
+        guard hasMoved else { return refreshBookmarkState(await page?.visibleRange()) }
         // The first words on screen make the place exact; Readium's progression is a page boundary.
         // Only words captured on this very page count; a capture a reflow cut short leaves the last page's.
         let fresh = anchorLocator.flatMap { a in
@@ -349,7 +458,7 @@ final class ReaderModel {
                 at: now
             )
         }
-        refreshBookmarkState(await host?.visibleRange())
+        refreshBookmarkState(await page?.visibleRange())
         if let back = backLocator, abs((back.locations.totalProgression ?? 0) - totalProgression) < 0.0001 {
             backLocator = nil
         }
@@ -365,14 +474,14 @@ final class ReaderModel {
     /// A turn landed or sprang back: take the place from where the navigator is now.
     func userTurnedPage() {
         hasMoved = true
-        turns += 1
+        moves += 1
         Task {
-            guard let first = host?.navigator.currentLocation else { return }
+            guard let first = page?.currentLocation else { return }
             await locationDidChange(first)
             // Turning into the next resource, Readium can name the old one until the new one has
             // loaded, and its update arrives mid-turn when it's ignored. Look again once it has.
             try? await Task.sleep(for: .milliseconds(700))
-            if let later = host?.navigator.currentLocation, later.href != first.href
+            if let later = page?.currentLocation, later.href != first.href
                 || later.locations.progression != first.locations.progression {
                 await locationDidChange(later)
             }
@@ -381,11 +490,16 @@ final class ReaderModel {
 
     /// Takes the first words on screen as the reader's place, unless a reflow is moving the page.
     func captureAnchor() async {
-        guard keeper.reflowing == nil, let (anchor, anchorLoc) = await host?.currentAnchor(), keeper.reflowing == nil else { return }
+        guard keeper.reflowing == nil, let (anchor, anchorLoc) = await page?.currentAnchor(), keeper.reflowing == nil else { return }
         readerLog.notice("anchor \(anchor.text ?? "nil", privacy: .private)")
         keeper.userSettled(on: anchor)
         if keeper.anchor == anchor { anchorLocator = anchorLoc }
-        if anchorCheck == "pending 0", anchor.text != nil { anchorCheck = "ready 0" }
+        // The first place taken says "ready", whether or not a reflow (an unfolded Duo's first layout)
+        // came before it.
+        if !anchorReady, anchor.text != nil {
+            anchorReady = true
+            anchorCheck = "ready \(reflowCount)"
+        }
     }
 
     // MARK: Chrome
@@ -398,17 +512,19 @@ final class ReaderModel {
 
     func go(toProgression progression: Double, rememberBack: Bool) async {
         hasMoved = true
+        moves += 1
         if rememberBack { rememberPlace() }
         if let locator = await publication.locate(progression: progression) {
-            await host?.go(to: locator)
+            await page?.go(to: locator)
             await captureAnchor()
         }
     }
 
     func go(to entry: TOCEntry) async {
         hasMoved = true
+        moves += 1
         rememberPlace()
-        await host?.go(to: entry.link)
+        await page?.go(to: entry.link)
         await captureAnchor()
     }
 
@@ -420,8 +536,9 @@ final class ReaderModel {
     func goBack() async {
         guard let back = backLocator else { return }
         hasMoved = true
+        moves += 1
         backLocator = nil
-        await host?.go(to: back)
+        await page?.go(to: back)
         await captureAnchor()
     }
 
@@ -433,7 +550,7 @@ final class ReaderModel {
     // MARK: Bookmarks
 
     func toggleBookmark() async {
-        guard let host, let (anchor, _) = await host.currentAnchor(), let visible = await host.visibleRange() else { return }
+        guard let page, let (anchor, _) = await page.currentAnchor(), let visible = await page.visibleRange() else { return }
         let change = bookmarks.toggle(
             at: anchor,
             visible: VisibleRange(href: visible.href, start: visible.start, end: anchor.progression + 0.0001, text: visible.text),
@@ -447,7 +564,7 @@ final class ReaderModel {
     func removeBookmark(_ id: UUID) {
         bookmarks.remove(id)
         saveBookmarks()
-        Task { refreshBookmarkState(await host?.visibleRange()) }
+        Task { refreshBookmarkState(await page?.visibleRange()) }
     }
 
     private func saveBookmarks() {

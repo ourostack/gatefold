@@ -9,7 +9,12 @@ actor StubSync: SyncService {
     private(set) var pushed: [(ReadingPosition, String)] = []
     private(set) var flushes = 0
 
+    /// What `remotePosition` answers: the other device's place.
+    var remote: ReadingPosition?
+    private(set) var remoteReads = 0
+
     func setLibrary(_ result: Result<[CloudBook], CloudError>) { libraryResult = result }
+    func setRemote(_ position: ReadingPosition?) { remote = position }
 
     var account: CloudAccount? { signedInAccount }
     func stores(forEmail email: String) async throws -> [CloudStore] { FakeSyncService.stores }
@@ -20,7 +25,10 @@ actor StubSync: SyncService {
     func download(_ book: CloudBook) async throws -> URL { throw CloudError.notFound }
     func upload(fileAt url: URL) async throws -> CloudBook { throw CloudError.notFound }
     func delete(_ book: CloudBook) async throws {}
-    func remotePosition(for book: CloudBook) async throws -> ReadingPosition? { nil }
+    func remotePosition(for book: CloudBook) async throws -> ReadingPosition? {
+        remoteReads += 1
+        return remote
+    }
     func push(_ position: ReadingPosition, for book: CloudBook) async { pushed.append((position, book.fastHash)) }
     func annotations(for book: CloudBook) async throws -> [CloudAnnotation] { [] }
     func save(_ annotation: CloudAnnotation, for book: CloudBook) async {}

@@ -16,12 +16,13 @@ struct ReaderScreen: View {
 
     var body: some View {
         GeometryReader { proxy in
-            let layout = ReaderLayoutResolver.resolve(LayoutInput(
+            let input = LayoutInput(
                 containerSize: proxy.size,
                 division: FoldReader.division(in: proxy),
                 hinge: hinge,
                 forced: forced
-            ))
+            )
+            let layout = ReaderLayoutResolver.resolve(input)
             ZStack(alignment: .topLeading) {
                 model.theme.background
 
@@ -92,6 +93,12 @@ struct ReaderScreen: View {
                     .accessibilityLabel(model.anchorCheck)
                     .accessibilityValue(model.anchorDetail)
                     .allowsHitTesting(false)
+                Text(layout.posture.rawValue)
+                    .font(.system(size: 1))
+                    .opacity(0.01)
+                    .accessibilityIdentifier("reader.posture")
+                    .accessibilityLabel(layout.posture.rawValue)
+                    .allowsHitTesting(false)
                 }
 
                 if LaunchOptions.isUITest {
@@ -110,6 +117,9 @@ struct ReaderScreen: View {
                     }
                     .offset(y: proxy.size.height * 0.45)
                 }
+            }
+            .onChange(of: input, initial: true) { _, new in
+                readerLog.notice("layout input \(new.containerSize.width, privacy: .public)x\(new.containerSize.height, privacy: .public) fold \(new.division.map { "\($0.frame) active \($0.isActive)" } ?? "none", privacy: .public) hinge \(String(describing: new.hinge), privacy: .public)")
             }
             .onChange(of: layout, initial: true) { old, new in
                 let reason: ReflowReason = old.posture != new.posture ? .posture : .rotation

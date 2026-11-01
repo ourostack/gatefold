@@ -16,7 +16,9 @@ public struct FoldRegion: Equatable, Sendable {
     var isVertical: Bool { frame.height > frame.width }
 }
 
-/// The hinge, as `onHingeChange` reports it. Used for effects only, never for layout (Apple's split).
+/// The hinge, as `onHingeChange` reports it. It drives the spine shadow, and one layout decision: a bent
+/// device with a fold on this screen stands as a tabletop (the division region alone can't say so; the
+/// Duo reports its fold inactive whether flat or half open).
 public enum HingeState: Equatable, Sendable {
     case none
     case closed
@@ -87,7 +89,7 @@ public enum ReaderLayoutResolver {
         }
         let shadow = spineShadow(for: input.hinge)
 
-        switch input.forced ?? posture(bounds: bounds, fold: fold) {
+        switch input.forced ?? posture(bounds: bounds, fold: fold, hinge: input.hinge) {
         case .single:
             return ReaderLayout(posture: .single, pageFrame: bounds, gutter: nil, deck: nil, columns: .one, spineShadow: 0)
         case .spread:
@@ -113,9 +115,11 @@ public enum ReaderLayoutResolver {
         }
     }
 
-    private static func posture(bounds: CGRect, fold: FoldRegion?) -> Posture {
+    private static func posture(bounds: CGRect, fold: FoldRegion?, hinge: HingeState) -> Posture {
         let wide = bounds.width > bounds.height && bounds.width >= minimumSpreadWidth
         if let fold {
+            // Partially open: stood on a table, the page on the top half, the controls on the bottom.
+            if case .partiallyOpen = hinge { return .tabletop }
             if fold.isVertical {
                 return wide ? .spread : .single
             }

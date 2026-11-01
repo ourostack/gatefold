@@ -54,6 +54,8 @@ struct RootView: View {
         .animation(Motion.open, value: app.hasOnboarded)
         .fullScreenCover(item: $reader) { model in
             ReaderScreen(model: model) {
+                // Stop any landing or settle first, so the place sent below is the last one.
+                model.close()
                 reader = nil
                 app.openBookID = nil
                 app.activeReader = nil

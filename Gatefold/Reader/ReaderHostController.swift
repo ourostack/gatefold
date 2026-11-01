@@ -11,8 +11,9 @@ let readerLog = Logger(subsystem: "bot.ouro.gatefold", category: "reader")
 /// Hosts Readium's EPUB navigator. Owns page turns (curl, slide, fade, scroll), tap zones and the
 /// reading anchor's restore after every reflow. Everything else in the reader is SwiftUI.
 @MainActor
-final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGestureRecognizerDelegate {
+final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGestureRecognizerDelegate, ReaderPage {
     let navigator: EPUBNavigatorViewController
+    var currentLocation: Locator? { navigator.currentLocation }
     private weak var weakModel: ReaderModel?
     /// The reader outlives this controller in every path but a mid-turn close; callers in tasks guard `weakModel`.
     private var model: ReaderModel { weakModel! }
