@@ -10,6 +10,10 @@ enum ReaderJS {
         const r = document.caretRangeFromPoint(x, y);
         if (!r || !r.startContainer || r.startContainer.nodeType !== Node.TEXT_NODE) { return null; }
         if (!norm(r.startContainer.textContent)) { return null; }
+        // A picture's caption floats with the picture, which a reflow can push to a later page:
+        // the place is the running text.
+        const el = r.startContainer.parentElement;
+        if (el && el.closest("figure, figcaption, .caption, .figcenter, .figleft, .figright, .pagenum")) { return null; }
         return r;
       }
       // Scan a column from its top-left for the first character.

@@ -136,37 +136,39 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         _ = await navigator.evaluateJavaScript(ReaderJS.install)
         _ = await navigator.evaluateJavaScript(ReaderJS.setColumns(columns))
         guard current() else { return }
-        // A slow device may still be paginating: judge the page only once it shows text.
-        let visible = await laidOutRange()
+        // A slow device may still be paginating: judge the page only once it shows text. Each
+        // phase has its own budget, because a picture-only page never shows text.
+        func laidOutRange(within budget: Duration) async -> VisibleRange? {
+            let deadline = ContinuousClock.now + budget
+            var range = await visibleRange()
+            while let r = range, r.text == nil, ContinuousClock.now < deadline,
+                  !Task.isCancelled, current() {
+                try? await Task.sleep(for: .milliseconds(250))
+                range = await visibleRange()
+            }
+            return range
+        }
+        let visible = await laidOutRange(within: .seconds(3))
         guard current() else { return }
         var after = visible
         if let visible,
            case let .jump(anchor) = model.keeper.reflowDidSettle(visible: visible),
            let locator = model.locator(for: anchor) {
-            // A jump made while the book is still settling can land on an empty column; try again.
+            // A jump made while the book is still settling can land short of the place; try again.
+            let jumpBudget = ContinuousClock.now + .seconds(4)
             for _ in 0..<3 {
                 _ = await navigator.go(to: locator, options: .init(animated: false))
                 try? await Task.sleep(for: .milliseconds(160))
+                guard current(), !Task.isCancelled else { return }
+                after = await laidOutRange(within: max(.zero, jumpBudget - ContinuousClock.now))
                 guard current() else { return }
-                after = await laidOutRange()
-                guard current() else { return }
-                if after?.text != nil { break }
+                if after?.contains(anchor) == true || ContinuousClock.now >= jumpBudget { break }
             }
         }
         model.keeper.restoreDidComplete()
         model.reflowDidFinish(visible: after)
         disablePanningIfNeeded()
         UIView.animate(withDuration: 0.25) { self.navigator.view.alpha = 1 }
-    }
-
-    /// The visible range once the page shows text, waiting up to about 3 seconds for layout.
-    private func laidOutRange() async -> VisibleRange? {
-        var range = await visibleRange()
-        for _ in 0..<12 where range != nil && range?.text == nil {
-            try? await Task.sleep(for: .milliseconds(250))
-            range = await visibleRange()
-        }
-        return range
     }
 
     /// What's on screen now: the resource, its progression range and the visible text.

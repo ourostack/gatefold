@@ -76,6 +76,7 @@ struct ReaderScreen: View {
                     .opacity(0.01)
                     .accessibilityIdentifier("reader.anchorCheck")
                     .accessibilityLabel(model.anchorCheck)
+                    .accessibilityValue(model.anchorDetail)
                     .allowsHitTesting(false)
                 }
 

@@ -35,6 +35,8 @@ final class ReaderModel {
     var errorMessage: String?
     /// Set once the reader has settled after a reflow (for UI tests): whether the anchor is on screen.
     private(set) var anchorCheck = "pending 0"
+    /// For UI tests: what the last check compared.
+    private(set) var anchorDetail = ""
 
     var keeper = AnchorKeeper()
     private var anchorLocator: Locator?
@@ -194,6 +196,7 @@ final class ReaderModel {
         reflowSettledAt = Date()
         if let visible, let anchor = keeper.anchor {
             anchorCheck = (visible.contains(anchor) ? "anchor-visible " : "anchor-lost ") + "\(reflowCount)"
+            anchorDetail = "anchor \(anchor.href)@\(anchor.progression) [\(anchor.text?.prefix(40) ?? "-")] visible \(visible.href) \(visible.start)..\(visible.end) [\(visible.text?.prefix(60) ?? "nil")]"
         } else {
             anchorCheck = "no-anchor \(reflowCount)"
         }

@@ -61,7 +61,7 @@ final class PositionUITests: XCTestCase {
             if n > before, !label.hasPrefix("settling"), Date().timeIntervalSince(stableSince) > 2 { break }
             Thread.sleep(forTimeInterval: 0.5)
         }
-        XCTAssertTrue(last.hasPrefix("anchor-visible"), "\(what): probe says \(last) (was reflow \(before))", file: file, line: line)
+        XCTAssertTrue(last.hasPrefix("anchor-visible"), "\(what): probe says \(last) (was reflow \(before)) — \(probe.value as? String ?? "")", file: file, line: line)
     }
 
     func testEveryPostureKeepsThePlace() {
