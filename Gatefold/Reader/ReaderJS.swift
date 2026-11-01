@@ -34,6 +34,15 @@ enum ReaderJS {
         }
         return null;
       }
+      // The last heading at or before a node: the chapter the reader is actually in.
+      function headingBefore(node) {
+        let found = null;
+        for (const h of document.querySelectorAll("h1,h2,h3,h4")) {
+          if (h.contains(node) || (h.compareDocumentPosition(node) & Node.DOCUMENT_POSITION_FOLLOWING)) { found = h; } else { break; }
+        }
+        const t = found ? norm(found.textContent) : "";
+        return t && t.length <= 80 ? t : null;
+      }
       window.gatefold = {
         // The first visible words of the column starting at fraction `fx` of the viewport.
         anchor: function (fx) {
@@ -46,7 +55,7 @@ enum ReaderJS {
           while (start > 0 && !/\s/.test(text[start - 1])) { start--; }
           const highlight = text.substr(start, 64);
           if (!norm(highlight)) { return null; }
-          return { highlight: highlight, before: text.substr(Math.max(0, start - 32), Math.min(32, start)) };
+          return { highlight: highlight, before: text.substr(Math.max(0, start - 32), Math.min(32, start)), heading: headingBefore(node) };
         },
         // Where the page ends in the resource, as a progression (paginated and scrolled).
         pageEnd: function () {
@@ -82,6 +91,16 @@ enum ReaderJS {
     static let pageEnd = "window.gatefold ? window.gatefold.pageEnd() : null"
 
     static func setColumns(_ n: Int) -> String { "window.gatefoldColumns = \(n); true" }
+
+    /// "CHAPTER XIX." reads as "Chapter XIX": shouting headings are softened, numerals kept.
+    static func tidyHeading(_ s: String) -> String {
+        var t = normalize(s)
+        while let last = t.last, ".:".contains(last) { t.removeLast() }
+        guard t == t.uppercased(), t != t.lowercased() else { return t }
+        return t.split(separator: " ").map { word in
+            word.allSatisfy { "IVXLCDM".contains($0) } ? String(word) : word.capitalized
+        }.joined(separator: " ")
+    }
 
     static func normalize(_ s: String) -> String {
         s.split(whereSeparator: \.isWhitespace).joined(separator: " ")

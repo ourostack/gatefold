@@ -137,3 +137,24 @@ struct ReadingNowTests {
         #expect(ReadingNow.shelf(items, limit: 8).count == 8)
     }
 }
+
+@Suite("Chapters that share a file")
+struct SharedFileChapterTests {
+    // Gutenberg packs several chapters into one file, so their known starts are the same.
+    let map = ChapterMap(chapters: [
+        .init(title: "Chapter I", start: 0),
+        .init(title: "Chapter XVIII", start: 0.3),
+        .init(title: "Chapter XIX", start: 0.3),
+        .init(title: "Chapter XX", start: 0.3),
+        .init(title: "Chapter XXI", start: 0.4),
+    ], positionCount: 300)
+
+    @Test func aPageInTheSharedFileNamesItsFirstChapterNotTheLast() {
+        #expect(map.chapter(at: 0.31)?.title == "Chapter XVIII")
+        #expect(map.chapter(at: 0.41)?.title == "Chapter XXI")
+    }
+
+    @Test func pagesLeftRunToTheNextFileNotTheNextSharedChapter() {
+        #expect(map.pagesLeftInChapter(at: 0.31) == 27)
+    }
+}

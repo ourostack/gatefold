@@ -74,7 +74,10 @@ public struct ChapterMap: Equatable, Sendable {
     }
 
     public func chapterIndex(at progression: Double) -> Int? {
-        chapters.lastIndex { $0.start <= progression + 1e-9 } ?? (chapters.isEmpty ? nil : 0)
+        guard let last = chapters.lastIndex(where: { $0.start <= progression + 1e-9 }) else { return chapters.isEmpty ? nil : 0 }
+        // Chapters that share a file share a start; the page is somewhere in the first of them or later,
+        // and only the web view knows which, so name the first rather than jumping ahead.
+        return chapters.firstIndex { abs($0.start - chapters[last].start) < 1e-9 } ?? last
     }
 
     public func chapter(at progression: Double) -> Chapter? {
@@ -87,8 +90,9 @@ public struct ChapterMap: Equatable, Sendable {
 
     public func pagesLeftInChapter(at progression: Double) -> Int {
         let here = Int((progression * Double(positionCount)).rounded(.down))
+        // The next chapter that starts later (chapters sharing a file count as one stretch).
         let end: Double = chapterIndex(at: progression).flatMap { i in
-            i + 1 < chapters.count ? chapters[i + 1].start : nil
+            chapters[(i + 1)...].first { $0.start > chapters[i].start + 1e-9 }?.start
         } ?? 1.0
         return max(0, Int((end * Double(positionCount)).rounded()) - here)
     }

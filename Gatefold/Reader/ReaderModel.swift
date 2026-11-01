@@ -78,7 +78,9 @@ final class ReaderModel {
     var reduceMotion = false
     var pageTurn: PageTurnStyle { preferences.effectivePageTurn(reduceMotion: reduceMotion) }
     var totalProgression: Double { location?.locations.totalProgression ?? 0 }
-    var chapterTitle: String? { chapterMap.chapter(at: totalProgression)?.title ?? location?.title }
+    /// The heading above the first line on screen, when the page has one; else the contents' best guess.
+    var heading: String?
+    var chapterTitle: String? { heading ?? chapterMap.chapter(at: totalProgression)?.title ?? location?.title }
     var pageLabel: String {
         let page = chapterMap.page(at: totalProgression)
         return "\(page) of \(chapterMap.positionCount)"
@@ -114,13 +116,28 @@ final class ReaderModel {
         toc = entries
         chapterMap = ChapterMap(chapters: entries.filter { $0.level == 0 }.map { .init(title: $0.title, start: $0.progression) }, positionCount: max(1, count))
 
+        // The first page can take seconds to lay out on a cold web view; nothing below means anything
+        // until the navigator reports where it is.
+        await waitForLocation()
         if let goTo = LaunchOptions.goTo, let locator = await publication.locate(progression: goTo) {
             hasMoved = true
-            await host?.go(to: locator)
+            // Readium refuses a jump while it is still loading; try until it takes.
+            var tries = 0
+            while await host?.go(to: locator) != true, tries < 50 {
+                tries += 1
+                try? await Task.sleep(for: .milliseconds(200))
+            }
         }
         try? await Task.sleep(for: .milliseconds(300))
         await captureAnchor()
         await checkRemote()
+    }
+
+    private func waitForLocation() async {
+        for _ in 0..<150 where host?.navigator.currentLocation == nil {
+            try? await Task.sleep(for: .milliseconds(200))
+        }
+        if location == nil { location = host?.navigator.currentLocation }
     }
 
     /// Ask the other device where it is; offer a jump if it's further ahead.

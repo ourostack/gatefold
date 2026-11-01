@@ -168,8 +168,9 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         guard let location = navigator.currentLocation else { return nil }
         _ = await navigator.evaluateJavaScript(ReaderJS.install)
         let json = (try? await navigator.evaluateJavaScript(ReaderJS.anchor(column: 0)).get()) as? String
-        struct Found: Decodable { var highlight: String; var before: String? }
+        struct Found: Decodable { var highlight: String; var before: String?; var heading: String? }
         let found = json.flatMap { $0.data(using: .utf8) }.flatMap { try? JSONDecoder().decode(Found.self, from: $0) }
+        weakModel?.heading = found?.heading.map(ReaderJS.tidyHeading)
         let anchor = ReadingAnchor(
             href: location.href.string,
             progression: location.locations.progression ?? 0,
@@ -398,8 +399,9 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
 
     // MARK: Jumps
 
-    func go(to locator: Locator) async {
-        _ = await navigator.go(to: locator, options: .init(animated: false))
+    @discardableResult
+    func go(to locator: Locator) async -> Bool {
+        await navigator.go(to: locator, options: .init(animated: false))
     }
 
     func go(to link: ReadiumShared.Link) async {
