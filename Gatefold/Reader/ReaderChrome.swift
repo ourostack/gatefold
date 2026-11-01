@@ -282,12 +282,7 @@ struct TabletopDeck: View {
                 .padding(.horizontal, 8)
             HStack(spacing: 22) {
                 GlassIconButton(systemName: "list.bullet", label: "Contents", id: "deck.contents") { showContents = true }
-                GlassIconButton(systemName: "textformat.size.smaller", label: "Smaller Text", id: "deck.smaller") {
-                    model.setPreferences { _ = $0.stepFont(up: false) }
-                }
-                GlassIconButton(systemName: "textformat.size.larger", label: "Larger Text", id: "deck.larger") {
-                    model.setPreferences { _ = $0.stepFont(up: true) }
-                }
+                TextSizeControl(model: model, idPrefix: "deck", large: true)
                 GlassIconButton(
                     systemName: model.isBookmarked ? "bookmark.fill" : "bookmark",
                     label: "Bookmark",

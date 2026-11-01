@@ -11,13 +11,7 @@ struct AppearanceSheet: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 26) {
                 HStack(spacing: 12) {
-                    sizeButton(up: false)
-                    Text("\(Int((prefs.fontScale * 100).rounded()))%")
-                        .font(.subheadline.monospacedDigit())
-                        .foregroundStyle(.secondary)
-                        .frame(minWidth: 52)
-                        .contentTransition(.numericText())
-                    sizeButton(up: true)
+                    TextSizeControl(model: model, idPrefix: "appearance")
                     Spacer()
                     Picker("Page Turn", selection: Binding(
                         get: { prefs.pageTurn },
@@ -122,19 +116,6 @@ struct AppearanceSheet: View {
         .presentationDragIndicator(.visible)
         .sensoryFeedback(.selection, trigger: model.preferences)
         .animation(.snappy, value: model.preferences)
-    }
-
-    private func sizeButton(up: Bool) -> some View {
-        Button {
-            model.setPreferences { _ = $0.stepFont(up: up) }
-        } label: {
-            Image(systemName: "textformat.size")
-                .font(.system(size: up ? 22 : 14, weight: .semibold))
-                .frame(width: 52, height: 44)
-        }
-        .buttonStyle(.glass)
-        .accessibilityLabel(up ? "Larger Text" : "Smaller Text")
-        .accessibilityIdentifier(up ? "appearance.larger" : "appearance.smaller")
     }
 
     private func labeled<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
@@ -286,5 +267,45 @@ struct ContentsSheet: View {
         let level0 = model.toc.filter { $0.level == 0 }
         guard let i = model.chapterMap.chapterIndex(at: model.totalProgression), i < level0.count else { return false }
         return level0[i].id == entry.id
+    }
+}
+
+/// Smaller and larger text, unmistakably: a small A and a large A either side of the current size,
+/// in one capsule, the way Books does it.
+struct TextSizeControl: View {
+    let model: ReaderModel
+    var idPrefix: String
+    var large = false
+
+    var body: some View {
+        let scale = model.preferences.fontScale
+        HStack(spacing: 0) {
+            step(up: false)
+            Text("\(Int((scale * 100).rounded()))%")
+                .font((large ? Font.subheadline : .footnote).monospacedDigit().weight(.medium))
+                .foregroundStyle(.secondary)
+                .frame(minWidth: large ? 56 : 48)
+                .contentTransition(.numericText(value: scale))
+                .accessibilityHidden(true)
+            step(up: true)
+        }
+        .glassEffect(.regular.interactive(), in: .capsule)
+        .animation(.snappy, value: scale)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Text Size")
+    }
+
+    private func step(up: Bool) -> some View {
+        Button {
+            model.setPreferences { _ = $0.stepFont(up: up) }
+        } label: {
+            Text("A")
+                .font(.system(size: up ? (large ? 25 : 22) : (large ? 15 : 13), weight: .semibold, design: .serif))
+                .frame(width: large ? 58 : 50, height: large ? 50 : 44)
+                .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(up ? "Larger Text" : "Smaller Text")
+        .accessibilityIdentifier("\(idPrefix).\(up ? "larger" : "smaller")")
     }
 }

@@ -9,6 +9,12 @@ final class AppModel {
     let sync: any SyncService
     let library: LibraryStore
     private(set) var account: CloudAccount?
+    /// The Cloud turned the saved sign-in away (expired or revoked). Downloaded books and places stay;
+    /// the library offers to reconnect with this email.
+    private(set) var needsReconnect: String?
+    /// The open reader, so coming back to the app can ask the Cloud where the other device is.
+    weak var activeReader: ReaderModel?
+    @ObservationIgnored private var lastForegroundRefresh = Date.distantPast
     var preferences: PreferencesStore {
         didSet { savePreferences() }
     }
@@ -31,10 +37,7 @@ final class AppModel {
             UserDefaults.standard.removeObject(forKey: Keys.onboarded)
             UserDefaults.standard.removeObject(forKey: Keys.preferences)
         }
-        let service = sync ?? FakeSyncService(
-            signedIn: LaunchOptions.signedIn,
-            latency: LaunchOptions.noLatency || LaunchOptions.isUITest ? .zero : .milliseconds(450)
-        )
+        let service = sync ?? Self.makeSyncService()
         self.sync = service
         self.library = LibraryStore(sync: service, root: libraryRoot)
         if LaunchOptions.resetState { library.wipe() }
@@ -58,7 +61,22 @@ final class AppModel {
         self.openBookID = LaunchOptions.openBook
     }
 
+    /// PocketBook Cloud, unless a launch argument asks for the fake (previews, UI tests, screenshots).
+    static func makeSyncService() -> any SyncService {
+        if LaunchOptions.fakeCloud {
+            return FakeSyncService(
+                signedIn: LaunchOptions.signedIn,
+                scenario: LaunchOptions.fakeScenario,
+                latency: LaunchOptions.noLatency || LaunchOptions.isUITest ? .zero : .milliseconds(450)
+            )
+        }
+        let storage = URL.applicationSupportDirectory.appending(path: "GatefoldCloud", directoryHint: .isDirectory)
+        return PocketBookCloud(configuration: .init(storageDirectory: storage))
+    }
+
     func start() async {
+        // A clean start forgets the Cloud sign-in too (its tokens live in the Keychain, which survives reinstalls).
+        if LaunchOptions.resetState, await sync.account != nil { await sync.signOut() }
         account = await sync.account
         // Listen before the first fetch, so its announcement lands too.
         let changes = sync.changes()
@@ -68,7 +86,8 @@ final class AppModel {
                 await self.apply(change)
             }
         }
-        await library.refresh()
+        await refresh()
+        lastForegroundRefresh = Date()
         if LaunchOptions.downloadAll {
             for book in library.books where !book.isOnDevice {
                 await library.download(book)
@@ -97,12 +116,14 @@ final class AppModel {
             library.update(fastHash) { $0.remote = position }
         case let .signedIn(account):
             self.account = account
+            needsReconnect = nil
         case .signedOut:
             account = nil
+            needsReconnect = nil
             library.forgetCloudOnlyBooks()
         case .authenticationRequired:
-            // The account menu offers "Connect PocketBook Cloud" again; downloaded books and places stay.
-            account = nil
+            // Keep the shelf and the account's name; the library offers to sign in again.
+            needsReconnect = account?.email ?? needsReconnect ?? ""
         case .annotations, .annotationSaved, .outbox:
             break
         }
@@ -110,6 +131,7 @@ final class AppModel {
 
     func didSignIn(_ account: CloudAccount) async {
         self.account = account
+        needsReconnect = nil
         hasOnboarded = true
         await library.refresh()
     }
@@ -117,7 +139,36 @@ final class AppModel {
     func signOut() async {
         await sync.signOut()
         account = nil
+        needsReconnect = nil
         library.forgetCloudOnlyBooks()
+    }
+
+    /// Fetching the shelf can also discover that the sign-in has expired.
+    func refresh() async {
+        await library.refresh()
+        if library.syncProblem == .signInExpired { needsReconnect = account?.email ?? needsReconnect ?? "" }
+    }
+
+    /// Back in the foreground: refresh the shelf (at most every half minute) and ask where the other
+    /// device is for the open book.
+    func didBecomeActive() async {
+        guard account != nil else { return }
+        if Date().timeIntervalSince(lastForegroundRefresh) > 30 {
+            lastForegroundRefresh = Date()
+            await refresh()
+        }
+        await activeReader?.checkRemote()
+    }
+
+    /// Sign-in first needs PocketBook's web-app client pair, which takes a while to fetch; start it
+    /// while the reader is still admiring the welcome screen or typing their email.
+    func prepareSignIn() async {
+        await (sync as? PocketBookCloud)?.prepareSignIn()
+    }
+
+    /// Leaving the app or closing a book: send the place now rather than after the debounce.
+    func sendPlaceNow() async {
+        await library.sendPendingPushes()
     }
 
     private func savePreferences() {

@@ -11,7 +11,10 @@ final class LibraryStore {
     private(set) var downloads: [String: DownloadState] = [:]
     private(set) var covers: [String: UIImage] = [:]
     private(set) var isRefreshing = false
+    /// An import that failed (shown as an alert: the reader just asked for it).
     var lastError: String?
+    /// Why the last refresh didn't reach the Cloud (shown quietly on the shelf, never as an alert).
+    private(set) var syncProblem: SyncProblem?
     @ObservationIgnored private var pushes: [String: Task<Void, Never>] = [:]
     @ObservationIgnored private var pending: [String: (ReadingPosition, CloudBook)] = [:]
 
@@ -62,14 +65,30 @@ final class LibraryStore {
         isRefreshing = true
         defer { isRefreshing = false }
         do {
-            var cloudBooks = try await sync.library()
-            for i in cloudBooks.indices {
-                if let remote = try? await sync.remotePosition(for: cloudBooks[i]) { cloudBooks[i].position = remote }
-            }
+            // One request per page of books: each book already carries its position.
+            let cloudBooks = try await sync.library()
+            syncProblem = nil
+            prune(keeping: Set(cloudBooks.map(\.id)))
             await merge(cloudBooks)
         } catch {
-            lastError = error.localizedDescription
+            syncProblem = SyncProblem(error)
         }
+    }
+
+    /// After a full fetch: Cloud books that are no longer in the Cloud leave the shelf (a downloaded one
+    /// stays, unlinked). The fake Cloud's demo books never belong on a real account's shelf.
+    func prune(keeping cloudIDs: Set<String>) {
+        for book in books where book.origin == .cloud && !cloudIDs.contains(book.id) {
+            if book.isDemo {
+                if let url = fileURL(of: book) { try? FileManager.default.removeItem(at: url) }
+                books.removeAll { $0.id == book.id }
+                covers[book.id] = nil
+                try? FileManager.default.removeItem(at: coversDir.appending(path: "\(book.id).jpg"))
+            } else {
+                cloudBookRemoved(book.id)
+            }
+        }
+        save()
     }
 
     /// Puts cloud books on the shelf, or updates the ones already there. Never fetches the library.
@@ -92,7 +111,7 @@ final class LibraryStore {
         }
         save()
         for cloudBook in cloudBooks where covers[cloudBook.id] == nil {
-            if let url = cloudBook.coverURL { await loadCover(id: cloudBook.id, from: url) }
+            if let url = cloudBook.largeCoverURL ?? cloudBook.coverURL { await loadCover(id: cloudBook.id, from: url) }
         }
     }
 
@@ -124,7 +143,8 @@ final class LibraryStore {
             if FileManager.default.fileExists(atPath: target.path) {
                 try FileManager.default.removeItem(at: target)
             }
-            try FileManager.default.copyItem(at: temp, to: target)
+            // The Cloud keeps its verified copy; a hard link shares it instead of doubling the space.
+            do { try FileManager.default.linkItem(at: temp, to: target) } catch { try FileManager.default.copyItem(at: temp, to: target) }
             update(book.id) { $0.fileName = name }
             downloads[book.id] = nil
             if covers[book.id] == nil, let meta = try? await BookOpener.shared.metadata(of: target), let cover = meta.cover {
@@ -183,15 +203,19 @@ final class LibraryStore {
         save()
     }
 
-    func recordPlace(bookID: String, locatorJSON: String, totalProgression: Double, progression: Double) {
-        let now = Date()
+    /// Saves the place here and queues it for the Cloud. `position` carries the exact CFI when the
+    /// reader could make one; without it the Cloud gets a percent.
+    func recordPlace(bookID: String, locatorJSON: String, totalProgression: Double, progression: Double,
+                     position exact: ReadingPosition? = nil, at now: Date = Date()) {
         update(bookID) {
             $0.locatorJSON = locatorJSON
             $0.totalProgression = totalProgression
             $0.lastOpened = now
         }
         guard let cloud = book(bookID)?.cloud else { return }
-        let position = ReadingPosition(cfi: nil, progression: progression, totalProgression: totalProgression, updated: now, source: .gatefold)
+        var position = exact ?? ReadingPosition(cfi: nil, progression: progression, totalProgression: totalProgression, updated: now)
+        position.updated = now
+        position.source = .gatefold
         // One push per book at a time, latest wins: rapid turns settle on the last page, in order.
         pending[bookID] = (position, cloud)
         schedulePush(bookID, after: .milliseconds(400))
@@ -201,6 +225,17 @@ final class LibraryStore {
     func flushPushes() {
         for id in pending.keys { schedulePush(id, after: .zero) }
     }
+
+    /// Hands every waiting place to the sync service and asks it to send at once (book closed, app
+    /// leaving). Returns when the service has tried.
+    func sendPendingPushes() async {
+        flushPushes()
+        for task in Array(pushes.values) { await task.value }
+        await sync.flushOutbox()
+    }
+
+    /// The place waiting to go to the Cloud for a book (tests).
+    func pendingPush(for bookID: String) -> ReadingPosition? { pending[bookID]?.0 }
 
     private func schedulePush(_ bookID: String, after delay: Duration) {
         let previous = pushes[bookID]
@@ -219,6 +254,21 @@ final class LibraryStore {
         let remote = try? await sync.remotePosition(for: cloud)
         if let remote { update(book.id) { $0.remote = remote } }
         return remote
+    }
+
+    /// What the shelf shows when the Cloud can't be reached.
+    enum SyncProblem: Equatable {
+        case offline
+        case signInExpired
+        case other(String)
+
+        init(_ error: Error) {
+            switch error as? CloudError {
+            case .offline?, .network(_)?: self = .offline
+            case .authenticationRequired?, .notSignedIn?: self = .signInExpired
+            default: self = .other(error.localizedDescription)
+            }
+        }
     }
 
     // MARK: Covers

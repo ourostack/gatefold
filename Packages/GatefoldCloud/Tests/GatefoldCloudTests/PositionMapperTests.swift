@@ -5,8 +5,12 @@ import Testing
 /// Frankenstein (Project Gutenberg #84), the book used in the web-reader round trip.
 private func mapper() throws -> PositionMapper {
     let spine = try SpineMap(opf: Fixture.data("frankenstein/content.opf"), opfPath: "OEBPS/content.opf")
+    // Only two chapters are fixtures; the rest of the book is simply missing, as an unreadable resource would be.
     return PositionMapper(spine: spine) { href in
-        try Fixture.data("frankenstein/" + (href as NSString).lastPathComponent)
+        guard let url = Bundle.module.url(forResource: "Fixtures/frankenstein/" + (href as NSString).lastPathComponent, withExtension: nil) else {
+            throw CocoaError(.fileNoSuchFile)
+        }
+        return try Data(contentsOf: url)
     }
 }
 
@@ -42,6 +46,39 @@ struct PositionMapperTests {
         let back = try #require(await m.location(for: position))
         #expect(back.href == Fixture.chapter1Href)
         #expect(abs(try #require(back.progression) - 0.5) < 0.01, "the CFI lands where the reader was")
+    }
+
+    /// Readium's progression is a page boundary, not a character; the first words on screen are exact.
+    @Test func anchorsTheCFIOnTheFirstWordsOnScreen() async throws {
+        let m = try mapper()
+        // The page starts mid-chapter: progression says "near the top", the words say exactly where.
+        let location = BookLocation(href: Fixture.chapter1Href, progression: 0.0, totalProgression: 0.09,
+                                    textHighlight: "I am by birth a Genevese, and my family")
+        let position = try #require(await m.position(for: location, at: utc("2026-10-31T22:00:00Z")))
+        let back = try #require(await m.location(for: position))
+        #expect(back.textAfter?.hasPrefix("I am by birth a Genevese") == true)
+    }
+
+    /// Readium can still report the last resource just after a turn into the next one, while the
+    /// words on screen already come from the new chapter. The words win.
+    @Test func followsTheWordsIntoTheNextResource() async throws {
+        let m = try mapper()
+        let location = BookLocation(href: "OEBPS/4328224471496264690_84-h-5.htm.xhtml", progression: 0.97, totalProgression: 0.08,
+                                    textHighlight: "Chapter 1")
+        let position = try #require(await m.position(for: location, at: utc("2026-10-31T22:00:00Z")))
+        #expect(position.parsedCFI?.spineItemID == "item9")
+        let back = try #require(await m.location(for: position))
+        #expect(back.href == Fixture.chapter1Href)
+        #expect(back.textAfter?.hasPrefix("Chapter 1") == true)
+    }
+
+    @Test func fallsBackToProgressionWhenTheWordsAreNotInTheResource() async throws {
+        let m = try mapper()
+        let location = BookLocation(href: Fixture.chapter1Href, progression: 0.5, totalProgression: 0.12,
+                                    textHighlight: "words that never appear in Frankenstein at all")
+        let position = try #require(await m.position(for: location, at: utc("2026-10-31T22:00:00Z")))
+        let back = try #require(await m.location(for: position))
+        #expect(abs(try #require(back.progression) - 0.5) < 0.01)
     }
 
     @Test func keepsACFIReadiumAlreadyHas() async throws {

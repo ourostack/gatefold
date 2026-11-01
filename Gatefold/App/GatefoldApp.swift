@@ -14,7 +14,19 @@ struct GatefoldApp: App {
                 .task { await app.start() }
         }
         .onChange(of: scenePhase) { _, phase in
-            if phase != .active { app.library.flushPushes() }
+            switch phase {
+            case .active:
+                Task { await app.didBecomeActive() }
+            case .background:
+                // Finish sending the place even if the app is suspended mid-request.
+                let task = UIApplication.shared.beginBackgroundTask(withName: "Send reading place")
+                Task {
+                    await app.sendPlaceNow()
+                    UIApplication.shared.endBackgroundTask(task)
+                }
+            default:
+                app.library.flushPushes()
+            }
         }
     }
 }
@@ -41,6 +53,8 @@ struct RootView: View {
             ReaderScreen(model: model) {
                 reader = nil
                 app.openBookID = nil
+                app.activeReader = nil
+                Task { await app.sendPlaceNow() }
             }
             .navigationTransition(.zoom(sourceID: model.bookID, in: covers))
             // The zoom's swipe-to-dismiss would take edge drags meant for turning back a page.
@@ -65,7 +79,9 @@ struct RootView: View {
             defer { opening = false }
             do {
                 let publication = try await BookOpener.shared.open(url)
-                reader = ReaderModel(book: book, publication: publication, app: app)
+                let model = ReaderModel(book: book, publication: publication, app: app)
+                reader = model
+                app.activeReader = model
                 app.openBookID = book.id
             } catch {
                 openError = error.localizedDescription

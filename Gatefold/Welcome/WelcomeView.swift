@@ -19,12 +19,14 @@ struct WelcomeView: View {
                     Text("Gatefold")
                         .font(.system(size: 44, weight: .bold, design: .serif))
                         .foregroundStyle(Color.ink)
-                    Text("Your PocketBook library, wherever you are. Pick up on your phone exactly where your InkPad left off.")
+                    Text("Your PocketBook shelf, now in your pocket. Open a book and land on the very page your InkPad left off.")
                         .font(.title3)
                         .multilineTextAlignment(.center)
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: 380)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
+                .padding(.horizontal, 28)
                 .opacity(opened ? 1 : 0)
                 .offset(y: opened ? 0 : 12)
                 Spacer(minLength: 20)
@@ -56,6 +58,7 @@ struct WelcomeView: View {
             .background(Color.paper)
             .navigationDestination(isPresented: $signingIn) { SignInFlow() }
         }
+        .task { await app.prepareSignIn() }
         .task {
             try? await Task.sleep(for: .milliseconds(250))
             withAnimation(reduceMotion ? .easeOut(duration: 0.2) : .spring(duration: 1.1, bounce: 0.12)) { opened = true }
@@ -119,6 +122,9 @@ struct GatefoldMark: View {
 struct SignInFlow: View {
     @Environment(AppModel.self) private var app
     @Environment(\.dismiss) private var dismiss
+    /// Signing in again after the Cloud let the sign-in lapse: the email is known.
+    var prefilledEmail: String?
+    var onDone: (() -> Void)?
 
     private enum Step: Hashable { case email, store, password }
 
@@ -130,7 +136,25 @@ struct SignInFlow: View {
     @State private var working = false
     @State private var error: String?
     @State private var failures = 0
+    /// Live UI tests: what the debug password fill did (never the password).
+    @State private var debugFill = ""
     @FocusState private var focused: Bool
+
+    #if DEBUG
+    private func fillFromLiveTestDriver() {
+        guard let path = ProcessInfo.processInfo.environment["GATEFOLD_LIVE_CREDENTIAL_FILE"] else {
+            debugFill = "no-path"; return
+        }
+        let file = URL(filePath: path)
+        do {
+            password = try String(contentsOf: file, encoding: .utf8).trimmingCharacters(in: .newlines)
+            debugFill = password.isEmpty ? "empty" : "filled"
+        } catch {
+            debugFill = "unreadable: \((error as NSError).domain) \((error as NSError).code)"
+        }
+        try? FileManager.default.removeItem(at: file)
+    }
+    #endif
 
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
@@ -181,6 +205,18 @@ struct SignInFlow: View {
                         .accessibilityIdentifier("signIn.password")
                 }
                 .modifier(Shake(amount: CGFloat(failures)))
+                #if DEBUG
+                if LaunchOptions.isUITest {
+                    // Live UI tests only: the driver writes the test account's password to a private file and
+                    // passes its path; it's read into the field and deleted, never typed or logged. This
+                    // reports what happened (never the password).
+                    Text(debugFill)
+                        .font(.caption2)
+                        .opacity(0.02)
+                        .accessibilityIdentifier("debug.fillPassword")
+                        .onAppear(perform: fillFromLiveTestDriver)
+                }
+                #endif
             }
             if let error {
                 Label(error, systemImage: "exclamationmark.circle")
@@ -214,7 +250,11 @@ struct SignInFlow: View {
         .animation(Motion.open, value: step)
         .animation(.default, value: error)
         .sensoryFeedback(.error, trigger: failures)
-        .onAppear { focused = true }
+        .onAppear {
+            if let prefilledEmail, !prefilledEmail.isEmpty, email.isEmpty { email = prefilledEmail }
+            focused = true
+        }
+        .task { await app.prepareSignIn() }
         .toolbar {
             if step != .email {
                 ToolbarItem(placement: .topBarLeading) {
@@ -275,6 +315,7 @@ struct SignInFlow: View {
                     guard let store else { return }
                     let account = try await app.sync.signIn(email: email, password: password, store: store)
                     await app.didSignIn(account)
+                    onDone?()
                 case .store:
                     break
                 }

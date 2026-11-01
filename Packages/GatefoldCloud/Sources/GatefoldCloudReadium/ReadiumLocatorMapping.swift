@@ -11,7 +11,8 @@ public extension BookLocation {
     init(_ locator: Locator) {
         let cfi: String? = if case let .string(value)? = locator.locations.otherLocations["cfi"] { value } else { nil }
         self.init(href: locator.href.string, progression: locator.locations.progression,
-                  totalProgression: locator.locations.totalProgression, cfi: cfi, textAfter: locator.text.after)
+                  totalProgression: locator.locations.totalProgression, cfi: cfi, textAfter: locator.text.after,
+                  textHighlight: locator.text.highlight)
     }
 }
 
@@ -23,7 +24,7 @@ public extension Locator {
         if let cfi = location.cfi { other["cfi"] = .string(cfi) }
         self.init(href: href, mediaType: mediaType, title: title,
                   locations: .init(progression: location.progression, totalProgression: location.totalProgression, otherLocations: other),
-                  text: .init(after: location.textAfter))
+                  text: .init(after: location.textAfter, highlight: location.textHighlight))
     }
 }
 #endif

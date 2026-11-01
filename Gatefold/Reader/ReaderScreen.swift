@@ -71,6 +71,15 @@ struct ReaderScreen: View {
                 }
 
                 if LaunchOptions.isUITest {
+                    Text("visible text")
+                        .font(.system(size: 1))
+                        .opacity(0.01)
+                        .accessibilityIdentifier("reader.visibleText")
+                        .accessibilityValue(model.visibleTextProbe)
+                        .allowsHitTesting(false)
+                }
+
+                if LaunchOptions.isUITest {
                 Text(model.anchorCheck)
                     .font(.system(size: 1))
                     .opacity(0.01)
