@@ -53,7 +53,13 @@ jobs:
           xcodebuild build-for-testing -project Gatefold.xcodeproj -scheme Gatefold \
             -destination "${{ steps.sim.outputs.destination }}" -only-testing:GatefoldUITests/DemoUITests \
             -derivedDataPath "$RUNNER_TEMP/duo/DerivedData" CODE_SIGNING_ALLOWED=NO 2>&1 | tail -40
-          xcrun simctl install "${{ steps.sim.outputs.udid }}" "$RUNNER_TEMP/duo/DerivedData/Build/Products/Debug-iphonesimulator/Gatefold.app"
+          # CoreSimulator sometimes restarts right after a build ("Mach error -308, server died"); wait for the device and try again.
+          for attempt in 1 2 3; do
+            xcrun simctl bootstatus "${{ steps.sim.outputs.udid }}" -b >/dev/null 2>&1 || true
+            if xcrun simctl install "${{ steps.sim.outputs.udid }}" "$RUNNER_TEMP/duo/DerivedData/Build/Products/Debug-iphonesimulator/Gatefold.app"; then break; fi
+            [ "$attempt" = 3 ] && exit 1
+            sleep 15
+          done
       - name: Open DeviceHub
         run: |
           set -euo pipefail
