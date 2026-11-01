@@ -8,7 +8,7 @@ final class DemoUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = [
             "-GatefoldUITest", "YES", "-GatefoldReset", "YES", "-GatefoldSkipWelcome", "YES", "-GatefoldSignedIn", "YES",
-            "-GatefoldDownloadAll", "YES", "-GatefoldOpenBook", "gutenberg-alice-in-wonderland",
+            "-GatefoldDownloadAll", "YES", "-GatefoldNoLatency", "YES", "-GatefoldOpenBook", "gutenberg-alice-in-wonderland",
             "-GatefoldGoTo", "0.12", "-GatefoldTheme", "vellum",
         ]
         app.launch()

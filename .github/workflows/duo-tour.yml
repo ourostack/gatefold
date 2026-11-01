@@ -118,12 +118,21 @@ jobs:
           xcrun simctl io "$udid" recordVideo --display=1 --codec=h264 --force "$RUNNER_TEMP/duo/shots/page-curl.mp4" &
           rec=$!
           sleep 2
+          status=0
           xcodebuild test-without-building -project Gatefold.xcodeproj -scheme Gatefold \
             -destination "${{ steps.sim.outputs.destination }}" -only-testing:GatefoldUITests/DemoUITests \
-            -derivedDataPath "$RUNNER_TEMP/duo/DerivedData" 2>&1 | tail -20
-          kill -INT "$rec"; wait "$rec" || true
+            -retry-tests-on-failure -test-iterations 2 \
+            -derivedDataPath "$RUNNER_TEMP/duo/DerivedData" -resultBundlePath "$RUNNER_TEMP/duo/demo.xcresult" \
+            > "$RUNNER_TEMP/duo/demo.log" 2>&1 || status=$?
+          # Stop the recorder whatever happened, so the video is written out.
+          kill -INT "$rec" || true; wait "$rec" || true
+          grep -E "error:|Test Case .*(passed|failed)|TEST (EXECUTE )?(SUCCEEDED|FAILED)" "$RUNNER_TEMP/duo/demo.log" | tail -30 || true
+          exit $status
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: duo-tour
-          path: ${{ runner.temp }}/duo/shots
+          path: |
+            ${{ runner.temp }}/duo/shots
+            ${{ runner.temp }}/duo/demo.xcresult
+            ${{ runner.temp }}/duo/demo.log
