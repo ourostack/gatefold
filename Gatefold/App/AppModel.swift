@@ -53,10 +53,11 @@ final class AppModel {
         self.preferences = prefs!
         self.hasOnboarded = LaunchOptions.skipWelcome || UserDefaults.standard.bool(forKey: Keys.onboarded)
         if let theme = LaunchOptions.theme {
-            preferences.updateDefaults {
-                $0.theme = theme
-                $0.matchSystemAppearance = false
-            }
+            // A screenshot switch: every book wears this theme, whatever a book was given before.
+            var forced = preferences.defaults
+            forced.theme = theme
+            forced.matchSystemAppearance = false
+            preferences = PreferencesStore(defaults: forced)
         }
         self.openBookID = LaunchOptions.openBook
     }

@@ -66,7 +66,12 @@ struct ReaderScreen: View {
                         model.dismissSuggestion()
                     }
                     .frame(width: min(proxy.size.width - 32, 460))
-                    .position(x: layout.gutter.map { _ in proxy.size.width * 0.75 } ?? proxy.size.width / 2, y: proxy.safeAreaInsets.top + 60)
+                    // With the controls up, the banner drops below the title instead of covering it.
+                    .position(
+                        x: layout.gutter.map { _ in proxy.size.width * 0.75 } ?? proxy.size.width / 2,
+                        y: proxy.safeAreaInsets.top + 60 + (model.chromeVisible ? 58 : 0)
+                    )
+                    .animation(Motion.chrome, value: model.chromeVisible)
                     .transition(.move(edge: .top).combined(with: .opacity))
                 }
 

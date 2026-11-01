@@ -134,7 +134,7 @@ struct LibraryView: View {
                 }
             }
             section("All Books") {
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 104, maximum: 150), spacing: 20, alignment: .bottom)], spacing: 28) {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 100), spacing: 12, alignment: .bottomLeading)], spacing: 28) {
                     ForEach(library.allBooks) { book in
                         BookTile(book: book, size: .grid, namespace: namespace, onOpen: onOpen)
                     }
@@ -172,7 +172,7 @@ struct BookTile: View {
 
     var body: some View {
         let state = app.library.state(of: book)
-        let width: CGFloat = size == .large ? 150 : 110
+        let width: CGFloat = size == .large ? 150 : 100
         Button {
             switch state {
             case .onDevice: onOpen(book)
