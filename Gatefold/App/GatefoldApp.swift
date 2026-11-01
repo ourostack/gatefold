@@ -14,7 +14,22 @@ struct GatefoldApp: App {
                 .task { await app.start() }
         }
         .onChange(of: scenePhase) { _, phase in
-            if phase != .active { app.library.flushPushes() }
+            switch phase {
+            case .active:
+                Task { await app.didBecomeActive() }
+            case .background:
+                // Finish sending the place even if the app is suspended mid-request.
+                // iOS ends the grace period if the network hangs; whichever comes first ends the task once.
+                let finish = BackgroundTaskEnd()
+                let task = UIApplication.shared.beginBackgroundTask(withName: "Send reading place") { finish.end() }
+                finish.task = task
+                Task {
+                    await app.sendPlaceNow()
+                    finish.end()
+                }
+            default:
+                app.library.flushPushes()
+            }
         }
     }
 }
@@ -41,6 +56,8 @@ struct RootView: View {
             ReaderScreen(model: model) {
                 reader = nil
                 app.openBookID = nil
+                app.activeReader = nil
+                Task { await app.sendPlaceNow() }
             }
             .navigationTransition(.zoom(sourceID: model.bookID, in: covers))
             // The zoom's swipe-to-dismiss would take edge drags meant for turning back a page.
@@ -65,7 +82,9 @@ struct RootView: View {
             defer { opening = false }
             do {
                 let publication = try await BookOpener.shared.open(url)
-                reader = ReaderModel(book: book, publication: publication, app: app)
+                let model = ReaderModel(book: book, publication: publication, app: app)
+                reader = model
+                app.activeReader = model
                 app.openBookID = book.id
             } catch {
                 openError = error.localizedDescription
@@ -76,4 +95,15 @@ struct RootView: View {
 
 extension ReaderModel: Identifiable {
     nonisolated var id: String { bookID }
+}
+
+/// Ends a background task exactly once, from the expiration handler or the finished work.
+@MainActor
+private final class BackgroundTaskEnd {
+    var task: UIBackgroundTaskIdentifier = .invalid
+    func end() {
+        guard task != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(task)
+        task = .invalid
+    }
 }

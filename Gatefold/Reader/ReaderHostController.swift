@@ -181,14 +181,22 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         return VisibleRange(href: location.href.string, start: start, end: max(start, min(1, end ?? start + 0.0001)), text: text)
     }
 
+    /// Where `quote` is in the resource on screen, as a progression; nil when it isn't there.
+    func progression(of quote: String) async -> Double? {
+        _ = await navigator.evaluateJavaScript(ReaderJS.install)
+        return (try? await navigator.evaluateJavaScript(ReaderJS.progressionOf(quote)).get()) as? Double
+    }
+
     /// The first words on the page the reader is on.
     func currentAnchor() async -> (ReadingAnchor, Locator)? {
         guard let location = navigator.currentLocation else { return nil }
         _ = await navigator.evaluateJavaScript(ReaderJS.install)
-        let json = (try? await navigator.evaluateJavaScript(ReaderJS.anchor(column: 0)).get()) as? String
-        struct Found: Decodable { var highlight: String; var before: String?; var heading: String? }
+        let anchors = weakModel?.contents.fragments(in: location.href.string) ?? []
+        let json = (try? await navigator.evaluateJavaScript(ReaderJS.anchor(column: 0, contentsAnchors: anchors)).get()) as? String
+        struct Found: Decodable { var highlight: String; var before: String?; var heading: String?; var contents: String? }
         let found = json.flatMap { $0.data(using: .utf8) }.flatMap { try? JSONDecoder().decode(Found.self, from: $0) }
         weakModel?.heading = found?.heading.map(ReaderJS.tidyHeading)
+        weakModel?.contentsFragment = found?.contents
         let anchor = ReadingAnchor(
             href: location.href.string,
             progression: location.locations.progression ?? 0,

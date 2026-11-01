@@ -54,6 +54,11 @@ enum LaunchOptions {
     static var isUITest: Bool { defaults.bool(forKey: "GatefoldUITest") }
     static var resetState: Bool { defaults.bool(forKey: "GatefoldReset") }
     static var skipWelcome: Bool { defaults.bool(forKey: "GatefoldSkipWelcome") }
+    /// Use the in-memory `FakeSyncService` (bundled public-domain books) instead of PocketBook Cloud.
+    /// For previews, UI tests and screenshots; a real launch always talks to the Cloud.
+    /// `-GatefoldSignedIn` means "a fake account is already signed in", so it implies the fake too.
+    static var fakeCloud: Bool { defaults.bool(forKey: "GatefoldFakeCloud") || signedIn }
+    /// Fake Cloud only: start signed in.
     static var signedIn: Bool { defaults.bool(forKey: "GatefoldSignedIn") }
     static var openBook: String? { defaults.string(forKey: "GatefoldOpenBook") }
     static var goTo: Double? { defaults.object(forKey: "GatefoldGoTo") == nil ? nil : defaults.double(forKey: "GatefoldGoTo") }
@@ -63,4 +68,8 @@ enum LaunchOptions {
     static var noLatency: Bool { defaults.bool(forKey: "GatefoldNoLatency") }
     static var downloadAll: Bool { defaults.bool(forKey: "GatefoldDownloadAll") }
     static var sheet: String? { defaults.string(forKey: "GatefoldSheet") }
+    /// Fake Cloud only: `empty`, `offline` or `expired`, for screenshots of those states.
+    static var fakeScenario: FakeSyncService.Scenario {
+        defaults.string(forKey: "GatefoldFakeScenario").flatMap(FakeSyncService.Scenario.init(rawValue:)) ?? .normal
+    }
 }

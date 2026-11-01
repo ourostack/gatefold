@@ -7,7 +7,7 @@ final class DemoUITests: XCTestCase {
     func testCurlDemo() {
         let app = XCUIApplication()
         app.launchArguments = [
-            "-GatefoldUITest", "YES", "-GatefoldReset", "YES", "-GatefoldSkipWelcome", "YES", "-GatefoldSignedIn", "YES",
+            "-GatefoldUITest", "YES", "-GatefoldFakeCloud", "YES", "-GatefoldReset", "YES", "-GatefoldSkipWelcome", "YES", "-GatefoldSignedIn", "YES",
             "-GatefoldDownloadAll", "YES", "-GatefoldNoLatency", "YES", "-GatefoldOpenBook", "gutenberg-alice-in-wonderland",
             "-GatefoldGoTo", "0.12", "-GatefoldTheme", "vellum",
         ]

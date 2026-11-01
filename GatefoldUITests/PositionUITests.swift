@@ -19,7 +19,7 @@ final class PositionUITests: XCTestCase {
 
     private func launch(_ extra: [String] = []) {
         app.launchArguments = [
-            "-GatefoldUITest", "YES", "-GatefoldReset", "YES", "-GatefoldSkipWelcome", "YES",
+            "-GatefoldUITest", "YES", "-GatefoldFakeCloud", "YES", "-GatefoldReset", "YES", "-GatefoldSkipWelcome", "YES",
             "-GatefoldSignedIn", "YES", "-GatefoldDownloadAll", "YES",
             "-GatefoldOpenBook", "gutenberg-pride-and-prejudice", "-GatefoldGoTo", "0.31",
             "-GatefoldTheme", "vellum",

@@ -41,7 +41,7 @@
           }
         ],
         "build": {
-          "whatsNew": "First light: your library, a reader with page curl and six themes, and iPhone Duo spreads and tabletop.",
+          "whatsNew": "Now with real PocketBook Cloud sync: sign in, find your shelf, and pick up exactly where your InkPad left off. If the InkPad got further ahead, Gatefold offers to jump you there. Plus a tidier library, clearer text-size buttons and proper chapter titles.",
           "autoNotifyEnabled": true,
           "notifyTesters": true
         },

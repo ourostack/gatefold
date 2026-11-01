@@ -30,7 +30,11 @@ public actor FakeSyncService: SyncService {
         CloudStore(alias: "pbookint", name: "PocketBook International", shopID: "2", iconURL: nil, loggedBy: nil),
     ]
 
+    /// Screenshot and test states: a healthy Cloud, an empty shelf, no network, or a sign-in that expired.
+    public enum Scenario: String, Sendable { case normal, empty, offline, expired }
+
     private var signedIn: CloudAccount?
+    private let scenario: Scenario
     private var positions: [String: ReadingPosition] = [:]
     private var annotationsByBook: [String: [CloudAnnotation]] = [:]
     /// How many times the whole library was fetched (tests watch for refresh loops).
@@ -41,7 +45,8 @@ public actor FakeSyncService: SyncService {
     private let bundle: Bundle
     private let now: @Sendable () -> Date
 
-    public init(signedIn: Bool = false, latency: Duration = .milliseconds(450), bundle: Bundle = .main, now: @escaping @Sendable () -> Date = { Date() }) {
+    public init(signedIn: Bool = false, scenario: Scenario = .normal, latency: Duration = .milliseconds(450), bundle: Bundle = .main, now: @escaping @Sendable () -> Date = { Date() }) {
+        self.scenario = scenario
         self.latency = latency
         self.bundle = bundle
         self.now = now
@@ -82,13 +87,19 @@ public actor FakeSyncService: SyncService {
     }
 
     public func cachedLibrary() async -> [CloudBook] {
-        signedIn == nil ? [] : books()
+        signedIn == nil || scenario == .empty ? [] : books()
     }
 
     public func library() async throws -> [CloudBook] {
         guard signedIn != nil else { return [] }
         try await pause()
         libraryFetches += 1
+        switch scenario {
+        case .normal: break
+        case .empty: broadcast(.library([])); return []
+        case .offline: throw CloudError.offline
+        case .expired: throw CloudError.authenticationRequired
+        }
         let all = books()
         // Like PocketBookCloud: every fetch announces the library it found.
         broadcast(.library(all))

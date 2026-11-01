@@ -11,78 +11,30 @@ struct LibraryView: View {
     @State private var importing = false
     @State private var importedCount = 0
     @State private var confirmSignOut = false
+    @State private var reconnecting = false
 
     var body: some View {
         let library = app.library
         NavigationStack {
             ScrollView {
-                if library.books.isEmpty {
-                    EmptyShelf(signedIn: app.account != nil, isRefreshing: library.isRefreshing) { importing = true }
-                        .padding(.top, 60)
-                } else {
-                    VStack(alignment: .leading, spacing: 34) {
-                        let now = library.readingNow
-                        if !now.isEmpty {
-                            section("Reading Now") {
-                                ScrollView(.horizontal, showsIndicators: false) {
-                                    LazyHStack(alignment: .bottom, spacing: 22) {
-                                        ForEach(now) { book in
-                                            BookTile(book: book, size: .large, namespace: namespace, onOpen: onOpen)
-                                        }
-                                    }
-                                    .padding(.horizontal, 20)
-                                    .scrollTargetLayout()
-                                }
-                                .scrollTargetBehavior(.viewAligned)
-                                .accessibilityIdentifier("library.readingNow")
-                            }
-                        }
-                        section("All Books") {
-                            LazyVGrid(columns: [GridItem(.adaptive(minimum: 104, maximum: 150), spacing: 20, alignment: .bottom)], spacing: 28) {
-                                ForEach(library.allBooks) { book in
-                                    BookTile(book: book, size: .grid, namespace: namespace, onOpen: onOpen)
-                                }
-                            }
-                            .padding(.horizontal, 20)
-                            .accessibilityIdentifier("library.grid")
-                        }
+                VStack(alignment: .leading, spacing: 0) {
+                    header
+                    SyncStatusLine()
+                        .padding(.horizontal, 20)
+                        .padding(.bottom, 6)
+                    if library.books.isEmpty {
+                        EmptyShelf(signedIn: app.account != nil, isRefreshing: library.isRefreshing) { importing = true }
+                            .padding(.top, 48)
+                    } else {
+                        shelves
                     }
-                    .padding(.vertical, 12)
                 }
             }
             .background(Color.paper)
-            .navigationTitle("Library")
-            .toolbarTitleDisplayMode(.inlineLarge)
-            .refreshable { await library.refresh() }
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        importing = true
-                    } label: {
-                        Label("Add Books", systemImage: "plus")
-                    }
-                    .accessibilityIdentifier("library.import")
-                }
-                ToolbarItem(placement: .topBarTrailing) {
-                    Menu {
-                        if let account = app.account {
-                            Section(account.email) {
-                                Text(account.store.name)
-                                Button("Sign Out", systemImage: "rectangle.portrait.and.arrow.right", role: .destructive) {
-                                    confirmSignOut = true
-                                }
-                            }
-                        } else {
-                            Button("Connect PocketBook Cloud", systemImage: "icloud") {
-                                app.hasOnboarded = false
-                            }
-                        }
-                    } label: {
-                        Label("Account", systemImage: app.account == nil ? "person.crop.circle" : "person.crop.circle.fill")
-                    }
-                    .accessibilityIdentifier("library.account")
-                }
-            }
+            // The title and buttons live in the page, so nothing floats over the covers in any posture
+            // (on the Duo's cover screen the system would move bar buttons to the side edge, over the shelf).
+            .toolbar(.hidden, for: .navigationBar)
+            .refreshable { await app.refresh() }
             .confirmationDialog("Sign out of PocketBook Cloud?", isPresented: $confirmSignOut, titleVisibility: .visible) {
                 Button("Sign Out", role: .destructive) { Task { await app.signOut() } }
             } message: {
@@ -101,7 +53,98 @@ struct LibraryView: View {
             } message: {
                 Text(library.lastError ?? "")
             }
+            .sheet(isPresented: $reconnecting) {
+                NavigationStack { SignInFlow(prefilledEmail: app.needsReconnect, onDone: { reconnecting = false }) }
+            }
         }
+    }
+
+    /// "Library", with Add and the account beside it, like Books' Home.
+    private var header: some View {
+        HStack(alignment: .center, spacing: 10) {
+            Text("Library")
+                .font(.display(.largeTitle, weight: .bold))
+                .foregroundStyle(Color.ink)
+                .accessibilityAddTraits(.isHeader)
+            Spacer(minLength: 8)
+            Button {
+                importing = true
+            } label: {
+                Image(systemName: "plus")
+                    .font(.system(size: 17, weight: .semibold))
+                    .frame(width: 44, height: 44)
+            }
+            .buttonStyle(.glass)
+            .buttonBorderShape(.circle)
+            .accessibilityLabel("Add Books from Files")
+            .accessibilityIdentifier("library.import")
+            accountMenu
+        }
+        .tint(Color.ink)
+        .padding(.horizontal, 20)
+        .padding(.top, 8)
+        .padding(.bottom, 2)
+    }
+
+    private var accountMenu: some View {
+        Menu {
+            if let account = app.account {
+                Section(account.email) {
+                    Text(account.store.name)
+                    if app.needsReconnect != nil {
+                        Button("Sign In Again", systemImage: "key") { reconnecting = true }
+                    }
+                    Button("Sign Out", systemImage: "rectangle.portrait.and.arrow.right", role: .destructive) {
+                        confirmSignOut = true
+                    }
+                }
+            } else {
+                Button("Connect PocketBook Cloud", systemImage: "icloud") {
+                    app.hasOnboarded = false
+                }
+            }
+        } label: {
+            AccountBadge(email: app.account?.email, needsAttention: app.needsReconnect != nil)
+        }
+        .accessibilityLabel(app.account.map { "Account, \($0.email)" } ?? "Account")
+        .accessibilityIdentifier("library.account")
+    }
+
+    @ViewBuilder
+    private var shelves: some View {
+        let library = app.library
+        VStack(alignment: .leading, spacing: 30) {
+            let now = library.readingNow
+            if !now.isEmpty {
+                section("Reading Now") {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        LazyHStack(alignment: .bottom, spacing: 22) {
+                            ForEach(now) { book in
+                                BookTile(book: book, size: .large, namespace: namespace, onOpen: onOpen)
+                            }
+                        }
+                        .padding(.horizontal, 20)
+                        .padding(.vertical, 10)
+                        .scrollTargetLayout()
+                    }
+                    // Covers cast shadows; let them fall outside the row instead of being sliced off.
+                    .scrollClipDisabled()
+                    .scrollTargetBehavior(.viewAligned)
+                    .accessibilityIdentifier("library.readingNow")
+                }
+            }
+            section("All Books") {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 100), spacing: 12, alignment: .bottomLeading)], spacing: 28) {
+                    ForEach(library.allBooks) { book in
+                        BookTile(book: book, size: .grid, namespace: namespace, onOpen: onOpen)
+                    }
+                }
+                .padding(.horizontal, 20)
+                .accessibilityIdentifier("library.grid")
+            }
+        }
+        .padding(.top, 14)
+        .padding(.bottom, 28)
     }
 
     private func section<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
@@ -110,6 +153,7 @@ struct LibraryView: View {
                 .font(.display(.title2, weight: .bold))
                 .foregroundStyle(Color.ink)
                 .padding(.horizontal, 20)
+                .padding(.bottom, -4)
                 .accessibilityAddTraits(.isHeader)
             content()
         }
@@ -128,7 +172,7 @@ struct BookTile: View {
 
     var body: some View {
         let state = app.library.state(of: book)
-        let width: CGFloat = size == .large ? 150 : 110
+        let width: CGFloat = size == .large ? 150 : 100
         Button {
             switch state {
             case .onDevice: onOpen(book)
@@ -143,7 +187,7 @@ struct BookTile: View {
                     .matchedTransitionSource(id: book.id, in: namespace)
                 VStack(alignment: .leading, spacing: 3) {
                     if size == .large {
-                        Text(book.title)
+                        Text(BookTitle.short(book.title))
                             .font(.subheadline.weight(.semibold))
                             .foregroundStyle(Color.ink)
                             .lineLimit(1)
@@ -324,5 +368,76 @@ private struct EmptyShelf: View {
         }
         .frame(maxWidth: .infinity)
         .padding(24)
+    }
+}
+
+/// The account button: the reader's initial on the ribbon colour, a plain silhouette when signed out,
+/// and a small dot when the Cloud wants them to sign in again.
+private struct AccountBadge: View {
+    let email: String?
+    let needsAttention: Bool
+
+    var body: some View {
+        ZStack(alignment: .topTrailing) {
+            if let initial = email?.first.map({ String($0).uppercased() }) {
+                Text(initial)
+                    .font(.system(.headline, design: .serif, weight: .bold))
+                    .foregroundStyle(.white)
+                    .frame(width: 36, height: 36)
+                    .background(Color.ribbon.gradient, in: .circle)
+            } else {
+                Image(systemName: "person.crop.circle")
+                    .font(.system(size: 30, weight: .regular))
+                    .foregroundStyle(Color.ink)
+            }
+            if needsAttention {
+                Circle().fill(.orange).frame(width: 11, height: 11)
+                    .overlay(Circle().stroke(Color.paper, lineWidth: 2))
+                    .offset(x: 2, y: -2)
+            }
+        }
+        .frame(width: 44, height: 44)
+        .contentShape(.circle)
+    }
+}
+
+/// One quiet line under the title about the Cloud: checking, offline, or asking to sign in again.
+/// Nothing at all when everything is fine.
+private struct SyncStatusLine: View {
+    @Environment(AppModel.self) private var app
+    @State private var reconnecting = false
+
+    var body: some View {
+        Group {
+            if let email = app.needsReconnect {
+                HStack(spacing: 8) {
+                    Image(systemName: "key.fill").foregroundStyle(.orange)
+                    Text("PocketBook Cloud wants you to sign in again.")
+                        .foregroundStyle(.secondary)
+                    Button("Sign In") { reconnecting = true }
+                        .fontWeight(.semibold)
+                        .tint(.ribbon)
+                        .accessibilityIdentifier("library.reconnect")
+                }
+                .sheet(isPresented: $reconnecting) {
+                    NavigationStack { SignInFlow(prefilledEmail: email, onDone: { reconnecting = false }) }
+                }
+            } else if app.library.syncProblem == .offline, app.account != nil {
+                Label("Offline. Your books are here, and your place will sync when you're back.", systemImage: "wifi.slash")
+                    .foregroundStyle(.secondary)
+            } else if case let .other(message)? = app.library.syncProblem, app.account != nil {
+                Label(message, systemImage: "exclamationmark.icloud")
+                    .foregroundStyle(.secondary)
+            } else if app.library.isRefreshing, !app.library.books.isEmpty {
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.mini)
+                    Text("Checking PocketBook Cloud…").foregroundStyle(.secondary)
+                }
+            }
+        }
+        .font(.footnote)
+        .transition(.opacity)
+        .animation(.easeOut(duration: 0.25), value: app.library.isRefreshing)
+        .accessibilityIdentifier("library.syncStatus")
     }
 }

@@ -84,6 +84,12 @@ public actor PocketBookCloud: SyncService {
         get async { await session.account }
     }
 
+    /// Fetches what sign-in needs (the web app's client pair) ahead of time, so the store lookup
+    /// after the reader types their email is quick. Failures are left for sign-in to report.
+    public func prepareSignIn() async {
+        _ = try? await session.credentials.credentials(refresh: false)
+    }
+
     public func stores(forEmail email: String) async throws -> [CloudStore] {
         try await session.stores(forEmail: email)
     }

@@ -35,8 +35,22 @@ public actor WebBundleCredentials: ClientCredentialsProvider {
         self.cached = cached
     }
 
+    /// Fetching the bundle is slow (it's megabytes of JavaScript), so callers who arrive while a
+    /// fetch is running share it instead of starting another.
+    private var fetching: Task<ClientCredentials, Error>?
+
     public func credentials(refresh: Bool) async throws -> ClientCredentials {
         if !refresh, let cached { return cached }
+        if !refresh, let fetching { return try await fetching.value }
+        let task = Task { try await fetch() }
+        fetching = task
+        defer { if fetching == task { fetching = nil } }
+        let pair = try await task.value
+        cached = pair
+        return pair
+    }
+
+    private func fetch() async throws -> ClientCredentials {
         do {
             let (html, _) = try await transport.send(URLRequest(url: site.appendingPathComponent("browser/")))
             let page = String(decoding: html, as: UTF8.self)
@@ -45,7 +59,6 @@ public actor WebBundleCredentials: ClientCredentialsProvider {
             }
             let (js, _) = try await transport.send(URLRequest(url: site.appendingPathComponent(String(script.dropFirst()))))
             guard let pair = Self.extract(from: String(decoding: js, as: UTF8.self)) else { throw CloudError.clientCredentialsUnavailable }
-            cached = pair
             return pair
         } catch let error as CloudError {
             throw error

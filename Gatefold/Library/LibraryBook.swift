@@ -26,6 +26,8 @@ struct LibraryBook: Identifiable, Codable, Equatable {
     var bookmarks = BookmarkList()
 
     var isOnDevice: Bool { fileName != nil }
+    /// A book from the fake Cloud's bundled demo shelf.
+    var isDemo: Bool { id.hasPrefix("gutenberg-") }
     var isFinished: Bool { totalProgression >= 0.995 }
 
     var displayProgression: Double {

@@ -29,6 +29,31 @@ struct CredentialsTests {
         #expect(await t.requests("GET", "main.1234abcd").count == 1, "cached after the first fetch")
     }
 
+    /// The welcome screen warms the pair while the reader types; the store lookup that follows
+    /// must join that fetch, not start a second one.
+    @Test func concurrentCallersShareOneFetch() async throws {
+        let t = ScriptedTransport()
+        await t.setDelay(.milliseconds(80))
+        await t.on("GET", "/browser/", .data(Data(#"<script src="/browser/static/js/main.1234abcd.chunk.js"></script>"#.utf8)))
+        await t.on("GET", "main.1234abcd.chunk.js", .data(Data(#"d="".concat(r,"/api/v1.1/"),l="FAKEID12",h="FakeSecretValueThatIsLongEnough0123456789""#.utf8)))
+        let provider = WebBundleCredentials(transport: t)
+        async let warm = provider.credentials(refresh: false)
+        async let lookup = provider.credentials(refresh: false)
+        let (a, b) = try await (warm, lookup)
+        #expect(a == b)
+        #expect(await t.requests("GET", "main.1234abcd").count == 1, "one bundle fetch for both callers")
+    }
+
+    @Test func prepareSignInWarmsTheClientPair() async throws {
+        let t = ScriptedTransport()
+        await t.on("GET", "/browser/", .data(Data(#"<script src="/browser/static/js/main.1234abcd.chunk.js"></script>"#.utf8)))
+        await t.on("GET", "main.1234abcd.chunk.js", .data(Data(#"d="".concat(r,"/api/v1.1/"),l="FAKEID12",h="FakeSecretValueThatIsLongEnough0123456789""#.utf8)))
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let cloud = PocketBookCloud(configuration: .init(storageDirectory: dir), transport: t, tokenStore: InMemoryTokenStore())
+        await cloud.prepareSignIn()
+        #expect(await t.requests("GET", "main.1234abcd").count == 1)
+    }
+
     @Test func failsClearlyWhenTheBundleChangesShape() async throws {
         let t = ScriptedTransport()
         await t.on("GET", "/browser/", .data(Data("<html></html>".utf8)))
