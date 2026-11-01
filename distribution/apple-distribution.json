@@ -1,0 +1,56 @@
+{
+  "schemaVersion": 1,
+  "app": {
+    "name": "Gatefold",
+    "bundleId": "bot.ouro.gatefold",
+    "sku": "gatefold-ios",
+    "primaryLocale": "en-US"
+  },
+  "team": {
+    "teamId": "743GT2AJ24",
+    "providerPublicId": "b25f0f77-25c0-44b8-9d21-2e95083f09ae"
+  },
+  "channels": [
+    {
+      "id": "ios-testflight",
+      "platform": "ios",
+      "distribution": "testflight",
+      "bundleId": "bot.ouro.gatefold",
+      "buildCommand": "swift test --package-path Packages/GatefoldCore && xcodegen generate",
+      "packageCommand": "scripts/package-testflight-ios.sh",
+      "store": {
+        "version": "0.1",
+        "copyright": "Copyright (c) 2026 Ari Mendelow",
+        "category": "BOOKS",
+        "screenshots": [],
+        "privacy": {
+          "policyUrl": "https://ouroboros.bot/privacy",
+          "collectsData": false
+        },
+        "exportCompliance": {
+          "usesEncryption": false,
+          "exempt": true
+        }
+      },
+      "testflight": {
+        "groups": [
+          {
+            "name": "Gatefold Internal",
+            "type": "internal",
+            "feedbackEnabled": true
+          }
+        ],
+        "build": {
+          "whatsNew": "First light: your library, a reader with page curl and six themes, and iPhone Duo spreads and tabletop.",
+          "autoNotifyEnabled": true,
+          "notifyTesters": true
+        },
+        "betaApp": {
+          "description": "Gatefold reads your PocketBook Cloud library and keeps your place with your InkPad.",
+          "feedbackEmail": "16390116+arimendelow@users.noreply.github.com",
+          "marketingUrl": "https://ouroboros.bot"
+        }
+      }
+    }
+  ]
+}
