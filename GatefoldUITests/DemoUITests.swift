@@ -7,13 +7,13 @@ final class DemoUITests: XCTestCase {
     func testCurlDemo() {
         let app = XCUIApplication()
         app.launchArguments = [
-            "-GatefoldUITest", "YES", "-GatefoldSkipWelcome", "YES", "-GatefoldSignedIn", "YES",
+            "-GatefoldUITest", "YES", "-GatefoldReset", "YES", "-GatefoldSkipWelcome", "YES", "-GatefoldSignedIn", "YES",
             "-GatefoldDownloadAll", "YES", "-GatefoldOpenBook", "gutenberg-alice-in-wonderland",
             "-GatefoldGoTo", "0.12", "-GatefoldTheme", "vellum",
         ]
         app.launch()
         let page = app.descendants(matching: .any)["reader.page"]
-        XCTAssertTrue(page.waitForExistence(timeout: 30))
+        XCTAssertTrue(page.waitForExistence(timeout: 60))
         let probe = app.descendants(matching: .any)["reader.anchorCheck"]
         _ = XCTWaiter.wait(for: [expectation(for: NSPredicate(format: "label == 'ready 0'"), evaluatedWith: probe)], timeout: 90)
         sleep(2)

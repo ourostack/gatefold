@@ -40,7 +40,13 @@ enum ReaderJS {
         for (const h of document.querySelectorAll("h1,h2,h3,h4")) {
           if (h.contains(node) || (h.compareDocumentPosition(node) & Node.DOCUMENT_POSITION_FOLLOWING)) { found = h; } else { break; }
         }
-        const t = found ? norm(found.textContent) : "";
+        // Illustrated editions put the picture's caption inside the heading; keep only the heading's own words.
+        let t = "";
+        if (found) {
+          const copy = found.cloneNode(true);
+          copy.querySelectorAll(".caption, figcaption, img, svg, sup, .pagenum").forEach(function (e) { e.remove(); });
+          t = norm(copy.textContent);
+        }
         return t && t.length <= 80 ? t : null;
       }
       window.gatefold = {
