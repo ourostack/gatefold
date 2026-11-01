@@ -43,6 +43,8 @@ struct RootView: View {
                 app.openBookID = nil
             }
             .navigationTransition(.zoom(sourceID: model.bookID, in: covers))
+            // The zoom's swipe-to-dismiss would take edge drags meant for turning back a page.
+            .interactiveDismissDisabled()
         }
         .onChange(of: app.library.books.filter(\.isOnDevice).count, initial: true) { _, _ in
             if reader == nil, !opening, let id = app.openBookID, let book = app.library.book(id), book.isOnDevice {
