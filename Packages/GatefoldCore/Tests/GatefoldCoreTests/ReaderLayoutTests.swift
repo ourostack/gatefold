@@ -29,14 +29,39 @@ struct ReaderLayoutTests {
         #expect(layout.spineShadow == 0)
     }
 
-    @Test func halfOpenBookWidensTheGutterAroundTheActiveFoldAndShadesTheSpine() {
+    @Test func aSpreadWidensTheGutterAroundAnActiveFoldAndShadesTheSpine() {
         let fold = FoldRegion(frame: CGRect(x: 450, y: 0, width: 51, height: 545), isActive: true)
-        let layout = ReaderLayoutResolver.resolve(.init(containerSize: duoInnerWide, division: fold, hinge: .partiallyOpen(angleDegrees: 120)))
+        let layout = ReaderLayoutResolver.resolve(.init(containerSize: duoInnerWide, division: fold, hinge: .partiallyOpen(angleDegrees: 120), forced: .spread))
         #expect(layout.posture == .spread)
         let gutter = try! #require(layout.gutter)
         #expect(gutter.minX <= 450)
         #expect(gutter.maxX >= 501)
         #expect(layout.spineShadow > 0.5)
+    }
+
+    /// Measured on the Duo with DeviceHub's "Partially Open": the fold stays vertical and reads inactive,
+    /// and only the hinge says the device is bent. Bent is tabletop: the page above, the controls below.
+    @Test func partiallyOpenIsTabletopWithThePageOnTopAndTheDeckBelow() {
+        let size = CGSize(width: 951, height: 669)
+        let fold = FoldRegion(frame: CGRect(x: 455.5, y: 0, width: 40, height: 669), isActive: false)
+        let layout = ReaderLayoutResolver.resolve(.init(containerSize: size, division: fold, hinge: .partiallyOpen(angleDegrees: 127.8)))
+        #expect(layout.posture == .tabletop)
+        #expect(layout.columns == .one)
+        #expect(layout.gutter == nil)
+        #expect(layout.pageFrame.minY == 0)
+        #expect(layout.pageFrame.width == 951)
+        #expect(abs(layout.pageFrame.maxY - size.height / 2) <= ReaderLayoutResolver.foldMargin)
+        let deck = try! #require(layout.deck)
+        #expect(deck.minY >= layout.pageFrame.maxY)
+        #expect(deck.maxY == size.height)
+        // Flat again, the same fold is a spread.
+        #expect(ReaderLayoutResolver.resolve(.init(containerSize: size, division: fold, hinge: .fullyOpen)).posture == .spread)
+        #expect(ReaderLayoutResolver.resolve(.init(containerSize: size, division: fold)).posture == .spread)
+    }
+
+    @Test func aBentHingeWithoutAFoldOnThisScreenChangesNothing() {
+        // The folded Duo's cover screen has no fold in it, whatever the hinge says.
+        #expect(ReaderLayoutResolver.resolve(.init(containerSize: duoOuter, hinge: .partiallyOpen(angleDegrees: 90))).posture == .single)
     }
 
     @Test func tabletopPutsThePageAboveTheFoldAndTheDeckBelow() {

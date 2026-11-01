@@ -121,7 +121,7 @@ public actor FakeSyncService: SyncService {
                 mimeType: "application/epub+zip",
                 bytes: Int64((try? bundleURL(seed.resource).resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0) ?? 0),
                 modifiedAt: position?.updated,
-                readPercent: position.map { Int(($0.totalProgression * 100).rounded()) },
+                readPercent: position.map(\.wholePercent),
                 coverURL: bundle.url(forResource: seed.resource, withExtension: "jpg"),
                 position: position
             )

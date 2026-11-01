@@ -249,7 +249,7 @@ struct BookTile: View {
                 ProgressView(value: p)
                     .tint(.ribbon)
                     .frame(maxWidth: 60)
-                Text("\(Int((p * 100).rounded()))%")
+                Text("\(book.displayPercent)%")
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)
             }
@@ -262,7 +262,7 @@ struct BookTile: View {
 
     private func accessibilityValue(_ state: DownloadState) -> String {
         var parts: [String] = []
-        if book.displayProgression > 0.001 { parts.append("\(Int((book.displayProgression * 100).rounded())) percent read") }
+        if book.displayProgression > 0.001 { parts.append("\(book.displayPercent) percent read") }
         switch state {
         case .cloudOnly: parts.append("in PocketBook Cloud")
         case .downloading: parts.append("downloading")

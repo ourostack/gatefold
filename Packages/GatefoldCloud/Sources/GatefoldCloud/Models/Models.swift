@@ -1,4 +1,5 @@
 import Foundation
+import GatefoldCore
 
 /// A PocketBook "provider": the bookstore an account belongs to. Sign-in is per store.
 public struct CloudStore: Sendable, Codable, Hashable, Identifiable {
@@ -112,7 +113,8 @@ public struct ReadingPosition: Sendable, Codable, Hashable {
     public var pointer: String?
     /// Progress inside the current resource (Readium `progression`). Local only; the Cloud does not store it.
     public var progression: Double?
-    /// Whole-book progress 0...1. The Cloud stores whole percents.
+    /// Whole-book progress 0...1, on Readium's scale for our own places. The Cloud stores whole percents
+    /// (`wholePercent`); a place read back without a CFI is that percent over 100.
     public var totalProgression: Double
     public var updated: Date
     public var source: PositionSource
@@ -128,10 +130,13 @@ public struct ReadingPosition: Sendable, Codable, Hashable {
 
     public var parsedCFI: EPUBCFI? { cfi.flatMap(EPUBCFI.init) }
 
+    /// The whole percent the Cloud holds for this place (`offs`, `read_percent`).
+    public var wholePercent: Int { ReadingPercent.whole(totalProgression) }
+
     /// Same place in the book: identical CFI location, or equal whole percents when either side has no CFI.
     public func isSameLocation(as other: ReadingPosition) -> Bool {
         if let a = parsedCFI, let b = other.parsedCFI { return a.isSameLocation(as: b) }
-        return Int((totalProgression * 100).rounded()) == Int((other.totalProgression * 100).rounded())
+        return wholePercent == other.wholePercent
     }
 }
 

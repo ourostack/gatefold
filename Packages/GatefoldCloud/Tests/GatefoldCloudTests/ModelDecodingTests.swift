@@ -116,6 +116,24 @@ struct ModelEncodingTests {
         #expect(body["page"] == nil)
     }
 
+    @Test func theCloudPercentIsTheSameWholePercentEverywhere() throws {
+        for whole in [0, 1, 7, 14, 28, 29, 57, 99, 100] {
+            let position = ReadingPosition(cfi: nil, totalProgression: Double(whole) / 100, updated: utc("2026-10-31T22:30:00Z"))
+            let body = try JSONSerialization.jsonObject(with: WireEncoder.positionBody(position, pointerStyle: .external)) as! [String: Any]
+            #expect(body["offs"] as? Int == whole, "\(whole)% must not gain a percent from floating-point noise")
+            #expect(position.wholePercent == whole)
+        }
+    }
+
+    @Test func percentOnlyPlacesMatchByTheirWholePercent() {
+        let t = utc("2026-10-31T22:30:00Z")
+        let ours = ReadingPosition(cfi: nil, totalProgression: 0.301, updated: t)
+        // What the Cloud hands back after we send ceil(30.1) = 31.
+        let readBack = ReadingPosition(cfi: nil, totalProgression: 0.31, updated: t, source: .unknown)
+        #expect(ours.isSameLocation(as: readBack))
+        #expect(!ours.isSameLocation(as: ReadingPosition(cfi: nil, totalProgression: 0.32, updated: t)))
+    }
+
     @Test func encodesAnnotationFieldsWithTheirOwnTimestamps() throws {
         var note = CloudAnnotation.highlight(begin: "#epubcfi(/6/8!/4/2/4/1:0)", end: "#epubcfi(/6/8!/4/2/4/1:20)", text: "quoted", color: .cyan, at: utc("2026-10-31T22:00:00Z"))
         note.note = .init("my thought", updated: utc("2026-10-31T22:05:00Z"))

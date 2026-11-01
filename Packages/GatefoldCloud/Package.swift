@@ -11,10 +11,13 @@ let package = Package(
     dependencies: [
         // Readium is iOS-only, so the adapter target links it on iOS and compiles to nothing on macOS.
         .package(url: "https://github.com/readium/swift-toolkit.git", exact: "3.11.1"),
+        // One definition of a whole percent, shared with the reader.
+        .package(path: "../GatefoldCore"),
     ],
     targets: [
         .target(
             name: "GatefoldCloud",
+            dependencies: ["GatefoldCore"],
             swiftSettings: [.swiftLanguageMode(.v6)]
         ),
         .target(
