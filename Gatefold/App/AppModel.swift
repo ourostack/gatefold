@@ -26,7 +26,7 @@ final class AppModel {
         static let preferences = "readerPreferences"
     }
 
-    init(sync: (any SyncService)? = nil) {
+    init(sync: (any SyncService)? = nil, libraryRoot: URL = LibraryStore.defaultRoot) {
         if LaunchOptions.resetState {
             UserDefaults.standard.removeObject(forKey: Keys.onboarded)
             UserDefaults.standard.removeObject(forKey: Keys.preferences)
@@ -36,7 +36,7 @@ final class AppModel {
             latency: LaunchOptions.noLatency || LaunchOptions.isUITest ? .zero : .milliseconds(450)
         )
         self.sync = service
-        self.library = LibraryStore(sync: service)
+        self.library = LibraryStore(sync: service, root: libraryRoot)
         if LaunchOptions.resetState { library.wipe() }
 
         var prefs = UserDefaults.standard.data(forKey: Keys.preferences)
@@ -60,25 +60,44 @@ final class AppModel {
 
     func start() async {
         account = await sync.account
+        // Listen before the first fetch, so its announcement lands too.
+        let changes = sync.changes()
+        Task { [weak self] in
+            for await change in changes {
+                guard let self else { return }
+                await self.apply(change)
+            }
+        }
         await library.refresh()
         if LaunchOptions.downloadAll {
             for book in library.books where !book.isOnDevice {
                 await library.download(book)
             }
         }
-        Task { [weak self] in
-            guard let self else { return }
-            for await change in sync.changes() {
-                switch change {
-                case .library, .bookAdded, .bookUpdated, .bookRemoved, .signedIn, .signedOut, .authenticationRequired:
-                    self.account = await self.sync.account
-                    await self.library.refresh()
-                case let .remotePosition(fastHash, position), let .positionSuperseded(fastHash, position):
-                    self.library.update(fastHash) { $0.remote = position }
-                case .annotations, .annotationSaved, .outbox:
-                    break
-                }
-            }
+    }
+
+    /// Applies one change from the sync service. Never fetches: the real service announces
+    /// `.library` after every fetch, so fetching here would loop.
+    func apply(_ change: CloudChange) async {
+        switch change {
+        case let .library(books):
+            await library.merge(books)
+        case let .bookAdded(book), let .bookUpdated(book):
+            await library.merge([book])
+        case let .bookRemoved(fastHash):
+            library.cloudBookRemoved(fastHash)
+        case let .remotePosition(fastHash, position), let .positionSuperseded(fastHash, position):
+            library.update(fastHash) { $0.remote = position }
+        case let .signedIn(account):
+            self.account = account
+        case .signedOut:
+            account = nil
+            library.forgetCloudOnlyBooks()
+        case .authenticationRequired:
+            // The account menu offers "Connect PocketBook Cloud" again; downloaded books and places stay.
+            account = nil
+        case .annotations, .annotationSaved, .outbox:
+            break
         }
     }
 

@@ -124,3 +124,53 @@ import Testing
         #expect(added.first?.origin == .imported)
     }
 }
+
+/// How the app answers the sync service's change stream. The real `PocketBookCloud` announces
+/// `.library` after every fetch, so answering a change with another fetch would never stop.
+@MainActor @Suite struct SyncChangeTests {
+    private func makeModel(_ sync: FakeSyncService) -> AppModel {
+        AppModel(sync: sync, libraryRoot: URL.temporaryDirectory.appending(path: "changes-\(UUID().uuidString)"))
+    }
+
+    @Test func libraryAnnouncementsDoNotFetchAgain() async throws {
+        let sync = FakeSyncService(signedIn: true, latency: .zero)
+        let model = makeModel(sync)
+        await model.start()
+        try await Task.sleep(for: .milliseconds(600))
+        #expect(await sync.libraryFetches == 1)
+        #expect(model.library.books.count == FakeSyncService.seeds.count)
+    }
+
+    @Test func aRemovedCloudBookLeavesTheShelfUnlessItIsOnDevice() async throws {
+        let sync = FakeSyncService(signedIn: true, latency: .zero)
+        let model = makeModel(sync)
+        await model.library.refresh()
+        let emma = try #require(model.library.books.first { $0.title == "Emma" })
+        let moby = try #require(model.library.books.first { $0.title == "Moby-Dick" })
+        await model.library.download(emma)
+        await model.apply(.bookRemoved(fastHash: moby.id))
+        await model.apply(.bookRemoved(fastHash: emma.id))
+        #expect(model.library.book(moby.id) == nil)
+        #expect(model.library.book(emma.id)?.isOnDevice == true)
+        #expect(model.library.book(emma.id)?.cloud == nil)
+    }
+
+    @Test func anAddedBookArrivesWithoutAFetch() async throws {
+        let sync = FakeSyncService(signedIn: true, latency: .zero)
+        let model = makeModel(sync)
+        let book = CloudBook(fastHash: "new-book", title: "New Book", authors: "Someone", position: ReadingPosition(cfi: nil, totalProgression: 0.2, updated: Date(), source: .pocketBookNative))
+        await model.apply(.bookAdded(book))
+        #expect(model.library.book("new-book")?.remote?.totalProgression == 0.2)
+        #expect(await sync.libraryFetches == 0)
+    }
+
+    @Test func expiredSignInAsksToConnectAgainAndKeepsBooks() async throws {
+        let sync = FakeSyncService(signedIn: true, latency: .zero)
+        let model = makeModel(sync)
+        await model.start()
+        let count = model.library.books.count
+        await model.apply(.authenticationRequired)
+        #expect(model.account == nil)
+        #expect(model.library.books.count == count)
+    }
+}

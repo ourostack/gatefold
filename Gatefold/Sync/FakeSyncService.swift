@@ -33,6 +33,8 @@ public actor FakeSyncService: SyncService {
     private var signedIn: CloudAccount?
     private var positions: [String: ReadingPosition] = [:]
     private var annotationsByBook: [String: [CloudAnnotation]] = [:]
+    /// How many times the whole library was fetched (tests watch for refresh loops).
+    public private(set) var libraryFetches = 0
     /// Subscribers register synchronously, so no change sent after `changes()` returns is missed.
     private let subscribers = OSAllocatedUnfairLock<[UUID: AsyncStream<CloudChange>.Continuation]>(initialState: [:])
     private let latency: Duration
@@ -86,7 +88,11 @@ public actor FakeSyncService: SyncService {
     public func library() async throws -> [CloudBook] {
         guard signedIn != nil else { return [] }
         try await pause()
-        return books()
+        libraryFetches += 1
+        let all = books()
+        // Like PocketBookCloud: every fetch announces the library it found.
+        broadcast(.library(all))
+        return all
     }
 
     private func books() -> [CloudBook] {

@@ -62,30 +62,49 @@ final class LibraryStore {
         isRefreshing = true
         defer { isRefreshing = false }
         do {
-            let cloudBooks = try await sync.library()
-            for cloudBook in cloudBooks {
-                let remote = try? await sync.remotePosition(for: cloudBook)
-                if let i = books.firstIndex(where: { $0.id == cloudBook.id }) {
-                    books[i].cloud = cloudBook
-                    books[i].remote = remote ?? books[i].remote
-                } else {
-                    books.append(LibraryBook(
-                        id: cloudBook.id,
-                        title: cloudBook.title,
-                        author: cloudBook.authors ?? "",
-                        origin: .cloud,
-                        cloud: cloudBook,
-                        remote: remote,
-                        added: cloudBook.createdAt ?? cloudBook.modifiedAt ?? Date()
-                    ))
-                }
-                if covers[cloudBook.id] == nil, let url = cloudBook.coverURL {
-                    await loadCover(id: cloudBook.id, from: url)
-                }
+            var cloudBooks = try await sync.library()
+            for i in cloudBooks.indices {
+                if let remote = try? await sync.remotePosition(for: cloudBooks[i]) { cloudBooks[i].position = remote }
             }
-            save()
+            await merge(cloudBooks)
         } catch {
             lastError = error.localizedDescription
+        }
+    }
+
+    /// Puts cloud books on the shelf, or updates the ones already there. Never fetches the library.
+    func merge(_ cloudBooks: [CloudBook]) async {
+        for cloudBook in cloudBooks {
+            if let i = books.firstIndex(where: { $0.id == cloudBook.id }) {
+                books[i].cloud = cloudBook
+                books[i].remote = cloudBook.position ?? books[i].remote
+            } else {
+                books.append(LibraryBook(
+                    id: cloudBook.id,
+                    title: cloudBook.title,
+                    author: cloudBook.authors ?? "",
+                    origin: .cloud,
+                    cloud: cloudBook,
+                    remote: cloudBook.position,
+                    added: cloudBook.createdAt ?? cloudBook.modifiedAt ?? Date()
+                ))
+            }
+        }
+        save()
+        for cloudBook in cloudBooks where covers[cloudBook.id] == nil {
+            if let url = cloudBook.coverURL { await loadCover(id: cloudBook.id, from: url) }
+        }
+    }
+
+    /// The book left PocketBook Cloud: a cloud-only book leaves the shelf; a downloaded one stays, unlinked.
+    func cloudBookRemoved(_ id: String) {
+        guard let book = book(id) else { return }
+        if book.isOnDevice {
+            update(id) { $0.cloud = nil }
+        } else {
+            books.removeAll { $0.id == id }
+            covers[id] = nil
+            save()
         }
     }
 
