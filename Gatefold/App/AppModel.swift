@@ -80,6 +80,13 @@ final class AppModel {
     /// `.library` after every fetch, so fetching here would loop.
     func apply(_ change: CloudChange) async {
         switch change {
+        case .library, .bookAdded, .bookUpdated:
+            // A fetch that finished after sign-out; its books no longer belong on the shelf.
+            guard account != nil else { return }
+        default:
+            break
+        }
+        switch change {
         case let .library(books):
             await library.merge(books)
         case let .bookAdded(book), let .bookUpdated(book):

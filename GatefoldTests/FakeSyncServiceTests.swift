@@ -159,9 +159,21 @@ import Testing
         let sync = FakeSyncService(signedIn: true, latency: .zero)
         let model = makeModel(sync)
         let book = CloudBook(fastHash: "new-book", title: "New Book", authors: "Someone", position: ReadingPosition(cfi: nil, totalProgression: 0.2, updated: Date(), source: .pocketBookNative))
+        await model.apply(.signedIn(CloudAccount(email: "reader@example.com", store: FakeSyncService.stores[0])))
         await model.apply(.bookAdded(book))
         #expect(model.library.book("new-book")?.remote?.totalProgression == 0.2)
         #expect(await sync.libraryFetches == 0)
+    }
+
+    @Test func aLateLibraryAfterSignOutDoesNotRefillTheShelf() async throws {
+        let sync = FakeSyncService(signedIn: true, latency: .zero)
+        let model = makeModel(sync)
+        await model.start()
+        let books = await sync.cachedLibrary()
+        await model.apply(.signedOut)
+        await model.apply(.library(books))
+        await model.apply(.bookAdded(books[0]))
+        #expect(model.library.books.isEmpty)
     }
 
     @Test func expiredSignInAsksToConnectAgainAndKeepsBooks() async throws {
