@@ -30,7 +30,7 @@ struct LibraryBook: Identifiable, Codable, Equatable {
     var started: Date?
     var sessions: Int?
     /// The earliest sign that another device (the InkPad) was reading this book, and which, for the
-    /// end leaf's "Started on your InkPad 11 days ago" line.
+    /// end leaf's "Started on your InkPad, finished here…" line.
     var otherSince: Date?
     var otherDevice: String?
     /// Set when the reader landed on a Cloud place the Cloud counts further on than Readium does.

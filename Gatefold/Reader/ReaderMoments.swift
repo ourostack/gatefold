@@ -110,7 +110,7 @@ struct EndLeafView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var settled = false
 
-    /// "Started on your InkPad 11 days ago · finished here on your phone", from what the shelf knows.
+    /// "Started on your InkPad, finished here on your phone · read over 12 days", from what the shelf knows.
     private var story: String {
         guard let book = app.library.book(model.bookID) else { return leaf.line }
         return ReadStory.text(
