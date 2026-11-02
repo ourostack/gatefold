@@ -53,7 +53,7 @@ struct SyncSlipView: View {
                 HStack(spacing: 10) {
                     Spacer(minLength: 0)
                     Button(action: onStay) {
-                        Text("Stay")
+                        Text("Carry on here")
                             .font(.subheadline.weight(.medium))
                             .padding(.horizontal, 14)
                             .frame(minWidth: 64, minHeight: 44)
@@ -61,10 +61,10 @@ struct SyncSlipView: View {
                     }
                     .buttonStyle(.plain)
                     .foregroundStyle(theme.text)
-                    .accessibilityLabel("Stay Here")
+                    .accessibilityLabel("Carry On Here")
                     .accessibilityIdentifier("banner.dismiss")
                     Button(action: onJump) {
-                        Text("Jump")
+                        Text("Catch up")
                             .font(.subheadline.weight(.semibold))
                             .foregroundStyle(theme.onAccent)
                             .padding(.horizontal, 18)
@@ -99,40 +99,60 @@ struct SyncSlipView: View {
     }
 }
 
-/// The last leaf: the cover, "The End", how long it took, and the ribbon falling across it.
+/// The last leaf: the cover with its silk ribbon hanging out below, "The End", and a line about the
+/// read itself (where it began, where it finished).
 struct EndLeafView: View {
     let model: ReaderModel
     let leaf: ReaderModel.EndLeaf
     var onLibrary: () -> Void
 
+    @Environment(AppModel.self) private var app
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var settled = false
+
+    /// "Started on your InkPad 11 days ago · finished here on your phone", from what the shelf knows.
+    private var story: String {
+        guard let book = app.library.book(model.bookID) else { return leaf.line }
+        return ReadStory.text(
+            otherDevice: book.otherDevice,
+            otherSince: book.otherSince,
+            started: book.started,
+            finished: book.finished ?? Date(),
+            sessions: book.sessions ?? 1,
+            here: UIDevice.current.userInterfaceIdiom == .pad ? "iPad" : "phone"
+        )
+    }
 
     var body: some View {
         let theme = model.theme
         VStack(spacing: 0) {
             Spacer(minLength: 24)
             ZStack(alignment: .top) {
-                cover
-                    .frame(width: 120, height: 180)
-                // The ribbon falls across the cover and comes to rest.
-                RibbonShape()
-                    .fill(theme.accent.gradient)
-                    .frame(width: 18, height: 120)
-                    .shadow(color: .black.opacity(0.25), radius: 2, y: 1)
-                    .rotationEffect(.degrees(settled ? 8 : (reduceMotion ? 8 : -24)), anchor: .top)
-                    .offset(x: 34, y: settled ? -14 : (reduceMotion ? -14 : -220))
+                // The ribbon is tucked in at the last page and falls out below the book, beside its
+                // title rather than across it, like the bookmark of a cloth-bound book.
+                SilkRibbon(color: theme.accent, dark: theme.palette.isDark)
+                    // Out of the book's foot: it slips down from under the cover's bottom edge and sways to rest.
+                    .frame(width: 11, height: settled || reduceMotion ? 76 : 12, alignment: .top)
+                    .rotationEffect(.degrees(settled ? 3 : (reduceMotion ? 3 : -6)), anchor: .top)
+                    .offset(x: 36, y: 168)
                     .opacity(settled || !reduceMotion ? 1 : 0)
                     .accessibilityHidden(true)
+                cover
+                    .frame(width: 120, height: 180)
             }
-            .padding(.bottom, 34)
+            .frame(height: 252, alignment: .top)
+            .padding(.bottom, 14)
             Text("The End")
                 .font(.system(size: 40, weight: .regular, design: .serif).italic())
                 .accessibilityAddTraits(.isHeader)
-            Text(leaf.line)
+            // Two halves of the story, a line each, rather than wherever the width happens to break.
+            Text(story.replacingOccurrences(of: " · finished", with: "\nfinished"))
                 .font(.subheadline)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
                 .foregroundStyle(theme.text.opacity(0.8))
                 .padding(.top, 10)
+                .padding(.horizontal, 28)
                 .accessibilityIdentifier("endLeaf.line")
             Spacer(minLength: 28)
             VStack(spacing: 12) {
@@ -177,7 +197,7 @@ struct EndLeafView: View {
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("endLeaf")
         .onAppear {
-            withAnimation(reduceMotion ? .easeOut(duration: 0.3) : .spring(duration: 1.1, bounce: 0.28).delay(0.2)) { settled = true }
+            withAnimation(reduceMotion ? .easeOut(duration: 0.3) : .spring(duration: 1.2, bounce: 0.3).delay(0.35)) { settled = true }
         }
     }
 
@@ -199,6 +219,49 @@ struct EndLeafView: View {
     }
 }
 
+/// A narrow ribbon of silk: soft shading across its width (the weave catches light down the middle),
+/// a slight sheen, and a notched swallowtail end.
+private struct SilkRibbon: View {
+    let color: Color
+    let dark: Bool
+
+    var body: some View {
+        SwallowtailShape()
+            .fill(color)
+            .overlay {
+                SwallowtailShape().fill(LinearGradient(
+                    stops: [
+                        .init(color: .black.opacity(0.28), location: 0),
+                        .init(color: .white.opacity(dark ? 0.10 : 0.22), location: 0.42),
+                        .init(color: .clear, location: 0.6),
+                        .init(color: .black.opacity(0.32), location: 1),
+                    ],
+                    startPoint: .leading, endPoint: .trailing
+                ))
+            }
+            .overlay {
+                // Where it leaves the book it's in the cover's shadow.
+                SwallowtailShape().fill(LinearGradient(colors: [.black.opacity(0.35), .clear], startPoint: .top, endPoint: UnitPoint(x: 0.5, y: 0.16)))
+            }
+            .shadow(color: .black.opacity(dark ? 0.45 : 0.18), radius: 1.5, x: 1, y: 1.5)
+    }
+}
+
+/// A strip with a V cut into its end.
+private struct SwallowtailShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        var p = Path()
+        let notch = rect.width * 0.85
+        p.move(to: CGPoint(x: rect.minX, y: rect.minY))
+        p.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
+        p.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
+        p.addLine(to: CGPoint(x: rect.midX, y: rect.maxY - notch))
+        p.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
+        p.closeSubpath()
+        return p
+    }
+}
+
 /// While the first page lays out: the page colour and the book's cover, never a spinner. After
 /// 1.5 s a hairline of ribbon creeps along the top so a slow open still says something is happening.
 struct OpeningPlaceholder: View {
@@ -214,9 +277,12 @@ struct OpeningPlaceholder: View {
                 Image(uiImage: cover)
                     .resizable()
                     .scaledToFit()
-                    .frame(maxWidth: 200, maxHeight: 300)
                     .clipShape(.rect(topLeadingRadius: 3, bottomLeadingRadius: 3, bottomTrailingRadius: 6, topTrailingRadius: 6))
                     .shadow(color: .black.opacity(0.22), radius: 14, y: 8)
+                    // Every open is the same move: the cover grows to fill the page, as a book's
+                    // cover fills your hands, and the first page takes its place.
+                    .padding(.horizontal, 28)
+                    .padding(.vertical, 44)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
             if slow {
@@ -261,5 +327,34 @@ struct UnfoldLeaf: View {
         .opacity(opacity)
         .allowsHitTesting(false)
         .accessibilityHidden(true)
+    }
+}
+
+/// The "read on without you" slip, folded into a tab hanging in the page's top margin.
+struct AheadTab: View {
+    let label: String
+    let theme: ReaderTheme
+    var onOpen: () -> Void
+
+    var body: some View {
+        Button(action: onOpen) {
+            HStack(spacing: 5) {
+                Image(systemName: "book.pages")
+                    .font(.caption2.weight(.semibold))
+                Text(label)
+                    .font(.caption.weight(.semibold))
+                    .monospacedDigit()
+            }
+            .foregroundStyle(theme.onAccent)
+            .padding(.horizontal, 9)
+            .frame(height: 22)
+            .background(theme.accent, in: UnevenRoundedRectangle(cornerRadii: .init(topLeading: 0, bottomLeading: 8, bottomTrailing: 8, topTrailing: 0)))
+            .shadow(color: .black.opacity(0.12), radius: 2, y: 1)
+            .frame(minWidth: 44, minHeight: 44, alignment: .top)
+            .contentShape(.rect)
+        }
+        .buttonStyle(PressScale())
+        .accessibilityLabel("Your InkPad read on. Show the offer")
+        .accessibilityIdentifier("banner.tab")
     }
 }

@@ -126,6 +126,69 @@ final class LiveSyncUITests: XCTestCase {
         sleep(4)
     }
 
+    /// Highlights both ways (driver steps around it): a note written through the Cloud API is listed
+    /// and drawn with its words, and a highlight made here is sent to the Cloud.
+    func test3_highlightsRoundTrip() throws {
+        let marker = try XCTUnwrap(env["GATEFOLD_LIVE_NOTE_MARKER"].flatMap { $0.isEmpty ? nil : $0 }, "the seeded note's marker")
+        launch(reset: false)
+        let book = element(frankenstein)
+        XCTAssertTrue(book.waitForExistence(timeout: 30))
+        book.tap()
+        let page = element("reader.page")
+        XCTAssertTrue(page.waitForExistence(timeout: 30))
+        waitForSettled()
+
+        page.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        let contents = element("reader.contents")
+        XCTAssertTrue(contents.waitForExistence(timeout: 5))
+        contents.tap()
+        let tab = app.buttons["Highlights"]
+        XCTAssertTrue(tab.waitForExistence(timeout: 10))
+        tab.tap()
+        let seeded = app.staticTexts.containing(NSPredicate(format: "label BEGINSWITH %@", marker)).firstMatch
+        XCTAssertTrue(seeded.waitForExistence(timeout: 60), "the API's note is listed")
+        shot("live-11-highlights-list")
+        seeded.tap()
+
+        let probe = element("reader.highlights")
+        let drawn = NSPredicate(format: "label MATCHES 'drawn [1-9][0-9]* of [0-9]+' AND value CONTAINS 'note='")
+        XCTAssertEqual(XCTWaiter.wait(for: [expectation(for: drawn, evaluatedWith: probe)], timeout: 60), .completed,
+                       "the API's note is drawn: \(probe.label) [\(probe.value as? String ?? "")]")
+        let before = probe.label
+        print("LIVE highlights probe: \(before) [\(probe.value as? String ?? "")]")
+        sleep(1)
+        shot("live-12-note-drawn")
+
+        // Tap the drawn note: its card shows the words written through the API.
+        let value = probe.value as? String ?? ""
+        let note = value.split(separator: ";").first { $0.hasPrefix("note=") }.map { $0.dropFirst(5).split(separator: ",").compactMap { Double($0) } } ?? []
+        XCTAssertEqual(note.count, 2)
+        app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: note[0], dy: note[1])).tap()
+        let card = element("highlight.note")
+        XCTAssertTrue(card.waitForExistence(timeout: 10))
+        XCTAssertTrue(card.label.hasPrefix(marker), card.label)
+        print("LIVE note card: \(card.label) / \(element("highlight.provenance").label)")
+        shot("live-13-note-card")
+        app.swipeDown(velocity: .fast)
+        XCTAssertTrue(card.waitForNonExistence(timeout: 10))
+
+        // Highlight a word lower on the page.
+        let total = Int(before.split(separator: " ").last ?? "") ?? 0
+        page.coordinate(withNormalizedOffset: CGVector(dx: 0.45, dy: 0.8)).press(forDuration: 1.2)
+        let highlight = app.menuItems["Highlight"].exists ? app.menuItems["Highlight"] : app.buttons["Highlight"]
+        XCTAssertTrue(highlight.waitForExistence(timeout: 10))
+        shot("live-14-selection")
+        highlight.tap()
+        let more = NSPredicate(format: "label ENDSWITH %@", " of \(total + 1)")
+        XCTAssertEqual(XCTWaiter.wait(for: [expectation(for: more, evaluatedWith: probe)], timeout: 20), .completed, probe.label)
+        print("LIVE after highlighting: \(probe.label)")
+        sleep(2)
+        shot("live-15-highlighted")
+        sleep(6) // the Cloud write goes out
+        close()
+        sleep(4)
+    }
+
     private func waitForSettled() {
         let probe = element("reader.visibleText")
         let deadline = Date().addingTimeInterval(60)
@@ -141,8 +204,9 @@ final class LiveSyncUITests: XCTestCase {
     }
 
     private func close() {
-        element("reader.page").coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
         let close = element("reader.close")
+        // A jump leaves the chrome up; only tap the page when it's hidden.
+        if !close.isHittable { element("reader.page").coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap() }
         XCTAssertTrue(close.waitForExistence(timeout: 5))
         close.tap()
     }

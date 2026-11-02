@@ -137,3 +137,34 @@ public enum ReaderLayoutResolver {
         return min(1, max(0, (180 - angle) / 90))
     }
 }
+
+/// Page text never starts under the status bar or a camera: the folded Duo's cutout sits inside the
+/// page's top margin, so the page itself moves down until its first line is clear.
+public enum PageSafeArea {
+    /// The first line's distance below the page's top edge (Readium's top inset, compact size).
+    public static let textTopInset: CGFloat = 28
+    /// Breathing room between the lowest thing the system covers and the first line.
+    public static let gap: CGFloat = 8
+
+    public static func clearingTop(_ layout: ReaderLayout, safeTop: CGFloat, occlusions: [CGRect]) -> ReaderLayout {
+        let page = layout.pageFrame
+        let band = page.minY + textTopInset + 24
+        let covered = occlusions
+            .filter { $0.minY < band && $0.maxX > page.minX && $0.minX < page.maxX }
+            .map(\.maxY)
+        let needed = max(safeTop, covered.max() ?? 0) + gap
+        return shifted(layout, by: needed - (page.minY + textTopInset))
+    }
+
+    /// The page moved down by `shift` points, keeping its foot.
+    public static func shifted(_ layout: ReaderLayout, by shift: CGFloat) -> ReaderLayout {
+        guard shift > 0 else { return layout }
+        let page = layout.pageFrame
+        var out = layout
+        out.pageFrame = CGRect(x: page.minX, y: page.minY + shift, width: page.width, height: max(0, page.height - shift))
+        if let gutter = layout.gutter {
+            out.gutter = CGRect(x: gutter.minX, y: gutter.minY + shift, width: gutter.width, height: max(0, gutter.height - shift))
+        }
+        return out
+    }
+}

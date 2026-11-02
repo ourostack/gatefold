@@ -51,6 +51,9 @@ final class ReaderModel {
     enum SlipKind: Equatable { case landed, ahead }
     private(set) var slip: SyncSlip?
     private(set) var slipKind: SlipKind?
+    /// The "read on without you" slip, tucked into a tab at the page's top edge: a turn means stay.
+    private(set) var slipFolded = false
+    private(set) var aheadTab: String?
     /// Bumped each time a slip appears, for its haptic.
     private(set) var slipCount = 0
     /// After a Jump, the way back stays on screen for a few seconds even with the controls hidden.
@@ -61,9 +64,52 @@ final class ReaderModel {
     private(set) var endLeaf: EndLeaf?
     /// The book's cover, shown while the first page lays out and on the end leaf.
     let cover: UIImage?
+    /// The InkPad's highlights and notes, and the reader's own (Highlights.swift).
+    let highlights: HighlightStore
     /// The first page is on screen and legible.
     private(set) var pageReady = false
     let openedAt = Date()
+    /// When the reader asked for the book: the tap, for a book opened ahead of it behind the shelf.
+    var askedAt = Date()
+    /// The shelf state a warm open was made for; a change opens it afresh.
+    var warmKey: String?
+    /// Opened ahead of a tap, behind the shelf: everything up to the first page, nothing the reader
+    /// would notice (no session, no Cloud check, no slip) until `activate()`.
+    private(set) var isWarming = false
+    private var activation: CheckedContinuation<Void, Never>?
+    private var loadStarted = false
+
+    /// Opens the book behind the shelf, so a tap on it shows a page that's already there.
+    func warm() {
+        guard !loadStarted else { return }
+        isWarming = true
+        Task { await load() }
+    }
+
+    /// The reader tapped the book: carry on from wherever the warm open got to.
+    func activate() {
+        guard isWarming else { return }
+        isWarming = false
+        askedAt = Date()
+        readerLog.notice("open: tapped a warm book; page ready \(self.pageReady, privacy: .public)")
+        if pageReady { readerLog.notice("first page ready after 0 s (opened ahead of the tap)") }
+        activation?.resume()
+        activation = nil
+        if let landed = pendingLanded {
+            pendingLanded = nil
+            // After the zoom has brought the page up, so the line draws in where the reader can see it.
+            Task {
+                try? await Task.sleep(for: .milliseconds(450))
+                guard !isClosed else { return }
+                showLanded(landed.slip, underline: landed.underline)
+            }
+        }
+    }
+
+    private func untilActive() async {
+        guard isWarming, !isClosed else { return }
+        await withCheckedContinuation { activation = $0 }
+    }
     /// Set once the reader has settled after a reflow (for UI tests): whether the anchor is on screen.
     private(set) var anchorCheck = "pending 0"
     private var anchorReady = false
@@ -83,6 +129,12 @@ final class ReaderModel {
     /// First open here of a book the InkPad has a place in: the cover stays up until the reader has
     /// landed there, so the book's first page never flashes past (or loads blank) on the way.
     private var awaitingLanding: Bool
+    /// Our own place was front matter, so the InkPad's place is opened directly, as on a first open.
+    private var landsOverFrontMatter = false
+    /// The Cloud's place as the shelf last saw it, to decide before asking whether to land there.
+    private let cloudHint: Double?
+    /// A landing made behind the shelf says so once the reader is looking.
+    private var pendingLanded: (slip: SyncSlip, underline: Locator?)?
     /// Where the book opened; nothing is recorded or pushed until the reader moves from it,
     /// so opening a book never overwrites a further-ahead place on the other device.
     private var hasMoved = false
@@ -114,6 +166,8 @@ final class ReaderModel {
         self.awaitingLanding = book.localSnapshot == nil
             && ((book.remote?.totalProgression ?? 0) > JumpSuggestion.threshold || (book.cloud?.readPercent ?? 0) > 0)
         self.cover = app.library.cover(for: book)
+        self.cloudHint = book.remote?.totalProgression ?? book.cloud?.readPercent.map { Double($0) / 100 }
+        self.highlights = HighlightStore(bookID: book.id, cloudBook: book.cloud, sync: app.sync)
         let initial = book.locatorJSON.flatMap { try? Locator(jsonString: $0) }
         self.initialLocator = initial
         let prefs = app.preferences.effective(for: book.id)
@@ -126,7 +180,7 @@ final class ReaderModel {
                 model: self,
                 publication: publication,
                 initialLocation: initial,
-                preferences: Self.epubPreferences(prefs, theme: prefs.resolvedTheme(systemIsDark: false), columns: .one)
+                preferences: Self.epubPreferences(prefs, theme: prefs.resolvedTheme(systemIsDark: false), columns: .one, language: Self.hyphenationLanguage(publication))
             )
         } catch {
             errorMessage = "This book couldn't be opened: \(error.localizedDescription)"
@@ -181,6 +235,8 @@ final class ReaderModel {
     // MARK: Loading
 
     func load() async {
+        guard !loadStarted else { activate(); return }
+        loadStarted = true
         let positions = (try? await publication.positionsByReadingOrder().get()) ?? []
         let count = positions.reduce(0) { $0 + $1.count }
         readerLog.notice("open: positions after \(Date().timeIntervalSince(self.openedAt), privacy: .public) s; location \(self.page?.currentLocation != nil, privacy: .public)")
@@ -198,6 +254,7 @@ final class ReaderModel {
             }
         }
         walk(tocLinks, level: 0)
+        readerLog.notice("open: toc after \(Date().timeIntervalSince(self.openedAt), privacy: .public) s")
         let raw = entries.map { ContentsIndex.Entry(title: $0.title, href: $0.link.url().removingFragment().string, fragment: $0.link.url().fragment, level: $0.level) }
         // Contents start at chapter one, with human titles; the licence marks where the story ends.
         let kept = ContentsCleaner.clean(raw, bookTitle: fullTitle)
@@ -206,6 +263,7 @@ final class ReaderModel {
             return TOCEntry(id: i, title: k.title, level: e.level, link: e.link, progression: e.progression)
         }
         if toc.isEmpty { toc = entries }
+        readerLog.notice("open: cleaned after \(Date().timeIntervalSince(self.openedAt), privacy: .public) s")
         storyEnd = BookEnd.backMatter(in: raw)
         readingOrderHrefs = publication.readingOrder.map { $0.url().removingFragment().string }
         resourceStarts = readingOrderHrefs.map { starts[$0] ?? 0 }
@@ -214,8 +272,17 @@ final class ReaderModel {
             readingOrder: readingOrderHrefs
         )
         mapper = await BookPositions.mapper(for: publication)
+        if let mapper { Task { await highlights.start(model: self, mapper: mapper) } }
         readerLog.notice("open: mapper after \(Date().timeIntervalSince(self.openedAt), privacy: .public) s; location \(self.page?.currentLocation != nil, privacy: .public)")
         chapterMap = ChapterMap(chapters: toc.filter { $0.level == 0 }.map { .init(title: $0.title, start: $0.progression) }, positionCount: max(1, count))
+        // A place of ours that's still in the front matter (a list of illustrations, a title page) isn't
+        // reading yet: when the InkPad has the book further on, open there instead of offering a Jump.
+        if !awaitingLanding, let local = openedSnapshot?.totalProgression, let cloud = cloudHint, cloud > local + JumpSuggestion.threshold,
+           FrontMatter.isUnread(local, storyStart: toc.first(where: { $0.level == 0 })?.progression ?? 0) {
+            readerLog.notice("open: our place \(local, privacy: .public) is front matter; landing on the InkPad's")
+            awaitingLanding = true
+            landsOverFrontMatter = true
+        }
 
         // The first page can take seconds to lay out on a cold web view; nothing below means anything
         // until the navigator reports where it is.
@@ -245,13 +312,19 @@ final class ReaderModel {
             await captureAnchor()
             markReady()
         }
-        app.library.noteSession(bookID)
-        await checkRemote()
-        // Landed (or there was nowhere to land): show the page.
+        // A book landing on the InkPad's place lands before it shows, warm or not.
+        var checked = false
         if awaitingLanding {
+            await checkRemote()
+            checked = true
+            // Landed (or there was nowhere to land): show the page.
             awaitingLanding = false
             markReady()
         }
+        await untilActive()
+        guard !isClosed else { return }
+        app.library.noteSession(bookID)
+        if !checked { await checkRemote() }
     }
 
     /// The first page has painted: the cover placeholder cross-fades to it.
@@ -263,7 +336,8 @@ final class ReaderModel {
             for _ in 0..<80 where host?.isLoadingPage == true { try? await Task.sleep(for: .milliseconds(100)) }
             revealing = false
             guard !pageReady else { return }
-            readerLog.notice("first page ready after \(Date().timeIntervalSince(self.openedAt), privacy: .public) s")
+            Task { [weak self] in await self?.host?.logTypography() }
+            readerLog.notice("first page ready after \(Date().timeIntervalSince(self.isWarming ? self.openedAt : self.askedAt), privacy: .public) s\(self.isWarming ? " (behind the shelf)" : "", privacy: .public)")
             withAnimation(.easeOut(duration: 0.3)) { pageReady = true }
         }
     }
@@ -312,14 +386,18 @@ final class ReaderModel {
         let aim = landingTarget(remote, at: target.totalProgression)
         // First time this book opens here: there's no place of ours to protect, so just open where
         // the InkPad is, like picking the book up off the nightstand.
-        if openedSnapshot == nil, !hasMoved {
+        if openedSnapshot == nil || landsOverFrontMatter, !hasMoved {
             readerLog.notice("first open: landing on the Cloud place \(remote.pointer ?? "no pointer", privacy: .public)")
             await land(on: target.locator, progression: target.totalProgression, target: aim, rememberBack: false)
             guard !isClosed else { return }
             awaitingLanding = false
             markReady()
-            showSlip(.landed(device: remote.deviceName, updated: remote.updated, now: Date()), kind: .landed)
-            if let locator = target.locator { host?.underline(locator, color: theme.palette.accent) }
+            let landed = SyncSlip.landed(device: remote.deviceName, updated: remote.updated, now: Date())
+            if isWarming {
+                pendingLanded = (landed, target.locator)
+            } else {
+                showLanded(landed, underline: target.locator)
+            }
             return
         }
         let made = JumpSuggestion.make(
@@ -333,16 +411,92 @@ final class ReaderModel {
         suggestionLocator = target.locator
         suggestionRemote = aim
         withAnimation(Motion.banner) { suggestion = made }
-        let pages = chapterMap.positionCount > 1 && !percentOnly
+        let pages = chapterMap.positionCount > 1
             ? chapterMap.page(at: target.totalProgression) - chapterMap.page(at: totalProgression) : nil
         let percent = ReadingPercent.whole(target.totalProgression) - ReadingPercent.whole(totalProgression)
+        // A place the Cloud only has as a percent still gets its words: the sentence starting there.
+        var passage = target.locator?.text.highlight
+        if passage == nil, let found = await sentence(atTotalProgression: target.totalProgression) {
+            passage = found.text
+            // The words give the jump an exact place to land and a line to underline.
+            if suggestionLocator == nil { suggestionLocator = found.locator }
+        }
+        guard !isClosed else { return }
+        aheadTab = SyncSlip.tab(device: remote.deviceName, pagesAhead: pages)
+        aheadTarget = (target.totalProgression, remote.deviceName)
+        slipFolded = false
         showSlip(.ahead(
             device: remote.deviceName,
             pagesAhead: pages,
+            approximate: percentOnly,
             percentAhead: percent,
-            chapter: chapterMap.chapter(at: target.totalProgression)?.title,
-            passage: target.locator?.text.highlight
+            updated: remote.updated,
+            now: Date(),
+            passage: passage
         ), kind: .ahead)
+    }
+
+    /// The first words of the sentence at a place in the book, read from the book itself, and a
+    /// locator that finds them.
+    private func sentence(atTotalProgression total: Double) async -> (text: String, locator: Locator?)? {
+        guard let index = resourceStarts.lastIndex(where: { $0 <= total }), index < publication.readingOrder.count else { return nil }
+        let start = resourceStarts[index]
+        let end = index + 1 < resourceStarts.count ? resourceStarts[index + 1] : 1
+        let within = end > start ? (total - start) / (end - start) : 0
+        nonisolated(unsafe) let publication = publication
+        let link = publication.readingOrder[index]
+        guard let resource = publication.get(link), let data = try? await resource.read().get(),
+              let text = PassageText.sentence(inHTML: String(decoding: data, as: UTF8.self), at: within) else { return nil }
+        let words = String(text.prefix(60))
+        let locator = await publication.locate(link).map {
+            $0.copy(locations: { $0.progression = within; $0.totalProgression = total },
+                    text: { $0 = Locator.Text(highlight: words) })
+        }
+        return (text, locator)
+    }
+
+    @ObservationIgnored private var aheadTarget: (progression: Double, device: String)?
+
+    /// The folded tab counts down as the reader catches up, and goes once they're there.
+    private func refreshAheadTab() {
+        guard let aim = aheadTarget, slipKind == .ahead, slip != nil, chapterMap.positionCount > 1 else { return }
+        let pages = chapterMap.page(at: aim.progression) - chapterMap.page(at: totalProgression)
+        if pages <= 0 {
+            aheadTarget = nil
+            dismissSuggestion()
+            return
+        }
+        let label = SyncSlip.tab(device: aim.device, pagesAhead: pages)
+        if label != aheadTab { aheadTab = label }
+    }
+
+    /// A page turn while the slip is up means "carry on here": it folds into its tab.
+    func foldSlip() {
+        guard slipKind == .ahead, slip != nil, !slipFolded else { return }
+        slipTask?.cancel()
+        withAnimation(reduceMotion ? .easeOut(duration: 0.2) : .spring(duration: 0.4, bounce: 0.15)) { slipFolded = true }
+    }
+
+    /// The tab, tapped: the slip opens again with its offer.
+    func unfoldSlip() {
+        guard slipFolded else { return }
+        withAnimation(reduceMotion ? .easeOut(duration: 0.2) : .spring(duration: 0.4, bounce: 0.2)) { slipFolded = false }
+        foldSlipLater()
+    }
+
+    /// Unanswered, the offer folds itself away after a while rather than sitting on the page.
+    private func foldSlipLater() {
+        slipTask?.cancel()
+        slipTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(10))
+            guard !Task.isCancelled else { return }
+            self?.foldSlip()
+        }
+    }
+
+    private func showLanded(_ landed: SyncSlip, underline: Locator?) {
+        showSlip(landed, kind: .landed)
+        if let underline { host?.underline(underline, color: theme.palette.accent) }
     }
 
     private func showSlip(_ new: SyncSlip, kind: SlipKind) {
@@ -352,8 +506,8 @@ final class ReaderModel {
             slipKind = kind
         }
         slipCount += 1
-        // "From your InkPad" is news, not a question: it goes by itself.
-        guard kind == .landed else { return }
+        // "From your InkPad" is news, not a question: it goes by itself. An offer folds away.
+        guard kind == .landed else { return foldSlipLater() }
         slipTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(4))
             guard !Task.isCancelled else { return }
@@ -366,6 +520,7 @@ final class ReaderModel {
         withAnimation(.easeOut(duration: 0.35)) {
             slip = nil
             slipKind = nil
+            slipFolded = false
         }
     }
 
@@ -511,6 +666,8 @@ final class ReaderModel {
     /// the page or records a place after the close has sent the last one.
     func close() {
         isClosed = true
+        activation?.resume()
+        activation = nil
         moves += 1
         slipTask?.cancel()
         jumpBackTask?.cancel()
@@ -574,6 +731,7 @@ final class ReaderModel {
     func locationDidChange(_ locator: Locator, duringTurn: Bool = false) async {
         guard !isClosed else { return }
         location = locator
+        refreshAheadTab()
         // The navigator opens on the saved place, so its first report is a page worth showing: don't
         // keep the cover up while the rest of the book is indexed.
         if !pageReady, LaunchOptions.goTo == nil { markReady() }
@@ -634,6 +792,7 @@ final class ReaderModel {
 
     /// A turn landed or sprang back: take the place from where the navigator is now.
     func userTurnedPage() {
+        foldSlip()
         hasMoved = true
         moves += 1
         Task {
@@ -745,6 +904,15 @@ final class ReaderModel {
         await captureAnchor()
     }
 
+    /// A highlight's exact place: Readium finds its words, so the page is the one they are on.
+    func go(to locator: Locator, rememberBack: Bool) async {
+        hasMoved = true
+        moves += 1
+        if rememberBack { rememberPlace() }
+        await veiled { _ = await self.page?.go(to: locator) }
+        await captureAnchor()
+    }
+
     func go(to bookmark: Bookmark) async {
         rememberPlace()
         await go(toProgression: bookmark.totalProgression, rememberBack: false)
@@ -795,7 +963,7 @@ final class ReaderModel {
     private(set) var visibleTextProbe = ""
 
     private func refreshBookmarkState(_ visible: VisibleRange?) {
-        if LaunchOptions.isUITest, let text = visible?.text { visibleTextProbe = String(text.prefix(600)) }
+        if LaunchOptions.isUITest, let text = visible?.text { visibleTextProbe = String(text.prefix(2400)) }
         guard let location else { return }
         let here = location.href.string
         let p = location.locations.progression ?? 0
@@ -829,7 +997,7 @@ final class ReaderModel {
     func applyPreferences(reflow: Bool) {
         let prefs = preferences
         host?.apply(
-            Self.epubPreferences(prefs, theme: theme, columns: layout.columns, tabletop: layout.posture == .tabletop),
+            Self.epubPreferences(prefs, theme: theme, columns: layout.columns, tabletop: layout.posture == .tabletop, language: Self.hyphenationLanguage(publication)),
             columns: layout.columns == .two ? 2 : 1,
             reflow: reflow
         )
@@ -837,17 +1005,30 @@ final class ReaderModel {
     }
 
     /// Tabletop's half-height page keeps no more than the Normal side margins.
-    static func epubPreferences(_ prefs: ReaderPreferences, theme: ReaderTheme, columns: GatefoldCore.ColumnCount, tabletop: Bool = false) -> EPUBPreferences {
+    /// WebKit hyphenates only text that says its language, and many Gutenberg chapters don't: the
+    /// book's own language, or English, goes on the page so justified lines break words, not gaps.
+    static func hyphenationLanguage(_ publication: Publication) -> Language {
+        publication.metadata.language ?? Language(code: .bcp47("en"))
+    }
+
+    static func epubPreferences(_ prefs: ReaderPreferences, theme: ReaderTheme, columns: GatefoldCore.ColumnCount, tabletop: Bool = false, language: Language? = nil) -> EPUBPreferences {
         let custom = prefs.font != .original || prefs.lineSpacing != .normal || prefs.justify
         return EPUBPreferences(
             backgroundColor: ReadiumNavigator.Color(hex: ThemePalette.hexString(theme.palette.background)),
             columnCount: columns == .two ? .two : .one,
             fontFamily: prefs.font.cssFamily.map { FontFamily(rawValue: $0) },
             fontSize: prefs.fontScale,
-            hyphens: prefs.justify ? true : nil,
+            // Gutenberg justifies its own text; without hyphenation the narrow page opens rivers.
+            // ReadiumCSS applies hyphens only in its advanced mode, which on its own changes nothing
+            // else (every other user setting stays nil unless chosen).
+            hyphens: true,
+            language: language,
             lineHeight: custom ? prefs.lineSpacing.lineHeight : nil,
-            pageMargins: tabletop ? min(prefs.margins.factor, PageMargins.normal.factor) : prefs.margins.factor,
-            publisherStyles: !custom,
+            // Facing pages give their width to the line, not the margins (the spine is margin enough),
+            // so each page keeps a book's measure.
+            pageMargins: tabletop ? min(prefs.margins.factor, PageMargins.normal.factor)
+                : columns == .two ? min(prefs.margins.factor, PageMargins.narrow.factor) : prefs.margins.factor,
+            publisherStyles: false,
             scroll: prefs.pageTurn == .scroll,
             textAlign: prefs.justify ? .justify : nil,
             textColor: ReadiumNavigator.Color(hex: ThemePalette.hexString(theme.palette.text)),

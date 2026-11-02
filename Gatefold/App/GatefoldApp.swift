@@ -50,6 +50,14 @@ enum WebWarmup {
         let web = WKWebView(frame: CGRect(x: 0, y: 0, width: 10, height: 10))
         web.loadHTMLString("<html><body style='font-family:serif'>Gatefold</body></html>", baseURL: nil)
         view = web
+        // A web view's first trip into a window loads WebKit's window-side services (Screen Time's page
+        // controller among them) on the main thread; pay that here, under the launch mark, not on the
+        // first open.
+        let window = UIApplication.shared.connectedScenes.compactMap { ($0 as? UIWindowScene)?.keyWindow }.first
+        web.frame = CGRect(x: 0, y: 0, width: 1, height: 1)
+        web.alpha = 0.01
+        web.isUserInteractionEnabled = false
+        window?.insertSubview(web, at: 0)
     }
 }
 
@@ -60,6 +68,8 @@ struct RootView: View {
     @State private var reader: ReaderModel?
     @State private var openError: String?
     @State private var opening = false
+    /// The book most likely to be opened next, already open behind the shelf.
+    @State private var warm: ReaderModel?
 
     var body: some View {
         ZStack {
@@ -72,6 +82,12 @@ struct RootView: View {
             }
         }
         .animation(Motion.open, value: app.hasOnboarded)
+        // Under the shelf's own paper: never seen, but laid out and painted like the real page. A
+        // background, so its arrival can't resize the shelf's stack (it ignores the safe area).
+        .background {
+            if let warm, reader == nil { WarmPage(model: warm) }
+        }
+        .task(id: warmKey) { await warmUp() }
         .fullScreenCover(item: $reader) { model in
             ReaderScreen(model: model) {
                 // Stop any landing or settle first, so the place sent below is the last one.
@@ -99,14 +115,50 @@ struct RootView: View {
         }
     }
 
+    /// What to open ahead of a tap: the first book on Reading Now, at its current place.
+    private var warmKey: String? {
+        guard app.hasOnboarded, reader == nil, !opening, !LaunchOptions.noWarm,
+              let book = app.library.readingNow.first(where: \.isOnDevice) else { return nil }
+        // The book only: the warm reader keeps its own place (a landing moves it), and closing the
+        // reader clears the key, so the next warm one opens where reading stopped.
+        return book.id
+    }
+
+    private func warmUp() async {
+        guard let key = warmKey, case let id = key else { return }
+        if let warm, warm.warmKey == key { return }
+        warm?.close()
+        warm = nil
+        // Let the shelf arrive first; the warm open is the next thing the main thread does, not the first.
+        try? await Task.sleep(for: .milliseconds(700))
+        guard !Task.isCancelled, let book = app.library.book(id), let url = app.library.fileURL(of: book),
+              let publication = try? await BookOpener.shared.open(url), !Task.isCancelled, warmKey == key else { return }
+        let model = ReaderModel(book: book, publication: publication, app: app)
+        model.warmKey = key
+        model.warm()
+        warm = model
+    }
+
     private func open(_ book: LibraryBook) {
         guard !opening, let url = app.library.fileURL(of: book) else { return }
+        let asked = Date()
+        if let ready = warm, ready.bookID == book.id, !ready.isClosed {
+            warm = nil
+            reader = ready
+            app.activeReader = ready
+            app.openBookID = book.id
+            ready.activate()
+            return
+        }
+        warm?.close()
+        warm = nil
         opening = true
         Task {
             defer { opening = false }
             do {
                 let publication = try await BookOpener.shared.open(url)
                 let model = ReaderModel(book: book, publication: publication, app: app)
+                model.askedAt = asked
                 reader = model
                 app.activeReader = model
                 app.openBookID = book.id

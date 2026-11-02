@@ -59,6 +59,28 @@ public actor FakeSyncService: SyncService {
                 positions[Self.id(for: seed)] = ReadingPosition(cfi: nil, progression: 0, totalProgression: p, updated: t.addingTimeInterval(-seed.remoteAge), source: .pocketBookNative)
             }
         }
+        annotationsByBook = Self.seededAnnotations(now: t)
+    }
+
+    /// The book whose opening the InkPad has marked up, for demos and UI tests.
+    public static let highlightedBook = "gutenberg-pride-and-prejudice"
+
+    /// What "the InkPad" highlighted in Chapter I of Pride and Prejudice, in the InkPad's own anchor form.
+    /// `HighlightSeedTests` checks each pair of CFIs still names its words in the bundled book.
+    public static func seededAnnotations(now: Date) -> [String: [CloudAnnotation]] {
+        func seed(_ uuid: String, _ begin: String, _ end: String, _ text: String, note: String?, color: AnnotationColor, age: TimeInterval) -> CloudAnnotation {
+            var a = CloudAnnotation.highlight(begin: "pbr:/webkit?##epubcfi(/6/4[pg-header]!\(begin))", end: "pbr:/webkit?##epubcfi(/6/4[pg-header]!\(end))",
+                                              text: text, color: color, note: note, at: now.addingTimeInterval(-age))
+            a.uuid = uuid
+            return a
+        }
+        return [highlightedBook: [
+            seed("seed-truth", "/4/64/3:5", "/4/64/3:115",
+                 "a truth universally acknowledged, that a single man in possession of a good fortune must be in want of a wife.",
+                 note: nil, color: .yellow, age: 3 * 86400),
+            seed("seed-netherfield", "/4/68/1:73", "/4/68/1:105", "Netherfield Park is let at last?",
+                 note: "And so it begins. Mrs. Bennet has been waiting her whole life for this sentence.", color: .yellow, age: 5 * 3600),
+        ]]
     }
 
     public static func id(for seed: Seed) -> String { "gutenberg-\(seed.resource)" }
@@ -171,15 +193,21 @@ public actor FakeSyncService: SyncService {
         annotationsByBook[book.id] ?? []
     }
 
+    /// Like the real Cloud: a new note gets a uuid, announced with `.annotationSaved`.
     public func save(_ annotation: CloudAnnotation, for book: CloudBook) async {
         var list = annotationsByBook[book.id] ?? []
-        list.removeAll { $0.id == annotation.id }
-        list.append(annotation)
+        var saved = annotation
+        if saved.uuid == nil { saved.uuid = list.first { $0.dedupeKey == annotation.dedupeKey }?.uuid ?? UUID().uuidString.lowercased() }
+        list.removeAll { $0.uuid == saved.uuid }
+        list.append(saved)
         annotationsByBook[book.id] = list
+        if annotation.uuid == nil { broadcast(.annotationSaved(fastHash: book.id, saved)) }
     }
 
     public func deleteAnnotation(_ annotation: CloudAnnotation, for book: CloudBook) async {
-        annotationsByBook[book.id]?.removeAll { $0.id == annotation.id }
+        annotationsByBook[book.id]?.removeAll { a in
+            annotation.uuid.map { $0 == a.uuid } ?? (a.dedupeKey == annotation.dedupeKey)
+        }
     }
 
     public func pendingChanges() async -> Int { 0 }

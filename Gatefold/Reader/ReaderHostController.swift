@@ -14,7 +14,7 @@ let readerLog = Logger(subsystem: "bot.ouro.gatefold", category: "reader")
 final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGestureRecognizerDelegate, ReaderPage {
     let navigator: EPUBNavigatorViewController
     var currentLocation: Locator? { navigator.currentLocation }
-    private weak var weakModel: ReaderModel?
+    private(set) weak var weakModel: ReaderModel?
     /// The reader outlives this controller in every path but a mid-turn close; callers in tasks guard `weakModel`.
     private var model: ReaderModel { weakModel! }
     private let curl = CurlModel()
@@ -24,6 +24,8 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     private var lastSize: CGSize = .zero
     private var reflowTask: Task<Void, Never>?
     private var reflowGeneration = 0
+    /// The old page, held over the web view while it repaginates, so a reflow never shows bare paper.
+    private var reflowCover: UIView?
     /// True from the moment a turn begins until it lands or springs back.
     private(set) var isTurning = false
     private var panStart: CGPoint = .zero
@@ -39,6 +41,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             initialLocation: initialLocation,
             config: .init(
                 preferences: preferences,
+                editingActions: Self.highlightEditingActions,
                 contentInset: [.compact: (top: 28, bottom: 28), .regular: (top: 44, bottom: 44)],
                 // Readium shows and reports the first page only once every preloaded neighbour has loaded
                 // too: 2 behind and 4 ahead held the cover up for three to six seconds. Neighbours load on
@@ -46,6 +49,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
                 preloadPreviousPositionCount: 0,
                 preloadNextPositionCount: 0,
                 decorationTemplates: HTMLDecorationTemplate.defaultTemplates().merging([.gatefoldSync: .gatefoldSync()]) { a, _ in a }
+                    .merging(Self.highlightTemplates) { a, _ in a }
             )
         )
         super.init(nibName: nil, bundle: nil)
@@ -118,7 +122,13 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         if reflow { beginReflow(model.consumeReflowReason() ?? .typography) }
         navigator.submitPreferences(preferences)
         if reflow { settleReflowSoon() }
-        Task { _ = await navigator.evaluateJavaScript(ReaderJS.setColumns(columns)) }
+        Task {
+            _ = await navigator.evaluateJavaScript(ReaderJS.setColumns(columns))
+            if reflow, model.pageReady {
+                try? await Task.sleep(for: .seconds(1))
+                await logTypography()
+            }
+        }
     }
 
     // MARK: Reflow and the reading anchor
@@ -128,7 +138,19 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         model.keeper.reflowWillBegin(reason)
         model.reflowDidBegin()
         if !curl.isActive {
-            UIView.animate(withDuration: 0.12) { self.navigator.view.alpha = 0 }
+            let page = navigator.view!
+            if reflowCover == nil, page.alpha > 0.5, let container = page.superview,
+               let cover = page.snapshotView(afterScreenUpdates: false) {
+                cover.frame = page.frame
+                cover.isUserInteractionEnabled = false
+                container.insertSubview(cover, aboveSubview: page)
+                reflowCover = cover
+            }
+            if reflowCover != nil {
+                page.alpha = 0
+            } else {
+                UIView.animate(withDuration: 0.12) { page.alpha = 0 }
+            }
         }
         settleReflowSoon()
     }
@@ -182,7 +204,12 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         model.keeper.restoreDidComplete()
         model.reflowDidFinish(visible: after)
         disablePanningIfNeeded()
-        UIView.animate(withDuration: 0.25) { self.navigator.view.alpha = 1 }
+        let cover = reflowCover
+        reflowCover = nil
+        UIView.animate(withDuration: 0.25) {
+            self.navigator.view.alpha = 1
+            cover?.alpha = 0
+        } completion: { _ in cover?.removeFromSuperview() }
     }
 
     /// What's on screen now: the resource, its progression range and the visible text.
@@ -294,6 +321,14 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     /// A whole turn without a finger: lift from the lower corner and sweep across.
     private func animatedTurn(forward: Bool, from finger: CGPoint?) async {
         guard await prepareTurn(forward: forward, startingAt: finger ?? CGPoint(x: view.bounds.width, y: view.bounds.height * 0.86)) else { return }
+        // The same leaf as a drag: the corner lifts up and in first, so the page bends as a cylinder
+        // rather than folding along a flat vertical strip, then sweeps over.
+        if curl.style == .curl, !(weakModel?.reduceMotion ?? false) {
+            let w = curl.size.width, h = curl.size.height
+            let lift = CGPoint(x: forward ? w * 0.80 : w * 0.20, y: h * 0.80)
+            withAnimation(.easeOut(duration: 0.12)) { curl.finger = lift }
+            try? await Task.sleep(for: .milliseconds(120))
+        }
         await finish(complete: true, velocity: 0)
     }
 
@@ -484,7 +519,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     /// Runs a jump with the old page left on screen, dimmed to 60 %, until the new page has painted;
     /// then the old page cross-fades away over 0.2 s (no blank page, no spinner). With `riffle`, a few
     /// leaves flick past first.
-    func veiledJump(riffle: Bool, forward: Bool, _ body: () async -> Void) async {
+    func veiledJump(riffle: Bool, forward: Bool, _ body: @escaping () async -> Void) async {
         guard veil == nil, !isTurning, view.window != nil else { return await body() }
         let old = await renderedSnapshot(afterChange: false)
         // The old page, opaque, with a wash of paper over it: it reads as dimmed to 60 %, and nothing
@@ -501,16 +536,26 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         cover.addSubview(wash)
         view.insertSubview(cover, belowSubview: curlHost.view)
         veil = cover
-        let dim = UIViewPropertyAnimator(duration: 0.15, curve: .easeOut) { wash.alpha = 0.4 }
-        dim.startAnimation()
-        await body()
-        let fresh = await renderedSnapshot(afterChange: true)
         if riffle {
-            await riffleLeaves(from: old, to: fresh, forward: forward)
+            // The thumb starts riffling at once and keeps going while the far chapter loads, so the
+            // wait is the riffle, never a dimmed page.
+            var arrived = false
+            let travel = Task { @MainActor in
+                await body()
+                arrived = true
+            }
+            await riffleLeaves(from: old, forward: forward, arrived: { arrived }) { [weak self] in
+                await travel.value
+                return await self?.renderedSnapshot(afterChange: true) ?? old
+            }
             cover.removeFromSuperview()
             veil = nil
             return
         }
+        let dim = UIViewPropertyAnimator(duration: 0.15, curve: .easeOut) { wash.alpha = 0.4 }
+        dim.startAnimation()
+        await body()
+        _ = await renderedSnapshot(afterChange: true)
         await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
             UIView.animate(withDuration: 0.2, delay: 0, options: [.curveEaseInOut, .beginFromCurrentState]) {
                 cover.alpha = 0
@@ -520,10 +565,10 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         veil = nil
     }
 
-    /// Four fast leaves of the old page curl away over the new one, like a thumb riffling to a place.
-    private func riffleLeaves(from old: UIImage, to fresh: UIImage, forward: Bool) async {
+    /// Fast leaves curl away, like a thumb riffling to a place: at least three, more while the far
+    /// page is still on its way, and the last one uncovers it.
+    private func riffleLeaves(from old: UIImage, forward: Bool, arrived: @escaping () -> Bool, fresh: @escaping () async -> UIImage) async {
         guard let model = weakModel else { return }
-        veil?.alpha = 0
         isTurning = true
         defer { isTurning = false }
         let size = navigator.view.bounds.size
@@ -534,20 +579,29 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         curl.paper = model.theme.background
         curl.ink = model.theme.text
         curl.isDark = model.theme.palette.isDark
-        let leaves = 4
-        for i in 0..<leaves {
-            curl.top = old
-            curl.beneath = fresh
-            let y = size.height * (0.92 - CGFloat(i) * 0.06)
-            curl.corner = CGPoint(x: forward ? size.width : 0, y: size.height)
-            curl.finger = CGPoint(x: forward ? size.width : 0, y: y)
-            curl.isActive = true
-            await nextFrame()
-            let d = i == leaves - 1 ? 0.26 : 0.13
-            withAnimation(.easeIn(duration: d)) { curl.finger = turnedTarget() }
-            try? await Task.sleep(for: .seconds(d))
+        var i = 0
+        // Leaves of the old page over itself until the new one is ready (a riffle through pages
+        // in between); capped so a lost load still ends.
+        while i < 3 || (!arrived() && i < 40) {
+            await leaf(top: old, beneath: old, index: i, size: size, forward: forward, duration: 0.12)
+            i += 1
         }
+        let page = await fresh()
+        await leaf(top: old, beneath: page, index: i, size: size, forward: forward, duration: 0.28)
+        veil?.alpha = 0
         curl.reset()
+    }
+
+    private func leaf(top: UIImage, beneath: UIImage, index: Int, size: CGSize, forward: Bool, duration: Double) async {
+        curl.top = top
+        curl.beneath = beneath
+        let y = size.height * (0.92 - CGFloat(index % 5) * 0.06)
+        curl.corner = CGPoint(x: forward ? size.width : 0, y: size.height)
+        curl.finger = CGPoint(x: forward ? size.width : 0, y: y)
+        curl.isActive = true
+        await nextFrame()
+        withAnimation(.easeIn(duration: duration)) { curl.finger = turnedTarget() }
+        try? await Task.sleep(for: .seconds(duration))
     }
 
     /// Underlines the other device's words with the ribbon colour: drawn in over 0.6 s, gone after 2.
@@ -563,9 +617,21 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
 
     // MARK: Helpers
 
-    /// The page as the web views draw it. `drawHierarchy` misplaces a paginated web view's content
-    /// (it drew the page shifted by about a column, with the next one peeking in, and a spread
-    /// black), so each visible web view is asked for its own snapshot and laid out where it sits.
+    /// The page's typography as WebKit set it: its language (hyphenation needs one), whether it
+    /// hyphenates, and about how many characters a line holds. Logged once per open, for evidence.
+    func logTypography() async {
+        let js = """
+        (function(){var p=[].slice.call(document.querySelectorAll('p')).find(function(e){return (e.innerText||'').length>200});
+        if(!p)return 'no paragraph';var cs=getComputedStyle(p);var c=document.createElement('canvas').getContext('2d');
+        c.font=cs.fontStyle+' '+cs.fontWeight+' '+cs.fontSize+' '+cs.fontFamily;var t=p.innerText;var avg=c.measureText(t).width/t.length;
+        var w=Math.min.apply(null,[].slice.call(p.getClientRects()).map(function(r){return r.width}));
+        return 'lang='+(document.documentElement.getAttribute('lang')||document.documentElement.getAttribute('xml:lang')||'-')+
+          ' hyphens='+(cs.webkitHyphens||cs.hyphens)+' align='+cs.textAlign+' width='+Math.round(w)+' charsPerLine='+Math.round(w/avg);})()
+        """
+        let line = (try? await navigator.evaluateJavaScript(js).get()) as? String ?? "nil"
+        readerLog.notice("typography columns=\(self.columns) \(line, privacy: .public)")
+    }
+
     /// Readium's own loading spinner is showing: the page in view hasn't loaded yet.
     var isLoadingPage: Bool {
         let host = navigator.view!
@@ -579,6 +645,9 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         return spinning(host)
     }
 
+    /// The page as the web views draw it. `drawHierarchy` misplaces a paginated web view's content
+    /// (it drew the page shifted by about a column, with the next one peeking in, and a spread
+    /// black), so each visible web view is asked for its own snapshot and laid out where it sits.
     func snapshot() async -> UIImage {
         let host = navigator.view!
         let bounds = host.bounds
