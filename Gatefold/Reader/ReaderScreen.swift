@@ -33,14 +33,31 @@ struct ReaderScreen: View {
             let layout = Self.placed(input, fontScale: model.preferences.fontScale, proxy: proxy, bare: !model.chromeVisible && !coverScreen)
             let clearance = ChromeClearance.resolve(container: proxy.size, occlusions: FoldReader.occlusions(in: proxy))
             let safeTop = ReaderChrome.safeTop(proxy.safeAreaInsets)
+            // An open "ahead" offer gets its own band: the page slides down below it, its foot fading
+            // at the screen's edge, and slides back when the offer folds. No line sits under the slip.
+            let aheadOpen = model.slip != nil && model.slipKind == .ahead && !model.slipFolded && !model.chromeVisible && layout.deck == nil
+            let push: CGFloat = aheadOpen
+                ? max(0, safeTop + 8 + slipHeight + 14 - (layout.pageFrame.minY + pageTopClearance(layout, clearance: clearance)))
+                : 0
             // The page steps back while the controls or a slip are up, so nothing sits on its text.
-            let lifted = (model.chromeVisible && layout.deck == nil) || (model.slip != nil && !model.slipFolded)
+            let lifted = (model.chromeVisible && layout.deck == nil) || (model.slip != nil && !model.slipFolded && push == 0)
             ZStack(alignment: .topLeading) {
                 model.theme.background
 
                 page(layout, clearance: clearance)
+                    .frame(width: proxy.size.width, height: proxy.size.height, alignment: .topLeading)
                     .scaleEffect(lifted && !reduceMotion ? 0.96 : 1, anchor: .center)
                     .animation(.spring(duration: 0.25), value: lifted)
+                    .offset(y: push)
+                    .mask {
+                        let h = max(proxy.size.height, 1)
+                        LinearGradient(stops: [.init(color: .black, location: 0),
+                                               .init(color: .black, location: push > 0 ? max(0, (h - 44) / h) : 1),
+                                               .init(color: push > 0 ? .clear : .black, location: 1)],
+                                       startPoint: .top, endPoint: .bottom)
+                            .frame(width: proxy.size.width, height: proxy.size.height)
+                    }
+                    .animation(reduceMotion ? .easeOut(duration: 0.2) : .spring(duration: 0.4, bounce: 0.1), value: push)
 
                 scrims(proxy: proxy, layout: layout, safeTop: safeTop)
 
@@ -192,7 +209,8 @@ struct ReaderScreen: View {
     private func scrims(proxy: GeometryProxy, layout: ReaderLayout, safeTop: CGFloat) -> some View {
         let fade: CGFloat = 24
         let paper = model.theme.background
-        let aheadSlip = model.slip != nil && model.slipKind == .ahead && !model.slipFolded
+        // Without the controls the page moves out of the ahead slip's way (see `push`), so it needs no paper.
+        let aheadSlip = model.slip != nil && model.slipKind == .ahead && !model.slipFolded && model.chromeVisible
         let landedSlip = model.slip != nil && model.slipKind == .landed
         let top = safeTop + (model.chromeVisible ? ReaderChrome.topBarHeight : 0) + (aheadSlip ? 8 + slipHeight + 16 : 0)
         if model.chromeVisible || aheadSlip {

@@ -78,6 +78,11 @@ struct LibraryView: View {
                             .transition(.opacity)
                     }
                 }
+                // Full width from the first frame: a shelf still waiting for its books would otherwise
+                // hug the header and centre it, then jump left when the covers arrive.
+                .frame(maxWidth: .infinity, alignment: .leading)
+                // Nothing shows until the shelf knows its width, so the header never flies in from a zero-wide layout.
+                .opacity(width > 0 ? 1 : 0)
                 .animation(.easeOut(duration: 0.3), value: shelfState)
             }
             .background(Color.paper)
@@ -88,9 +93,19 @@ struct LibraryView: View {
                         [ChromeClearance.headerDrop(occlusions: FoldReader.occlusions(in: proxy), band: 60, width: proxy.size.width),
                          proxy.size.width, proxy.safeAreaInsets.trailing]
                     } action: { values in
-                        headerDrop = values[0]
-                        width = values[1]
-                        trailingReserved = values[2] > 0
+                        // Measurements arrive after the first layout (the camera band later still): apply
+                        // them without animation, and start from the band this screen width had last time.
+                        let key = "GatefoldHeaderDrop-\(Int(values[1]))"
+                        var drop = values[0]
+                        if drop > 0 { UserDefaults.standard.set(Double(drop), forKey: key) }
+                        else { drop = CGFloat(UserDefaults.standard.double(forKey: key)) }
+                        var quiet = Transaction()
+                        quiet.disablesAnimations = true
+                        withTransaction(quiet) {
+                            headerDrop = drop
+                            width = values[1]
+                            trailingReserved = values[2] > 0
+                        }
                     }
                 }
             }
@@ -166,7 +181,8 @@ struct LibraryView: View {
             .buttonBorderShape(.circle)
             .accessibilityLabel("Add Books from Files")
             .accessibilityIdentifier("library.import")
-            accountMenu
+            // A menu is hosted by UIKit and ignores the shelf's fade-in; it waits for the measured width too.
+            if width > 0 { accountMenu } else { Color.clear.frame(width: 44, height: 44) }
         }
         .tint(Color.ink)
         .padding(.horizontal, metrics.gutter)

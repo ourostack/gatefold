@@ -423,6 +423,7 @@ final class ReaderModel {
         }
         guard !isClosed else { return }
         aheadTab = SyncSlip.tab(device: remote.deviceName, pagesAhead: pages)
+        aheadTarget = (target.totalProgression, remote.deviceName)
         slipFolded = false
         showSlip(.ahead(
             device: remote.deviceName,
@@ -452,6 +453,21 @@ final class ReaderModel {
                     text: { $0 = Locator.Text(highlight: words) })
         }
         return (text, locator)
+    }
+
+    @ObservationIgnored private var aheadTarget: (progression: Double, device: String)?
+
+    /// The folded tab counts down as the reader catches up, and goes once they're there.
+    private func refreshAheadTab() {
+        guard let aim = aheadTarget, slipKind == .ahead, slip != nil, chapterMap.positionCount > 1 else { return }
+        let pages = chapterMap.page(at: aim.progression) - chapterMap.page(at: totalProgression)
+        if pages <= 0 {
+            aheadTarget = nil
+            dismissSuggestion()
+            return
+        }
+        let label = SyncSlip.tab(device: aim.device, pagesAhead: pages)
+        if label != aheadTab { aheadTab = label }
     }
 
     /// A page turn while the slip is up means "carry on here": it folds into its tab.
@@ -715,6 +731,7 @@ final class ReaderModel {
     func locationDidChange(_ locator: Locator, duringTurn: Bool = false) async {
         guard !isClosed else { return }
         location = locator
+        refreshAheadTab()
         // The navigator opens on the saved place, so its first report is a page worth showing: don't
         // keep the cover up while the rest of the book is indexed.
         if !pageReady, LaunchOptions.goTo == nil { markReady() }

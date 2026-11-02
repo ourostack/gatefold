@@ -120,7 +120,13 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         if reflow { beginReflow(model.consumeReflowReason() ?? .typography) }
         navigator.submitPreferences(preferences)
         if reflow { settleReflowSoon() }
-        Task { _ = await navigator.evaluateJavaScript(ReaderJS.setColumns(columns)) }
+        Task {
+            _ = await navigator.evaluateJavaScript(ReaderJS.setColumns(columns))
+            if reflow, model.pageReady {
+                try? await Task.sleep(for: .seconds(1))
+                await logTypography()
+            }
+        }
     }
 
     // MARK: Reflow and the reading anchor
@@ -599,12 +605,12 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         (function(){var p=[].slice.call(document.querySelectorAll('p')).find(function(e){return (e.innerText||'').length>200});
         if(!p)return 'no paragraph';var cs=getComputedStyle(p);var c=document.createElement('canvas').getContext('2d');
         c.font=cs.fontStyle+' '+cs.fontWeight+' '+cs.fontSize+' '+cs.fontFamily;var t=p.innerText;var avg=c.measureText(t).width/t.length;
-        var w=p.getBoundingClientRect().width;
+        var w=Math.min.apply(null,[].slice.call(p.getClientRects()).map(function(r){return r.width}));
         return 'lang='+(document.documentElement.getAttribute('lang')||document.documentElement.getAttribute('xml:lang')||'-')+
           ' hyphens='+(cs.webkitHyphens||cs.hyphens)+' align='+cs.textAlign+' width='+Math.round(w)+' charsPerLine='+Math.round(w/avg);})()
         """
         let line = (try? await navigator.evaluateJavaScript(js).get()) as? String ?? "nil"
-        readerLog.notice("typography \(line, privacy: .public)")
+        readerLog.notice("typography columns=\(self.columns) \(line, privacy: .public)")
     }
 
     /// Readium's own loading spinner is showing: the page in view hasn't loaded yet.

@@ -277,9 +277,12 @@ struct OpeningPlaceholder: View {
                 Image(uiImage: cover)
                     .resizable()
                     .scaledToFit()
-                    .frame(maxWidth: 200, maxHeight: 300)
                     .clipShape(.rect(topLeadingRadius: 3, bottomLeadingRadius: 3, bottomTrailingRadius: 6, topTrailingRadius: 6))
                     .shadow(color: .black.opacity(0.22), radius: 14, y: 8)
+                    // Every open is the same move: the cover grows to fill the page, as a book's
+                    // cover fills your hands, and the first page takes its place.
+                    .padding(.horizontal, 28)
+                    .padding(.vertical, 44)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
             if slow {

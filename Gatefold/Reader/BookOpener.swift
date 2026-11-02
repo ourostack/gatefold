@@ -1,4 +1,5 @@
 import Foundation
+import GatefoldCore
 import ReadiumShared
 import ReadiumStreamer
 import UIKit
@@ -15,7 +16,14 @@ final class BookOpener {
             httpClient: httpClient,
             assetRetriever: assetRetriever,
             pdfFactory: DefaultPDFDocumentFactory()
-        )
+        ),
+        onCreatePublication: { _, container, _ in
+            // Gatefold's own few lines of CSS in every chapter (see `BookStyle`).
+            container = container.map { href, resource in
+                guard BookStyle.applies(toPath: href.string) else { return resource }
+                return resource.mapAsString { BookStyle.inject(into: $0) }
+            }
+        }
     )
 
     enum OpenError: LocalizedError {

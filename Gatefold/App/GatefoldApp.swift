@@ -73,10 +73,6 @@ struct RootView: View {
 
     var body: some View {
         ZStack {
-            if let warm, reader == nil {
-                // Under the shelf's own paper: never seen, but laid out and painted like the real page.
-                WarmPage(model: warm)
-            }
             if app.hasOnboarded {
                 LibraryView(namespace: covers) { book in open(book) }
                     .transition(.opacity)
@@ -86,6 +82,11 @@ struct RootView: View {
             }
         }
         .animation(Motion.open, value: app.hasOnboarded)
+        // Under the shelf's own paper: never seen, but laid out and painted like the real page. A
+        // background, so its arrival can't resize the shelf's stack (it ignores the safe area).
+        .background {
+            if let warm, reader == nil { WarmPage(model: warm) }
+        }
         .task(id: warmKey) { await warmUp() }
         .fullScreenCover(item: $reader) { model in
             ReaderScreen(model: model) {
