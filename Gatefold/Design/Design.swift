@@ -77,6 +77,8 @@ enum LaunchOptions {
     static var noWarm: Bool { defaults.bool(forKey: "GatefoldNoWarm") }
     /// Book IDs to open and close one after another, as taps would (see `RootView.openTour`).
     /// Seconds an open tour rests on the shelf between books (the warm books reopen meanwhile).
+    /// Seconds after launch before an open tour's first tap (default 8: the warm books are ready).
+    static var tourDelay: Double { defaults.object(forKey: "GatefoldTourDelay") == nil ? 8 : defaults.double(forKey: "GatefoldTourDelay") }
     static var tourRest: Double { defaults.object(forKey: "GatefoldTourRest") == nil ? 3 : defaults.double(forKey: "GatefoldTourRest") }
     static var openTour: [String]? { defaults.string(forKey: "GatefoldOpenTour").map { $0.split(separator: ",").map(String.init) } }
     /// Use the in-memory `FakeSyncService` (bundled public-domain books) instead of PocketBook Cloud.

@@ -177,6 +177,17 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         readerLog.notice("standby: loading the Cloud place's page behind this one")
     }
 
+    /// A book opened ahead of a tap that won't be shown: stop its pages loading, so a book the reader
+    /// did tap gets the whole CPU (an abandoned warm page went on loading for seconds behind a cold open).
+    func halt() {
+        func stop(_ view: UIView) {
+            if let web = view as? WKWebView { web.stopLoading() }
+            view.subviews.forEach(stop)
+        }
+        stop(navigator.view)
+        readerLog.notice("warm: stopped loading \(self.weakModel?.bookID ?? "?", privacy: .public)")
+    }
+
     func dropStandby() {
         guard let old = standby else { return }
         standby = nil
@@ -313,7 +324,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     }
 
     /// The leaf that starts rising from the spine at the bell, while the spread lays out behind.
-    private var leaf: (view: UIView, shade: CAGradientLayer, lift: UIViewPropertyAnimator)?
+    private var leaf: (view: UIView, shade: CAGradientLayer, lift: UIViewPropertyAnimator, through: CALayer?)?
 
     /// The unfold starts at the bell: the right leaf rises slowly from the spine, edge-on at first, so
     /// the reader sees the book opening while the spread is laid out, not a page standing still.
@@ -325,7 +336,12 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         let view = UIView(frame: CGRect(x: frame.minX + spine, y: frame.minY, width: frame.width - spine, height: frame.height))
         view.backgroundColor = weakModel?.theme.uiBackground ?? .systemBackground
         view.isUserInteractionEnabled = false
-        let shade = Self.leafShade(bounds: view.bounds, dark: weakModel?.theme.palette.isDark ?? false)
+        let dark = weakModel?.theme.palette.isDark ?? false
+        // Until the new page is on it, the leaf is the back of a printed page, as in the riffle: the old
+        // page's words showing through faintly, mirrored about the spine (where the leaf lay closed).
+        let through = showThrough(size: view.bounds.size, spine: frame.minX + spine, page: frame, dark: dark)
+        if let through { view.layer.addSublayer(through) }
+        let shade = Self.leafShade(bounds: view.bounds, dark: dark)
         view.layer.addSublayer(shade)
         view.layer.anchorPoint = CGPoint(x: 0, y: 0.5)
         view.layer.position = CGPoint(x: frame.minX + spine, y: frame.midY)
@@ -335,8 +351,31 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         let lift = UIViewPropertyAnimator(duration: 2.6, controlPoint1: CGPoint(x: 0.2, y: 0.6), controlPoint2: CGPoint(x: 0.35, y: 1))
         lift.addAnimations { view.layer.transform = Self.leafAngle(-.pi * 0.30, width: frame.width) }
         lift.startAnimation()
-        leaf = (view, shade, lift)
-        readerLog.notice("unfold: the leaf starts to lift at the bell")
+        leaf = (view, shade, lift, through)
+        readerLog.notice("unfold: the leaf starts to lift at the bell (old words through it \(through != nil, privacy: .public))")
+    }
+
+    /// The old page's words, mirrored about the spine and faint, as a page's back shows its front's
+    /// print; nil without a fresh picture of the old page.
+    private func showThrough(size: CGSize, spine: CGFloat, page: CGRect, dark: Bool) -> CALayer? {
+        guard let model = weakModel, let picture = model.heldPicture,
+              UnfoldCover.choose(held: model.heldPage, liveAvailable: false, book: model.bookID, now: Date()) == .held else { return nil }
+        let layer = CALayer()
+        layer.frame = CGRect(origin: .zero, size: size)
+        layer.masksToBounds = true
+        layer.backgroundColor = UIColor(model.theme.text).withAlphaComponent(dark ? 0.05 : 0.10).cgColor
+        let words = CALayer()
+        // Where the picture sat over the closed book, seen from the leaf's side: the strip left of the
+        // spine, flipped so the spine stays the spine.
+        let held = UnfoldCover.heldFrame(picture: picture.size, in: page)
+        words.frame = CGRect(x: held.minX - (spine - size.width), y: held.minY - page.minY, width: held.width, height: held.height)
+        words.contents = picture.cgImage
+        words.contentsScale = picture.scale
+        words.contentsGravity = .resize
+        words.opacity = dark ? 0.28 : 0.15
+        layer.addSublayer(words)
+        layer.sublayerTransform = CATransform3DMakeAffineTransform(CGAffineTransform(a: -1, b: 0, c: 0, d: 1, tx: size.width, ty: 0))
+        return layer
     }
 
     private func dropLeaf() {
@@ -606,6 +645,14 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             show.toValue = 1
             show.duration = 0.18
             words.add(show, forKey: "show")
+            if let through = lifted.through {
+                through.opacity = 0
+                let hide = CABasicAnimation(keyPath: "opacity")
+                hide.fromValue = 1
+                hide.toValue = 0
+                hide.duration = 0.18
+                through.add(hide, forKey: "hide")
+            }
         } else {
             right = half(spine, frame.width - spine)
             shade = Self.leafShade(bounds: right.bounds, dark: dark)
@@ -994,6 +1041,9 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         cover.addSubview(wash)
         view.insertSubview(cover, belowSubview: curlHost.view)
         veil = cover
+        // The running head stays with the page on screen: it changes chapter as the new page is revealed.
+        weakModel?.heldRunningHead = .some(weakModel?.chapterTitle)
+        defer { weakModel?.heldRunningHead = nil }
         if riffle {
             // The thumb starts riffling at once and keeps going while the far chapter loads, so the
             // wait is the riffle, never a dimmed page.
@@ -1014,6 +1064,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         dim.startAnimation()
         await body()
         _ = await renderedSnapshot(afterChange: true)
+        weakModel?.heldRunningHead = nil
         await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
             UIView.animate(withDuration: 0.2, delay: 0, options: [.curveEaseInOut, .beginFromCurrentState]) {
                 cover.alpha = 0
@@ -1048,6 +1099,9 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         let page = await fresh()
         readerLog.notice("riffle: \(i, privacy: .public) leaves, new page ready at \(ReaderModel.ms(since: t0), privacy: .public) ms")
         await leaf(top: old, beneath: page, index: i, size: size, forward: forward, duration: 0.28)
+        // The last leaf has turned away and the new page lies open: its chapter comes up now, not
+        // while the old page is still under the leaf.
+        model.heldRunningHead = nil
         veil?.alpha = 0
         curl.reset()
     }

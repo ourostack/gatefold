@@ -424,6 +424,22 @@ final class ScriptedPage: ReaderPage {
         let landings = f.page.jumps.filter { $0.text.highlight != nil }.count
         #expect(landings == 1)
     }
+
+    @Test func theRunningHeadStaysWithThePageOnScreenUntilTheNewOneIsRevealed() async throws {
+        let f = try await Self.make(remote: { _, _ in nil }, startAt: 0.05)
+        await f.model.load()
+        let before = f.model.chapterTitle
+        // A jump under way: the old page still shows, so the head keeps its chapter.
+        f.model.heldRunningHead = .some(before)
+        let far = try #require(await Self.locate(f.publication, 0.8))
+        _ = await f.page.go(to: far)
+        await f.model.locationDidChange(f.page.currentLocation!)
+        #expect(f.model.chapterTitle != before, "the jump went to another chapter")
+        #expect(f.model.runningHead == before, "mid-riffle, the head still names the old page's chapter")
+        // The new page is revealed.
+        f.model.heldRunningHead = nil
+        #expect(f.model.runningHead == f.model.chapterTitle)
+    }
 }
 
 // MARK: Pushes and percents (items 2 and 3)

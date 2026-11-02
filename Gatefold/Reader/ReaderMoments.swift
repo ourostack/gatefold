@@ -110,7 +110,7 @@ struct EndLeafView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var settled = false
 
-    /// "Started on your InkPad, finished here on your phone · read over 12 days", from what the shelf knows.
+    /// "Started on your InkPad, finished here on your phone" over "Read over 12 days", from what the shelf knows.
     private var story: String {
         guard let book = app.library.book(model.bookID) else { return leaf.line }
         return ReadStory.text(
@@ -145,8 +145,8 @@ struct EndLeafView: View {
             Text("The End")
                 .font(.system(size: 40, weight: .regular, design: .serif).italic())
                 .accessibilityAddTraits(.isHeader)
-            // Two halves of the story, a line each, rather than wherever the width happens to break.
-            Text(story.replacingOccurrences(of: " · finished", with: "\nfinished"))
+            // The story and its span, a line each (`ReadStory.text`), rather than wherever the width breaks.
+            Text(story)
                 .font(.subheadline)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)

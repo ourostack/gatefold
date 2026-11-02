@@ -63,7 +63,7 @@ struct ReaderChrome: View {
                 Text(model.title)
                     .font(.display(.subheadline))
                     .lineLimit(1)
-                if let chapter = model.chapterTitle, chapter != model.title {
+                if let chapter = model.runningHead, chapter != model.title {
                     Text(chapter)
                         .font(.caption)
                         .foregroundStyle(.secondary)
