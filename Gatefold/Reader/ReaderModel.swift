@@ -963,7 +963,7 @@ final class ReaderModel {
     private(set) var visibleTextProbe = ""
 
     private func refreshBookmarkState(_ visible: VisibleRange?) {
-        if LaunchOptions.isUITest, let text = visible?.text { visibleTextProbe = String(text.prefix(600)) }
+        if LaunchOptions.isUITest, let text = visible?.text { visibleTextProbe = String(text.prefix(2400)) }
         guard let location else { return }
         let here = location.href.string
         let p = location.locations.progression ?? 0
