@@ -30,7 +30,7 @@ struct ReaderScreen: View {
                 hinge: hinge,
                 forced: forced
             )
-            let layout = Self.placed(input, fontScale: model.preferences.fontScale, proxy: proxy)
+            let layout = Self.placed(input, fontScale: model.preferences.fontScale, proxy: proxy, bare: !model.chromeVisible && !coverScreen)
             let clearance = ChromeClearance.resolve(container: proxy.size, occlusions: FoldReader.occlusions(in: proxy))
             let safeTop = ReaderChrome.safeTop(proxy.safeAreaInsets)
             // The page steps back while the controls or a slip are up, so nothing sits on its text.
@@ -279,10 +279,16 @@ struct ReaderScreen: View {
     }
 
     /// The resolved layout, measured, with its first line clear of the status bar and camera.
-    static func placed(_ input: LayoutInput, fontScale: Double, proxy: GeometryProxy) -> ReaderLayout {
+    /// `bare` is a page with the status bar hidden: only then does the system report the page's own
+    /// clearance (with the status bar up, the folded Duo's status column reaches twice as far down).
+    static func placed(_ input: LayoutInput, fontScale: Double, proxy: GeometryProxy, bare: Bool) -> ReaderLayout {
         let layout = measured(ReaderLayoutResolver.resolve(input), fontScale: fontScale)
         guard layout.deck == nil else { return layout }
-        return PageSafeArea.clearingTop(layout, safeTop: proxy.safeAreaInsets.top, occlusions: FoldReader.occlusions(in: proxy))
+        // The status column's taller report belongs to the status bar, which a bare page hides.
+        let occlusions = FoldReader.occlusions(in: proxy).filter { $0.height <= 120 }
+        let fresh = PageSafeArea.clearingTop(layout, safeTop: proxy.safeAreaInsets.top, occlusions: occlusions).pageFrame.minY - layout.pageFrame.minY
+        let shift = PageTop.settled(fresh, known: bare && !occlusions.isEmpty, size: proxy.size, posture: layout.posture)
+        return PageSafeArea.shifted(layout, by: shift)
     }
 
     private func ribbonX(_ layout: ReaderLayout, clearance: ChromeClearance) -> CGFloat {
@@ -452,7 +458,7 @@ struct WarmPage: View {
     var body: some View {
         GeometryReader { proxy in
             let input = LayoutInput(containerSize: proxy.size, division: FoldReader.division(in: proxy), hinge: hinge, forced: LaunchOptions.forcedPosture)
-            let layout = ReaderScreen.placed(input, fontScale: model.preferences.fontScale, proxy: proxy)
+            let layout = ReaderScreen.placed(input, fontScale: model.preferences.fontScale, proxy: proxy, bare: false)
             ZStack(alignment: .topLeading) {
                 if let host = model.hostController {
                     ReaderHostView(controller: host)
@@ -473,5 +479,32 @@ struct WarmPage: View {
         }
         .allowsHitTesting(false)
         .accessibilityHidden(true)
+    }
+}
+
+/// The system reports the camera a moment after the first frame, and moving the page then repaginates
+/// the book mid-open. The clearance for each screen size is remembered across launches and settled once
+/// per launch, so the page is placed right on its first frame and never moves under the reader.
+@MainActor
+enum PageTop {
+    private static var settledShift: [String: CGFloat] = [:]
+    private static let defaultsKey = "GatefoldPageTopShift"
+
+    /// The clearance a bare page last reported at this size, settled once per launch.
+    static func settled(_ fresh: CGFloat, known: Bool, size: CGSize, posture: Posture) -> CGFloat {
+        let key = "\(Int(size.width))x\(Int(size.height))-\(posture.rawValue)"
+        var stored = UserDefaults.standard.dictionary(forKey: defaultsKey) as? [String: Double] ?? [:]
+        let remembered = stored[key]
+        if known, remembered != Double(fresh) {
+            stored[key] = Double(fresh)
+            UserDefaults.standard.set(stored, forKey: defaultsKey)
+        }
+        if let done = settledShift[key] { return done }
+        if let remembered {
+            settledShift[key] = CGFloat(remembered)
+            return CGFloat(remembered)
+        }
+        if known { settledShift[key] = fresh }
+        return fresh
     }
 }

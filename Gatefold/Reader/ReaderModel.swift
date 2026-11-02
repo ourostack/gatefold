@@ -991,7 +991,10 @@ final class ReaderModel {
             hyphens: prefs.justify ? true : nil,
             language: language,
             lineHeight: custom ? prefs.lineSpacing.lineHeight : nil,
-            pageMargins: tabletop ? min(prefs.margins.factor, PageMargins.normal.factor) : prefs.margins.factor,
+            // Facing pages give their width to the line, not the margins (the spine is margin enough),
+            // so each page keeps a book's measure.
+            pageMargins: tabletop ? min(prefs.margins.factor, PageMargins.normal.factor)
+                : columns == .two ? min(prefs.margins.factor, PageMargins.narrow.factor) : prefs.margins.factor,
             publisherStyles: !custom,
             scroll: prefs.pageTurn == .scroll,
             textAlign: prefs.justify ? .justify : nil,

@@ -327,6 +327,14 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     /// A whole turn without a finger: lift from the lower corner and sweep across.
     private func animatedTurn(forward: Bool, from finger: CGPoint?) async {
         guard await prepareTurn(forward: forward, startingAt: finger ?? CGPoint(x: view.bounds.width, y: view.bounds.height * 0.86)) else { return }
+        // The same leaf as a drag: the corner lifts up and in first, so the page bends as a cylinder
+        // rather than folding along a flat vertical strip, then sweeps over.
+        if curl.style == .curl, !(weakModel?.reduceMotion ?? false) {
+            let w = curl.size.width, h = curl.size.height
+            let lift = CGPoint(x: forward ? w * 0.80 : w * 0.20, y: h * 0.80)
+            withAnimation(.easeOut(duration: 0.12)) { curl.finger = lift }
+            try? await Task.sleep(for: .milliseconds(120))
+        }
         await finish(complete: true, velocity: 0)
     }
 

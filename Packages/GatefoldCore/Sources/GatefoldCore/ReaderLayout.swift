@@ -153,8 +153,13 @@ public enum PageSafeArea {
             .filter { $0.minY < band && $0.maxX > page.minX && $0.minX < page.maxX }
             .map(\.maxY)
         let needed = max(safeTop, covered.max() ?? 0) + gap
-        let shift = needed - (page.minY + textTopInset)
+        return shifted(layout, by: needed - (page.minY + textTopInset))
+    }
+
+    /// The page moved down by `shift` points, keeping its foot.
+    public static func shifted(_ layout: ReaderLayout, by shift: CGFloat) -> ReaderLayout {
         guard shift > 0 else { return layout }
+        let page = layout.pageFrame
         var out = layout
         out.pageFrame = CGRect(x: page.minX, y: page.minY + shift, width: page.width, height: max(0, page.height - shift))
         if let gutter = layout.gutter {
