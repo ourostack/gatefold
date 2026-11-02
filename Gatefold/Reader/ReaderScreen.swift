@@ -366,7 +366,7 @@ struct ReaderScreen: View {
         let textTop = layout.pageFrame.minY + pageTopClearance(layout, clearance: clearance)
         let side: CGFloat = 24
         if layout.deck == nil, let camera, textTop - camera.maxY >= -camera.height / 2, textTop >= 40,
-           let words = model.chapterTitle ?? Optional(model.title) {
+           let words = model.runningHead ?? Optional(model.title) {
             // Clear of the folded "read on" tab, which hangs at the page's leading edge in this band.
             let tab: CGFloat = model.aheadTab != nil && model.slipFolded && model.slip != nil ? 16 + 112 : 0
             // Whichever side of the camera has the more room.

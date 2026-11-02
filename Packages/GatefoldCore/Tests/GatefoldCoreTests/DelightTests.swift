@@ -190,11 +190,11 @@ struct FinishLineTests {
         let start = Date(timeIntervalSince1970: 1_800_000_000)
         let end = start.addingTimeInterval(11 * 86400 + 3600)
         #expect(ReadStory.text(otherDevice: "InkPad", otherSince: start, started: start.addingTimeInterval(86400), finished: end,
-                               sessions: 4, here: "phone", calendar: cal) == "Started on your InkPad, finished here on your phone · read over 12 days")
+                               sessions: 4, here: "phone", calendar: cal) == "Started on your InkPad, finished here on your phone\nRead over 12 days")
         #expect(ReadStory.text(otherDevice: "InkPad", otherSince: end.addingTimeInterval(-3600), started: nil, finished: end,
-                               sessions: 1, here: "iPad", calendar: cal) == "Started on your InkPad, finished here on your iPad · read in a single day")
+                               sessions: 1, here: "iPad", calendar: cal) == "Started on your InkPad, finished here on your iPad\nRead in a single day")
         #expect(ReadStory.text(otherDevice: "InkPad", otherSince: start, started: start, finished: start.addingTimeInterval(86400),
-                               sessions: 2, here: "phone", calendar: cal) == "Started on your InkPad, finished here on your phone · read over 2 days")
+                               sessions: 2, here: "phone", calendar: cal) == "Started on your InkPad, finished here on your phone\nRead over 2 days")
     }
 
     @Test func beganHereOrUnknown() {
@@ -217,7 +217,7 @@ struct FinishLineTests {
         let start = Date(timeIntervalSince1970: 1_800_000_000)
         let today = start.addingTimeInterval(5 * 86400 + 3600)
         #expect(ReadStory.text(otherDevice: "InkPad", otherSince: start, started: today, finished: today,
-                               sessions: 1, here: "phone", calendar: cal) == "Started on your InkPad, finished here on your phone · read over 6 days")
+                               sessions: 1, here: "phone", calendar: cal) == "Started on your InkPad, finished here on your phone\nRead over 6 days")
         #expect(ReadStory.shelfLine(otherDevice: "InkPad", otherSince: start, started: today, finished: today,
                                     sessions: 1, here: "phone", calendar: cal) == "Read over 6 days, InkPad to phone")
     }

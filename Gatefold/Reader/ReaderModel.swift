@@ -211,6 +211,14 @@ final class ReaderModel {
     var totalProgression: Double { location?.locations.totalProgression ?? 0 }
     /// The heading above the first line on screen, for books without contents.
     var heading: String?
+    /// The running head held on the old page's chapter while a jump's veil or riffle still shows that
+    /// page; nil when it follows the page (see `runningHead`).
+    var heldRunningHead: String??
+    /// What the running head shows: the chapter of the page the reader can see.
+    var runningHead: String? {
+        if let held = heldRunningHead { return held }
+        return chapterTitle
+    }
     /// The chapter, as the book's contents name it; the page's heading only when there are no contents.
     var chapterTitle: String? {
         if let href = location?.href.string, let title = contents.title(href: href, precedingFragment: contentsFragment) {
@@ -775,6 +783,7 @@ final class ReaderModel {
     /// The reader closed the book: whatever is still settling or landing stops here, so nothing moves
     /// the page or records a place after the close has sent the last one.
     func close() {
+        if isWarming, !pageReady { hostController?.halt() }
         isClosed = true
         activation?.resume()
         activation = nil
