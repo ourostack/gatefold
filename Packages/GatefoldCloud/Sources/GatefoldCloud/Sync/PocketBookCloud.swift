@@ -31,6 +31,8 @@ public actor PocketBookCloud: SyncService {
     let jitter: @Sendable () -> Double
     let sleep: @Sendable (Duration) async throws -> Void
     private let broadcaster = ChangeBroadcaster()
+    /// Our own pointers, kept past a reinstall, so our place never comes back as another device's.
+    private let pushedPlaces: PushedPlaces
 
     private var books: [CloudBook]
     private var state: OutboxState
@@ -53,11 +55,13 @@ public actor PocketBookCloud: SyncService {
                 transport: HTTPTransport = URLSessionTransport(),
                 credentials: ClientCredentialsProvider? = nil,
                 tokenStore: TokenStore = KeychainTokenStore(),
+                pushedPlaces: PushedPlaces = KeychainPushedPlaces(),
                 base: URL = CloudSession.defaultBase,
                 now: @escaping @Sendable () -> Date = { Date() },
                 jitter: @escaping @Sendable () -> Double = { Double.random(in: 0.8...1.2) },
                 sleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) }) {
         self.configuration = configuration
+        self.pushedPlaces = pushedPlaces
         self.transport = transport
         self.now = now
         self.jitter = jitter
@@ -140,7 +144,8 @@ public actor PocketBookCloud: SyncService {
             fetched += page.items
             if page.items.isEmpty { break }
         }
-        fetched = fetched.map(markOwnPosition)
+        let email = await session.account?.email
+        fetched = fetched.map { markOwnPosition($0, account: email) }
         announceDifferences(from: books, to: fetched)
         books = fetched
         JSONFile.write(books, to: libraryFile)
@@ -172,15 +177,17 @@ public actor PocketBookCloud: SyncService {
          String(b.favorite), b.position.map { "\($0.pointer ?? "")@\($0.updated.timeIntervalSince1970)" } ?? ""]
     }
 
-    private func markOwnPosition(_ book: CloudBook) -> CloudBook {
+    private func markOwnPosition(_ book: CloudBook, account: String?) -> CloudBook {
         var book = book
-        if let p = book.position { book.position = markOwn(p, fastHash: book.fastHash) }
+        if let p = book.position { book.position = markOwn(p, fastHash: book.fastHash, account: account) }
         return book
     }
 
-    private func markOwn(_ position: ReadingPosition, fastHash: String) -> ReadingPosition {
+    private func markOwn(_ position: ReadingPosition, fastHash: String, account: String?) -> ReadingPosition {
         var p = position
-        if let pushed = state.pushedPointers[fastHash], pushed == p.pointer { p.source = .gatefold }
+        guard let pointer = p.pointer else { return p }
+        let remembered = pushedPlaces.load()[Self.placeKey(account: account, fastHash: fastHash)]
+        if state.pushedPointers[fastHash] == pointer || remembered == pointer { p.source = .gatefold }
         return p
     }
 
@@ -319,7 +326,8 @@ public actor PocketBookCloud: SyncService {
 
     public func remotePosition(for book: CloudBook) async throws -> ReadingPosition? {
         let (data, _) = try await session.send(.get("/fileops/info/", query: ["fast_hash": book.fastHash]))
-        return try WireDecoder.fileInfo(data).position.map { markOwn($0, fastHash: book.fastHash) }
+        let email = await session.account?.email
+        return try WireDecoder.fileInfo(data).position.map { markOwn($0, fastHash: book.fastHash, account: email) }
     }
 
     public func push(_ position: ReadingPosition, for book: CloudBook) async {
@@ -623,7 +631,8 @@ public actor PocketBookCloud: SyncService {
     /// queued write must not overwrite a newer one from another device. Read first, then write.
     private func sendPosition(_ position: ReadingPosition, fastHash: String) async throws -> Outcome {
         let (data, _) = try await session.send(.get("/fileops/info/", query: ["fast_hash": fastHash]))
-        if let remote = try WireDecoder.fileInfo(data).position.map({ markOwn($0, fastHash: fastHash) }), remote.source != .gatefold {
+        let email = await session.account?.email
+        if let remote = try WireDecoder.fileInfo(data).position.map({ markOwn($0, fastHash: fastHash, account: email) }), remote.source != .gatefold {
             let ours = await session.serverTime(position.updated)
             if remote.updated > ours {
                 updateCachedPosition(remote, fastHash: fastHash)
@@ -634,7 +643,11 @@ public actor PocketBookCloud: SyncService {
         let body = try WireEncoder.positionBody(position, pointerStyle: configuration.pointerStyle)
         try await session.send(Endpoint(method: "POST", path: "/books/read-position", query: ["fast_hash": fastHash], body: .json(body)))
         if let cfi = position.parsedCFI {
-            state.pushedPointers[fastHash] = PocketBookAnchor.string(for: cfi, style: configuration.pointerStyle)
+            let pointer = PocketBookAnchor.string(for: cfi, style: configuration.pointerStyle)
+            state.pushedPointers[fastHash] = pointer
+            var remembered = pushedPlaces.load()
+            remembered[Self.placeKey(account: email, fastHash: fastHash)] = pointer
+            pushedPlaces.save(remembered)
         }
         updateCachedPosition(position, fastHash: fastHash)
         return .done

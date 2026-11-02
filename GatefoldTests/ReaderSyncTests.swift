@@ -217,6 +217,22 @@ final class ScriptedPage: ReaderPage {
     }
 
     @Test func ourOwnPlaceComingBackIsNotNews() async throws {
+        // Opened here before: our own place in the Cloud is where we already are.
+        let opened = Date().addingTimeInterval(-600)
+        let f = try await Self.make(remote: { pub, mapper in
+            var p = try await Self.inkPadPlace(pub, mapper)
+            p.source = .gatefold
+            p.updated = opened.addingTimeInterval(60)
+            return p
+        }, book: { $0.totalProgression = 0.05; $0.lastOpened = opened }, startAt: 0.05)
+        await f.model.load()
+        #expect(f.model.suggestion == nil)
+        #expect(f.page.jumps.isEmpty)
+        #expect(await f.sent().isEmpty)
+    }
+
+    @Test func afterAReinstallOurOwnPlaceOpensAndIsNeverCreditedToTheInkPad() async throws {
+        // A fresh shelf (a reinstall), and the Cloud holds a place this app wrote.
         let f = try await Self.make(remote: { pub, mapper in
             var p = try await Self.inkPadPlace(pub, mapper)
             p.source = .gatefold
@@ -224,8 +240,10 @@ final class ScriptedPage: ReaderPage {
         })
         await f.model.load()
         #expect(f.model.suggestion == nil)
-        #expect(f.page.jumps.isEmpty)
-        #expect(await f.sent().isEmpty)
+        #expect(!(await f.sent()).isEmpty, "the book opens on the place it was left at")
+        let title = f.model.slip?.title
+        #expect(title?.hasPrefix("Right where you left off") == true, "got \(title ?? "no slip")")
+        #expect(title?.contains("InkPad") == false)
     }
 
     @Test func aRemotePlaceArrivingWhileTheOpeningSettleRunsWinsAndIsNotPulledBack() async throws {

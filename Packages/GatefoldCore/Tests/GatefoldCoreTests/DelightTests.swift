@@ -134,6 +134,13 @@ struct SyncSlipTests {
         #expect(slip.passage == nil)
     }
 
+    // Our own place, found again after a reinstall: never credited to the InkPad.
+    @Test func ourOwnPlaceIsNotTheInkPads() {
+        let slip = SyncSlip.resumed(updated: now.addingTimeInterval(-3600), now: now)
+        #expect(slip.title == "Right where you left off · 1 h ago")
+        #expect(!slip.title.contains("InkPad"))
+    }
+
     @Test func anOfferNamesThePassage() {
         let slip = SyncSlip.ahead(device: "PocketBook InkPad", pagesAhead: 23, percentAhead: nil, updated: now.addingTimeInterval(-30 * 3600), now: now,
                                   passage: "She thought her the model of all that was good and kind, and more besides")

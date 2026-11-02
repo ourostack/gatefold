@@ -419,9 +419,12 @@ final class ReaderModel {
     }
 
     private func checkRemoteOnce() async {
-        // Our own place coming back is not news.
         guard let book = app.library.book(bookID), let remote = await app.library.remotePosition(for: book),
-              remote.source != .gatefold, !isClosed else { return }
+              !isClosed else { return }
+        // Our own place coming back is not news, except on a fresh install (a reinstall wipes the
+        // shelf but not the Cloud): then it's where to open, and it's ours, never the InkPad's.
+        let ours = remote.source == .gatefold
+        if ours, openedSnapshot != nil || hasMoved { return }
         let target = await place(of: remote)
         guard !isClosed else { return }
         // A place the Cloud only has as a whole percent compares as one: our own 30.1% reads back as 31%.
@@ -437,7 +440,9 @@ final class ReaderModel {
             guard !isClosed else { return }
             awaitingLanding = false
             markReady()
-            let landed = SyncSlip.landed(device: remote.deviceName, updated: remote.updated, now: Date())
+            let landed = ours
+                ? SyncSlip.resumed(updated: remote.updated, now: Date())
+                : SyncSlip.landed(device: remote.deviceName, updated: remote.updated, now: Date())
             if isWarming {
                 pendingLanded = (landed, target.locator)
             } else {
@@ -445,6 +450,7 @@ final class ReaderModel {
             }
             return
         }
+        if ours { return }
         let made = JumpSuggestion.make(
             local: hasMoved ? app.library.book(bookID)?.localSnapshot : openedSnapshot,
             remote: ProgressSnapshot(totalProgression: target.totalProgression, updated: remote.updated, device: remote.deviceName),
