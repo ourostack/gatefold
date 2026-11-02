@@ -251,4 +251,17 @@ struct ContrastTests {
             #expect(ThemePalette.contrast(scheme.ink, scheme.paper) >= 4.5)
         }
     }
+
+    /// Captions, the slip's detail and the end leaf's line are the theme's text at 80 % over its page.
+    @Test func softenedCaptions() {
+        func blend(_ fg: UInt32, _ bg: UInt32, _ a: Double) -> UInt32 {
+            let f = ThemePalette.components(fg), b = ThemePalette.components(bg)
+            func c(_ x: Double, _ y: Double) -> UInt32 { UInt32(((x * a + y * (1 - a)) * 255).rounded()) }
+            return c(f.r, b.r) << 16 | c(f.g, b.g) << 8 | c(f.b, b.b)
+        }
+        for theme in ReaderTheme.allCases {
+            let p = theme.palette
+            #expect(ThemePalette.contrast(blend(p.text, p.background, 0.8), p.background) >= 4.5, "\(theme) caption")
+        }
+    }
 }

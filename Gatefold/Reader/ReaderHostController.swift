@@ -41,7 +41,8 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
                 preferences: preferences,
                 contentInset: [.compact: (top: 28, bottom: 28), .regular: (top: 44, bottom: 44)],
                 preloadPreviousPositionCount: 2,
-                preloadNextPositionCount: 4
+                preloadNextPositionCount: 4,
+                decorationTemplates: HTMLDecorationTemplate.defaultTemplates().merging([.gatefoldSync: .gatefoldSync()]) { a, _ in a }
             )
         )
         super.init(nibName: nil, bundle: nil)
@@ -269,7 +270,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             Task {
                 let moved = forward ? await navigator.goForward(options: .init(animated: true)) : await navigator.goBackward(options: .init(animated: true))
                 isTurning = false
-                if moved { weakModel?.userTurnedPage() }
+                if moved { weakModel?.userTurnedPage() } else if forward { weakModel?.reachedEnd() }
             }
         case .curl, .fade:
             Task { await animatedTurn(forward: forward, from: nil) }
@@ -315,7 +316,10 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         guard moved, weakModel != nil else {
             curl.reset()
             isTurning = false
-            UIImpactFeedbackGenerator(style: .soft).impactOccurred(intensity: 0.4)
+            // Past the last page there is no page: there is the end leaf.
+            if forward, let model = weakModel { model.reachedEnd() } else {
+                UIImpactFeedbackGenerator(style: .soft).impactOccurred(intensity: 0.4)
+            }
             return false
         }
         // Wait until the destination has painted and stopped changing (a spread lays out two
@@ -460,6 +464,82 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         _ = await navigator.go(to: link, options: .init(animated: false))
     }
 
+    // MARK: Jumps
+
+    private var veil: UIImageView?
+
+    /// Runs a jump with the old page left on screen, dimmed to 60 %, until the new page has painted;
+    /// then the old page cross-fades away over 0.2 s (no blank page, no spinner). With `riffle`, a few
+    /// leaves flick past first.
+    func veiledJump(riffle: Bool, forward: Bool, _ body: () async -> Void) async {
+        guard veil == nil, !isTurning, view.window != nil else { return await body() }
+        let old = await renderedSnapshot(afterChange: false)
+        let cover = UIImageView(image: old)
+        cover.frame = navigator.view.frame
+        cover.backgroundColor = weakModel?.theme.uiBackground
+        cover.isUserInteractionEnabled = false
+        view.insertSubview(cover, belowSubview: curlHost.view)
+        veil = cover
+        let dim = UIViewPropertyAnimator(duration: 0.15, curve: .easeOut) { cover.alpha = 0.6 }
+        dim.startAnimation()
+        await body()
+        let fresh = await renderedSnapshot(afterChange: true)
+        if riffle {
+            await riffleLeaves(from: old, to: fresh, forward: forward)
+            cover.removeFromSuperview()
+            veil = nil
+            return
+        }
+        await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
+            UIView.animate(withDuration: 0.2, delay: 0, options: [.curveEaseInOut, .beginFromCurrentState]) {
+                cover.alpha = 0
+            } completion: { _ in done.resume() }
+        }
+        cover.removeFromSuperview()
+        veil = nil
+    }
+
+    /// Four fast leaves of the old page curl away over the new one, like a thumb riffling to a place.
+    private func riffleLeaves(from old: UIImage, to fresh: UIImage, forward: Bool) async {
+        guard let model = weakModel else { return }
+        veil?.alpha = 0
+        isTurning = true
+        defer { isTurning = false }
+        let size = navigator.view.bounds.size
+        curl.size = size
+        curl.style = .curl
+        curl.isSpread = model.layout.posture == .spread
+        curl.mirrored = !forward
+        curl.paper = model.theme.background
+        curl.ink = model.theme.text
+        curl.isDark = model.theme.palette.isDark
+        let leaves = 4
+        for i in 0..<leaves {
+            curl.top = old
+            curl.beneath = fresh
+            let y = size.height * (0.92 - CGFloat(i) * 0.06)
+            curl.corner = CGPoint(x: forward ? size.width : 0, y: size.height)
+            curl.finger = CGPoint(x: forward ? size.width : 0, y: y)
+            curl.isActive = true
+            await nextFrame()
+            let d = i == leaves - 1 ? 0.26 : 0.13
+            withAnimation(.easeIn(duration: d)) { curl.finger = turnedTarget() }
+            try? await Task.sleep(for: .seconds(d))
+        }
+        curl.reset()
+    }
+
+    /// Underlines the other device's words with the ribbon colour: drawn in over 0.6 s, gone after 2.
+    func underline(_ locator: Locator, color: UInt32) {
+        guard locator.text.highlight?.isEmpty == false else { return }
+        let decoration = Decoration(id: "sync", locator: locator, style: .init(id: .gatefoldSync, config: ThemePalette.hexString(color)))
+        navigator.apply(decorations: [decoration], in: "gatefold-sync")
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(3))
+            self?.navigator.apply(decorations: [], in: "gatefold-sync")
+        }
+    }
+
     // MARK: Helpers
 
     /// The page as the web views draw it. `drawHierarchy` misplaces a paginated web view's content
@@ -586,4 +666,32 @@ private final class TouchNoticer: UIGestureRecognizer {
         onTouch()
         state = .failed
     }
+}
+
+extension Decoration.Style.Id {
+    static var gatefoldSync: Self { "gatefoldSync" }
+}
+
+extension HTMLDecorationTemplate {
+    /// A ribbon-coloured underline that draws itself in from the left, then fades.
+    static func gatefoldSync() -> HTMLDecorationTemplate { HTMLDecorationTemplate(
+        layout: .boxes,
+        element: { decoration in
+            let tint = (decoration.style.config as? String) ?? "#9A3B26"
+            return "<div class=\"gatefold-sync\" style=\"--gf-tint: \(tint);\"/>"
+        },
+        stylesheet: """
+        .gatefold-sync {
+            box-sizing: border-box;
+            border-bottom: 2px solid var(--gf-tint);
+            clip-path: inset(0 100% 0 0);
+            animation: gatefold-draw 0.6s ease-out forwards, gatefold-fade 2s ease-in 0.6s forwards;
+        }
+        @media (prefers-reduced-motion: reduce) {
+            .gatefold-sync { clip-path: none; animation: gatefold-fade 2s ease-in 0.6s forwards; }
+        }
+        @keyframes gatefold-draw { to { clip-path: inset(0 0 0 0); } }
+        @keyframes gatefold-fade { from { opacity: 1; } to { opacity: 0; } }
+        """
+    ) }
 }

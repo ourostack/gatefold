@@ -5,6 +5,10 @@ struct WelcomeView: View {
     @Environment(AppModel.self) private var app
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var opened = false
+    /// The mark starts where the launch screen left it (closed, centred) and rises once it has opened.
+    @State private var risen = false
+    @State private var markCenter: CGFloat?
+    @State private var screenCenter: CGFloat?
     @State private var signingIn = false
 
     var body: some View {
@@ -12,7 +16,9 @@ struct WelcomeView: View {
             VStack(spacing: 0) {
                 Spacer(minLength: 20)
                 GatefoldMark(opened: opened)
-                    .frame(width: 180, height: 150)
+                    .frame(width: GatefoldMark.size.width, height: GatefoldMark.size.height)
+                    .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).midY } action: { markCenter = $0 }
+                    .offset(y: risen ? 0 : max(0, (screenCenter ?? 0) - (markCenter ?? 0)))
                     .padding(.bottom, 36)
                     .accessibilityHidden(true)
                 VStack(spacing: 12) {
@@ -27,8 +33,8 @@ struct WelcomeView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 .padding(.horizontal, 28)
-                .opacity(opened ? 1 : 0)
-                .offset(y: opened ? 0 : 12)
+                .opacity(risen ? 1 : 0)
+                .offset(y: risen ? 0 : 12)
                 Spacer(minLength: 20)
                 VStack(spacing: 12) {
                     Button {
@@ -36,6 +42,7 @@ struct WelcomeView: View {
                     } label: {
                         Text("Sign In with PocketBook Cloud")
                             .font(.headline)
+                            .foregroundStyle(Color.onRibbon)
                             .frame(maxWidth: .infinity, minHeight: 50)
                     }
                     .buttonStyle(.glassProminent)
@@ -50,18 +57,35 @@ struct WelcomeView: View {
                     .accessibilityIdentifier("welcome.skip")
                 }
                 .frame(maxWidth: 420)
-                .opacity(opened ? 1 : 0)
+                .opacity(risen ? 1 : 0)
                 .padding(.horizontal, 28)
                 .padding(.bottom, 24)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color.paper)
+            .background {
+                // The launch screen centres its mark in the safe area; so does the first frame here.
+                GeometryReader { geo in
+                    Color.paper
+                        .ignoresSafeArea()
+                        .onGeometryChange(for: CGFloat.self) { _ in geo.frame(in: .global).midY } action: { screenCenter = $0 }
+                }
+            }
             .navigationDestination(isPresented: $signingIn) { SignInFlow() }
         }
         .task { await app.prepareSignIn() }
         .task {
+            if reduceMotion {
+                withAnimation(.easeOut(duration: 0.3)) {
+                    opened = true
+                    risen = true
+                }
+                return
+            }
+            // The launch screen's closed gatefold opens in place, then rises to make room for the words.
             try? await Task.sleep(for: .milliseconds(250))
-            withAnimation(reduceMotion ? .easeOut(duration: 0.2) : .spring(duration: 1.1, bounce: 0.12)) { opened = true }
+            withAnimation(.spring(duration: 1.1, bounce: 0.12)) { opened = true }
+            try? await Task.sleep(for: .milliseconds(750))
+            withAnimation(.spring(duration: 0.7, bounce: 0.1)) { risen = true }
         }
         .sensoryFeedback(.impact(weight: .light, intensity: 0.6), trigger: opened)
     }
@@ -69,6 +93,7 @@ struct WelcomeView: View {
 
 /// The app's mark: a folded sheet whose two panels swing open around a ribbon.
 struct GatefoldMark: View {
+    static let size = CGSize(width: 180, height: 150)
     var opened: Bool
 
     var body: some View {
@@ -158,12 +183,27 @@ struct SignInFlow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
+            // Back lives in the page, above the title, where the eye already is.
+            Button(action: back) {
+                Label("Back", systemImage: "chevron.left")
+                    .font(.body.weight(.medium))
+                    .labelStyle(.titleAndIcon)
+                    .frame(minHeight: 44)
+                    .contentShape(.rect)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(Color.ribbon)
+            .padding(.bottom, -14)
+            .accessibilityIdentifier("signIn.back")
             Text(title)
                 .font(.display(.largeTitle, weight: .bold))
                 .foregroundStyle(Color.ink)
                 .contentTransition(.opacity)
+                .fixedSize(horizontal: false, vertical: true)
             Text(subtitle)
                 .foregroundStyle(.secondary)
+                .lineLimit(nil)
+                .fixedSize(horizontal: false, vertical: true)
             switch step {
             case .email:
                 field {
@@ -222,6 +262,8 @@ struct SignInFlow: View {
                 Label(error, systemImage: "exclamationmark.circle")
                     .font(.footnote)
                     .foregroundStyle(.red)
+                    .lineLimit(nil)
+                    .fixedSize(horizontal: false, vertical: true)
                     .transition(.opacity)
                     .accessibilityIdentifier("signIn.error")
             }
@@ -230,6 +272,7 @@ struct SignInFlow: View {
                 Button(action: next) {
                     ZStack {
                         Text(step == .password ? "Sign In" : "Continue").opacity(working ? 0 : 1)
+                            .foregroundStyle(Color.onRibbon)
                         if working { ProgressView() }
                     }
                     .font(.headline)
@@ -252,20 +295,31 @@ struct SignInFlow: View {
         .sensoryFeedback(.error, trigger: failures)
         .onAppear {
             if let prefilledEmail, !prefilledEmail.isEmpty, email.isEmpty { email = prefilledEmail }
+            focusSoon()
+        }
+        // The keyboard comes up once the new step has landed, not mid-transition.
+        .onChange(of: step) { _, _ in focusSoon() }
+        .task { await app.prepareSignIn() }
+        .toolbar(.hidden, for: .navigationBar)
+        .navigationBarBackButtonHidden(true)
+    }
+
+    private func focusSoon() {
+        focused = false
+        guard step != .store else { return }
+        Task {
+            try? await Task.sleep(for: .milliseconds(350))
             focused = true
         }
-        .task { await app.prepareSignIn() }
-        .toolbar {
-            if step != .email {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button("Back", systemImage: "chevron.left") {
-                        error = nil
-                        step = step == .password && stores.count > 1 ? .store : .email
-                    }
-                }
-            }
+    }
+
+    private func back() {
+        error = nil
+        switch step {
+        case .email: dismiss()
+        case .store: withAnimation(Motion.open) { step = .email }
+        case .password: withAnimation(Motion.open) { step = stores.count > 1 ? .store : .email }
         }
-        .navigationBarBackButtonHidden(step != .email)
     }
 
     private var title: String {
@@ -310,7 +364,6 @@ struct SignInFlow: View {
                     } else {
                         step = .store
                     }
-                    focused = true
                 case .password:
                     guard let store else { return }
                     let account = try await app.sync.signIn(email: email, password: password, store: store)

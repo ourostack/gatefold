@@ -12,6 +12,14 @@ struct LibraryView: View {
     @State private var importedCount = 0
     @State private var confirmSignOut = false
     @State private var reconnecting = false
+    /// Room for the cover screen's camera at the header's trailing edge.
+    @State private var clearance = ChromeClearance()
+    /// The shelf arriving after sign-in: how many covers have dropped so far (nil once it's over).
+    @State private var arrived: Int?
+    @State private var greeting: String?
+    @State private var arrivalTaps = 0
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    static let arrivalCap = 12
 
     var body: some View {
         let library = app.library
@@ -19,6 +27,16 @@ struct LibraryView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
                     header
+                    if let greeting {
+                        Text(greeting)
+                            .font(.subheadline)
+                            .foregroundStyle(Color.ink.opacity(0.8))
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(.horizontal, 20)
+                            .padding(.bottom, 6)
+                            .transition(.opacity)
+                            .accessibilityIdentifier("library.greeting")
+                    }
                     SyncStatusLine()
                         .padding(.horizontal, 20)
                         .padding(.bottom, 6)
@@ -31,6 +49,17 @@ struct LibraryView: View {
                 }
             }
             .background(Color.paper)
+            .background {
+                GeometryReader { proxy in
+                    Color.clear.onGeometryChange(for: ChromeClearance.self) { _ in
+                        // Only what reaches into the content (the camera beside the title), not the status bar above it.
+                        ChromeClearance.resolve(container: proxy.size, occlusions: FoldReader.occlusions(in: proxy).filter { $0.maxY > 0 })
+                    } action: { clearance = $0 }
+                }
+            }
+            .sensoryFeedback(.impact(weight: .light, intensity: 0.4), trigger: arrivalTaps)
+            .onChange(of: library.books.count, initial: true) { _, _ in arriveIfNew() }
+            .onChange(of: library.isRefreshing) { _, _ in arriveIfNew() }
             // The title and buttons live in the page, so nothing floats over the covers in any posture
             // (on the Duo's cover screen the system would move bar buttons to the side edge, over the shelf).
             .toolbar(.hidden, for: .navigationBar)
@@ -81,9 +110,54 @@ struct LibraryView: View {
             accountMenu
         }
         .tint(Color.ink)
-        .padding(.horizontal, 20)
+        .padding(.leading, 20 + clearance.leading)
+        .padding(.trailing, 20 + clearance.trailing)
         .padding(.top, 8)
         .padding(.bottom, 2)
+    }
+
+    /// The order covers drop in: Reading Now left to right, then the rest of the shelf.
+    private var dropOrder: [String: Int] {
+        var order: [String: Int] = [:]
+        for book in app.library.readingNow + app.library.finishedBooks + app.library.allBooks where order[book.id] == nil {
+            order[book.id] = order.count
+        }
+        return order
+    }
+
+    private func hidden(_ book: LibraryBook) -> Bool {
+        guard let arrived else { return false }
+        return (dropOrder[book.id] ?? 0) >= arrived
+    }
+
+    /// First time a signed-in shelf fills: the covers drop in one by one, and a line says hello.
+    private func arriveIfNew() {
+        let library = app.library
+        guard arrived == nil, let account = app.account, !library.books.isEmpty, !library.isRefreshing else { return }
+        let key = "arrived-\(account.email)"
+        guard !UserDefaults.standard.bool(forKey: key) || UserDefaults.standard.bool(forKey: "GatefoldReplayArrival") else { return }
+        UserDefaults.standard.set(true, forKey: key)
+        let waiting = library.readingNow.first { $0.displayPercent > 0 }
+        let text = ArrivalGreeting.text(bookCount: library.books.count, waitingTitle: waiting?.title, waitingPercent: waiting?.displayPercent)
+        let count = min(Self.arrivalCap, library.books.count)
+        arrived = 0
+        Task {
+            withAnimation(.easeOut(duration: 0.4)) { greeting = text }
+            if reduceMotion {
+                withAnimation(.easeOut(duration: 0.35)) { arrived = .max }
+            } else {
+                for i in 0..<count {
+                    withAnimation(.spring(duration: 0.45, bounce: 0.2)) { arrived = i + 1 }
+                    if i == 0 || i == count - 1 { arrivalTaps += 1 }
+                    try? await Task.sleep(for: .milliseconds(60))
+                }
+                // Past the first dozen, the rest of a big shelf settles in together.
+                withAnimation(.spring(duration: 0.45, bounce: 0.2)) { arrived = .max }
+            }
+            try? await Task.sleep(for: .seconds(4))
+            withAnimation(.easeOut(duration: 0.6)) { greeting = nil }
+            arrived = nil
+        }
     }
 
     private var accountMenu: some View {
@@ -121,6 +195,7 @@ struct LibraryView: View {
                         LazyHStack(alignment: .bottom, spacing: 22) {
                             ForEach(now) { book in
                                 BookTile(book: book, size: .large, namespace: namespace, onOpen: onOpen)
+                                    .modifier(Drop(hidden: hidden(book)))
                             }
                         }
                         .padding(.horizontal, 20)
@@ -133,10 +208,30 @@ struct LibraryView: View {
                     .accessibilityIdentifier("library.readingNow")
                 }
             }
+            let finished = library.finishedBooks
+            if !finished.isEmpty {
+                section("Finished") {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        LazyHStack(alignment: .bottom, spacing: 18) {
+                            ForEach(finished) { book in
+                                BookTile(book: book, size: .grid, namespace: namespace, onOpen: onOpen)
+                                    .modifier(Drop(hidden: hidden(book)))
+                                    .transition(reduceMotion ? .opacity : .offset(y: -24).combined(with: .opacity))
+                            }
+                        }
+                        .padding(.horizontal, 20)
+                        .padding(.vertical, 10)
+                    }
+                    .scrollClipDisabled()
+                    .accessibilityIdentifier("library.finished")
+                }
+                .transition(.opacity)
+            }
             section("All Books") {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 100), spacing: 12, alignment: .bottomLeading)], spacing: 28) {
                     ForEach(library.allBooks) { book in
                         BookTile(book: book, size: .grid, namespace: namespace, onOpen: onOpen)
+                            .modifier(Drop(hidden: hidden(book)))
                     }
                 }
                 .padding(.horizontal, 20)
@@ -145,6 +240,8 @@ struct LibraryView: View {
         }
         .padding(.top, 14)
         .padding(.bottom, 28)
+        // A book just finished drops onto the Finished shelf the way the shelf first arrived.
+        .animation(reduceMotion ? .easeOut(duration: 0.3) : .spring(duration: 0.45, bounce: 0.2), value: library.finishedBooks.map(\.id))
     }
 
     private func section<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
@@ -360,7 +457,9 @@ private struct EmptyShelf: View {
                     .multilineTextAlignment(.center)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: 320)
-                Button("Add Books from Files", systemImage: "folder", action: onImport)
+                Button(action: onImport) {
+                    Label("Add Books from Files", systemImage: "folder").foregroundStyle(Color.onRibbon)
+                }
                     .buttonStyle(.glassProminent)
                     .tint(.ribbon)
                     .controlSize(.large)
@@ -382,7 +481,7 @@ private struct AccountBadge: View {
             if let initial = email?.first.map({ String($0).uppercased() }) {
                 Text(initial)
                     .font(.system(.headline, design: .serif, weight: .bold))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(Color.onRibbon)
                     .frame(width: 36, height: 36)
                     .background(Color.ribbon.gradient, in: .circle)
             } else {
@@ -439,5 +538,17 @@ private struct SyncStatusLine: View {
         .transition(.opacity)
         .animation(.easeOut(duration: 0.25), value: app.library.isRefreshing)
         .accessibilityIdentifier("library.syncStatus")
+    }
+}
+
+/// A cover not yet on the shelf: just above its place, transparent. Dropping it in springs it down.
+private struct Drop: ViewModifier {
+    let hidden: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func body(content: Content) -> some View {
+        content
+            .offset(y: hidden && !reduceMotion ? -24 : 0)
+            .opacity(hidden ? 0 : 1)
     }
 }

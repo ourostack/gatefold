@@ -47,7 +47,11 @@ final class AppModel {
         if prefs == nil {
             // First launch: the book's type size follows Dynamic Type, then it's the reader's own.
             var first = ReaderPreferences()
-            first.fontScale = ReaderPreferences.initialFontScale(forContentSizeRank: Self.contentSizeRank)
+            // A regular-width screen (iPad) starts a step larger, as a printed page would be read there.
+            first.fontScale = ReaderPreferences.initialFontScale(
+                forContentSizeRank: Self.contentSizeRank,
+                regularWidth: UIDevice.current.userInterfaceIdiom == .pad
+            )
             prefs = PreferencesStore(defaults: first)
         }
         self.preferences = prefs!

@@ -6,6 +6,8 @@ struct ReaderChrome: View {
     let model: ReaderModel
     let layout: ReaderLayout
     let insets: EdgeInsets
+    /// Room left for the camera and status column on the folded Duo's cover screen.
+    var clearance = ChromeClearance()
     var onClose: () -> Void
     @Binding var showAppearance: Bool
     @Binding var showContents: Bool
@@ -14,30 +16,48 @@ struct ReaderChrome: View {
         VStack(spacing: 0) {
             if model.chromeVisible {
                 topBar
-                    .padding(.horizontal, 16)
+                    .padding(.leading, 16 + clearance.leading)
+                    .padding(.trailing, 16 + clearance.trailing)
                     .padding(.top, 8)
                     .transition(.move(edge: .top).combined(with: .opacity))
             }
             Spacer(minLength: 0)
-            if model.chromeVisible && layout.deck == nil {
+            if layout.deck == nil {
                 bottomBar
                     .padding(.horizontal, 16)
                     .padding(.bottom, 8)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
         .safeAreaPadding(.vertical, 4)
-        .padding(.top, safeTop)
-        .padding(.bottom, safeBottom)
+        .padding(.top, Self.safeTop(insets))
+        .padding(.bottom, max(insets.bottom, 12))
         .tint(model.theme.text)
+        .environment(\.glassTint, model.theme.background.opacity(0.7))
     }
 
-    private var safeTop: CGFloat { max(insets.top, 12) }
-    private var safeBottom: CGFloat { max(insets.bottom, 12) }
+    static func safeTop(_ insets: EdgeInsets) -> CGFloat { max(insets.top, 12) }
+    /// The bars' heights, for the paper fade beneath them.
+    static let topBarHeight: CGFloat = 4 + 8 + 44 + 8
+    static let bottomBarHeight: CGFloat = 4 + 8 + 48 + 8
+
+    private var bookmarkButton: some View {
+        GlassIconButton(
+            systemName: model.isBookmarked ? "bookmark.fill" : "bookmark",
+            label: model.isBookmarked ? "Remove Bookmark" : "Add Bookmark",
+            id: "reader.bookmark",
+            tint: model.isBookmarked ? model.theme.accent : nil
+        ) {
+            Task { await model.toggleBookmark() }
+        }
+        .sensoryFeedback(.impact(weight: .light, intensity: 0.7), trigger: model.isBookmarked) { _, new in new }
+        .accessibilityValue(model.isBookmarked ? "Bookmarked" : "")
+    }
 
     private var topBar: some View {
         HStack(spacing: 12) {
             GlassIconButton(systemName: "xmark", label: "Close Book", id: "reader.close", action: onClose)
+            // On the cover screen the camera takes the trailing corner: Bookmark moves beside Close.
+            if clearance.bookmarkLeading { bookmarkButton }
             Spacer(minLength: 0)
             VStack(spacing: 1) {
                 Text(model.title)
@@ -52,24 +72,17 @@ struct ReaderChrome: View {
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 7)
-            .glassEffect(.regular, in: .capsule)
+            .readerGlass(model.theme.background.opacity(0.7), in: .capsule)
             .accessibilityElement(children: .combine)
             Spacer(minLength: 0)
-            GlassIconButton(
-                systemName: model.isBookmarked ? "bookmark.fill" : "bookmark",
-                label: model.isBookmarked ? "Remove Bookmark" : "Add Bookmark",
-                id: "reader.bookmark",
-                tint: model.isBookmarked ? model.theme.accent : nil
-            ) {
-                Task { await model.toggleBookmark() }
-            }
-            .sensoryFeedback(.impact(weight: .light), trigger: model.isBookmarked) { _, new in new }
+            if !clearance.bookmarkLeading { bookmarkButton }
         }
     }
 
     private var bottomBar: some View {
         VStack(spacing: 8) {
-            if let back = model.backLocator, model.backPage != nil {
+            // After a Jump the way back stays up for a while, with or without the controls.
+            if let back = model.backLocator, model.backPage != nil, model.chromeVisible || model.showJumpBack {
                 Button {
                     Task { await model.goBack() }
                 } label: {
@@ -78,11 +91,13 @@ struct ReaderChrome: View {
                         .padding(.horizontal, 14)
                         .frame(minHeight: 36)
                 }
-                .buttonStyle(.glass)
+                .frame(minHeight: 44)
+                .buttonStyle(.glass(.regular.tint(model.theme.background.opacity(0.7))))
                 .accessibilityIdentifier("reader.back")
                 .id(back.locations.totalProgression)
                 .transition(.scale.combined(with: .opacity))
             }
+            if model.chromeVisible {
             HStack(spacing: 10) {
                 GlassIconButton(systemName: "list.bullet", label: "Contents and Bookmarks", id: "reader.contents") {
                     showContents = true
@@ -94,15 +109,18 @@ struct ReaderChrome: View {
                         Spacer()
                         if let left = model.pagesLeftLabel { Text(left) }
                     }
-                    .font(.caption2.monospacedDigit())
-                    .foregroundStyle(.secondary)
+                    // Caption size, at 4.5:1 or better on the tinted glass in every theme.
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(model.theme.text.opacity(0.8))
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 6)
-                .glassEffect(.regular, in: .capsule)
+                .readerGlass(model.theme.background.opacity(0.7), in: .capsule)
                 GlassIconButton(systemName: "textformat.size", label: "Appearance", id: "reader.appearance") {
                     showAppearance = true
                 }
+            }
+            .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
         .frame(maxWidth: 720)
@@ -110,6 +128,7 @@ struct ReaderChrome: View {
 }
 
 struct GlassIconButton: View {
+    @Environment(\.glassTint) private var glassTint
     let systemName: String
     let label: String
     let id: String
@@ -133,7 +152,7 @@ struct GlassIconButton: View {
                 .frame(width: 44, height: 44)
         }
         .buttonStyle(.plain)
-        .glassEffect(.regular.interactive(), in: .circle)
+        .readerGlass(glassTint, interactive: true, in: .circle)
         .accessibilityLabel(label)
         .accessibilityIdentifier(id)
     }
@@ -144,12 +163,14 @@ struct GlassIconButton: View {
 struct Scrubber: View {
     let model: ReaderModel
     @State private var dragging: Double?
+    /// Where a finished drag is going: the thumb stays there while the page catches up.
+    @State private var pending: Double?
     @State private var crossings = 0
 
     var body: some View {
         GeometryReader { geo in
             let width = geo.size.width
-            let value = dragging ?? model.totalProgression
+            let value = dragging ?? pending ?? model.totalProgression
             ZStack(alignment: .leading) {
                 Capsule().fill(.secondary.opacity(0.25)).frame(height: 3)
                 Capsule().fill(model.theme.accent).frame(width: max(3, width * value), height: 3)
@@ -180,8 +201,12 @@ struct Scrubber: View {
                     }
                     .onEnded { _ in
                         guard let target = dragging else { return }
-                        Task { await model.go(toProgression: target, rememberBack: true) }
-                        withAnimation(.easeOut(duration: 0.2)) { dragging = nil }
+                        pending = target
+                        dragging = nil
+                        Task {
+                            await model.go(toProgression: target, rememberBack: true)
+                            pending = nil
+                        }
                     }
             )
             .sensoryFeedback(.selection, trigger: crossings)
@@ -211,49 +236,6 @@ struct Scrubber: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
         .glassEffect(.regular, in: .rect(cornerRadius: 14))
-    }
-}
-
-/// "Your InkPad is further ahead — jump?"
-struct JumpBanner: View {
-    let suggestion: JumpSuggestion
-    let theme: ReaderTheme
-    var onJump: () -> Void
-    var onDismiss: () -> Void
-
-    var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: "book.pages")
-                .font(.title3)
-                .foregroundStyle(theme.accent)
-                .symbolEffect(.bounce, value: suggestion.targetProgression)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(suggestion.headline).font(.subheadline.weight(.semibold))
-                Text(suggestion.detail).font(.footnote).foregroundStyle(.secondary)
-            }
-            Spacer(minLength: 4)
-            Button(action: onJump) {
-                Text("Jump").foregroundStyle(.white)
-            }
-                .font(.subheadline.weight(.semibold))
-                .buttonStyle(.glassProminent)
-                .tint(theme.accent)
-                .accessibilityIdentifier("banner.jump")
-            Button(action: onDismiss) {
-                Image(systemName: "xmark").font(.footnote.weight(.bold)).frame(width: 30, height: 30)
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
-            .accessibilityLabel("Stay Here")
-            .accessibilityIdentifier("banner.dismiss")
-        }
-        .padding(.leading, 16)
-        .padding(.trailing, 10)
-        .padding(.vertical, 10)
-        .glassEffect(.regular, in: .rect(cornerRadius: 22))
-        .foregroundStyle(theme.text)
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("banner")
     }
 }
 
@@ -305,11 +287,11 @@ struct TabletopDeck: View {
     private func deckButton(_ symbol: String, _ label: String, _ id: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: symbol)
-                .font(.system(size: 26, weight: .semibold))
-                .frame(width: 76, height: 64)
+                .font(.system(size: 22, weight: .semibold))
+                .frame(width: 56, height: 56)
         }
         .buttonStyle(.plain)
-        .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 22))
+        .glassEffect(.regular.interactive(), in: .circle)
         .accessibilityLabel(label)
         .accessibilityIdentifier(id)
     }

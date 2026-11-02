@@ -12,6 +12,9 @@ struct GatefoldApp: App {
             RootView()
                 .environment(app)
                 .task { await app.start() }
+                #if DEBUG
+                .task { LaunchMarkRenderer.renderIfAsked() }
+                #endif
         }
         .onChange(of: scenePhase) { _, phase in
             switch phase {
@@ -36,6 +39,7 @@ struct GatefoldApp: App {
 
 struct RootView: View {
     @Environment(AppModel.self) private var app
+    @Environment(\.colorScheme) private var colorScheme
     @Namespace private var covers
     @State private var reader: ReaderModel?
     @State private var openError: String?
@@ -62,6 +66,8 @@ struct RootView: View {
                 Task { await app.sendPlaceNow() }
             }
             .navigationTransition(.zoom(sourceID: model.bookID, in: covers))
+            // The zoom opens onto the page's own colour, never white or black.
+            .presentationBackground(model.preferences.resolvedTheme(systemIsDark: colorScheme == .dark).background)
             // The zoom's swipe-to-dismiss would take edge drags meant for turning back a page.
             .interactiveDismissDisabled()
         }
@@ -109,3 +115,29 @@ private final class BackgroundTaskEnd {
         task = .invalid
     }
 }
+
+#if DEBUG
+/// Draws the launch screen's mark from the welcome's own closed gatefold, so the hand-off is seamless:
+/// `-GatefoldRenderLaunchMark YES` writes LaunchMark.png and LaunchMark-dark.png to the app's tmp.
+@MainActor
+enum LaunchMarkRenderer {
+    static func renderIfAsked() {
+        guard UserDefaults.standard.bool(forKey: "GatefoldRenderLaunchMark") else { return }
+        for dark in [false, true] {
+            let view = GatefoldMark(opened: false)
+                .frame(width: GatefoldMark.size.width, height: GatefoldMark.size.height)
+                .padding(30)
+                .environment(\.colorScheme, dark ? .dark : .light)
+            let renderer = ImageRenderer(content: view)
+            renderer.scale = 3
+            var traits = UITraitCollection(userInterfaceStyle: dark ? .dark : .light)
+            traits = traits.modifyingTraits { $0.displayScale = 3 }
+            traits.performAsCurrent {
+                if let data = renderer.uiImage?.pngData() {
+                    try? data.write(to: URL.temporaryDirectory.appending(path: dark ? "LaunchMark-dark.png" : "LaunchMark.png"))
+                }
+            }
+        }
+    }
+}
+#endif

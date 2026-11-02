@@ -60,6 +60,14 @@ struct AppearanceSheet: View {
                                 }
                             }
                         }
+                        .padding(.trailing, 24)
+                    }
+                    // More fonts lie past the edge: the row fades out instead of cutting a name in half.
+                    .mask {
+                        HStack(spacing: 0) {
+                            Color.black
+                            LinearGradient(colors: [.black, .clear], startPoint: .leading, endPoint: .trailing).frame(width: 24)
+                        }
                     }
                 }
 
@@ -128,6 +136,7 @@ struct AppearanceSheet: View {
 }
 
 private struct ThemeSwatch: View {
+    @Environment(\.colorScheme) private var colorScheme
     let theme: ReaderTheme
     let isSelected: Bool
     let action: () -> Void
@@ -142,7 +151,8 @@ private struct ThemeSwatch: View {
                     .background(theme.background, in: .rect(cornerRadius: 14))
                     .overlay {
                         RoundedRectangle(cornerRadius: 14)
-                            .strokeBorder(isSelected ? Color.ribbon : Color.primary.opacity(0.12), lineWidth: isSelected ? 2.5 : 1)
+                            // In dark mode a dark swatch would vanish into the sheet without its edge.
+                            .strokeBorder(isSelected ? Color.ribbon : Color.primary.opacity(colorScheme == .dark ? 0.25 : 0.12), lineWidth: isSelected ? 2.5 : 1)
                     }
                 Text(theme.displayName)
                     .font(.caption.weight(isSelected ? .semibold : .regular))

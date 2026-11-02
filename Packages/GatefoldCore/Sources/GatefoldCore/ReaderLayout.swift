@@ -77,6 +77,8 @@ public enum ReaderLayoutResolver {
     public static let minimumSpreadWidth: CGFloat = 700
     /// Clear space either side of an active fold.
     static let foldMargin: CGFloat = 12
+    /// In tabletop the page's last line stops this far above the fold, clear of the hinge's shadow.
+    static let tabletopPageInset: CGFloat = 16
 
     public static func resolve(_ input: LayoutInput) -> ReaderLayout {
         let bounds = CGRect(origin: .zero, size: input.containerSize)
@@ -109,7 +111,7 @@ public enum ReaderLayoutResolver {
                 // No real fold (forced or simulated): split at the screen's midline.
                 foldBand = CGRect(x: 0, y: bounds.midY - foldMargin, width: bounds.width, height: 2 * foldMargin)
             }
-            let page = CGRect(x: 0, y: 0, width: bounds.width, height: max(0, foldBand.minY))
+            let page = CGRect(x: 0, y: 0, width: bounds.width, height: max(0, foldBand.minY + foldMargin - tabletopPageInset))
             let deck = CGRect(x: 0, y: foldBand.maxY, width: bounds.width, height: max(0, bounds.maxY - foldBand.maxY))
             return ReaderLayout(posture: .tabletop, pageFrame: page, gutter: nil, deck: deck, columns: .one, spineShadow: 0)
         }

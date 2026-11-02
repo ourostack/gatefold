@@ -47,6 +47,22 @@ final class ReaderModel {
     private(set) var backLocator: Locator?
     private(set) var backPage: Int?
     var errorMessage: String?
+    /// The paper slip under the top bar: the sync landed, or the other device is further on.
+    enum SlipKind: Equatable { case landed, ahead }
+    private(set) var slip: SyncSlip?
+    private(set) var slipKind: SlipKind?
+    /// Bumped each time a slip appears, for its haptic.
+    private(set) var slipCount = 0
+    /// After a Jump, the way back stays on screen for a few seconds even with the controls hidden.
+    private(set) var showJumpBack = false
+    @ObservationIgnored private var jumpBackTask: Task<Void, Never>?
+    @ObservationIgnored private var slipTask: Task<Void, Never>?
+    /// The end leaf, once the reader turns past the story's last page.
+    private(set) var endLeaf: EndLeaf?
+    /// The book's cover, shown while the first page lays out and on the end leaf.
+    let cover: UIImage?
+    /// The first page is on screen and legible.
+    private(set) var pageReady = false
     /// Set once the reader has settled after a reflow (for UI tests): whether the anchor is on screen.
     private(set) var anchorCheck = "pending 0"
     private var anchorReady = false
@@ -91,6 +107,7 @@ final class ReaderModel {
         self.app = app
         self.bookmarks = book.bookmarks
         self.openedSnapshot = book.localSnapshot
+        self.cover = app.library.cover(for: book)
         let initial = book.locatorJSON.flatMap { try? Locator(jsonString: $0) }
         self.initialLocator = initial
         let prefs = app.preferences.effective(for: book.id)
@@ -196,6 +213,7 @@ final class ReaderModel {
         // until the navigator reports where it is.
         await waitForLocation()
         if LaunchOptions.goTo == nil, let initialLocator { await settle(on: initialLocator, move: moves) }
+        markReady()
         if let goTo = LaunchOptions.goTo, let locator = await publication.locate(progression: goTo) {
             hasMoved = true
             moves += 1
@@ -213,7 +231,21 @@ final class ReaderModel {
         }
         try? await Task.sleep(for: .milliseconds(300))
         await captureAnchor()
+        markReady()
+        app.library.noteSession(bookID)
         await checkRemote()
+    }
+
+    /// The first page has painted: the cover placeholder cross-fades to it.
+    private func markReady() {
+        guard !pageReady, page?.currentLocation != nil else { return }
+        withAnimation(.easeOut(duration: 0.3)) { pageReady = true }
+    }
+
+    /// The cover placeholder's own timeout: a page that never reports in still shows.
+    func forceReady() {
+        guard !pageReady else { return }
+        withAnimation(.easeOut(duration: 0.3)) { pageReady = true }
     }
 
     private func waitForLocation() async {
@@ -254,6 +286,10 @@ final class ReaderModel {
         if openedSnapshot == nil, !hasMoved {
             readerLog.notice("first open: landing on the Cloud place \(remote.pointer ?? "no pointer", privacy: .public)")
             await land(on: target.locator, progression: target.totalProgression, target: aim, rememberBack: false)
+            guard !isClosed else { return }
+            markReady()
+            showSlip(.landed(device: remote.deviceName, updated: remote.updated, now: Date()), kind: .landed)
+            if let locator = target.locator { host?.underline(locator, color: theme.palette.accent) }
             return
         }
         let made = JumpSuggestion.make(
@@ -267,6 +303,40 @@ final class ReaderModel {
         suggestionLocator = target.locator
         suggestionRemote = aim
         withAnimation(Motion.banner) { suggestion = made }
+        let pages = chapterMap.positionCount > 1 && !percentOnly
+            ? chapterMap.page(at: target.totalProgression) - chapterMap.page(at: totalProgression) : nil
+        let percent = ReadingPercent.whole(target.totalProgression) - ReadingPercent.whole(totalProgression)
+        showSlip(.ahead(
+            device: remote.deviceName,
+            pagesAhead: pages,
+            percentAhead: percent,
+            chapter: chapterMap.chapter(at: target.totalProgression)?.title,
+            passage: target.locator?.text.highlight
+        ), kind: .ahead)
+    }
+
+    private func showSlip(_ new: SyncSlip, kind: SlipKind) {
+        slipTask?.cancel()
+        withAnimation(Motion.banner) {
+            slip = new
+            slipKind = kind
+        }
+        slipCount += 1
+        // "From your InkPad" is news, not a question: it goes by itself.
+        guard kind == .landed else { return }
+        slipTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(4))
+            guard !Task.isCancelled else { return }
+            self?.hideSlip()
+        }
+    }
+
+    func hideSlip() {
+        slipTask?.cancel()
+        withAnimation(.easeOut(duration: 0.35)) {
+            slip = nil
+            slipKind = nil
+        }
     }
 
     /// The other device's place as we would record it: its own CFI, on our scale.
@@ -300,11 +370,37 @@ final class ReaderModel {
     func acceptSuggestion() async {
         guard let s = suggestion, !isClosed else { return }
         withAnimation(Motion.banner) { suggestion = nil }
+        hideSlip()
         let locator = suggestionLocator, aim = suggestionRemote
         suggestionLocator = nil
         suggestionRemote = nil
-        await land(on: locator, progression: s.targetProgression, target: aim, rememberBack: true)
+        // The pages riffle past on the way, the way a thumb finds a place in a real book.
+        await veiled(riffle: true, forward: s.targetProgression >= totalProgression) {
+            await self.land(on: locator, progression: s.targetProgression, target: aim, rememberBack: true)
+        }
         UINotificationFeedbackGenerator().notificationOccurred(.success)
+        if let locator { host?.underline(locator, color: theme.palette.accent) }
+        holdJumpBack()
+    }
+
+    /// The Back pill stays for 8 seconds after a Jump, controls or not.
+    private func holdJumpBack() {
+        jumpBackTask?.cancel()
+        withAnimation(Motion.chrome) { showJumpBack = backLocator != nil }
+        jumpBackTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(8))
+            guard !Task.isCancelled else { return }
+            withAnimation(Motion.chrome) { self?.showJumpBack = false }
+        }
+    }
+
+    /// A jump keeps the old page on screen, dimmed, until the new one has painted, then cross-fades.
+    private func veiled(riffle: Bool = false, forward: Bool = true, _ body: @escaping () async -> Void) async {
+        if let host {
+            await host.veiledJump(riffle: riffle && !reduceMotion && pageTurn == .curl, forward: forward, body)
+        } else {
+            await body()
+        }
     }
 
     /// Goes to another device's place: the exact spot when its CFI resolved, else its percent.
@@ -385,6 +481,9 @@ final class ReaderModel {
     func close() {
         isClosed = true
         moves += 1
+        slipTask?.cancel()
+        jumpBackTask?.cancel()
+        slip = nil
         suggestion = nil
         suggestionLocator = nil
         suggestionRemote = nil
@@ -394,6 +493,7 @@ final class ReaderModel {
         suggestionLocator = nil
         suggestionRemote = nil
         withAnimation(Motion.banner) { suggestion = nil }
+        hideSlip()
     }
 
     // MARK: Layout
@@ -401,7 +501,7 @@ final class ReaderModel {
     func updateLayout(_ new: ReaderLayout, reason: ReflowReason) {
         guard new != layout else { return }
         readerLog.notice("layout \(new.posture.rawValue, privacy: .public) \(new.pageFrame.width, privacy: .public)x\(new.pageFrame.height, privacy: .public)")
-        let columnsChanged = new.columns != layout.columns
+        let columnsChanged = new.columns != layout.columns || (new.posture == .tabletop) != (layout.posture == .tabletop)
         if new.posture != layout.posture || new.pageFrame.size != layout.pageFrame.size {
             pendingReflowReason = reason
         }
@@ -443,6 +543,7 @@ final class ReaderModel {
     func locationDidChange(_ locator: Locator, duringTurn: Bool = false) async {
         guard !isClosed else { return }
         location = locator
+        if !duringTurn, hasMoved, isPastStory(locator) { reachedEnd() }
         // A landing records its place once it has settled; the steps on the way are not places.
         guard !landing else { return }
         // Mid-turn the navigator has moved under the overlay; the turn records the place when it lands.
@@ -528,6 +629,48 @@ final class ReaderModel {
         }
     }
 
+    // MARK: The end
+
+    struct EndLeaf: Equatable {
+        var line: String
+        var cloud: Bool
+        var markedOnCloud = false
+    }
+
+    /// The page is in the back matter (a Project Gutenberg licence that has a file of its own). A book
+    /// without one ends when a forward turn finds no next page.
+    func isPastStory(_ locator: Locator) -> Bool {
+        guard let end = storyEnd, end.fragment == nil else { return false }
+        return ContentsIndex.sameResource(locator.href.string, end.href)
+    }
+
+    /// The reader turned past the last page of the story: the end leaf, once.
+    func reachedEnd() {
+        guard endLeaf == nil, !isClosed else { return }
+        let now = Date()
+        app.library.markFinished(bookID, at: now)
+        let book = app.library.book(bookID)
+        let line = FinishLine.text(started: book?.started, finished: book?.finished ?? now, sessions: book?.sessions ?? 1)
+        setChrome(false)
+        withAnimation(reduceMotion ? .easeOut(duration: 0.25) : .spring(duration: 0.6, bounce: 0.15)) {
+            endLeaf = EndLeaf(line: line, cloud: book?.cloud != nil)
+        }
+        UINotificationFeedbackGenerator().notificationOccurred(.success)
+    }
+
+    /// "Mark Finished on InkPad": 100 % and read in the Cloud.
+    func markFinishedOnCloud() async {
+        guard endLeaf?.markedOnCloud == false else { return }
+        withAnimation(.snappy) { endLeaf?.markedOnCloud = true }
+        await app.library.markFinishedInCloud(bookID)
+        UIImpactFeedbackGenerator(style: .light).impactOccurred(intensity: 0.6)
+    }
+
+    /// Back from the end leaf to the last page of the story.
+    func leaveEndLeaf() {
+        withAnimation(.easeOut(duration: 0.25)) { endLeaf = nil }
+    }
+
     // MARK: Chrome
 
     func setChrome(_ visible: Bool) {
@@ -541,7 +684,7 @@ final class ReaderModel {
         moves += 1
         if rememberBack { rememberPlace() }
         if let locator = await publication.locate(progression: progression) {
-            await page?.go(to: locator)
+            await veiled { _ = await self.page?.go(to: locator) }
             await captureAnchor()
         }
     }
@@ -550,7 +693,7 @@ final class ReaderModel {
         hasMoved = true
         moves += 1
         rememberPlace()
-        await page?.go(to: entry.link)
+        await veiled { await self.page?.go(to: entry.link) }
         await captureAnchor()
     }
 
@@ -564,7 +707,9 @@ final class ReaderModel {
         hasMoved = true
         moves += 1
         backLocator = nil
-        await page?.go(to: back)
+        jumpBackTask?.cancel()
+        withAnimation(Motion.chrome) { showJumpBack = false }
+        await veiled { _ = await self.page?.go(to: back) }
         await captureAnchor()
     }
 
@@ -636,14 +781,15 @@ final class ReaderModel {
     func applyPreferences(reflow: Bool) {
         let prefs = preferences
         host?.apply(
-            Self.epubPreferences(prefs, theme: theme, columns: layout.columns),
+            Self.epubPreferences(prefs, theme: theme, columns: layout.columns, tabletop: layout.posture == .tabletop),
             columns: layout.columns == .two ? 2 : 1,
             reflow: reflow
         )
         host?.disablePanningIfNeeded()
     }
 
-    static func epubPreferences(_ prefs: ReaderPreferences, theme: ReaderTheme, columns: GatefoldCore.ColumnCount) -> EPUBPreferences {
+    /// Tabletop's half-height page keeps no more than the Normal side margins.
+    static func epubPreferences(_ prefs: ReaderPreferences, theme: ReaderTheme, columns: GatefoldCore.ColumnCount, tabletop: Bool = false) -> EPUBPreferences {
         let custom = prefs.font != .original || prefs.lineSpacing != .normal || prefs.justify
         return EPUBPreferences(
             backgroundColor: ReadiumNavigator.Color(hex: ThemePalette.hexString(theme.palette.background)),
@@ -652,7 +798,7 @@ final class ReaderModel {
             fontSize: prefs.fontScale,
             hyphens: prefs.justify ? true : nil,
             lineHeight: custom ? prefs.lineSpacing.lineHeight : nil,
-            pageMargins: prefs.margins.factor,
+            pageMargins: tabletop ? min(prefs.margins.factor, PageMargins.normal.factor) : prefs.margins.factor,
             publisherStyles: !custom,
             scroll: prefs.pageTurn == .scroll,
             textAlign: prefs.justify ? .justify : nil,
