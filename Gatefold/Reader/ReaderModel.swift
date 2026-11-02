@@ -80,6 +80,9 @@ final class ReaderModel {
     private var page: (any ReaderPage)? { injectedPage ?? host }
     /// This device's place when the book was opened, for the "further ahead" comparison.
     private let openedSnapshot: ProgressSnapshot?
+    /// First open here of a book the InkPad has a place in: the cover stays up until the reader has
+    /// landed there, so the book's first page never flashes past (or loads blank) on the way.
+    private var awaitingLanding: Bool
     /// Where the book opened; nothing is recorded or pushed until the reader moves from it,
     /// so opening a book never overwrites a further-ahead place on the other device.
     private var hasMoved = false
@@ -108,6 +111,8 @@ final class ReaderModel {
         self.app = app
         self.bookmarks = book.bookmarks
         self.openedSnapshot = book.localSnapshot
+        self.awaitingLanding = book.localSnapshot == nil
+            && ((book.remote?.totalProgression ?? 0) > JumpSuggestion.threshold || (book.cloud?.readPercent ?? 0) > 0)
         self.cover = app.library.cover(for: book)
         let initial = book.locatorJSON.flatMap { try? Locator(jsonString: $0) }
         self.initialLocator = initial
@@ -239,11 +244,16 @@ final class ReaderModel {
         markReady()
         app.library.noteSession(bookID)
         await checkRemote()
+        // Landed (or there was nowhere to land): show the page.
+        if awaitingLanding {
+            awaitingLanding = false
+            markReady()
+        }
     }
 
     /// The first page has painted: the cover placeholder cross-fades to it.
     private func markReady() {
-        guard !pageReady, page?.currentLocation != nil else { return }
+        guard !pageReady, !awaitingLanding, page?.currentLocation != nil else { return }
         readerLog.notice("first page ready after \(Date().timeIntervalSince(self.openedAt), privacy: .public) s")
         withAnimation(.easeOut(duration: 0.3)) { pageReady = true }
     }
@@ -295,6 +305,7 @@ final class ReaderModel {
             readerLog.notice("first open: landing on the Cloud place \(remote.pointer ?? "no pointer", privacy: .public)")
             await land(on: target.locator, progression: target.totalProgression, target: aim, rememberBack: false)
             guard !isClosed else { return }
+            awaitingLanding = false
             markReady()
             showSlip(.landed(device: remote.deviceName, updated: remote.updated, now: Date()), kind: .landed)
             if let locator = target.locator { host?.underline(locator, color: theme.palette.accent) }

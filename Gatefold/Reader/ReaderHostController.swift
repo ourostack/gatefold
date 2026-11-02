@@ -40,8 +40,9 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             config: .init(
                 preferences: preferences,
                 contentInset: [.compact: (top: 28, bottom: 28), .regular: (top: 44, bottom: 44)],
-                // Readium reports the first place only once every preloaded neighbour has loaded too:
-                // 2 behind and 4 ahead held the cover up for six seconds. Neighbours load on demand.
+                // Readium shows and reports the first page only once every preloaded neighbour has loaded
+                // too: 2 behind and 4 ahead held the cover up for three to six seconds. Neighbours load on
+                // demand; a turn into a chapter still loading holds the old page (`renderedSnapshot`).
                 preloadPreviousPositionCount: 0,
                 preloadNextPositionCount: 0,
                 decorationTemplates: HTMLDecorationTemplate.defaultTemplates().merging([.gatefoldSync: .gatefoldSync()]) { a, _ in a }
@@ -595,7 +596,8 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     func renderedSnapshot(afterChange: Bool) async -> UIImage {
         let paper = PageSignature.rgb(weakModel?.theme.uiBackground ?? .white)
         var last: (UIImage, PageSignature)?
-        for attempt in 0..<14 {
+        // Up to two seconds: a turn into a chapter that hasn't loaded yet holds the old page until it has.
+        for attempt in 0..<40 {
             if afterChange || attempt > 0 { try? await Task.sleep(for: .milliseconds(attempt == 0 ? 60 : 50)) }
             let image = await snapshot()
             guard let signature = PageSignature(image) else { return image }
@@ -645,7 +647,11 @@ struct PageSignature {
 
     /// Paper with nothing on it: no pixel strays more than a little from the paper's grey.
     func isBare(paper: UInt8) -> Bool {
-        pixels.filter { abs(Int($0) - Int(paper)) > 10 }.count < 3
+        if pixels.filter({ abs(Int($0) - Int(paper)) > 10 }).count < 3 { return true }
+        // Or a page of any one colour (a chapter still loading shows a white page and a spinner).
+        let sorted = pixels.sorted()
+        let median = Int(sorted[sorted.count / 2])
+        return pixels.filter { abs(Int($0) - median) > 10 }.count < 6
     }
 
     func matches(_ other: PageSignature) -> Bool {

@@ -70,13 +70,16 @@ struct ReaderScreen: View {
                     }
                     .frame(width: width)
                     .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { slipHeight = $0 }
-                    // In the top band: under the title when the controls are up, else at the top edge.
+                    // "Ahead" sits in the top band, under the title when the controls are up. "Landed" sits
+                    // at the foot, so the passage it underlines (the top line of the page) stays in view.
                     .offset(
                         x: layout.gutter.map { g in g.maxX + (proxy.size.width - g.maxX - width) / 2 } ?? (proxy.size.width - width) / 2,
-                        y: safeTop + 8 + (model.chromeVisible ? ReaderChrome.topBarHeight : 0)
+                        y: kind == .landed
+                            ? proxy.size.height - slipBottomBand(proxy) - slipHeight
+                            : safeTop + 8 + (model.chromeVisible ? ReaderChrome.topBarHeight : 0)
                     )
                     .animation(Motion.chrome, value: model.chromeVisible)
-                    .transition(reduceMotion ? .opacity : .move(edge: .top).combined(with: .opacity))
+                    .transition(reduceMotion ? .opacity : .move(edge: kind == .landed ? .bottom : .top).combined(with: .opacity))
                     .zIndex(2)
                 }
 
@@ -170,13 +173,20 @@ struct ReaderScreen: View {
         }
     }
 
+    /// Space below a slip at the foot of the page: the home indicator, and the controls when up.
+    private func slipBottomBand(_ proxy: GeometryProxy) -> CGFloat {
+        max(proxy.safeAreaInsets.bottom, 12) + 8 + (model.chromeVisible ? ReaderChrome.bottomBarHeight : 0)
+    }
+
     /// The theme's own paper under the bars, fading to clear over 24 pt, so glass never sits on text.
     @ViewBuilder
     private func scrims(proxy: GeometryProxy, layout: ReaderLayout, safeTop: CGFloat) -> some View {
         let fade: CGFloat = 24
         let paper = model.theme.background
-        let top = safeTop + (model.chromeVisible ? ReaderChrome.topBarHeight : 0) + (model.slip != nil ? 8 + slipHeight + 16 : 0)
-        if model.chromeVisible || model.slip != nil {
+        let aheadSlip = model.slip != nil && model.slipKind == .ahead
+        let landedSlip = model.slip != nil && model.slipKind == .landed
+        let top = safeTop + (model.chromeVisible ? ReaderChrome.topBarHeight : 0) + (aheadSlip ? 8 + slipHeight + 16 : 0)
+        if model.chromeVisible || aheadSlip {
             LinearGradient(stops: [.init(color: paper, location: 0), .init(color: paper, location: top / (top + fade)), .init(color: paper.opacity(0), location: 1)],
                            startPoint: .top, endPoint: .bottom)
                 .frame(width: proxy.size.width, height: top + fade)
@@ -184,8 +194,11 @@ struct ReaderScreen: View {
                 .transition(.opacity)
                 .accessibilityHidden(true)
         }
-        if model.chromeVisible, layout.deck == nil {
-            let bottom = max(proxy.safeAreaInsets.bottom, 12) + ReaderChrome.bottomBarHeight + (model.backLocator != nil ? 52 : 0)
+        if (model.chromeVisible && layout.deck == nil) || landedSlip {
+            let bottom = max(
+                model.chromeVisible && layout.deck == nil ? max(proxy.safeAreaInsets.bottom, 12) + ReaderChrome.bottomBarHeight + (model.backLocator != nil ? 52 : 0) : 0,
+                landedSlip ? slipBottomBand(proxy) + slipHeight + 16 : 0
+            )
             LinearGradient(stops: [.init(color: paper.opacity(0), location: 0), .init(color: paper, location: fade / (bottom + fade)), .init(color: paper, location: 1)],
                            startPoint: .top, endPoint: .bottom)
                 .frame(width: proxy.size.width, height: bottom + fade)
