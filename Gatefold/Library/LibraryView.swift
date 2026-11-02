@@ -78,9 +78,10 @@ struct LibraryView: View {
                             .transition(.opacity)
                     }
                 }
-                // Full width from the first frame: a shelf still waiting for its books would otherwise
-                // hug the header and centre it, then jump left when the covers arrive.
-                .frame(maxWidth: .infinity, alignment: .leading)
+                // Exactly the screen's width from the first frame: a shelf still waiting for its books
+                // would otherwise hug the header and centre it, and a row wider than the screen (the
+                // dusting shelf's ghosts on an iPad) would push it off the left edge.
+                .containerRelativeFrame(.horizontal, alignment: .leading)
                 // Nothing shows until the shelf knows its width, so the header never flies in from a zero-wide layout.
                 .opacity(width > 0 ? 1 : 0)
                 .animation(.easeOut(duration: 0.3), value: shelfState)

@@ -24,6 +24,8 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     private var lastSize: CGSize = .zero
     private var reflowTask: Task<Void, Never>?
     private var reflowGeneration = 0
+    /// The old page, held over the web view while it repaginates, so a reflow never shows bare paper.
+    private var reflowCover: UIView?
     /// True from the moment a turn begins until it lands or springs back.
     private(set) var isTurning = false
     private var panStart: CGPoint = .zero
@@ -136,7 +138,19 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         model.keeper.reflowWillBegin(reason)
         model.reflowDidBegin()
         if !curl.isActive {
-            UIView.animate(withDuration: 0.12) { self.navigator.view.alpha = 0 }
+            let page = navigator.view!
+            if reflowCover == nil, page.alpha > 0.5, let container = page.superview,
+               let cover = page.snapshotView(afterScreenUpdates: false) {
+                cover.frame = page.frame
+                cover.isUserInteractionEnabled = false
+                container.insertSubview(cover, aboveSubview: page)
+                reflowCover = cover
+            }
+            if reflowCover != nil {
+                page.alpha = 0
+            } else {
+                UIView.animate(withDuration: 0.12) { page.alpha = 0 }
+            }
         }
         settleReflowSoon()
     }
@@ -190,7 +204,12 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         model.keeper.restoreDidComplete()
         model.reflowDidFinish(visible: after)
         disablePanningIfNeeded()
-        UIView.animate(withDuration: 0.25) { self.navigator.view.alpha = 1 }
+        let cover = reflowCover
+        reflowCover = nil
+        UIView.animate(withDuration: 0.25) {
+            self.navigator.view.alpha = 1
+            cover?.alpha = 0
+        } completion: { _ in cover?.removeFromSuperview() }
     }
 
     /// What's on screen now: the resource, its progression range and the visible text.
