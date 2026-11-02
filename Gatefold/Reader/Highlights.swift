@@ -194,6 +194,12 @@ final class HighlightStore {
 
     // MARK: Drawing
 
+    /// The page in view is a new navigator (the catch-up's standby page): listen to it and draw on it.
+    func navigatorChanged() {
+        observingTaps = false
+        draw()
+    }
+
     /// Hands the navigator every highlight in the current theme's tints.
     func draw() {
         guard let model, let host = model.host else { return }
