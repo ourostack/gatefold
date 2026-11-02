@@ -181,8 +181,8 @@ struct LibraryView: View {
             .buttonBorderShape(.circle)
             .accessibilityLabel("Add Books from Files")
             .accessibilityIdentifier("library.import")
-            // A menu is hosted by UIKit and ignores the shelf's fade-in; it waits for the measured width too.
-            if width > 0 { accountMenu } else { Color.clear.frame(width: 44, height: 44) }
+            // A menu is hosted by UIKit and ignores the shelf's fade-in; it waits until the shelf has settled.
+            if width > 0, shelfState != .waiting { accountMenu } else { Color.clear.frame(width: 44, height: 44) }
         }
         .tint(Color.ink)
         .padding(.horizontal, metrics.gutter)
