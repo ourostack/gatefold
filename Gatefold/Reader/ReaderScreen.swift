@@ -72,7 +72,10 @@ struct ReaderScreen: View {
                         }
                     }
 
-                runningHead(layout: layout, proxy: proxy, clearance: clearance, hidden: aheadOpen || lifted)
+                runningHead(layout: layout, proxy: proxy, clearance: clearance, hidden: aheadOpen || (model.chromeVisible && layout.deck == nil))
+                    .task(id: headState(layout: layout, proxy: proxy, clearance: clearance, hidden: aheadOpen || (model.chromeVisible && layout.deck == nil))) {
+                        readerLog.notice("running head: \(headState(layout: layout, proxy: proxy, clearance: clearance, hidden: aheadOpen || (model.chromeVisible && layout.deck == nil)), privacy: .public)")
+                    }
 
                 if let deck = layout.deck {
                     TabletopDeck(model: model, showAppearance: $showAppearance, showContents: $showContents)
@@ -329,15 +332,28 @@ struct ReaderScreen: View {
     /// The cover screen keeps a band above the text clear of the camera. A printed book's head margin
     /// carries its running head; so does this band: the chapter in small capitals, beside the camera,
     /// never under it.
+    /// Why the running head is or isn't up, for the log.
+    private func headState(layout: ReaderLayout, proxy: GeometryProxy, clearance: ChromeClearance, hidden: Bool) -> String {
+        let camera = FoldReader.occlusions(in: proxy).filter { $0.height <= 120 && $0.minY < 80 }.min { $0.minY < $1.minY }
+        let textTop = layout.pageFrame.minY + pageTopClearance(layout, clearance: clearance)
+        guard layout.deck == nil, let camera else { return "none (no camera band)" }
+        if textTop - camera.maxY < -camera.height / 2 || textTop < 40 { return "none (text top \(Int(textTop)), camera \(Int(camera.minY))-\(Int(camera.maxY)))" }
+        if hidden { return "hidden (chrome or slip)" }
+        if !model.pageReady { return "hidden (page not ready)" }
+        return "shown"
+    }
+
     @ViewBuilder
     private func runningHead(layout: ReaderLayout, proxy: GeometryProxy, clearance: ChromeClearance, hidden: Bool) -> some View {
         let camera = FoldReader.occlusions(in: proxy).filter { $0.height <= 120 && $0.minY < 80 }.min { $0.minY < $1.minY }
         let textTop = layout.pageFrame.minY + pageTopClearance(layout, clearance: clearance)
         let side: CGFloat = 24
         if layout.deck == nil, let camera, textTop - camera.maxY >= -camera.height / 2, textTop >= 40,
-           model.slip == nil, let words = model.chapterTitle ?? Optional(model.title) {
+           let words = model.chapterTitle ?? Optional(model.title) {
+            // Clear of the folded "read on" tab, which hangs at the page's leading edge in this band.
+            let tab: CGFloat = model.aheadTab != nil && model.slipFolded && model.slip != nil ? 16 + 112 : 0
             // Whichever side of the camera has the more room.
-            let left = (layout.pageFrame.minX + side, min(layout.pageFrame.maxX - side, camera.minX - 14))
+            let left = (layout.pageFrame.minX + max(side, tab), min(layout.pageFrame.maxX - side, camera.minX - 14))
             let right = (max(layout.pageFrame.minX + side, camera.maxX + 14), layout.pageFrame.maxX - side)
             let (start, end) = left.1 - left.0 >= right.1 - right.0 ? left : right
             Text(words)
