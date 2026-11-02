@@ -61,11 +61,15 @@ struct ReaderScreen: View {
                     .animation(reduceMotion ? .easeOut(duration: 0.2) : .spring(duration: 0.4, bounce: 0.1), value: push)
 
                 scrims(proxy: proxy, layout: layout, safeTop: safeTop)
-                    .task(id: "\(footerNeed(proxy: proxy, layout: layout))-\(model.totalProgression)-\(proxy.size.width)x\(proxy.size.height)-\(model.pageReady)") {
-                        // Let a turn or a reflow settle before reading where the lines are.
-                        try? await Task.sleep(for: .milliseconds(120))
-                        guard !Task.isCancelled else { return }
-                        await measureFooterLine(proxy: proxy, layout: layout)
+                    .task(id: "\(footerNeed(proxy: proxy, layout: layout))-\(model.totalProgression)-\(model.location?.href.string ?? "")-\(model.location?.locations.progression ?? -1)-\(proxy.size.width)x\(proxy.size.height)-\(model.pageReady)") {
+                        // Let a turn or a reflow settle before reading where the lines are; then again
+                        // as a jump's veil lifts and its page settles on the words (the lines move, or
+                        // were hidden at the first look), so the paper never ends across a line.
+                        for wait in [120, 600, 1400] {
+                            try? await Task.sleep(for: .milliseconds(wait))
+                            guard !Task.isCancelled else { return }
+                            await measureFooterLine(proxy: proxy, layout: layout)
+                        }
                     }
 
                 runningHead(layout: layout, proxy: proxy, clearance: clearance, hidden: aheadOpen || lifted)

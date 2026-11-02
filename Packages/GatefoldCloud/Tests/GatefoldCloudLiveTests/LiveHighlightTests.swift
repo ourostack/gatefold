@@ -23,7 +23,9 @@ struct LiveHighlightTests {
 
         switch LiveHighlights.step {
         case "seed":
-            let marker = "Gatefold live \(UUID().uuidString.prefix(6))"
+            // A note a reader would write, so the evidence shows a real margin note; the test account
+            // is cleaned after each run, so the opening words identify it.
+            let marker = "Public office runs in the family"
             var found: AnnotationRange?
             for item in mapper.spine.items where found == nil {
                 found = await mapper.range(href: item.href, highlight: "My ancestors had been for many years counsellors and syndics",
@@ -31,7 +33,7 @@ struct LiveHighlightTests {
             }
             let range = try #require(found, "the passage is in the book")
             let seededAt = Date().addingTimeInterval(-2)
-            let note = CloudAnnotation.highlight(range, color: .cyan, note: "\(marker): written through the Cloud API, drawn by Gatefold.", at: seededAt)
+            let note = CloudAnnotation.highlight(range, color: .cyan, note: "\(marker): Victor is proud of his ancestors before we know anything about him.", at: seededAt)
             await cloud.save(note, for: book)
             await cloud.flushOutbox()
             #expect(await cloud.pendingChanges() == 0)
