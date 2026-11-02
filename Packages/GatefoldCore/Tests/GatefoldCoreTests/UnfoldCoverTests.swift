@@ -49,4 +49,18 @@ struct UnfoldCoverTests {
         let wide = UnfoldCover.heldFrame(picture: CGSize(width: 2000, height: 900), in: CGRect(x: 0, y: 0, width: 1100, height: 900))
         #expect(wide.width == 1100)
     }
+
+    // The picture is taken asynchronously. If a reflow began first, or while it was being taken, the
+    // web view was already redrawing the new layout under the cover, so the picture is not his page.
+    @Test func aPictureTakenBeforeAnyReflowIsThePage() {
+        #expect(UnfoldCover.pictureIsThePage(reflowingAtStart: false, reflowsAtStart: 3, reflowsAtEnd: 3))
+    }
+
+    @Test func aPictureTakenWhileAReflowIsUnderWayIsDropped() {
+        #expect(!UnfoldCover.pictureIsThePage(reflowingAtStart: true, reflowsAtStart: 3, reflowsAtEnd: 3))
+    }
+
+    @Test func aPictureDuringWhichAReflowBeganIsDropped() {
+        #expect(!UnfoldCover.pictureIsThePage(reflowingAtStart: false, reflowsAtStart: 3, reflowsAtEnd: 4))
+    }
 }

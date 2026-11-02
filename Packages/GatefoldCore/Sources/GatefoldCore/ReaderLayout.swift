@@ -200,6 +200,12 @@ public enum UnfoldCover: Equatable, Sendable {
         return liveAvailable ? .live : .none
     }
 
+    /// Whether a picture taken asynchronously shows the reader's page: not if a reflow was already
+    /// under way, or began while it was taken, because the page underneath was redrawing the new layout.
+    public static func pictureIsThePage(reflowingAtStart: Bool, reflowsAtStart: Int, reflowsAtEnd: Int) -> Bool {
+        !reflowingAtStart && reflowsAtStart == reflowsAtEnd
+    }
+
     /// Where the held picture goes on the new page: full height, its own proportions, from the
     /// leading edge (where the left page will be), never wider than the page.
     public static func heldFrame(picture: CGSize, in page: CGRect) -> CGRect {
