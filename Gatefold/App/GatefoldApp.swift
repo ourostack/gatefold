@@ -13,7 +13,7 @@ struct GatefoldApp: App {
             RootView()
                 .environment(app)
                 .task { await app.start() }
-                .task { LaunchClock.firstFrame(); await WebWarmup.startUnlessABookWarms() }
+                .task { LaunchClock.firstFrame(); await WebWarmup.startUnlessABookOpens() }
                 #if DEBUG
                 .task { LaunchMarkRenderer.renderIfAsked() }
                 #endif
@@ -66,15 +66,15 @@ enum LaunchClock {
 @MainActor
 enum WebWarmup {
     private static var view: WKWebView?
-    /// A book opening behind the shelf starts WebKit itself, and sooner; the warm-up would only hold
-    /// the main thread for it (a second on the first launch after an install).
-    static var bookIsWarming = false
+    /// A book opening (behind the shelf, or the reader's own at launch) starts WebKit itself, and
+    /// sooner; the warm-up would only hold the main thread and start a second page process beside it.
+    static var bookIsOpening = false
 
-    /// Starts WebKit a moment after the first frame, unless Reading Now's first book has already begun to.
-    static func startUnlessABookWarms() async {
+    /// Starts WebKit a moment after the first frame, unless a book has already begun to.
+    static func startUnlessABookOpens() async {
         try? await Task.sleep(for: .milliseconds(600))
-        if bookIsWarming {
-            readerLog.notice("launch: web warm-up skipped; a book is opening behind the shelf")
+        if bookIsOpening {
+            readerLog.notice("launch: web warm-up skipped; a book is already opening")
             return
         }
         start()
@@ -215,7 +215,7 @@ struct RootView: View {
                   let publication = try? await BookOpener.shared.open(url), !Task.isCancelled, warmKeys == keys else { return }
             let model = ReaderModel(book: book, publication: publication, app: app)
             model.warmKey = id
-            WebWarmup.bookIsWarming = true
+            WebWarmup.bookIsOpening = true
             readerLog.notice("warm: opening \(id, privacy: .public) at \(LaunchClock.processStarted.map { Date().timeIntervalSince($0) } ?? -1, privacy: .public) s after launch")
             model.warm()
             warm.append(model)
@@ -244,6 +244,7 @@ struct RootView: View {
             return
         }
         opening = true
+        WebWarmup.bookIsOpening = true
         Task {
             defer { opening = false }
             do {
