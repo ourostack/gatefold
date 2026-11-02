@@ -80,9 +80,12 @@ final class LiveSyncUITests: XCTestCase {
         sleep(1)
         shot("live-09-banner")
         element("banner.jump").tap()
-        sleep(3)
+        // A catch-up resolves the Cloud's place to its sentence first; it can take ten seconds live.
+        let probe = element("reader.visibleText")
+        let arrived = NSPredicate { _, _ in self.normalize(probe.value as? String ?? "").contains(self.normalize(expected)) }
+        _ = XCTWaiter.wait(for: [expectation(for: arrived, evaluatedWith: probe)], timeout: 40)
         waitForSettled()
-        let words = element("reader.visibleText").value as? String ?? ""
+        let words = probe.value as? String ?? ""
         print("LIVE after jump: \(words.prefix(200))")
         shot("live-10-after-jump")
         XCTAssertTrue(normalize(words).contains(normalize(expected)), "landed on the web reader's passage: \(words.prefix(200))")
