@@ -12,6 +12,14 @@ enum FoldReader {
         }
         return nil
     }
+
+    /// What the system says is covered (the folded Duo's cover-screen camera and status column).
+    static func occlusions(in proxy: GeometryProxy) -> [CGRect] {
+        if #available(iOS 27.1, *) {
+            return proxy.reservedRegions(kind: .occlusion, options: .includeInactive).map(\.frame)
+        }
+        return []
+    }
 }
 
 private struct HingeObserver: ViewModifier {

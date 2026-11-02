@@ -60,6 +60,14 @@ struct AppearanceSheet: View {
                                 }
                             }
                         }
+                        .padding(.trailing, 24)
+                    }
+                    // More fonts lie past the edge: the row fades out instead of cutting a name in half.
+                    .mask {
+                        HStack(spacing: 0) {
+                            Color.black
+                            LinearGradient(colors: [.black, .clear], startPoint: .leading, endPoint: .trailing).frame(width: 24)
+                        }
                     }
                 }
 
@@ -128,6 +136,7 @@ struct AppearanceSheet: View {
 }
 
 private struct ThemeSwatch: View {
+    @Environment(\.colorScheme) private var colorScheme
     let theme: ReaderTheme
     let isSelected: Bool
     let action: () -> Void
@@ -142,7 +151,8 @@ private struct ThemeSwatch: View {
                     .background(theme.background, in: .rect(cornerRadius: 14))
                     .overlay {
                         RoundedRectangle(cornerRadius: 14)
-                            .strokeBorder(isSelected ? Color.ribbon : Color.primary.opacity(0.12), lineWidth: isSelected ? 2.5 : 1)
+                            // In dark mode a dark swatch would vanish into the sheet without its edge.
+                            .strokeBorder(isSelected ? Color.ribbon : Color.primary.opacity(colorScheme == .dark ? 0.25 : 0.12), lineWidth: isSelected ? 2.5 : 1)
                     }
                 Text(theme.displayName)
                     .font(.caption.weight(isSelected ? .semibold : .regular))
@@ -192,9 +202,11 @@ struct ContentsSheet: View {
 
     var body: some View {
         NavigationStack {
+            ScrollViewReader { scroller in
             List {
                 if tab == 0 {
                     ForEach(model.toc) { entry in
+                        let current = isCurrent(entry)
                         Button {
                             Task { await model.go(to: entry) }
                             dismiss()
@@ -202,16 +214,29 @@ struct ContentsSheet: View {
                             HStack {
                                 Text(entry.title)
                                     .font(entry.level == 0 ? .body : .subheadline)
-                                    .foregroundStyle(isCurrent(entry) ? Color.ribbon : .primary)
-                                    .fontWeight(isCurrent(entry) ? .semibold : .regular)
+                                    .foregroundStyle(current ? Color.ribbon : .primary)
+                                    .fontWeight(current ? .semibold : .regular)
                                     .padding(.leading, CGFloat(entry.level) * 16)
+                                    .fixedSize(horizontal: false, vertical: true)
                                 Spacer()
                                 Text("\(model.chapterMap.page(at: entry.progression))")
                                     .font(.footnote.monospacedDigit())
                                     .foregroundStyle(.secondary)
                             }
                         }
+                        // The ribbon marks where you are, the way a bookmark sits in a printed contents page.
+                        .overlay(alignment: .leading) {
+                            if current {
+                                RibbonShape().fill(Color.ribbon.gradient)
+                                    .frame(width: 6, height: 22)
+                                    .offset(x: -14)
+                                    .accessibilityHidden(true)
+                            }
+                        }
                         .listRowBackground(Color.clear)
+                        .accessibilityAddTraits(current ? .isSelected : [])
+                        .accessibilityIdentifier(current ? "contents.current" : "contents.entry.\(entry.id)")
+                        .id(entry.id)
                     }
                 } else if model.bookmarks.items.isEmpty {
                     ContentUnavailableView(
@@ -232,7 +257,7 @@ struct ContentsSheet: View {
                                     Text("“\(text)…”").font(.footnote).foregroundStyle(.secondary).lineLimit(2)
                                 }
                                 Text("Page \(model.chapterMap.page(at: mark.totalProgression)) · \(mark.created.formatted(.relative(presentation: .named)))")
-                                    .font(.caption).foregroundStyle(.tertiary)
+                                    .font(.caption).foregroundStyle(.secondary)
                             }
                         }
                         .listRowBackground(Color.clear)
@@ -241,6 +266,10 @@ struct ContentsSheet: View {
                         }
                     }
                 }
+            }
+            .onAppear {
+                if let current = model.toc.first(where: isCurrent) { scroller.scrollTo(current.id, anchor: .center) }
+            }
             }
             .listStyle(.plain)
             .scrollContentBackground(.hidden)
@@ -264,9 +293,7 @@ struct ContentsSheet: View {
     }
 
     private func isCurrent(_ entry: TOCEntry) -> Bool {
-        let level0 = model.toc.filter { $0.level == 0 }
-        guard let i = model.chapterMap.chapterIndex(at: model.totalProgression), i < level0.count else { return false }
-        return level0[i].id == entry.id
+        model.currentTOCEntryID == entry.id
     }
 }
 

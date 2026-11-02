@@ -24,11 +24,16 @@ struct LibraryBook: Identifiable, Codable, Equatable {
     var remote: ReadingPosition?
     var added: Date
     var bookmarks = BookmarkList()
+    /// When the reader turned past the last page of the story here.
+    var finished: Date?
+    /// The first time the book was opened here, and how many times since, for the end leaf.
+    var started: Date?
+    var sessions: Int?
 
     var isOnDevice: Bool { fileName != nil }
     /// A book from the fake Cloud's bundled demo shelf.
     var isDemo: Bool { id.hasPrefix("gutenberg-") }
-    var isFinished: Bool { totalProgression >= 0.995 }
+    var isFinished: Bool { finished != nil || cloud?.readStatus == "read" }
 
     var displayProgression: Double {
         max(totalProgression, lastOpened == nil ? (remote?.totalProgression ?? 0) : 0)

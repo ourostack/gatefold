@@ -328,6 +328,12 @@ public actor PocketBookCloud: SyncService {
         enqueue(OutboxItem(fastHash: book.fastHash, operation: .position(p)))
     }
 
+    /// Marks the book read, so PocketBook's library (and the InkPad, once it syncs) shows it finished.
+    /// Push a 100 % position first for the percent; this sets the status the position write leaves at "reading".
+    public func markRead(_ book: CloudBook) async {
+        enqueue(OutboxItem(fastHash: book.fastHash, operation: .readStatus(name: book.name, status: "read")))
+    }
+
     // MARK: Annotations
 
     public func annotations(for book: CloudBook) async throws -> [CloudAnnotation] {
@@ -340,7 +346,7 @@ public actor PocketBookCloud: SyncService {
                 list.removeAll { $0.uuid == uuid }
             case let .createAnnotation(local):
                 if !list.contains(where: { $0.dedupeKey == local.dedupeKey }) { list.append(local) }
-            case .position:
+            case .position, .readStatus:
                 break
             }
         }
@@ -560,6 +566,15 @@ public actor PocketBookCloud: SyncService {
             return .done
         case let .deleteAnnotation(uuid):
             try await session.send(Endpoint(method: "DELETE", path: "/notes/\(Endpoint.pathSegment(uuid))", query: ["fast_hash": item.fastHash]))
+            return .done
+        case let .readStatus(name, status):
+            do {
+                try await session.send(Endpoint(method: "POST", path: "/books/status/\(Endpoint.pathSegment(name))/\(Endpoint.pathSegment(status))"))
+            } catch CloudError.server(500) {
+                // The Cloud answers 500 when the book already has this status (seen live, 2026-11-01);
+                // a status it accepts answers 200. Either way there is nothing left to send.
+            }
+            if let i = books.firstIndex(where: { $0.fastHash == item.fastHash }) { books[i].readStatus = status }
             return .done
         }
     }

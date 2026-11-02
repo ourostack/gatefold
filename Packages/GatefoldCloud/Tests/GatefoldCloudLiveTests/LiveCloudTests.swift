@@ -164,6 +164,29 @@ struct LiveCloudTests {
         #expect(Int((back.totalProgression * 100).rounded()) == Int((position.totalProgression * 100).rounded(.up)))
     }
 
+    /// The End's "Mark Finished on InkPad": a 100 % position plus `read_status` "read". Account 2 is
+    /// scratch; the book goes back to 5 % and "reading" afterwards.
+    @Test func marksABookFinished() async throws {
+        let cloud = try await Live.signedIn(2)
+        let book = try #require(try await cloud.library().first { $0.fastHash == Live.frankenstein })
+        Live.log("before: status=\(book.readStatus ?? "nil") percent=\(book.readPercent.map(String.init) ?? "nil")")
+        await cloud.push(ReadingPosition(cfi: nil, progression: 1, totalProgression: 1, updated: Date()), for: book)
+        await cloud.markRead(book)
+        await cloud.flushOutbox()
+        #expect(await cloud.pendingChanges() == 0)
+        let finished = try #require(try await cloud.library().first { $0.fastHash == Live.frankenstein })
+        Live.log("after mark: status=\(finished.readStatus ?? "nil") percent=\(finished.readPercent.map(String.init) ?? "nil")")
+        #expect(finished.readStatus == "read")
+        #expect(finished.readPercent == 100)
+
+        await cloud.push(ReadingPosition(cfi: nil, progression: 0.05, totalProgression: 0.05, updated: Date()), for: book)
+        await cloud.flushOutbox()
+        _ = try? await cloud.session.send(Endpoint(method: "POST", path: "/books/status/\(Endpoint.pathSegment(book.name))/reading"))
+        let restored = try #require(try await cloud.library().first { $0.fastHash == Live.frankenstein })
+        Live.log("restored: status=\(restored.readStatus ?? "nil") percent=\(restored.readPercent.map(String.init) ?? "nil")")
+        #expect(restored.readStatus == "reading")
+    }
+
     @Test func annotationsRoundTrip() async throws {
         let cloud = try await Live.signedIn(2)
         let book = try #require(try await cloud.library().first { $0.fastHash == Live.frankenstein }, "account 2 holds a copy of Frankenstein")

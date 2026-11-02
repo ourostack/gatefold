@@ -11,6 +11,8 @@ final class LibraryStore {
     private(set) var downloads: [String: DownloadState] = [:]
     private(set) var covers: [String: UIImage] = [:]
     private(set) var isRefreshing = false
+    /// The Cloud has answered at least once since launch, so an empty shelf really is empty.
+    private(set) var hasRefreshed = false
     /// An import that failed (shown as an alert: the reader just asked for it).
     var lastError: String?
     /// Why the last refresh didn't reach the Cloud (shown quietly on the shelf, never as an alert).
@@ -41,7 +43,12 @@ final class LibraryStore {
     // MARK: Queries
 
     var readingNow: [LibraryBook] {
-        ReadingNow.shelf(books.map(\.shelfItem), limit: 10).compactMap { item in books.first { $0.id == item.id } }
+        ReadingNow.shelf(books.filter { !$0.isFinished }.map(\.shelfItem), limit: 10).compactMap { item in books.first { $0.id == item.id } }
+    }
+
+    /// Books finished, most recent first.
+    var finishedBooks: [LibraryBook] {
+        books.filter(\.isFinished).sorted { ($0.finished ?? $0.lastOpened ?? $0.added) > ($1.finished ?? $1.lastOpened ?? $1.added) }
     }
 
     /// Everything, newest first.
@@ -65,7 +72,7 @@ final class LibraryStore {
     func refresh() async {
         guard await sync.account != nil else { return }
         isRefreshing = true
-        defer { isRefreshing = false }
+        defer { isRefreshing = false; hasRefreshed = true }
         do {
             // One request per page of books: each book already carries its position.
             let cloudBooks = try await sync.library()
@@ -221,6 +228,32 @@ final class LibraryStore {
         // One push per book at a time, latest wins: rapid turns settle on the last page, in order.
         pending[bookID] = (position, cloud)
         schedulePush(bookID, after: .milliseconds(400))
+    }
+
+    /// A reading session began: remembers when the book was first opened and counts the sessions.
+    func noteSession(_ id: String, at now: Date = Date()) {
+        update(id) {
+            if $0.started == nil { $0.started = now }
+            $0.sessions = ($0.sessions ?? 0) + 1
+        }
+    }
+
+    /// The reader turned past the story's last page.
+    func markFinished(_ id: String, at now: Date = Date()) {
+        update(id) { if $0.finished == nil { $0.finished = now } }
+    }
+
+    /// "Mark Finished on InkPad": 100 % and `read_status` "read" in the Cloud, so the InkPad's
+    /// library shows it finished too.
+    func markFinishedInCloud(_ id: String, at now: Date = Date()) async {
+        markFinished(id, at: now)
+        guard let cloud = book(id)?.cloud else { return }
+        pending[id] = nil
+        var done = ReadingPosition(cfi: nil, progression: 1, totalProgression: 1, updated: now)
+        done.source = .gatefold
+        await sync.push(done, for: cloud)
+        await sync.markRead(cloud)
+        await sync.flushOutbox()
     }
 
     /// Sends waiting places now (the app is going to the background).

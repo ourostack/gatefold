@@ -4,14 +4,16 @@ using namespace metal;
 
 // A page curl: the page wraps around a cylinder whose axis follows the finger.
 //
-// The layer is two pages wide: the current page (what lifts) in [0, w), and the page whose
-// face shows on the back of a turning leaf in [w, 2w). Only [0, w) is drawn.
+// The layer is the current page (what lifts), `w` wide. `back` is the destination page, whose
+// left half shows on the back of a spread's turning leaf; `mirror` is 1 when the whole effect is
+// drawn mirrored (turning backward), so `back` is sampled flipped to match.
 //
 // `leaf` is the part of the page that turns, as (minX, minY, maxX, maxY): the whole page,
 // or the right page of a spread. `corner` is the corner being lifted and `finger` where it
-// is now. `radius` is the cylinder's radius. `paper` is the theme's background, `backMode`
-// 0 shows a faint mirror of the front on the back (one page), 1 shows the next spread's
-// left page there (a spread's leaf).
+// is now. `radius` is the cylinder's radius. `paper` and `ink` are the theme's background and
+// text, `backMode` 0 shows a faint mirror of the front on the back (one page), 1 shows the next
+// spread's left page there (a spread's leaf). `dark` is 1 for a dark theme: paper there is lit by
+// a soft highlight along the roll instead of being darkened, so the leaf never reads as a hole.
 
 static bool inside(float2 p, float4 r) {
     return p.x >= r.x && p.x < r.z && p.y >= r.y && p.y < r.w;
@@ -25,7 +27,11 @@ static bool inside(float2 p, float4 r) {
                                 float2 finger,
                                 float radius,
                                 half4 paper,
-                                float backMode) {
+                                half4 ink,
+                                float backMode,
+                                float dark,
+                                texture2d<half> back,
+                                float mirror) {
     float2 p = position;
     if (p.x >= w) { return half4(0); }
 
@@ -48,24 +54,41 @@ static bool inside(float2 p, float4 r) {
             if (backMode > 0.5) {
                 // A spread's leaf: its back is the next spread's left page, mirrored about the spine.
                 float spine = leaf.x;
-                float2 q = float2(w + (2.0 * spine - src.x), src.y);
-                face = layer.sample(q);
+                float2 q = float2(2.0 * spine - src.x, src.y);
+                float u = q.x / w;
+                if (mirror > 0.5) { u = 1.0 - u; }
+                constexpr sampler s(address::clamp_to_edge, filter::linear);
+                face = back.sample(s, float2(u, q.y / leaf.w));
+                if (face.a < 0.5) { face = paper; }
             } else {
+                // The back of a printed page: paper a shade toward the ink, the front's words
+                // showing through faintly, mirrored.
                 half4 front = layer.sample(src);
-                face = mix(paper, front, half(0.14));
+                half4 back = mix(paper, ink, half(0.10));
+                face = mix(back, front, half(0.15));
             }
-            // Light the cylinder: brightest at its crown, a little darker as it rolls away.
-            half shade = d >= 0.0 ? half(0.86 + 0.14 * sin(M_PI_F * 0.5 * (1.0 - d / r))) : half(0.97);
-            return half4(face.rgb * shade, 1.0);
+            // Light the cylinder. Where the paper rolls toward the light (its crown, d near r) it
+            // catches a highlight; it settles as it lies flatter.
+            float crown = d >= 0.0 ? sin(M_PI_F * 0.5 * (1.0 - d / r)) : 0.0;
+            float rim = d >= 0.0 ? pow(clamp(d / r, 0.0, 1.0), 6.0) : 0.0;
+            half3 rgb;
+            if (dark > 0.5) {
+                rgb = face.rgb + half3(0.06 + 0.06 * crown) + half3(0.10 * rim);
+            } else {
+                half shade = d >= 0.0 ? half(0.88 + 0.12 * crown) : half(0.97);
+                rgb = face.rgb * shade + half3(0.08 * rim);
+            }
+            return half4(min(rgb, half3(1.0)), 1.0);
         }
     }
 
     bool inLeaf = inside(p, leaf);
     if (inLeaf) {
         if (d >= r) {
-            // Lifted away: show the page beneath, darkened by the curl's shadow near the fold.
-            float t = clamp((d - r) / (r * 2.2), 0.0, 1.0);
-            half a = half(0.28 * (1.0 - t) * (1.0 - t));
+            // Lifted away: show the page beneath, darkened by the leaf's cast shadow, which falls
+            // off over 24 pt the way a sheet's shadow does on paper.
+            float t = clamp((d - r) / 24.0, 0.0, 1.0);
+            half a = half(0.35 * (1.0 - t) * (1.0 - t));
             return half4(0, 0, 0, a);
         }
         if (d >= 0.0) {

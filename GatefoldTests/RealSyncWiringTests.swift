@@ -30,6 +30,8 @@ actor StubSync: SyncService {
         return remote
     }
     func push(_ position: ReadingPosition, for book: CloudBook) async { pushed.append((position, book.fastHash)) }
+    private(set) var markedRead: [String] = []
+    func markRead(_ book: CloudBook) async { markedRead.append(book.fastHash) }
     func annotations(for book: CloudBook) async throws -> [CloudAnnotation] { [] }
     func save(_ annotation: CloudAnnotation, for book: CloudBook) async {}
     func deleteAnnotation(_ annotation: CloudAnnotation, for book: CloudBook) async {}
@@ -148,6 +150,52 @@ actor StubSync: SyncService {
         let pending = try #require(store.pendingPush(for: frankenstein.fastHash))
         #expect(pending.cfi == nil)
         #expect(pending.totalProgression == 0.4)
+    }
+
+    @Test func finishingABookMovesItToFinishedAndCountsSessions() async throws {
+        let sync = StubSync()
+        let (store, _) = makeStore(sync)
+        await sync.setLibrary(.success([frankenstein]))
+        await store.refresh()
+        let id = frankenstein.fastHash
+        let start = Date(timeIntervalSince1970: 1_000_000)
+        store.noteSession(id, at: start)
+        store.noteSession(id, at: start.addingTimeInterval(3600))
+        store.recordPlace(bookID: id, locatorJSON: "{}", totalProgression: 0.5, progression: 0.5, at: start)
+        #expect(store.readingNow.map(\.id) == [id])
+        #expect(store.finishedBooks.isEmpty)
+
+        store.markFinished(id, at: start.addingTimeInterval(86_400 * 3))
+        let book = try #require(store.book(id))
+        #expect(book.started == start)
+        #expect(book.sessions == 2)
+        #expect(book.isFinished)
+        #expect(store.readingNow.isEmpty, "a finished book leaves Reading Now")
+        #expect(store.finishedBooks.map(\.id) == [id])
+    }
+
+    @Test func markFinishedOnInkPadPushesAHundredPercentAndMarksRead() async throws {
+        let sync = StubSync()
+        let (store, _) = makeStore(sync)
+        await sync.setLibrary(.success([frankenstein]))
+        await store.refresh()
+        await store.markFinishedInCloud(frankenstein.fastHash)
+        let pushed = await sync.pushed
+        #expect(pushed.last?.0.totalProgression == 1)
+        #expect(pushed.last?.0.source == .gatefold)
+        #expect(await sync.markedRead == [frankenstein.fastHash])
+        #expect(await sync.flushes >= 1)
+        #expect(store.book(frankenstein.fastHash)?.finished != nil)
+    }
+
+    @Test func aBookTheCloudSaysIsReadIsFinished() async throws {
+        let sync = StubSync()
+        let (store, _) = makeStore(sync)
+        var read = frankenstein
+        read.readStatus = "read"
+        await sync.setLibrary(.success([read]))
+        await store.refresh()
+        #expect(store.finishedBooks.map(\.id) == [frankenstein.fastHash])
     }
 
     @Test func theRealCloudIsTheDefault() {

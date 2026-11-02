@@ -40,8 +40,12 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             config: .init(
                 preferences: preferences,
                 contentInset: [.compact: (top: 28, bottom: 28), .regular: (top: 44, bottom: 44)],
-                preloadPreviousPositionCount: 2,
-                preloadNextPositionCount: 4
+                // Readium shows and reports the first page only once every preloaded neighbour has loaded
+                // too: 2 behind and 4 ahead held the cover up for three to six seconds. Neighbours load on
+                // demand; a turn into a chapter still loading holds the old page (`renderedSnapshot`).
+                preloadPreviousPositionCount: 0,
+                preloadNextPositionCount: 0,
+                decorationTemplates: HTMLDecorationTemplate.defaultTemplates().merging([.gatefoldSync: .gatefoldSync()]) { a, _ in a }
             )
         )
         super.init(nibName: nil, bundle: nil)
@@ -53,6 +57,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        if let model = weakModel { readerLog.notice("open: host loads after \(Date().timeIntervalSince(model.openedAt), privacy: .public) s") }
         view.clipsToBounds = true
         addChild(navigator)
         navigator.view.frame = view.bounds
@@ -62,7 +67,12 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
 
         // Any touch on the page means the next location is the reader's own (slide and scroll swipes
         // belong to Readium, so they're noticed here rather than in the pan handler).
-        let noticer = TouchNoticer { [weak self] in self?.weakModel?.noteInteraction() }
+        let noticer = TouchNoticer { [weak self] in
+            // Web views loaded since the last location change bring their own scroll pans; switch them
+            // off before this touch can drag the page sideways under the curl.
+            self?.disablePanningIfNeeded()
+            self?.weakModel?.noteInteraction()
+        }
         noticer.delegate = self
         navigator.view.addGestureRecognizer(noticer)
 
@@ -72,6 +82,9 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         curlHost.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         curlHost.view.isUserInteractionEnabled = false
         curlHost.sizingOptions = []
+        // The overlay must sit exactly over the page. With safe-area insets (the folded Duo's camera
+        // column) SwiftUI centred it in the narrower safe area, so the lifted page drew shifted.
+        curlHost.safeAreaRegions = []
         view.addSubview(curlHost.view)
         curlHost.didMove(toParent: self)
 
@@ -211,8 +224,17 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
 
     // MARK: EPUBNavigatorDelegate
 
+    /// A link in the book (a contents page, a cross-reference) jumps like the contents sheet does:
+    /// the old page stays, dimmed, until the new one has loaded, and Back returns.
+    func navigator(_ navigator: VisualNavigator, shouldNavigateToLink link: ReadiumShared.Link) -> Bool {
+        guard let model = weakModel else { return true }
+        Task { await model.follow(link) }
+        return false
+    }
+
     func navigator(_ navigator: Navigator, locationDidChange locator: Locator) {
         guard let model = weakModel else { return }
+        if model.location == nil { readerLog.notice("open: navigator reports a place after \(Date().timeIntervalSince(model.openedAt), privacy: .public) s") }
         disablePanningIfNeeded()
         Task { await model.locationDidChange(locator, duringTurn: isTurning) }
     }
@@ -261,7 +283,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             Task {
                 let moved = forward ? await navigator.goForward(options: .init(animated: true)) : await navigator.goBackward(options: .init(animated: true))
                 isTurning = false
-                if moved { weakModel?.userTurnedPage() }
+                if moved { weakModel?.userTurnedPage() } else if forward { weakModel?.reachedEnd() }
             }
         case .curl, .fade:
             Task { await animatedTurn(forward: forward, from: nil) }
@@ -281,12 +303,15 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         guard !isTurning, weakModel != nil else { return false }
         isTurning = true
         let size = navigator.view.bounds.size
-        let top = snapshot()
+        // The page on screen now; a black or bare capture (seen in spreads) is retried.
+        let top = await renderedSnapshot(afterChange: false)
         curl.size = size
         curl.style = model.pageTurn == .fade ? .fade : .curl
         curl.isSpread = model.layout.posture == .spread
         curl.mirrored = !forward
         curl.paper = model.theme.background
+        curl.ink = model.theme.text
+        curl.isDark = model.theme.palette.isDark
         curl.top = top
         curl.beneath = nil
         curl.fade = 0
@@ -304,11 +329,23 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         guard moved, weakModel != nil else {
             curl.reset()
             isTurning = false
-            UIImpactFeedbackGenerator(style: .soft).impactOccurred(intensity: 0.4)
+            // Past the last page there is no page: there is the end leaf.
+            if forward, let model = weakModel { model.reachedEnd() } else {
+                UIImpactFeedbackGenerator(style: .soft).impactOccurred(intensity: 0.4)
+            }
             return false
         }
-        try? await Task.sleep(for: .milliseconds(140))
-        curl.beneath = snapshot()
+        // Wait until the destination has painted and stopped changing (a spread lays out two
+        // columns; caught halfway it ghosts).
+        curl.beneath = await renderedSnapshot(afterChange: true)
+        #if DEBUG
+        if ProcessInfo.processInfo.environment["GATEFOLD_DUMP_SNAPSHOTS"] != nil || UserDefaults.standard.bool(forKey: "GatefoldDumpSnapshots") {
+            let dir = URL.temporaryDirectory
+            let stamp = Int(Date().timeIntervalSince1970 * 1000)
+            try? top.pngData()?.write(to: dir.appending(path: "snap-\(stamp)-top.png"))
+            try? curl.beneath?.pngData()?.write(to: dir.appending(path: "snap-\(stamp)-beneath.png"))
+        }
+        #endif
         return true
     }
 
@@ -409,7 +446,12 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     }
 
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
-        true
+        // A curl owns the swipe: a scroll view moving the page at the same time shifts what lifts.
+        if gestureRecognizer is UIPanGestureRecognizer, other.view is UIScrollView,
+           let model = weakModel, model.pageTurn == .curl || model.pageTurn == .fade {
+            return false
+        }
+        return true
     }
 
     /// In curl and fade modes the page must not also slide under the finger.
@@ -435,24 +477,211 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         _ = await navigator.go(to: link, options: .init(animated: false))
     }
 
+    // MARK: Jumps
+
+    private var veil: UIView?
+
+    /// Runs a jump with the old page left on screen, dimmed to 60 %, until the new page has painted;
+    /// then the old page cross-fades away over 0.2 s (no blank page, no spinner). With `riffle`, a few
+    /// leaves flick past first.
+    func veiledJump(riffle: Bool, forward: Bool, _ body: () async -> Void) async {
+        guard veil == nil, !isTurning, view.window != nil else { return await body() }
+        let old = await renderedSnapshot(afterChange: false)
+        // The old page, opaque, with a wash of paper over it: it reads as dimmed to 60 %, and nothing
+        // of the new page shows through until the cross-fade.
+        let cover = UIView(frame: navigator.view.frame)
+        cover.isUserInteractionEnabled = false
+        let image = UIImageView(image: old)
+        image.frame = cover.bounds
+        image.backgroundColor = weakModel?.theme.uiBackground
+        let wash = UIView(frame: cover.bounds)
+        wash.backgroundColor = weakModel?.theme.uiBackground
+        wash.alpha = 0
+        cover.addSubview(image)
+        cover.addSubview(wash)
+        view.insertSubview(cover, belowSubview: curlHost.view)
+        veil = cover
+        let dim = UIViewPropertyAnimator(duration: 0.15, curve: .easeOut) { wash.alpha = 0.4 }
+        dim.startAnimation()
+        await body()
+        let fresh = await renderedSnapshot(afterChange: true)
+        if riffle {
+            await riffleLeaves(from: old, to: fresh, forward: forward)
+            cover.removeFromSuperview()
+            veil = nil
+            return
+        }
+        await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
+            UIView.animate(withDuration: 0.2, delay: 0, options: [.curveEaseInOut, .beginFromCurrentState]) {
+                cover.alpha = 0
+            } completion: { _ in done.resume() }
+        }
+        cover.removeFromSuperview()
+        veil = nil
+    }
+
+    /// Four fast leaves of the old page curl away over the new one, like a thumb riffling to a place.
+    private func riffleLeaves(from old: UIImage, to fresh: UIImage, forward: Bool) async {
+        guard let model = weakModel else { return }
+        veil?.alpha = 0
+        isTurning = true
+        defer { isTurning = false }
+        let size = navigator.view.bounds.size
+        curl.size = size
+        curl.style = .curl
+        curl.isSpread = model.layout.posture == .spread
+        curl.mirrored = !forward
+        curl.paper = model.theme.background
+        curl.ink = model.theme.text
+        curl.isDark = model.theme.palette.isDark
+        let leaves = 4
+        for i in 0..<leaves {
+            curl.top = old
+            curl.beneath = fresh
+            let y = size.height * (0.92 - CGFloat(i) * 0.06)
+            curl.corner = CGPoint(x: forward ? size.width : 0, y: size.height)
+            curl.finger = CGPoint(x: forward ? size.width : 0, y: y)
+            curl.isActive = true
+            await nextFrame()
+            let d = i == leaves - 1 ? 0.26 : 0.13
+            withAnimation(.easeIn(duration: d)) { curl.finger = turnedTarget() }
+            try? await Task.sleep(for: .seconds(d))
+        }
+        curl.reset()
+    }
+
+    /// Underlines the other device's words with the ribbon colour: drawn in over 0.6 s, gone after 2.
+    func underline(_ locator: Locator, color: UInt32) {
+        guard locator.text.highlight?.isEmpty == false else { return }
+        let decoration = Decoration(id: "sync", locator: locator, style: .init(id: .gatefoldSync, config: ThemePalette.hexString(color)))
+        navigator.apply(decorations: [decoration], in: "gatefold-sync")
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(3))
+            self?.navigator.apply(decorations: [], in: "gatefold-sync")
+        }
+    }
+
     // MARK: Helpers
 
-    private func snapshot() -> UIImage {
-        let bounds = navigator.view.bounds
+    /// The page as the web views draw it. `drawHierarchy` misplaces a paginated web view's content
+    /// (it drew the page shifted by about a column, with the next one peeking in, and a spread
+    /// black), so each visible web view is asked for its own snapshot and laid out where it sits.
+    /// Readium's own loading spinner is showing: the page in view hasn't loaded yet.
+    var isLoadingPage: Bool {
+        let host = navigator.view!
+        func spinning(_ v: UIView) -> Bool {
+            guard !v.isHidden, v.alpha > 0.01 else { return false }
+            if let a = v as? UIActivityIndicatorView {
+                return a.isAnimating && a.convert(a.bounds, to: host).intersects(host.bounds)
+            }
+            return v.subviews.contains(where: spinning)
+        }
+        return spinning(host)
+    }
+
+    func snapshot() async -> UIImage {
+        let host = navigator.view!
+        let bounds = host.bounds
+        var webs: [(WKWebView, CGRect)] = []
+        func walk(_ v: UIView) {
+            if let w = v as? WKWebView {
+                let frame = w.convert(w.bounds, to: host)
+                if !w.isHidden, w.alpha > 0.01, frame.intersects(bounds) { webs.append((w, frame)) }
+                return
+            }
+            v.subviews.forEach(walk)
+        }
+        walk(host)
+        var parts: [(UIImage, CGRect)] = []
+        for (web, frame) in webs {
+            let config = WKSnapshotConfiguration()
+            config.afterScreenUpdates = false
+            if let image = try? await web.takeSnapshot(configuration: config) { parts.append((image, frame)) }
+        }
         let paper = weakModel?.theme.uiBackground ?? .systemBackground
         let format = UIGraphicsImageRendererFormat.preferred()
         format.opaque = true
         return UIGraphicsImageRenderer(bounds: bounds, format: format).image { ctx in
             paper.setFill()
             ctx.fill(bounds)
-            navigator.view.drawHierarchy(in: bounds, afterScreenUpdates: true)
+            if parts.isEmpty {
+                host.drawHierarchy(in: bounds, afterScreenUpdates: false)
+            } else {
+                for (image, frame) in parts { image.draw(in: frame) }
+            }
         }
+    }
+
+    /// A snapshot that shows the page: not black, not bare paper, and (after a change) the same
+    /// twice running, so the layout has settled. Gives up after about 0.7 s with the best it has.
+    func renderedSnapshot(afterChange: Bool) async -> UIImage {
+        let paper = PageSignature.rgb(weakModel?.theme.uiBackground ?? .white)
+        var last: (UIImage, PageSignature)?
+        // A turn into a chapter still loading holds the old page until it has: as long as Readium's
+        // spinner is up (up to 8 s), else up to 2 s for a page that is still bare.
+        for attempt in 0..<160 {
+            if afterChange || attempt > 0 { try? await Task.sleep(for: .milliseconds(attempt == 0 ? 60 : 50)) }
+            if isLoadingPage { last = nil; continue }
+            if attempt >= 40 { break }
+            let image = await snapshot()
+            guard let signature = PageSignature(image) else { return image }
+            let usable = !signature.isBlack(paper: paper) && !signature.isBare(paper: paper)
+            if usable, !afterChange { return image }
+            if usable, let (_, previous) = last, previous.matches(signature) { return image }
+            if usable { last = (image, signature) }
+            if !usable { readerLog.notice("snapshot \(attempt) unusable: black=\(signature.isBlack(paper: paper)) bare=\(signature.isBare(paper: paper))") }
+        }
+        if let last { return last.0 }
+        return await snapshot()
     }
 
     private func nextFrame() async {
         await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
             DispatchQueue.main.async { c.resume() }
         }
+    }
+}
+
+/// A 24×32 greyscale thumbnail of a snapshot, to tell a painted page from a black or bare one and
+/// a settled page from one still laying out.
+struct PageSignature {
+    var pixels: [UInt8]
+
+    init?(_ image: UIImage) {
+        guard let cg = image.cgImage else { return nil }
+        let w = 24, h = 32
+        var buffer = [UInt8](repeating: 0, count: w * h)
+        guard let ctx = CGContext(data: &buffer, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w,
+                                  space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGImageAlphaInfo.none.rawValue) else { return nil }
+        ctx.interpolationQuality = .medium
+        ctx.draw(cg, in: CGRect(x: 0, y: 0, width: w, height: h))
+        pixels = buffer
+    }
+
+    static func rgb(_ color: UIColor) -> UInt8 {
+        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        color.getRed(&r, green: &g, blue: &b, alpha: &a)
+        return UInt8(max(0, min(255, (0.299 * r + 0.587 * g + 0.114 * b) * 255)))
+    }
+
+    var mean: Double { Double(pixels.reduce(0) { $0 + Int($1) }) / Double(pixels.count) }
+
+    /// Nearly black on a theme whose paper is not.
+    func isBlack(paper: UInt8) -> Bool { paper > 40 && mean < 12 }
+
+    /// Paper with nothing on it: no pixel strays more than a little from the paper's grey.
+    func isBare(paper: UInt8) -> Bool {
+        if pixels.filter({ abs(Int($0) - Int(paper)) > 10 }).count < 3 { return true }
+        // Or a page of any one colour (a chapter still loading shows a white page and a spinner).
+        let sorted = pixels.sorted()
+        let median = Int(sorted[sorted.count / 2])
+        return pixels.filter { abs(Int($0) - median) > 10 }.count < 6
+    }
+
+    func matches(_ other: PageSignature) -> Bool {
+        guard other.pixels.count == pixels.count else { return false }
+        let diff = zip(pixels, other.pixels).reduce(0) { $0 + abs(Int($1.0) - Int($1.1)) }
+        return Double(diff) / Double(pixels.count) < 1.5
     }
 }
 
@@ -479,4 +708,32 @@ private final class TouchNoticer: UIGestureRecognizer {
         onTouch()
         state = .failed
     }
+}
+
+extension Decoration.Style.Id {
+    static var gatefoldSync: Self { "gatefoldSync" }
+}
+
+extension HTMLDecorationTemplate {
+    /// A ribbon-coloured underline that draws itself in from the left, then fades.
+    static func gatefoldSync() -> HTMLDecorationTemplate { HTMLDecorationTemplate(
+        layout: .boxes,
+        element: { decoration in
+            let tint = (decoration.style.config as? String) ?? "#9A3B26"
+            return "<div class=\"gatefold-sync\" style=\"--gf-tint: \(tint);\"/>"
+        },
+        stylesheet: """
+        .gatefold-sync {
+            box-sizing: border-box;
+            border-bottom: 2px solid var(--gf-tint);
+            clip-path: inset(0 100% 0 0);
+            animation: gatefold-draw 0.6s ease-out forwards, gatefold-fade 2s ease-in 0.6s forwards;
+        }
+        @media (prefers-reduced-motion: reduce) {
+            .gatefold-sync { clip-path: none; animation: gatefold-fade 2s ease-in 0.6s forwards; }
+        }
+        @keyframes gatefold-draw { to { clip-path: inset(0 0 0 0); } }
+        @keyframes gatefold-fade { from { opacity: 1; } to { opacity: 0; } }
+        """
+    ) }
 }

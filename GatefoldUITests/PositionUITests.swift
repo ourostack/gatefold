@@ -124,4 +124,20 @@ final class PositionUITests: XCTestCase {
         app.buttons["deck.previous"].tap()
         XCTAssertTrue(app.descendants(matching: .any)["reader.page"].exists)
     }
+
+    /// Every control in the top bar does its own job, wherever the camera sits (on the folded Duo's
+    /// cover screen Bookmark moves beside Close, clear of the camera and status column).
+    func testBookmarkInTheTopBarBookmarks() {
+        launch()
+        let page = app.descendants(matching: .any)["reader.page"]
+        page.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        let bookmark = app.buttons["reader.bookmark"]
+        XCTAssertTrue(bookmark.waitForExistence(timeout: 5))
+        XCTAssertTrue(bookmark.isHittable)
+        bookmark.tap()
+        let marked = NSPredicate(format: "value == %@", "Bookmarked")
+        XCTAssertEqual(XCTWaiter.wait(for: [expectation(for: marked, evaluatedWith: bookmark)], timeout: 5), .completed,
+                       "tapping the top bar's bookmark bookmarks the page")
+        XCTAssertEqual(bookmark.label, "Remove Bookmark")
+    }
 }

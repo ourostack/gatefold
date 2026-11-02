@@ -22,6 +22,8 @@ final class CurlModel {
     var finger: CGPoint = .zero
     var fade: Double = 0
     var paper: Color = .white
+    var ink: Color = .black
+    var isDark = false
 
     /// The finger position that leaves the leaf fully turned.
     var turnedFinger: CGPoint {
@@ -62,6 +64,7 @@ struct CurlOverlay: View {
             }
             .frame(width: size.width, height: size.height)
             .clipped()
+            .ignoresSafeArea()
             .allowsHitTesting(false)
             .accessibilityHidden(true)
         }
@@ -80,28 +83,29 @@ struct CurlOverlay: View {
         // In mirrored (backward) space the leaf is the left page, drawn as if it were the right one.
         let corner = model.mirrored ? CGPoint(x: size.width - model.corner.x, y: model.corner.y) : model.corner
         let finger = model.mirrored ? CGPoint(x: size.width - model.finger.x, y: model.finger.y) : model.finger
-        HStack(spacing: 0) {
-            page(top).scaleEffect(x: mirror, y: 1)
-            Group {
-                if let beneath { page(beneath).scaleEffect(x: mirror, y: 1) } else { model.paper }
-            }
+        // The leaf's back in a spread shows the destination page, passed to the shader as an image
+        // (laying it beside the page in a double-width layer drew everything shifted).
+        let back = Image(uiImage: beneath ?? top)
+        page(top)
+            .scaleEffect(x: mirror, y: 1)
+            .layerEffect(
+                ShaderLibrary.pageCurl(
+                    .float(size.width),
+                    .float4(leafMinX, 0, size.width, size.height),
+                    .float2(corner),
+                    .float2(finger),
+                    .float(model.radius),
+                    .color(model.paper),
+                    .color(model.ink),
+                    .float(model.isSpread && beneath != nil ? 1 : 0),
+                    .float(model.isDark ? 1 : 0),
+                    .image(back),
+                    .float(model.mirrored ? 1 : 0)
+                ),
+                maxSampleOffset: CGSize(width: size.width, height: size.height)
+            )
             .frame(width: size.width, height: size.height)
-        }
-        .frame(width: size.width * 2, height: size.height, alignment: .leading)
-        .layerEffect(
-            ShaderLibrary.pageCurl(
-                .float(size.width),
-                .float4(leafMinX, 0, size.width, size.height),
-                .float2(corner),
-                .float2(finger),
-                .float(model.radius),
-                .color(model.paper),
-                .float(model.isSpread ? 1 : 0)
-            ),
-            maxSampleOffset: CGSize(width: size.width * 2, height: size.height)
-        )
-        .frame(width: size.width, height: size.height, alignment: .leading)
-        .clipped()
-        .scaleEffect(x: mirror, y: 1)
+            .clipped()
+            .scaleEffect(x: mirror, y: 1)
     }
 }

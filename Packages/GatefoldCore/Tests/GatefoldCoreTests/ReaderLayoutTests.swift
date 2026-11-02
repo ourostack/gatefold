@@ -50,7 +50,7 @@ struct ReaderLayoutTests {
         #expect(layout.gutter == nil)
         #expect(layout.pageFrame.minY == 0)
         #expect(layout.pageFrame.width == 951)
-        #expect(abs(layout.pageFrame.maxY - size.height / 2) <= ReaderLayoutResolver.foldMargin)
+        #expect(abs(layout.pageFrame.maxY - size.height / 2) <= ReaderLayoutResolver.tabletopPageInset)
         let deck = try! #require(layout.deck)
         #expect(deck.minY >= layout.pageFrame.maxY)
         #expect(deck.maxY == size.height)
@@ -71,8 +71,18 @@ struct ReaderLayoutTests {
         #expect(layout.pageFrame.maxY <= 460)
         let deck = try! #require(layout.deck)
         #expect(deck.minY >= 490)
+        #expect(deck.minY >= 490)
         #expect(deck.maxY == 951)
         #expect(layout.columns == .one)
+    }
+
+    /// The last line stops 16 pt above the hinge instead of running into its shadow.
+    @Test func tabletopLeavesSixteenPointsAboveTheFold() {
+        let fold = FoldRegion(frame: CGRect(x: 0, y: 460, width: 545, height: 30), isActive: true)
+        let layout = ReaderLayoutResolver.resolve(.init(containerSize: duoInnerTall, division: fold, hinge: .partiallyOpen(angleDegrees: 100)))
+        #expect(layout.pageFrame.maxY == 444)
+        let midline = ReaderLayoutResolver.resolve(.init(containerSize: duoInnerTall, forced: .tabletop))
+        #expect(midline.pageFrame.maxY == duoInnerTall.height / 2 - 16)
     }
 
     @Test func openFlatTallIsOneTallPageEvenThoughTheFoldIsHorizontal() {
