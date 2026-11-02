@@ -119,3 +119,26 @@ struct ReaderLayoutTests {
         #expect(layout.posture == .single)
     }
 }
+
+@Suite struct PageSafeAreaTests {
+    func layout(_ frame: CGRect) -> ReaderLayout {
+        ReaderLayout(posture: .single, pageFrame: frame, gutter: nil, deck: nil, columns: .one, spineShadow: 0)
+    }
+
+    @Test func theFirstLineClearsTheCamera() {
+        let out = PageSafeArea.clearingTop(layout(CGRect(x: 0, y: 0, width: 600, height: 800)), safeTop: 20,
+                                           occlusions: [CGRect(x: 280, y: 12, width: 40, height: 40)])
+        #expect(out.pageFrame.minY + PageSafeArea.textTopInset == 52 + PageSafeArea.gap)
+        #expect(out.pageFrame.maxY == 800, "the page keeps its foot")
+    }
+
+    @Test func aCameraOutsideThePageChangesNothing() {
+        let l = layout(CGRect(x: 0, y: 0, width: 600, height: 800))
+        #expect(PageSafeArea.clearingTop(l, safeTop: 10, occlusions: [CGRect(x: 700, y: 10, width: 40, height: 40)]) == l)
+    }
+
+    @Test func theStatusBarAlsoPushes() {
+        let out = PageSafeArea.clearingTop(layout(CGRect(x: 0, y: 0, width: 600, height: 800)), safeTop: 44, occlusions: [])
+        #expect(out.pageFrame.minY == 44 + PageSafeArea.gap - PageSafeArea.textTopInset)
+    }
+}

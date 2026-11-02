@@ -30,11 +30,11 @@ struct ReaderScreen: View {
                 hinge: hinge,
                 forced: forced
             )
-            let layout = Self.measured(ReaderLayoutResolver.resolve(input), fontScale: model.preferences.fontScale)
+            let layout = Self.placed(input, fontScale: model.preferences.fontScale, proxy: proxy)
             let clearance = ChromeClearance.resolve(container: proxy.size, occlusions: FoldReader.occlusions(in: proxy))
             let safeTop = ReaderChrome.safeTop(proxy.safeAreaInsets)
             // The page steps back while the controls or a slip are up, so nothing sits on its text.
-            let lifted = (model.chromeVisible && layout.deck == nil) || model.slip != nil
+            let lifted = (model.chromeVisible && layout.deck == nil) || (model.slip != nil && !model.slipFolded)
             ZStack(alignment: .topLeading) {
                 model.theme.background
 
@@ -61,7 +61,15 @@ struct ReaderScreen: View {
                 )
                 .frame(width: proxy.size.width, height: layout.deck == nil ? proxy.size.height : layout.pageFrame.height)
 
-                if let slip = model.slip, let kind = model.slipKind {
+                if let tab = model.aheadTab, model.slipFolded, model.slip != nil {
+                    // Hangs from the page's top edge in its margin, beside the binding: never on a line.
+                    AheadTab(label: tab, theme: model.theme) { model.unfoldSlip() }
+                        .offset(x: layout.pageFrame.minX + 16, y: layout.pageFrame.minY + pageTopClearance(layout, clearance: clearance) - 22)
+                        .transition(reduceMotion ? .opacity : .move(edge: .top).combined(with: .opacity))
+                        .zIndex(2)
+                }
+
+                if let slip = model.slip, let kind = model.slipKind, !model.slipFolded {
                     let width = min(proxy.size.width - 32 - clearance.leading - clearance.trailing, 460)
                     SyncSlipView(slip: slip, kind: kind, theme: model.theme) {
                         Task { await model.acceptSuggestion() }
@@ -99,6 +107,9 @@ struct ReaderScreen: View {
             }
             .sensoryFeedback(.success, trigger: model.slipCount) { _, _ in model.slipKind == .landed }
             .onChange(of: clearance.bookmarkLeading, initial: true) { _, taken in coverScreen = taken }
+            .onChange(of: FoldReader.occlusions(in: proxy), initial: true) { _, rects in
+                readerLog.notice("occlusions \(rects.map { "\($0)" }.joined(separator: " "), privacy: .public) safe \(proxy.safeAreaInsets.top, privacy: .public),\(proxy.safeAreaInsets.leading, privacy: .public),\(proxy.safeAreaInsets.bottom, privacy: .public),\(proxy.safeAreaInsets.trailing, privacy: .public) size \(proxy.size.width, privacy: .public)x\(proxy.size.height, privacy: .public)")
+            }
             .onChange(of: input, initial: true) { _, new in
                 readerLog.notice("layout input \(new.containerSize.width, privacy: .public)x\(new.containerSize.height, privacy: .public) fold \(new.division.map { "\($0.frame) active \($0.isActive)" } ?? "none", privacy: .public) hinge \(String(describing: new.hinge), privacy: .public)")
             }
@@ -183,7 +194,7 @@ struct ReaderScreen: View {
     private func scrims(proxy: GeometryProxy, layout: ReaderLayout, safeTop: CGFloat) -> some View {
         let fade: CGFloat = 24
         let paper = model.theme.background
-        let aheadSlip = model.slip != nil && model.slipKind == .ahead
+        let aheadSlip = model.slip != nil && model.slipKind == .ahead && !model.slipFolded
         let landedSlip = model.slip != nil && model.slipKind == .landed
         let top = safeTop + (model.chromeVisible ? ReaderChrome.topBarHeight : 0) + (aheadSlip ? 8 + slipHeight + 16 : 0)
         if model.chromeVisible || aheadSlip {
@@ -194,9 +205,12 @@ struct ReaderScreen: View {
                 .transition(.opacity)
                 .accessibilityHidden(true)
         }
-        if (model.chromeVisible && layout.deck == nil) || landedSlip {
+        let backAlone = model.showJumpBack && !model.chromeVisible && layout.deck == nil && model.backLocator != nil
+        if (model.chromeVisible && layout.deck == nil) || landedSlip || backAlone {
             let bottom = max(
                 model.chromeVisible && layout.deck == nil ? max(proxy.safeAreaInsets.bottom, 12) + ReaderChrome.bottomBarHeight + (model.backLocator != nil ? 52 : 0) : 0,
+                // After a Jump the Back pill gets its own paper footer: it never sits on a line.
+                backAlone ? max(proxy.safeAreaInsets.bottom, 12) + 52 : 0,
                 landedSlip ? slipBottomBand(proxy) + slipHeight + 16 : 0
             )
             LinearGradient(stops: [.init(color: paper.opacity(0), location: 0), .init(color: paper, location: fade / (bottom + fade)), .init(color: paper, location: 1)],
@@ -256,6 +270,19 @@ struct ReaderScreen: View {
         var out = layout
         out.pageFrame = layout.pageFrame.insetBy(dx: inset, dy: 0)
         return out
+    }
+
+    /// How far down the page its first line sits: Readium's inset, pushed below anything the system
+    /// covers at the top (the folded Duo's camera).
+    func pageTopClearance(_ layout: ReaderLayout, clearance: ChromeClearance) -> CGFloat {
+        PageSafeArea.textTopInset
+    }
+
+    /// The resolved layout, measured, with its first line clear of the status bar and camera.
+    static func placed(_ input: LayoutInput, fontScale: Double, proxy: GeometryProxy) -> ReaderLayout {
+        let layout = measured(ReaderLayoutResolver.resolve(input), fontScale: fontScale)
+        guard layout.deck == nil else { return layout }
+        return PageSafeArea.clearingTop(layout, safeTop: proxy.safeAreaInsets.top, occlusions: FoldReader.occlusions(in: proxy))
     }
 
     private func ribbonX(_ layout: ReaderLayout, clearance: ChromeClearance) -> CGFloat {
@@ -411,5 +438,40 @@ struct RibbonShape: Shape {
         p.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
         p.closeSubpath()
         return p
+    }
+}
+
+/// A book opened ahead of the tap: its page laid out exactly where the reader will show it, behind the
+/// shelf, so the web view has loaded and painted by the time the cover is tapped.
+struct WarmPage: View {
+    let model: ReaderModel
+
+    @Environment(\.colorScheme) private var colorScheme
+    @State private var hinge: HingeState = .none
+
+    var body: some View {
+        GeometryReader { proxy in
+            let input = LayoutInput(containerSize: proxy.size, division: FoldReader.division(in: proxy), hinge: hinge, forced: LaunchOptions.forcedPosture)
+            let layout = ReaderScreen.placed(input, fontScale: model.preferences.fontScale, proxy: proxy)
+            ZStack(alignment: .topLeading) {
+                if let host = model.hostController {
+                    ReaderHostView(controller: host)
+                        .frame(width: layout.pageFrame.width, height: layout.pageFrame.height)
+                        .offset(x: layout.pageFrame.minX, y: layout.pageFrame.minY)
+                }
+            }
+            .onChange(of: layout, initial: true) { _, new in model.updateLayout(new, reason: .rotation) }
+        }
+        .ignoresSafeArea()
+        .observingHinge($hinge)
+        .onChange(of: colorScheme, initial: true) { _, scheme in
+            let dark = scheme == .dark
+            if model.systemIsDark != dark {
+                model.systemIsDark = dark
+                model.applyPreferences(reflow: false)
+            }
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
     }
 }

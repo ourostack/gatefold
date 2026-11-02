@@ -135,18 +135,24 @@ struct SyncSlipTests {
     }
 
     @Test func anOfferNamesThePassage() {
-        let slip = SyncSlip.ahead(device: "PocketBook InkPad", pagesAhead: 23, percentAhead: nil, chapter: "Chapter 7",
+        let slip = SyncSlip.ahead(device: "PocketBook InkPad", pagesAhead: 23, percentAhead: nil, updated: now.addingTimeInterval(-30 * 3600), now: now,
                                   passage: "She thought her the model of all that was good and kind, and more besides")
-        #expect(slip.title == "Your InkPad is 23 pages ahead")
-        #expect(slip.detail == "In Chapter 7")
+        #expect(slip.title == "Your InkPad read on without you")
+        #expect(slip.detail == "23 pages ahead · yesterday")
         #expect(slip.passage == "She thought her the model of all that was good…")
     }
 
-    @Test func oneAheadAndPercentOnly() {
-        #expect(SyncSlip.ahead(device: "", pagesAhead: 1, percentAhead: nil, chapter: nil, passage: nil).title == "Your other device is 1 page ahead")
-        let percent = SyncSlip.ahead(device: "PocketBook web reader", pagesAhead: nil, percentAhead: 12, chapter: nil, passage: nil)
-        #expect(percent.title == "Your web reader is 12% ahead")
-        #expect(percent.detail == nil)
+    @Test func oneAheadApproximateAndPercentOnly() {
+        #expect(SyncSlip.ahead(device: "", pagesAhead: 1, percentAhead: nil, updated: nil, now: now, passage: nil).detail == "1 page ahead")
+        #expect(SyncSlip.ahead(device: "InkPad", pagesAhead: 14, approximate: true, percentAhead: 3, updated: nil, now: now, passage: nil).detail == "About 14 pages ahead")
+        let percent = SyncSlip.ahead(device: "PocketBook web reader", pagesAhead: nil, percentAhead: 12, updated: now.addingTimeInterval(-300), now: now, passage: nil)
+        #expect(percent.title == "Your web reader read on without you")
+        #expect(percent.detail == "12% further on · 5 min ago")
+    }
+
+    @Test func theFoldedTabSaysWhoAndHowFar() {
+        #expect(SyncSlip.tab(device: "PocketBook InkPad", pagesAhead: 23) == "InkPad +23")
+        #expect(SyncSlip.tab(device: "Web reader", pagesAhead: nil) == "Web reader")
     }
 }
 
@@ -263,5 +269,38 @@ struct ContrastTests {
             let p = theme.palette
             #expect(ThemePalette.contrast(blend(p.text, p.background, 0.8), p.background) >= 4.5, "\(theme) caption")
         }
+    }
+}
+
+@Suite struct FrontMatterTests {
+    @Test func aPlaceBeforeChapterOneIsUnread() {
+        #expect(FrontMatter.isUnread(0.03, storyStart: 0.051))
+        #expect(FrontMatter.isUnread(0.0515, storyStart: 0.051))
+    }
+
+    @Test func aPlaceInTheStoryIsRead() {
+        #expect(!FrontMatter.isUnread(0.06, storyStart: 0.051))
+        #expect(!FrontMatter.isUnread(0.2, storyStart: 0))
+    }
+
+    @Test func withoutContentsOnlyTheVeryStartIsUnread() {
+        #expect(FrontMatter.isUnread(0.001, storyStart: 0))
+        #expect(!FrontMatter.isUnread(0.01, storyStart: 0))
+    }
+}
+
+@Suite struct PassageTextTests {
+    let html = """
+    <html><head><title>Ch</title><style>p{}</style></head><body><h2>Chapter 7</h2>
+    <p>It was a fine day. She thought her the model of all that was good &amp; kind.</p><p>Then rain.</p></body></html>
+    """
+
+    @Test func readsTheBodyAsText() {
+        #expect(PassageText.plainText(ofHTML: html) == "Chapter 7 It was a fine day. She thought her the model of all that was good & kind. Then rain.")
+    }
+
+    @Test func startsAtTheNextSentence() {
+        #expect(PassageText.sentence(inHTML: html, at: 0.15)?.hasPrefix("She thought her the model") == true)
+        #expect(PassageText.sentence(inHTML: html, at: 0)?.hasPrefix("Chapter 7 It was") == true)
     }
 }

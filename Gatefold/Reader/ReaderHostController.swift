@@ -50,6 +50,14 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         )
         super.init(nibName: nil, bundle: nil)
         navigator.delegate = self
+        let probeHref = initialLocation?.href ?? publication.readingOrder.first?.url()
+        nonisolated(unsafe) let pub = publication
+        Task.detached {
+            let t = Date()
+            guard let href = probeHref, let r = pub.get(href) else { return }
+            let d = try? await r.read().get()
+            readerLog.notice("profile: read \(href.string, privacy: .public) \(d?.count ?? -1) bytes in \(Date().timeIntervalSince(t), privacy: .public) s")
+        }
     }
 
     @available(*, unavailable)
@@ -99,6 +107,31 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         observers.append(navigator.addObserver(.key(.arrowLeft) { [weak self] in self?.turn(forward: false) ?? false }))
         observers.append(navigator.addObserver(.key(.space) { [weak self] in self?.turn(forward: true) ?? false }))
         model.host = self
+        probeWebViews()
+    }
+
+    private func probeWebViews() {
+        guard let model = weakModel else { return }
+        let opened = model.openedAt
+        var lastBeat = Date()
+        let timer = Timer(timeInterval: 0.01, repeats: true) { t in
+            let now = Date(); let gap = now.timeIntervalSince(lastBeat); lastBeat = now
+            if gap > 0.08 { readerLog.notice("probe main blocked \(String(format: "%.2f", gap), privacy: .public) s ending +\(String(format: "%.2f", now.timeIntervalSince(opened)), privacy: .public)") }
+            if now.timeIntervalSince(opened) > 9 { t.invalidate() }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        var last = ""
+        Task { @MainActor [weak self] in
+            for _ in 0..<120 {
+                guard let self else { return }
+                var webs: [WKWebView] = []
+                func walk(_ v: UIView) { if let w = v as? WKWebView { webs.append(w) }; v.subviews.forEach(walk) }
+                walk(self.navigator.view)
+                let line = webs.map { w in "\(ObjectIdentifier(w).hashValue % 10000):\(w.url?.lastPathComponent.suffix(14) ?? "-") load=\(w.isLoading) p=\(String(format: "%.1f", w.estimatedProgress)) a=\(String(format: "%.1f", w.scrollView.alpha)) sz=\(Int(w.bounds.width)) win=\(w.window != nil) hid=\(sequence(first: w as UIView, next: { $0.superview }).contains { $0.isHidden || $0.alpha < 0.01 })" }.joined(separator: " | ")
+                if line != last { readerLog.notice("probe +\(String(format: "%.2f", Date().timeIntervalSince(model.openedAt)), privacy: .public) \(line, privacy: .public)"); last = line }
+                try? await Task.sleep(for: .milliseconds(50))
+            }
+        }
     }
 
     override func viewDidLayoutSubviews() {
@@ -484,7 +517,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     /// Runs a jump with the old page left on screen, dimmed to 60 %, until the new page has painted;
     /// then the old page cross-fades away over 0.2 s (no blank page, no spinner). With `riffle`, a few
     /// leaves flick past first.
-    func veiledJump(riffle: Bool, forward: Bool, _ body: () async -> Void) async {
+    func veiledJump(riffle: Bool, forward: Bool, _ body: @escaping () async -> Void) async {
         guard veil == nil, !isTurning, view.window != nil else { return await body() }
         let old = await renderedSnapshot(afterChange: false)
         // The old page, opaque, with a wash of paper over it: it reads as dimmed to 60 %, and nothing
@@ -501,16 +534,26 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         cover.addSubview(wash)
         view.insertSubview(cover, belowSubview: curlHost.view)
         veil = cover
-        let dim = UIViewPropertyAnimator(duration: 0.15, curve: .easeOut) { wash.alpha = 0.4 }
-        dim.startAnimation()
-        await body()
-        let fresh = await renderedSnapshot(afterChange: true)
         if riffle {
-            await riffleLeaves(from: old, to: fresh, forward: forward)
+            // The thumb starts riffling at once and keeps going while the far chapter loads, so the
+            // wait is the riffle, never a dimmed page.
+            var arrived = false
+            let travel = Task { @MainActor in
+                await body()
+                arrived = true
+            }
+            await riffleLeaves(from: old, forward: forward, arrived: { arrived }) { [weak self] in
+                await travel.value
+                return await self?.renderedSnapshot(afterChange: true) ?? old
+            }
             cover.removeFromSuperview()
             veil = nil
             return
         }
+        let dim = UIViewPropertyAnimator(duration: 0.15, curve: .easeOut) { wash.alpha = 0.4 }
+        dim.startAnimation()
+        await body()
+        _ = await renderedSnapshot(afterChange: true)
         await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
             UIView.animate(withDuration: 0.2, delay: 0, options: [.curveEaseInOut, .beginFromCurrentState]) {
                 cover.alpha = 0
@@ -520,10 +563,10 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         veil = nil
     }
 
-    /// Four fast leaves of the old page curl away over the new one, like a thumb riffling to a place.
-    private func riffleLeaves(from old: UIImage, to fresh: UIImage, forward: Bool) async {
+    /// Fast leaves curl away, like a thumb riffling to a place: at least three, more while the far
+    /// page is still on its way, and the last one uncovers it.
+    private func riffleLeaves(from old: UIImage, forward: Bool, arrived: @escaping () -> Bool, fresh: @escaping () async -> UIImage) async {
         guard let model = weakModel else { return }
-        veil?.alpha = 0
         isTurning = true
         defer { isTurning = false }
         let size = navigator.view.bounds.size
@@ -534,20 +577,29 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         curl.paper = model.theme.background
         curl.ink = model.theme.text
         curl.isDark = model.theme.palette.isDark
-        let leaves = 4
-        for i in 0..<leaves {
-            curl.top = old
-            curl.beneath = fresh
-            let y = size.height * (0.92 - CGFloat(i) * 0.06)
-            curl.corner = CGPoint(x: forward ? size.width : 0, y: size.height)
-            curl.finger = CGPoint(x: forward ? size.width : 0, y: y)
-            curl.isActive = true
-            await nextFrame()
-            let d = i == leaves - 1 ? 0.26 : 0.13
-            withAnimation(.easeIn(duration: d)) { curl.finger = turnedTarget() }
-            try? await Task.sleep(for: .seconds(d))
+        var i = 0
+        // Leaves of the old page over itself until the new one is ready (a riffle through pages
+        // in between); capped so a lost load still ends.
+        while i < 3 || (!arrived() && i < 40) {
+            await leaf(top: old, beneath: old, index: i, size: size, forward: forward, duration: 0.12)
+            i += 1
         }
+        let page = await fresh()
+        await leaf(top: old, beneath: page, index: i, size: size, forward: forward, duration: 0.28)
+        veil?.alpha = 0
         curl.reset()
+    }
+
+    private func leaf(top: UIImage, beneath: UIImage, index: Int, size: CGSize, forward: Bool, duration: Double) async {
+        curl.top = top
+        curl.beneath = beneath
+        let y = size.height * (0.92 - CGFloat(index % 5) * 0.06)
+        curl.corner = CGPoint(x: forward ? size.width : 0, y: size.height)
+        curl.finger = CGPoint(x: forward ? size.width : 0, y: y)
+        curl.isActive = true
+        await nextFrame()
+        withAnimation(.easeIn(duration: duration)) { curl.finger = turnedTarget() }
+        try? await Task.sleep(for: .seconds(duration))
     }
 
     /// Underlines the other device's words with the ribbon colour: drawn in over 0.6 s, gone after 2.
@@ -566,6 +618,21 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     /// The page as the web views draw it. `drawHierarchy` misplaces a paginated web view's content
     /// (it drew the page shifted by about a column, with the next one peeking in, and a spread
     /// black), so each visible web view is asked for its own snapshot and laid out where it sits.
+    /// Where the first page's time went, from the web view's own clock (profiling the open).
+    func logOpenProfile() async {
+        guard let model = weakModel else { return }
+        let js = """
+        (function(){var n=performance.getEntriesByType('navigation')[0];var r=performance.getEntriesByType('resource');
+        return JSON.stringify({origin:performance.timeOrigin,
+          nav:n?{fetch:Math.round(n.fetchStart),req:Math.round(n.requestStart),rs:Math.round(n.responseStart),resp:Math.round(n.responseEnd),dcl:Math.round(n.domContentLoadedEventEnd),load:Math.round(n.loadEventStart)}:null,
+          res:r.map(function(e){return e.initiatorType+' '+e.name.split('/').pop().slice(-28)+' '+Math.round(e.startTime)+'+'+Math.round(e.duration)}),
+          imgs:document.images.length, fonts:document.fonts.size, chars:(document.body&&document.body.innerText||'').length,
+          href:location.href.split('/').pop()});})()
+        """
+        let json = (try? await navigator.evaluateJavaScript(js).get()) as? String ?? "nil"
+        readerLog.notice("profile: opened at \(model.openedAt.timeIntervalSince1970 * 1000, privacy: .public) ms; now +\(Date().timeIntervalSince(model.openedAt), privacy: .public) s; \(json, privacy: .public)")
+    }
+
     /// Readium's own loading spinner is showing: the page in view hasn't loaded yet.
     var isLoadingPage: Bool {
         let host = navigator.view!

@@ -53,7 +53,7 @@ struct SyncSlipView: View {
                 HStack(spacing: 10) {
                     Spacer(minLength: 0)
                     Button(action: onStay) {
-                        Text("Stay")
+                        Text("Carry on here")
                             .font(.subheadline.weight(.medium))
                             .padding(.horizontal, 14)
                             .frame(minWidth: 64, minHeight: 44)
@@ -61,10 +61,10 @@ struct SyncSlipView: View {
                     }
                     .buttonStyle(.plain)
                     .foregroundStyle(theme.text)
-                    .accessibilityLabel("Stay Here")
+                    .accessibilityLabel("Carry On Here")
                     .accessibilityIdentifier("banner.dismiss")
                     Button(action: onJump) {
-                        Text("Jump")
+                        Text("Catch up")
                             .font(.subheadline.weight(.semibold))
                             .foregroundStyle(theme.onAccent)
                             .padding(.horizontal, 18)
@@ -261,5 +261,34 @@ struct UnfoldLeaf: View {
         .opacity(opacity)
         .allowsHitTesting(false)
         .accessibilityHidden(true)
+    }
+}
+
+/// The "read on without you" slip, folded into a tab hanging in the page's top margin.
+struct AheadTab: View {
+    let label: String
+    let theme: ReaderTheme
+    var onOpen: () -> Void
+
+    var body: some View {
+        Button(action: onOpen) {
+            HStack(spacing: 5) {
+                Image(systemName: "book.pages")
+                    .font(.caption2.weight(.semibold))
+                Text(label)
+                    .font(.caption.weight(.semibold))
+                    .monospacedDigit()
+            }
+            .foregroundStyle(theme.onAccent)
+            .padding(.horizontal, 9)
+            .frame(height: 22)
+            .background(theme.accent, in: UnevenRoundedRectangle(cornerRadii: .init(topLeading: 0, bottomLeading: 8, bottomTrailing: 8, topTrailing: 0)))
+            .shadow(color: .black.opacity(0.12), radius: 2, y: 1)
+            .frame(minWidth: 44, minHeight: 44, alignment: .top)
+            .contentShape(.rect)
+        }
+        .buttonStyle(PressScale())
+        .accessibilityLabel("Your InkPad read on. Show the offer")
+        .accessibilityIdentifier("banner.tab")
     }
 }

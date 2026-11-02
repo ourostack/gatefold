@@ -125,6 +125,17 @@ public enum BookEnd {
     public static func isNearEnd(_ totalProgression: Double) -> Bool { totalProgression >= 0.995 }
 }
 
+/// Where the story begins, so a place on a title page or a list of illustrations isn't mistaken for
+/// a place someone is reading.
+public enum FrontMatter {
+    /// Before chapter one (with a sliver of grace for a chapter heading's page), or within the first
+    /// half percent of a book whose contents don't say where the story starts.
+    public static func isUnread(_ totalProgression: Double, storyStart: Double) -> Bool {
+        if storyStart > 0 { return totalProgression < storyStart + 0.001 }
+        return totalProgression < 0.005
+    }
+}
+
 // MARK: - Words for moments
 
 /// "just now", "5 min ago", "2 h ago", "yesterday", "4 days ago".
@@ -153,21 +164,29 @@ public struct SyncSlip: Equatable, Sendable {
         SyncSlip(title: "From your \(deviceWord(device)) · \(RelativeAge.text(from: updated, to: now))", detail: nil, passage: nil)
     }
 
-    /// The other device is further on.
-    public static func ahead(device: String, pagesAhead: Int?, percentAhead: Int?, chapter: String?, passage: String?) -> SyncSlip {
-        let how: String
+    /// The other device is further on: how far, how long ago, and the words it stopped at.
+    public static func ahead(device: String, pagesAhead: Int?, approximate: Bool = false, percentAhead: Int?, updated: Date?, now: Date, passage: String?) -> SyncSlip {
+        var how: String
         if let pages = pagesAhead, pages > 0 {
             how = pages == 1 ? "1 page ahead" : "\(pages) pages ahead"
+            if approximate, pages > 1 { how = "About " + how }
         } else if let percent = percentAhead, percent > 0 {
-            how = "\(percent)% ahead"
+            how = "\(percent)% further on"
         } else {
-            how = "further ahead"
+            how = "A little further on"
         }
+        if let updated { how += " · \(RelativeAge.text(from: updated, to: now))" }
         return SyncSlip(
-            title: "Your \(deviceWord(device)) is \(how)",
-            detail: chapter.map { "In \($0)" },
+            title: "Your \(deviceWord(device)) read on without you",
+            detail: how.prefix(1).uppercased() + how.dropFirst(),
             passage: passage.flatMap(excerpt)
         )
+    }
+
+    /// The slip folded away into a tab at the page's edge: who, and how far.
+    public static func tab(device: String, pagesAhead: Int?) -> String {
+        if let pages = pagesAhead, pages > 0 { return "\(deviceWord(device)) +\(pages)" }
+        return deviceWord(device).prefix(1).uppercased() + deviceWord(device).dropFirst()
     }
 
     static func deviceWord(_ device: String) -> String {

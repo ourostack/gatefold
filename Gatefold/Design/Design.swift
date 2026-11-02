@@ -71,6 +71,8 @@ enum LaunchOptions {
     static var isUITest: Bool { defaults.bool(forKey: "GatefoldUITest") }
     static var resetState: Bool { defaults.bool(forKey: "GatefoldReset") }
     static var skipWelcome: Bool { defaults.bool(forKey: "GatefoldSkipWelcome") }
+    /// Measure a cold open: no book is opened ahead of the tap.
+    static var noWarm: Bool { defaults.bool(forKey: "GatefoldNoWarm") }
     /// Use the in-memory `FakeSyncService` (bundled public-domain books) instead of PocketBook Cloud.
     /// For previews, UI tests and screenshots; a real launch always talks to the Cloud.
     /// `-GatefoldSignedIn` means "a fake account is already signed in", so it implies the fake too.
