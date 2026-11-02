@@ -202,6 +202,31 @@ struct FinishLineTests {
         #expect(ReadStory.text(otherDevice: nil, otherSince: nil, started: nil, finished: end, sessions: 0, here: "phone", calendar: cal)
             == "Closed on the very last page")
     }
+
+    // The Finished shelf and the end leaf tell one story: when the InkPad began the book, the span
+    // counts from there, never "a single day" for a book begun on the InkPad days before.
+    @Test func theShelfCountsFromWhereTheReadBegan() {
+        let start = Date(timeIntervalSince1970: 1_800_000_000)
+        let today = start.addingTimeInterval(5 * 86400 + 3600)
+        #expect(ReadStory.text(otherDevice: "InkPad", otherSince: start, started: today, finished: today,
+                               sessions: 1, here: "phone", calendar: cal) == "Started on your InkPad 5 days ago · finished here on your phone")
+        #expect(ReadStory.shelfLine(otherDevice: "InkPad", otherSince: start, started: today, finished: today,
+                                    sessions: 1, here: "phone", calendar: cal) == "Read over 6 days, InkPad to phone")
+    }
+
+    @Test func theShelfLineForABookBegunHere() {
+        let start = Date(timeIntervalSince1970: 1_800_000_000)
+        #expect(ReadStory.shelfLine(otherDevice: nil, otherSince: nil, started: start, finished: start.addingTimeInterval(3600),
+                                    sessions: 1, here: "phone", calendar: cal) == "Read in a single day")
+        #expect(ReadStory.shelfLine(otherDevice: nil, otherSince: nil, started: start, finished: start.addingTimeInterval(11 * 86400),
+                                    sessions: 9, here: "iPad", calendar: cal) == "Read over 12 days, in 9 sittings")
+        // The InkPad's first sign came after the first open here: it began here.
+        #expect(ReadStory.shelfLine(otherDevice: "InkPad", otherSince: start.addingTimeInterval(86400), started: start,
+                                    finished: start.addingTimeInterval(3600 * 30), sessions: 2, here: "phone", calendar: cal)
+            == "Read over 2 days, in 2 sittings")
+        #expect(ReadStory.shelfLine(otherDevice: nil, otherSince: nil, started: nil, finished: start,
+                                    sessions: 1, here: "phone", calendar: cal) == nil)
+    }
 }
 
 @Suite("The shelf's sync line")

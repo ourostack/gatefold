@@ -282,6 +282,21 @@ public enum ReadStory {
         }
         return FinishLine.text(started: started, finished: finished, sessions: sessions, calendar: calendar)
     }
+
+    /// The Finished shelf's line, the same story as the end leaf: counted from the InkPad's start when
+    /// the read began there ("Read over 6 days, InkPad to phone"), else "Read over 12 days, in 9 sittings".
+    /// Sittings are counted only here, so a read begun elsewhere doesn't claim them. Nil when too little is known.
+    public static func shelfLine(otherDevice: String?, otherSince: Date?, started: Date?, finished: Date, sessions: Int,
+                                 here: String, calendar: Calendar = .current) -> String? {
+        if let device = otherDevice, let since = otherSince, since <= (started ?? finished), since <= finished {
+            let days = FinishLine.dayCount(from: since, to: finished, calendar: calendar)
+            return days <= 1 ? "Read in a single day, \(device) to \(here)" : "Read over \(days) days, \(device) to \(here)"
+        }
+        guard let started, finished >= started else { return nil }
+        let days = max(1, FinishLine.dayCount(from: started, to: finished, calendar: calendar))
+        let span = days == 1 ? "Read in a single day" : "Read over \(days) days"
+        return sessions > 1 ? "\(span), in \(sessions) sittings" : span
+    }
 }
 
 /// Cover sizes for the shelf, scaled to the screen so an iPad shelf is as full as a phone's.

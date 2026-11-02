@@ -911,12 +911,11 @@ struct FinishedColophon: View {
         .accessibilityElement(children: .combine)
     }
 
-    /// "Read over 12 days, in 9 sittings", from what the shelf kept; nil when it kept too little.
+    /// The read's span, the same story the end leaf tells ("Read over 6 days, InkPad to phone").
     static func journey(_ book: LibraryBook) -> String? {
-        guard let started = book.started, let finished = book.finished, finished >= started else { return nil }
-        let days = max(1, Calendar.current.dateComponents([.day], from: Calendar.current.startOfDay(for: started), to: Calendar.current.startOfDay(for: finished)).day.map { $0 + 1 } ?? 1)
-        let span = days == 1 ? "Read in a single day" : "Read over \(days) days"
-        guard let sittings = book.sessions, sittings > 1 else { return span }
-        return "\(span), in \(sittings) sittings"
+        guard let finished = book.finished else { return nil }
+        return ReadStory.shelfLine(otherDevice: book.otherDevice, otherSince: book.otherSince, started: book.started,
+                                   finished: finished, sessions: book.sessions ?? 1,
+                                   here: UIDevice.current.userInterfaceIdiom == .pad ? "iPad" : "phone")
     }
 }
