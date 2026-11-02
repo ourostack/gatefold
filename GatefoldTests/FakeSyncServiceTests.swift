@@ -67,6 +67,26 @@ import Testing
         #expect(store.state(of: moby!) == .cloudOnly)
     }
 
+    @Test func aSuccessfulRefreshStampsTheSyncAndRemembersTheInkPad() async throws {
+        let (store, _) = makeStore()
+        #expect(store.lastSynced == nil || store.lastSynced! <= .now)
+        let before = Date.now
+        await store.refresh()
+        #expect(try #require(store.lastSynced) >= before)
+        #expect(!store.cloudIsEmpty)
+        let frankenstein = try #require(store.books.first { $0.title == "Frankenstein" })
+        #expect(frankenstein.otherDevice == "InkPad")
+        #expect(try #require(frankenstein.otherSince) < before, "the InkPad's own date, not the fetch time")
+    }
+
+    @Test func theShelfComesBackFromDiskBeforeAnyFetch() async throws {
+        let (store, root) = makeStore()
+        await store.refresh()
+        let count = store.books.count
+        let reopened = LibraryStore(sync: FakeSyncService(signedIn: true, latency: .seconds(60)), root: root)
+        #expect(reopened.books.count == count, "the cached shelf is there at launch, no fetch needed")
+    }
+
     @Test func downloadPutsTheBookOnDeviceAndSurvivesReload() async throws {
         let (store, root) = makeStore()
         await store.refresh()

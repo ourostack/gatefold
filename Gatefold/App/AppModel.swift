@@ -8,7 +8,17 @@ import SwiftUI
 final class AppModel {
     let sync: any SyncService
     let library: LibraryStore
-    private(set) var account: CloudAccount?
+    private(set) var account: CloudAccount? {
+        didSet {
+            guard hasStarted || account != nil else { return }
+            accountInitial = account.flatMap { $0.email.first.map { String($0).uppercased() } }
+        }
+    }
+    /// The account's initial from the last launch, so the avatar is right from the first frame instead
+    /// of flipping from a silhouette once the sign-in has been read.
+    private(set) var accountInitial: String? {
+        didSet { UserDefaults.standard.set(accountInitial, forKey: Keys.accountInitial) }
+    }
     /// The saved sign-in has been read, so a missing account means signed out, not "not yet known".
     private(set) var hasStarted = false
     /// The Cloud turned the saved sign-in away (expired or revoked). Downloaded books and places stay;
@@ -32,17 +42,21 @@ final class AppModel {
     private enum Keys {
         static let onboarded = "onboarded"
         static let preferences = "readerPreferences"
+        static let accountInitial = "accountInitial"
     }
 
     init(sync: (any SyncService)? = nil, libraryRoot: URL = LibraryStore.defaultRoot) {
         if LaunchOptions.resetState {
             UserDefaults.standard.removeObject(forKey: Keys.onboarded)
             UserDefaults.standard.removeObject(forKey: Keys.preferences)
+            UserDefaults.standard.removeObject(forKey: Keys.accountInitial)
         }
+        self.accountInitial = UserDefaults.standard.string(forKey: Keys.accountInitial)
         let service = sync ?? Self.makeSyncService()
         self.sync = service
         self.library = LibraryStore(sync: service, root: libraryRoot)
         if LaunchOptions.resetState { library.wipe() }
+        LibraryView.startedEmpty = library.books.isEmpty
 
         var prefs = UserDefaults.standard.data(forKey: Keys.preferences)
             .flatMap { try? JSONDecoder().decode(PreferencesStore.self, from: $0) }
@@ -85,8 +99,10 @@ final class AppModel {
         // A clean start forgets the Cloud sign-in too (its tokens live in the Keychain, which survives reinstalls).
         // The fake Cloud's sign-in comes from its own launch argument, so a reset leaves it alone.
         if LaunchOptions.resetState, !LaunchOptions.fakeCloud, await sync.account != nil { await sync.signOut() }
-        account = await sync.account
+        let saved = await sync.account
         hasStarted = true
+        account = saved
+        if saved == nil { accountInitial = nil }
         // Listen before the first fetch, so its announcement lands too.
         let changes = sync.changes()
         Task { [weak self] in
@@ -138,7 +154,10 @@ final class AppModel {
         case let .bookRemoved(fastHash):
             library.cloudBookRemoved(fastHash)
         case let .remotePosition(fastHash, position), let .positionSuperseded(fastHash, position):
-            library.update(fastHash) { $0.remote = position }
+            library.update(fastHash) {
+                $0.remote = position
+                $0.noteOtherDevice(position)
+            }
         case let .signedIn(account):
             self.account = account
             needsReconnect = nil

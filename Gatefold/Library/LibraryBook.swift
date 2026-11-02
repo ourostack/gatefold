@@ -29,6 +29,10 @@ struct LibraryBook: Identifiable, Codable, Equatable {
     /// The first time the book was opened here, and how many times since, for the end leaf.
     var started: Date?
     var sessions: Int?
+    /// The earliest sign that another device (the InkPad) was reading this book, and which, for the
+    /// end leaf's "Started on your InkPad 11 days ago" line.
+    var otherSince: Date?
+    var otherDevice: String?
 
     var isOnDevice: Bool { fileName != nil }
     /// A book from the fake Cloud's bundled demo shelf.
@@ -44,6 +48,15 @@ struct LibraryBook: Identifiable, Codable, Equatable {
 
     var shelfItem: ShelfItem {
         ShelfItem(id: id, progression: displayProgression, lastOpened: lastOpened, remoteUpdated: remote?.updated)
+    }
+
+    /// Remembers the earliest place another device left, so the end leaf can tell where the read began.
+    mutating func noteOtherDevice(_ position: ReadingPosition?) {
+        guard let position, position.source != .gatefold, position.totalProgression > 0.005 else { return }
+        if otherSince.map({ position.updated < $0 }) ?? true {
+            otherSince = position.updated
+            otherDevice = position.source == .pocketBookWeb ? "web reader" : "InkPad"
+        }
     }
 
     var localSnapshot: ProgressSnapshot? {

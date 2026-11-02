@@ -14,6 +14,8 @@ extension Color {
     /// Warm paper, for the welcome and empty states.
     static let paper = Color(light: 0xF6F1E7, dark: 0x1B1A18)
     static let ink = Color(light: 0x23201C, dark: 0xEDE6DA)
+    /// Secondary words on paper: softer than ink, still comfortably readable (about 6.5:1 light, 9:1 dark).
+    static let secondaryInk = Color(light: 0x5C564E, dark: 0xB9B1A4)
 
     init(light: UInt32, dark: UInt32) {
         self.init(uiColor: UIColor { traits in

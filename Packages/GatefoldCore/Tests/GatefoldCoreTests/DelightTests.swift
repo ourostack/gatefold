@@ -160,8 +160,8 @@ struct SyncSlipTests {
 struct GreetingTests {
     @Test func namesTheBookWaiting() {
         #expect(ArrivalGreeting.text(bookCount: 11, waitingTitle: "Moby-Dick; or, The Whale", waitingPercent: 42)
-            == "11 books from your PocketBook. Moby-Dick is waiting at 42%.")
-        #expect(ArrivalGreeting.text(bookCount: 1, waitingTitle: nil, waitingPercent: nil) == "1 book from your PocketBook, ready when you are.")
+            == "Welcome back. Moby-Dick’s been holding your place at 42%.")
+        #expect(ArrivalGreeting.text(bookCount: 1, waitingTitle: nil, waitingPercent: nil) == "Welcome back. 1 book came over from your InkPad, ready when you are.")
         #expect(ArrivalGreeting.text(bookCount: 0, waitingTitle: nil, waitingPercent: nil) == nil)
     }
 }
@@ -176,7 +176,56 @@ struct FinishLineTests {
         #expect(FinishLine.text(started: start, finished: end, sessions: 9, calendar: cal) == "Finished · 11 days, 9 sessions")
         #expect(FinishLine.text(started: start, finished: start.addingTimeInterval(1800), sessions: 1, calendar: cal) == "Devoured in one sitting")
         #expect(FinishLine.text(started: start, finished: start.addingTimeInterval(3600), sessions: 3, calendar: cal) == "Finished · in a day, 3 sessions")
-        #expect(FinishLine.text(started: nil, finished: start, sessions: 0, calendar: cal) == "Every last page, read")
+        #expect(FinishLine.text(started: nil, finished: start, sessions: 0, calendar: cal) == "Closed on the very last page")
+    }
+
+    @Test func theTwoDeviceStory() {
+        let start = Date(timeIntervalSince1970: 1_800_000_000)
+        let end = start.addingTimeInterval(11 * 86400 + 3600)
+        #expect(ReadStory.text(otherDevice: "InkPad", otherSince: start, started: start.addingTimeInterval(86400), finished: end,
+                               sessions: 4, here: "phone", calendar: cal) == "Started on your InkPad 11 days ago · finished here on your phone")
+        #expect(ReadStory.text(otherDevice: "InkPad", otherSince: end.addingTimeInterval(-3600), started: nil, finished: end,
+                               sessions: 1, here: "iPad", calendar: cal) == "Started on your InkPad earlier today · finished here on your iPad")
+        #expect(ReadStory.text(otherDevice: "InkPad", otherSince: start, started: start, finished: start.addingTimeInterval(86400),
+                               sessions: 2, here: "phone", calendar: cal) == "Started on your InkPad yesterday · finished here on your phone")
+    }
+
+    @Test func beganHereOrUnknown() {
+        let start = Date(timeIntervalSince1970: 1_800_000_000)
+        let end = start.addingTimeInterval(10 * 86400 + 3600)
+        // Begun here: the days-and-sessions line.
+        #expect(ReadStory.text(otherDevice: nil, otherSince: nil, started: start, finished: end, sessions: 9, here: "phone", calendar: cal)
+            == "Finished · 11 days, 9 sessions")
+        // The InkPad's first sign came after the first open here: it began here.
+        #expect(ReadStory.text(otherDevice: "InkPad", otherSince: end, started: start, finished: end, sessions: 9, here: "phone", calendar: cal)
+            == "Finished · 11 days, 9 sessions")
+        #expect(ReadStory.text(otherDevice: nil, otherSince: nil, started: nil, finished: end, sessions: 0, here: "phone", calendar: cal)
+            == "Closed on the very last page")
+    }
+}
+
+@Suite("The shelf's sync line")
+struct SyncHealthTests {
+    @Test func words() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        #expect(SyncHealth.checking.text(now: now) == "Checking your InkPad…")
+        #expect(SyncHealth.upToDate(now.addingTimeInterval(-10)).text(now: now) == "Up to date with your InkPad · just now")
+        #expect(SyncHealth.upToDate(now.addingTimeInterval(-300)).text(now: now) == "Up to date with your InkPad · 5 min ago")
+        #expect(SyncHealth.offline(lastSynced: nil).text(now: now) == "Offline for now. Read on; your place will catch up later.")
+        #expect(SyncHealth.offline(lastSynced: now.addingTimeInterval(-7200)).text(now: now).hasPrefix("Offline for now · last synced 2 h ago"))
+    }
+}
+
+@Suite("Shelf sizes")
+struct ShelfMetricsTests {
+    @Test func scalesWithTheScreen() {
+        let phone = ShelfMetrics.forWidth(466)
+        let pad = ShelfMetrics.forWidth(820)
+        #expect(phone.large == 150 && phone.grid == 100)
+        #expect(pad.large > phone.large * 1.25, "iPad covers are a good deal larger")
+        // An 11-inch iPad's grid fits five covers across, not seven little ones.
+        let columns = Int((820 - 2 * pad.gutter + pad.spacing) / (pad.grid + pad.spacing))
+        #expect(columns == 5)
     }
 }
 
@@ -198,6 +247,17 @@ struct ChromeClearanceTests {
         let x = c.ribbonX(pageMaxX: 350, ribbonWidth: 20)
         #expect(x + 20 <= 288 - 8)
         #expect(ChromeClearance.resolve(container: size, occlusions: []).ribbonX(pageMaxX: 350, ribbonWidth: 20) == CGFloat(296))
+    }
+
+    @Test func theLibraryHeaderDropsBelowTheCamera() {
+        #expect(ChromeClearance.headerDrop(occlusions: [camera], band: 60, width: 350) == CGFloat(118))
+        #expect(ChromeClearance.headerDrop(occlusions: [], band: 60, width: 350) == 0)
+        // Above the view (the status bar) or well below the header: no drop.
+        #expect(ChromeClearance.headerDrop(occlusions: [CGRect(x: 0, y: -40, width: 350, height: 40)], band: 60, width: 350) == 0)
+        #expect(ChromeClearance.headerDrop(occlusions: [CGRect(x: 300, y: 300, width: 40, height: 40)], band: 60, width: 350) == 0)
+        // The real cover screen: the status column lies in the trailing safe area, beside a 382-pt shelf.
+        let column = CGRect(x: 382, y: 0, width: 84, height: 174)
+        #expect(ChromeClearance.headerDrop(occlusions: [column], band: 60, width: 382) == 0)
     }
 
     @Test func aRegionLowOnTheScreenOrOnTheLeftIsHandled() {
