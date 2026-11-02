@@ -109,6 +109,43 @@ import Testing
         #expect(store.book(emma.id)?.totalProgression == 0.3)
     }
 
+    /// The InkPad left the book at 36 %; Readium counts the same words as 25 %. Landing there and
+    /// reading three pages on must never shrink the shelf's bar or the Cloud's percent.
+    @Test func landingOnACloudPlaceAndReadingOnNeverLowersThePercent() async throws {
+        let sync = FakeSyncService(signedIn: true, latency: .zero)
+        let store = LibraryStore(sync: sync, root: URL.temporaryDirectory.appending(path: "library-tests-\(UUID().uuidString)"))
+        await store.refresh()
+        let emma = try #require(store.books.first { $0.title == "Emma" })
+        let cloud = try #require(emma.cloud)
+        store.landedOnCloudPlace(bookID: emma.id, cloud: 0.36, landed: 0.25)
+        store.recordPlace(bookID: emma.id, locatorJSON: "{}", totalProgression: 0.25, progression: 0.5)
+        #expect(store.book(emma.id)?.displayPercent == 36)
+        var last = 36
+        for page in 1...3 {
+            store.recordPlace(bookID: emma.id, locatorJSON: "{}", totalProgression: 0.25 + Double(page) * 0.002, progression: 0.5)
+            let shown = try #require(store.book(emma.id)?.displayPercent)
+            #expect(shown >= last, "page \(page): the shelf went from \(last) % to \(shown) %")
+            last = shown
+        }
+        store.flushPushes()
+        try await Task.sleep(for: .milliseconds(80))
+        let pushed = try #require(try await sync.remotePosition(for: cloud)?.totalProgression)
+        #expect(pushed >= 0.36, "the Cloud was sent \(pushed)")
+        // The scale outlives a relaunch.
+        let reopened = LibraryStore(sync: sync, root: store.root)
+        #expect(reopened.book(emma.id)?.cloudScale == store.book(emma.id)?.cloudScale)
+    }
+
+    @Test func aLandingWhoseCloudPercentIsBehindOursNeedsNoScale() async throws {
+        let (store, _) = makeStore()
+        await store.refresh()
+        let emma = try #require(store.books.first { $0.title == "Emma" })
+        store.landedOnCloudPlace(bookID: emma.id, cloud: 0.20, landed: 0.25)
+        store.recordPlace(bookID: emma.id, locatorJSON: "{}", totalProgression: 0.25, progression: 0.5)
+        #expect(store.book(emma.id)?.cloudScale == nil)
+        #expect(store.book(emma.id)?.displayPercent == 25)
+    }
+
     @Test func rapidPlacesLandInOrderLatestWins() async throws {
         let sync = FakeSyncService(signedIn: true, latency: .zero)
         let store = LibraryStore(sync: sync, root: URL.temporaryDirectory.appending(path: "library-tests-\(UUID().uuidString)"))
