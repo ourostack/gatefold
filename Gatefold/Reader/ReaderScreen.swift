@@ -42,23 +42,24 @@ struct ReaderScreen: View {
                 : 0
             // The page steps back while the controls or a slip are up, so nothing sits on its text.
             let lifted = (model.chromeVisible && layout.deck == nil) || (model.slip != nil && !model.slipFolded && push == 0)
-            // A tall iPad page shrinks little at its top: with the controls up it also steps down until
-            // its first line is clear of the title capsule. The Duo's placement already clears its bars
-            // (and its status column), so it keeps its page where it is.
-            let step: CGFloat = UIDevice.current.userInterfaceIdiom == .pad && model.chromeVisible && layout.deck == nil && push == 0
-                ? PageSafeArea.chromeStep(textTop: layout.pageFrame.minY + pageTopClearance(layout, clearance: clearance),
-                                          height: proxy.size.height, barBottom: safeTop + ReaderChrome.topBarHeight,
-                                          scale: reduceMotion ? 1 : 0.96)
-                : 0
+            // A tall iPad page shrinks little at its top: with the controls up it lifts about a lower
+            // anchor so its first line clears the title capsule. The Duo's placement already clears its
+            // bars (and its status column), so it keeps the plain lift.
+            let chromeLift = UIDevice.current.userInterfaceIdiom == .pad && model.chromeVisible && layout.deck == nil && push == 0
+                ? PageSafeArea.chromeLift(textTop: layout.pageFrame.minY + pageTopClearance(layout, clearance: clearance),
+                                          height: proxy.size.height, barBottom: safeTop + ReaderChrome.topBarHeight)
+                : PageSafeArea.Lift(scale: 0.96, anchorY: 0.5)
+            // Reduce Motion drops the plain lift, but not one that keeps a line out from under the capsule.
+            let liftNeeded = chromeLift.anchorY != 0.5
             ZStack(alignment: .topLeading) {
                 model.theme.background
 
                 page(layout, clearance: clearance)
                     .frame(width: proxy.size.width, height: proxy.size.height, alignment: .topLeading)
-                    .scaleEffect(lifted && !reduceMotion ? 0.96 : 1, anchor: .center)
-                    .animation(.spring(duration: 0.25), value: lifted)
-                    .offset(y: push + step)
-                    .animation(reduceMotion ? .easeOut(duration: 0.2) : .spring(duration: 0.25), value: step)
+                    .scaleEffect(lifted && (!reduceMotion || liftNeeded) ? chromeLift.scale : 1,
+                                 anchor: UnitPoint(x: 0.5, y: chromeLift.anchorY))
+                    .animation(reduceMotion ? .easeOut(duration: 0.2) : .spring(duration: 0.25), value: lifted)
+                    .offset(y: push)
                     .mask {
                         let h = max(proxy.size.height, 1)
                         LinearGradient(stops: [.init(color: .black, location: 0),

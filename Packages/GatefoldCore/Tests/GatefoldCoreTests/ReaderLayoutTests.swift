@@ -121,21 +121,29 @@ struct ReaderLayoutTests {
 }
 
 @Suite("With the controls up, no line sits under the title capsule")
-struct ChromeStepTests {
-    // The iPad: status bar 24, bar to 88; text starts at 52 on a 1180-point page lifted to 96 %.
-    @Test func theIPadPageStepsDownBelowTheBar() {
-        let step = PageSafeArea.chromeStep(textTop: 52, height: 1180, barBottom: 88, scale: 0.96)
-        let liftedTop = 590 + 0.96 * (52 - 590) + step
-        #expect(abs(liftedTop - (88 + PageSafeArea.chromeGap)) < 0.001)
+struct ChromeLiftTests {
+    func top(_ l: PageSafeArea.Lift, textTop: CGFloat, height: CGFloat) -> CGFloat {
+        let a = l.anchorY * height
+        return a + l.scale * (textTop - a)
+    }
+    func foot(_ l: PageSafeArea.Lift, height: CGFloat) -> CGFloat {
+        let a = l.anchorY * height
+        return a + l.scale * (height - a)
     }
 
-    // The Duo's text already starts below its bar: nothing moves.
-    @Test func aPageAlreadyClearDoesNotMove() {
-        #expect(PageSafeArea.chromeStep(textTop: 140, height: 873, barBottom: 88, scale: 0.96) == 0)
+    // The iPad: status bar 24, bar to 88; text starts at 52.
+    @Test(arguments: [CGFloat(1180), 820])
+    func theIPadPageLiftsItsFirstLineBelowTheBar(height: CGFloat) {
+        let lift = PageSafeArea.chromeLift(textTop: 52, height: height, barBottom: 88)
+        #expect(abs(top(lift, textTop: 52, height: height) - (88 + PageSafeArea.chromeGap)) < 0.001)
+        // The foot still rises off the bottom bar as much as the plain lift's.
+        #expect(foot(lift, height: height) <= height - 0.02 * height + 0.001)
+        #expect(lift.scale > 0.85 && lift.scale < 0.96)
     }
 
-    @Test func withoutTheLiftTheStepCoversTheWholeOverlap() {
-        #expect(PageSafeArea.chromeStep(textTop: 52, height: 1180, barBottom: 88, scale: 1) == 88 + PageSafeArea.chromeGap - 52)
+    // A page whose text is already clear keeps the plain lift.
+    @Test func aPageAlreadyClearKeepsThePlainLift() {
+        #expect(PageSafeArea.chromeLift(textTop: 140, height: 873, barBottom: 88) == PageSafeArea.Lift(scale: 0.96, anchorY: 0.5))
     }
 }
 

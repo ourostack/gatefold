@@ -160,12 +160,31 @@ public enum PageSafeArea {
     /// Room between the controls' top bar and the first line while the controls are up.
     public static let chromeGap: CGFloat = 12
 
-    /// How far the page steps down while the controls are up, so its first line clears the top bar.
-    /// `scale` is the lift (the page shrinks about its centre), which moves a tall page's top only a little.
-    public static func chromeStep(textTop: CGFloat, height: CGFloat, barBottom: CGFloat, scale: CGFloat) -> CGFloat {
+    /// The page's step back while the controls are up: a slight shrink about an anchor.
+    public struct Lift: Equatable, Sendable {
+        public var scale: CGFloat
+        /// 0 is the page's top, 1 its foot.
+        public var anchorY: CGFloat
+        public init(scale: CGFloat, anchorY: CGFloat) {
+            self.scale = scale
+            self.anchorY = anchorY
+        }
+    }
+
+    /// The step back while the controls are up: 96 % about the centre, or, when that would leave the first
+    /// line under the top bar (a tall iPad page barely moves at its top), a little smaller about a lower
+    /// anchor so the first line lands below the bar and the foot still rises as much as before. A scale,
+    /// never an offset: the page is a web view, and moving it broke press-and-hold selection.
+    public static func chromeLift(textTop: CGFloat, height: CGFloat, barBottom: CGFloat) -> Lift {
+        let plain = Lift(scale: 0.96, anchorY: 0.5)
+        guard height > textTop, height > 0 else { return plain }
         let centre = height / 2
-        let liftedTop = centre + scale * (textTop - centre)
-        return max(0, barBottom + chromeGap - liftedTop)
+        let target = barBottom + chromeGap
+        guard centre + plain.scale * (textTop - centre) < target else { return plain }
+        let down = target - textTop
+        let up = (1 - plain.scale) * centre
+        let k = (down + up) / (height - textTop)
+        return Lift(scale: 1 - k, anchorY: 1 - up / (k * height))
     }
 
     /// The page moved down by `shift` points, keeping its foot.
