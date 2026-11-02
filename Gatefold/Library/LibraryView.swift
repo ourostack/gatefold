@@ -302,6 +302,20 @@ struct LibraryView: View {
             let finished = library.finishedBooks
             if !finished.isEmpty {
                 section("Finished") {
+                    if finished.count == 1, let book = finished.first {
+                        // One book finished is a moment, not a sparse shelf: its cover with a colophon beside it.
+                        HStack(alignment: .bottom, spacing: 20) {
+                            BookTile(book: book, shelf: .finished, width: m.grid * 1.2, namespace: namespace, onOpen: onOpen)
+                                .modifier(Drop(hidden: hidden(book)))
+                            FinishedColophon(book: book)
+                                .padding(.bottom, 10)
+                            Spacer(minLength: 0)
+                        }
+                        .padding(.horizontal, m.gutter)
+                        .padding(.vertical, 10)
+                        .transition(reduceMotion ? .opacity : .offset(y: -24).combined(with: .opacity))
+                        .accessibilityIdentifier("library.finished")
+                    } else {
                     ScrollView(.horizontal, showsIndicators: false) {
                         LazyHStack(alignment: .bottom, spacing: m.spacing + 4) {
                             ForEach(finished) { book in
@@ -316,6 +330,7 @@ struct LibraryView: View {
                     .scrollClipDisabled()
                     .modifier(SafeEdgeFade(active: trailingReserved))
                     .accessibilityIdentifier("library.finished")
+                    }
                 }
                 .transition(.opacity)
             }
@@ -859,5 +874,49 @@ private struct Drop: ViewModifier {
         content
             .offset(y: hidden && !reduceMotion ? -24 : 0)
             .opacity(hidden ? 0 : 1)
+    }
+}
+
+/// Beside a lone finished book: what it was and how the reading went, set like a colophon.
+struct FinishedColophon: View {
+    let book: LibraryBook
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(book.title)
+                .font(.display(.title3, weight: .semibold))
+                .foregroundStyle(Color.ink)
+                .lineLimit(3)
+            if !book.author.isEmpty {
+                Text(book.author)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+            Rectangle()
+                .fill(Color.ribbon.opacity(0.7))
+                .frame(width: 28, height: 2)
+                .padding(.vertical, 6)
+            if let finished = book.finished {
+                Text("Last page turned \(finished.formatted(.dateTime.day().month(.wide)))")
+                    .font(.system(.footnote, design: .serif).italic())
+                    .foregroundStyle(.secondary)
+            }
+            if let line = Self.journey(book) {
+                Text(line)
+                    .font(.system(.footnote, design: .serif).italic())
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    /// "Read over 12 days, in 9 sittings", from what the shelf kept; nil when it kept too little.
+    static func journey(_ book: LibraryBook) -> String? {
+        guard let started = book.started, let finished = book.finished, finished >= started else { return nil }
+        let days = max(1, Calendar.current.dateComponents([.day], from: Calendar.current.startOfDay(for: started), to: Calendar.current.startOfDay(for: finished)).day.map { $0 + 1 } ?? 1)
+        let span = days == 1 ? "Read in a single day" : "Read over \(days) days"
+        guard let sittings = book.sessions, sittings > 1 else { return span }
+        return "\(span), in \(sittings) sittings"
     }
 }

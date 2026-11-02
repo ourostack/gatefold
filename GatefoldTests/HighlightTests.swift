@@ -1,4 +1,5 @@
 import Foundation
+import GatefoldCloud
 import GatefoldCore
 import ReadiumShared
 import Testing
@@ -175,5 +176,16 @@ actor ListSync: SyncService {
             #expect(look.mark == ThemePalette.hexString(theme.palette.accent))
         }
         #expect(HighlightLook(color: .cyan, theme: .vellum, hasNote: false).fill != HighlightLook(color: .yellow, theme: .vellum, hasNote: false).fill)
+    }
+
+    @Test func aNoteIsAWarmWashWhateverItsColour() {
+        for theme in ReaderTheme.allCases {
+            let notes = Set([AnnotationColor.cyan, .blue, .yellow, .green, .red].map { HighlightLook(color: $0, theme: theme, hasNote: true).fill })
+            #expect(notes.count == 1, "\(theme): a note's wash depends on its colour")
+            let fill = notes.first ?? ""
+            let rgb = UInt32(fill.dropFirst(), radix: 16) ?? 0
+            let r = (rgb >> 16) & 0xFF, b = rgb & 0xFF
+            #expect(r > b + 40, "\(theme): \(fill) is not warm")
+        }
     }
 }

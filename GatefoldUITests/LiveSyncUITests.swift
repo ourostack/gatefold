@@ -122,8 +122,19 @@ final class LiveSyncUITests: XCTestCase {
         print("LIVE after jump: \(words.prefix(200))")
         shot("live-10-after-jump")
         XCTAssertTrue(normalize(words).contains(normalize(expected)), "landed on the web reader's passage: \(words.prefix(200))")
+        // Read on three pages: the shelf and the Cloud must not fall below the InkPad's percent.
+        let page = element("reader.page")
+        for _ in 0..<3 {
+            page.coordinate(withNormalizedOffset: CGVector(dx: 0.92, dy: 0.6)).tap()
+            sleep(2)
+        }
+        shot("live-10b-read-on")
         close()
         sleep(4)
+        shot("live-10c-shelf-after-reading-on")
+        if let tile = app.descendants(matching: .any).matching(identifier: frankenstein).allElementsBoundByIndex.first {
+            print("LIVE shelf after reading on: \(tile.label)")
+        }
     }
 
     /// Highlights both ways (driver steps around it): a note written through the Cloud API is listed

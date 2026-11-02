@@ -33,14 +33,17 @@ struct LibraryBook: Identifiable, Codable, Equatable {
     /// end leaf's "Started on your InkPad 11 days ago" line.
     var otherSince: Date?
     var otherDevice: String?
+    /// Set when the reader landed on a Cloud place the Cloud counts further on than Readium does.
+    var cloudScale: CloudScale?
 
     var isOnDevice: Bool { fileName != nil }
     /// A book from the fake Cloud's bundled demo shelf.
     var isDemo: Bool { id.hasPrefix("gutenberg-") }
     var isFinished: Bool { finished != nil || cloud?.readStatus == "read" }
 
+    /// On the Cloud's scale once he has landed on a Cloud place (`cloudScale`), so the shelf agrees with the InkPad.
     var displayProgression: Double {
-        max(totalProgression, lastOpened == nil ? (remote?.totalProgression ?? 0) : 0)
+        max(cloudScale?.onCloudScale(totalProgression) ?? totalProgression, lastOpened == nil ? (remote?.totalProgression ?? 0) : 0)
     }
 
     /// The shelf's "percent read": the same whole percent PocketBook's readers show for this place.

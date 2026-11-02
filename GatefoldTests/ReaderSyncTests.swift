@@ -153,6 +153,27 @@ final class ScriptedPage: ReaderPage {
         #expect(f.app.library.book(Self.frankenstein.fastHash)?.locatorJSON != nil, "this device reopens on the landed page")
     }
 
+    @Test func aLandingBehindTheShelfRecordsNothingUntilTheTap() async throws {
+        let f = try await Self.make(remote: { pub, mapper in try await Self.inkPadPlace(pub, mapper) })
+        f.model.warm()
+        for _ in 0..<200 where !f.model.pageReady { try await Task.sleep(for: .milliseconds(25)) }
+        #expect(f.model.pageReady, "the warm open reached its first page")
+        try await Task.sleep(for: .milliseconds(200))
+        // Nothing opened yet: the shelf keeps its order and the Cloud hears nothing.
+        #expect(f.app.library.book(Self.frankenstein.fastHash)?.lastOpened == nil)
+        f.app.library.flushPushes()
+        try await Task.sleep(for: .milliseconds(80))
+        #expect(await f.sync.pushed.isEmpty, "a warm open sent the Cloud a place")
+        f.model.activate()
+        for _ in 0..<200 where f.app.library.book(Self.frankenstein.fastHash)?.lastOpened == nil {
+            try await Task.sleep(for: .milliseconds(25))
+        }
+        #expect(f.app.library.book(Self.frankenstein.fastHash)?.lastOpened != nil, "the tap records the landed place")
+        let sent = await f.sent()
+        #expect(!sent.isEmpty)
+        f.model.close()
+    }
+
     @Test func choosingTheLandedPlace() throws {
         let now = Date()
         let at = { (cfi: String?, total: Double) in ReadingPosition(cfi: cfi, totalProgression: total, updated: .distantPast, source: .pocketBookNative) }

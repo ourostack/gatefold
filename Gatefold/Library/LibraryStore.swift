@@ -33,7 +33,7 @@ final class LibraryStore {
     @ObservationIgnored private var pending: [String: (ReadingPosition, CloudBook)] = [:]
 
     private let sync: any SyncService
-    private let root: URL
+    let root: URL
     private var booksDir: URL { root.appending(path: "Books", directoryHint: .isDirectory) }
     private var coversDir: URL { root.appending(path: "Covers", directoryHint: .isDirectory) }
     private var indexURL: URL { root.appending(path: "library.json") }
@@ -262,20 +262,32 @@ final class LibraryStore {
 
     /// Saves the place here and queues it for the Cloud. `position` carries the exact CFI when the
     /// reader could make one; without it the Cloud gets a percent.
-    func recordPlace(bookID: String, locatorJSON: String, totalProgression: Double, progression: Double,
+    func recordPlace(bookID: String, locatorJSON: String, totalProgression readium: Double, progression: Double,
                      position exact: ReadingPosition? = nil, at now: Date = Date()) {
+        // The place is kept on Readium's scale, the one this reader compares places on. After landing on
+        // a Cloud place, what we send is on the Cloud's scale (and the shelf shows it, `displayProgression`),
+        // so a difference in how two readers count never shows as lost progress.
+        let totalProgression = book(bookID)?.cloudScale?.onCloudScale(readium) ?? readium
         update(bookID) {
             $0.locatorJSON = locatorJSON
-            $0.totalProgression = totalProgression
+            $0.totalProgression = readium
             $0.lastOpened = now
         }
         guard let cloud = book(bookID)?.cloud else { return }
         var position = exact ?? ReadingPosition(cfi: nil, progression: progression, totalProgression: totalProgression, updated: now)
+        position.totalProgression = totalProgression
         position.updated = now
         position.source = .gatefold
         // One push per book at a time, latest wins: rapid turns settle on the last page, in order.
         pending[bookID] = (position, cloud)
         schedulePush(bookID, after: .milliseconds(400))
+    }
+
+    /// The reader landed on another device's Cloud place: `cloud` is the Cloud's progress there and
+    /// `landed` Readium's for the same words. Replaces any earlier scale; none is kept when ours is
+    /// already at or above the Cloud's.
+    func landedOnCloudPlace(bookID: String, cloud: Double, landed: Double) {
+        update(bookID) { $0.cloudScale = CloudScale(cloud: cloud, landed: landed) }
     }
 
     /// A reading session began: remembers when the book was first opened and counts the sessions.

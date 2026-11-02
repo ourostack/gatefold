@@ -409,7 +409,10 @@ struct HighlightLook: Hashable {
         // a text selection.
         let light: [UInt32] = [0xFBE08A, 0xCFC6EC, 0xD3EABD, 0xF5C9D1]
         let night: [UInt32] = [0x5C4A1C, 0x3A3160, 0x2A4626, 0x5A2633]
-        fill = ThemePalette.hexString(dark ? night[family] : light[family])
+        // A highlight with a note is a warm apricot wash whatever its colour, so a note reads as
+        // pencil in the margin, never as a system text selection.
+        let noteLight: UInt32 = 0xF7D3AE, noteNight: UInt32 = 0x5E3B20
+        fill = ThemePalette.hexString(hasNote ? (dark ? noteNight : noteLight) : (dark ? night[family] : light[family]))
         blend = dark ? "screen" : "multiply"
         mark = ThemePalette.hexString(theme.palette.accent)
         self.hasNote = hasNote
@@ -592,6 +595,9 @@ struct HighlightCard: View {
         .frame(maxWidth: 560, alignment: .leading)
         // Centred in a wider sheet, so the card is balanced rather than hugging the left.
         .frame(maxWidth: .infinity)
+        // The folded Duo reports a trailing inset for its camera corner; down here in the sheet it
+        // only pushed the card left. The card keeps its own even margins instead.
+        .ignoresSafeArea(.container, edges: .horizontal)
         .presentationDetents([.medium])
         .presentationDragIndicator(.visible)
         .accessibilityElement(children: .contain)

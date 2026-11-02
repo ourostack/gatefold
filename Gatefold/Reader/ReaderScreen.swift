@@ -61,14 +61,21 @@ struct ReaderScreen: View {
                     .animation(reduceMotion ? .easeOut(duration: 0.2) : .spring(duration: 0.4, bounce: 0.1), value: push)
 
                 scrims(proxy: proxy, layout: layout, safeTop: safeTop)
-                    .task(id: "\(footerNeed(proxy: proxy, layout: layout))-\(model.totalProgression)-\(proxy.size.width)x\(proxy.size.height)-\(model.pageReady)") {
-                        // Let a turn or a reflow settle before reading where the lines are.
-                        try? await Task.sleep(for: .milliseconds(120))
-                        guard !Task.isCancelled else { return }
-                        await measureFooterLine(proxy: proxy, layout: layout)
+                    .task(id: "\(footerNeed(proxy: proxy, layout: layout))-\(model.totalProgression)-\(model.location?.href.string ?? "")-\(model.location?.locations.progression ?? -1)-\(proxy.size.width)x\(proxy.size.height)-\(model.pageReady)") {
+                        // Let a turn or a reflow settle before reading where the lines are; then again
+                        // as a jump's veil lifts and its page settles on the words (the lines move, or
+                        // were hidden at the first look), so the paper never ends across a line.
+                        for wait in [120, 600, 1400] {
+                            try? await Task.sleep(for: .milliseconds(wait))
+                            guard !Task.isCancelled else { return }
+                            await measureFooterLine(proxy: proxy, layout: layout)
+                        }
                     }
 
-                runningHead(layout: layout, proxy: proxy, clearance: clearance, hidden: aheadOpen || lifted)
+                runningHead(layout: layout, proxy: proxy, clearance: clearance, hidden: aheadOpen || (model.chromeVisible && layout.deck == nil))
+                    .task(id: headState(layout: layout, proxy: proxy, clearance: clearance, hidden: aheadOpen || (model.chromeVisible && layout.deck == nil))) {
+                        readerLog.notice("running head: \(headState(layout: layout, proxy: proxy, clearance: clearance, hidden: aheadOpen || (model.chromeVisible && layout.deck == nil)), privacy: .public)")
+                    }
 
                 if let deck = layout.deck {
                     TabletopDeck(model: model, showAppearance: $showAppearance, showContents: $showContents)
@@ -145,6 +152,11 @@ struct ReaderScreen: View {
         }
         .ignoresSafeArea()
         .observingHinge($hinge)
+        .onChange(of: hinge) { old, new in
+            // The hinge has started to move: hold a picture of the page before a Duo moves the app
+            // to its other screen, so the unfold swings from the page he was reading.
+            if model.layout.posture != .spread, old != new { model.host?.holdPageForUnfold() }
+        }
         .preferredColorScheme(model.theme.colorScheme)
         .statusBarHidden(!model.chromeVisible || coverScreen)
         .persistentSystemOverlays(model.chromeVisible ? .automatic : .hidden)
@@ -263,6 +275,7 @@ struct ReaderScreen: View {
         let global = proxy.frame(in: .global)
         let need = global.minY + proxy.size.height - bottom
         let line = await model.host?.lineTop(crossing: (need - 1)...(need + 1))
+        readerLog.notice("footer paper: needs \(need, privacy: .public), line measured at \(line.map { "\($0)" } ?? "none", privacy: .public)")
         withAnimation(.easeOut(duration: 0.15)) { footerLine = line }
     }
 
@@ -320,15 +333,28 @@ struct ReaderScreen: View {
     /// The cover screen keeps a band above the text clear of the camera. A printed book's head margin
     /// carries its running head; so does this band: the chapter in small capitals, beside the camera,
     /// never under it.
+    /// Why the running head is or isn't up, for the log.
+    private func headState(layout: ReaderLayout, proxy: GeometryProxy, clearance: ChromeClearance, hidden: Bool) -> String {
+        let camera = FoldReader.occlusions(in: proxy).filter { $0.height <= 120 && $0.minY < 80 }.min { $0.minY < $1.minY }
+        let textTop = layout.pageFrame.minY + pageTopClearance(layout, clearance: clearance)
+        guard layout.deck == nil, let camera else { return "none (no camera band)" }
+        if textTop - camera.maxY < -camera.height / 2 || textTop < 40 { return "none (text top \(Int(textTop)), camera \(Int(camera.minY))-\(Int(camera.maxY)))" }
+        if hidden { return "hidden (chrome or slip)" }
+        if !model.pageReady { return "hidden (page not ready)" }
+        return "shown"
+    }
+
     @ViewBuilder
     private func runningHead(layout: ReaderLayout, proxy: GeometryProxy, clearance: ChromeClearance, hidden: Bool) -> some View {
         let camera = FoldReader.occlusions(in: proxy).filter { $0.height <= 120 && $0.minY < 80 }.min { $0.minY < $1.minY }
         let textTop = layout.pageFrame.minY + pageTopClearance(layout, clearance: clearance)
         let side: CGFloat = 24
         if layout.deck == nil, let camera, textTop - camera.maxY >= -camera.height / 2, textTop >= 40,
-           model.slip == nil, let words = model.chapterTitle ?? Optional(model.title) {
+           let words = model.chapterTitle ?? Optional(model.title) {
+            // Clear of the folded "read on" tab, which hangs at the page's leading edge in this band.
+            let tab: CGFloat = model.aheadTab != nil && model.slipFolded && model.slip != nil ? 16 + 112 : 0
             // Whichever side of the camera has the more room.
-            let left = (layout.pageFrame.minX + side, min(layout.pageFrame.maxX - side, camera.minX - 14))
+            let left = (layout.pageFrame.minX + max(side, tab), min(layout.pageFrame.maxX - side, camera.minX - 14))
             let right = (max(layout.pageFrame.minX + side, camera.maxX + 14), layout.pageFrame.maxX - side)
             let (start, end) = left.1 - left.0 >= right.1 - right.0 ? left : right
             Text(words)
@@ -400,8 +426,13 @@ struct ReaderScreen: View {
         let now = forced ?? .single
         let next = cycle[((cycle.firstIndex(of: now) ?? 0) + 1) % cycle.count]
         readerLog.notice("posture bell: \(now.rawValue, privacy: .public) → \(next.rawValue, privacy: .public)")
-        hinge = next == .tabletop ? .partiallyOpen(angleDegrees: 110) : .none
-        forced = next
+        // A real hinge's first movement holds a picture of the page before the window moves; the bell
+        // does the same, and lets the posture change only once the picture is held.
+        Task {
+            if next == .spread { await model.host?.holdPage() }
+            hinge = next == .tabletop ? .partiallyOpen(angleDegrees: 110) : .none
+            forced = next
+        }
     }
 
     private func turnPostureOnTimer() async {

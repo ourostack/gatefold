@@ -206,3 +206,30 @@ public enum ReadingNow {
         )
     }
 }
+
+/// Two readers can count the same place differently: PocketBook's percent and Readium's whole-book
+/// progression weigh chapters their own ways. After landing on a Cloud place whose percent is ahead of
+/// Readium's number for the same words, this keeps every number we show or send on the Cloud's scale:
+/// the landed place reads as the Cloud's percent, and reading on adds to it, reaching 100 % only at the
+/// end. Going back before the landed place never shows less than the Cloud did.
+public struct CloudScale: Codable, Equatable, Sendable {
+    /// The Cloud's progress at the landed place, 0...1.
+    public var cloud: Double
+    /// Readium's whole-book progression at the same place, 0...1.
+    public var landed: Double
+
+    /// Nil when no scale is needed (our number is already at or above the Cloud's) or the numbers are bad.
+    public init?(cloud: Double, landed: Double) {
+        guard cloud.isFinite, landed.isFinite, (0...1).contains(cloud), (0..<1).contains(landed), cloud > landed else { return nil }
+        self.cloud = cloud
+        self.landed = landed
+    }
+
+    /// Readium's `local` progression, as the Cloud would count it.
+    public func onCloudScale(_ local: Double) -> Double {
+        guard local.isFinite else { return cloud }
+        let local = min(1, max(0, local))
+        guard local > landed else { return cloud }
+        return min(1, cloud + (local - landed) * (1 - cloud) / (1 - landed))
+    }
+}

@@ -78,6 +78,8 @@ final class ReaderModel {
     private(set) var isWarming = false
     private var activation: CheckedContinuation<Void, Never>?
     private var loadStarted = false
+    /// A landing made behind the shelf, recorded when the reader taps the book.
+    @ObservationIgnored private var pendingRecord: (@MainActor (Date) -> Void)?
 
     /// Opens the book behind the shelf, so a tap on it shows a page that's already there.
     func warm() {
@@ -95,6 +97,10 @@ final class ReaderModel {
         if pageReady { readerLog.notice("first page ready after 0 s (opened ahead of the tap)") }
         activation?.resume()
         activation = nil
+        if let record = pendingRecord {
+            pendingRecord = nil
+            record(Date())
+        }
         if let landed = pendingLanded {
             pendingLanded = nil
             // After the zoom has brought the page up, so the line draws in where the reader can see it.
@@ -120,6 +126,10 @@ final class ReaderModel {
     private var anchorLocator: Locator?
     private var pendingReflowReason: ReflowReason?
     weak var host: ReaderHostController?
+    /// A picture of the page taken as the hinge started to move (`ReaderHostController.holdPageForUnfold`).
+    /// It lives here, not in the host, so it survives the app moving to the Duo's inner screen.
+    @ObservationIgnored var heldPicture: UIImage?
+    @ObservationIgnored var heldPage: HeldPage?
     private(set) var hostController: ReaderHostController?
     /// A scripted page for unit tests; the app always reads the host's.
     @ObservationIgnored private var injectedPage: (any ReaderPage)?
@@ -151,6 +161,8 @@ final class ReaderModel {
     private var landing: Bool { landingMove == moves }
     /// The Cloud place behind the banner, so accepting it records that exact place.
     private var suggestionRemote: ReadingPosition?
+    /// The Cloud's own progress at the suggested place, for keeping our numbers on its scale.
+    private var suggestionCloud: Double?
     /// A remote check is running; another request runs once it ends instead of alongside it.
     private var checkingRemote = false
     private var recheckRemote = false
@@ -421,7 +433,7 @@ final class ReaderModel {
         // the InkPad is, like picking the book up off the nightstand.
         if openedSnapshot == nil || landsOverFrontMatter, !hasMoved {
             readerLog.notice("first open: landing on the Cloud place \(remote.pointer ?? "no pointer", privacy: .public)")
-            await land(on: target.locator, progression: target.totalProgression, target: aim, rememberBack: false)
+            await land(on: target.locator, progression: target.totalProgression, target: aim, cloud: remote.totalProgression, rememberBack: false)
             guard !isClosed else { return }
             awaitingLanding = false
             markReady()
@@ -443,6 +455,7 @@ final class ReaderModel {
         readerLog.notice("remote ahead: \(remote.pointer ?? "no pointer", privacy: .public) → \(target.locator?.text.highlight ?? "no text", privacy: .private)")
         suggestionLocator = target.locator
         suggestionRemote = aim
+        suggestionCloud = remote.totalProgression
         withAnimation(Motion.banner) { suggestion = made }
         let pages = chapterMap.positionCount > 1
             ? chapterMap.page(at: target.totalProgression) - chapterMap.page(at: totalProgression) : nil
@@ -593,12 +606,13 @@ final class ReaderModel {
         guard let s = suggestion, !isClosed else { return }
         withAnimation(Motion.banner) { suggestion = nil }
         hideSlip()
-        let locator = suggestionLocator, aim = suggestionRemote
+        let locator = suggestionLocator, aim = suggestionRemote, cloud = suggestionCloud
         suggestionLocator = nil
         suggestionRemote = nil
+        suggestionCloud = nil
         // The pages riffle past on the way, the way a thumb finds a place in a real book.
         await veiled(riffle: true, forward: s.targetProgression >= totalProgression) {
-            await self.land(on: locator, progression: s.targetProgression, target: aim, rememberBack: true)
+            await self.land(on: locator, progression: s.targetProgression, target: aim, cloud: cloud, rememberBack: true)
         }
         UINotificationFeedbackGenerator().notificationOccurred(.success)
         if let locator { host?.underline(locator, color: theme.palette.accent) }
@@ -628,7 +642,7 @@ final class ReaderModel {
 
     /// Goes to another device's place: the exact spot when its CFI resolved, else its percent.
     /// Records the place once, when the page has settled, and never earlier than `target`.
-    private func land(on locator: Locator?, progression: Double, target: ReadingPosition?, rememberBack: Bool) async {
+    private func land(on locator: Locator?, progression: Double, target: ReadingPosition?, cloud: Double? = nil, rememberBack: Bool) async {
         guard !isClosed else { return }
         guard let locator else {
             await go(toProgression: progression, rememberBack: rememberBack)
@@ -649,13 +663,13 @@ final class ReaderModel {
         await captureAnchor()
         guard moves == move, !isClosed, let here = page?.currentLocation else { return }
         // Landed on the other device's page: that's the reader's place now.
-        await recordLanding(here, target: target)
+        await recordLanding(here, target: target, cloud: cloud)
     }
 
     /// Records a settled landing. The first words on screen are the place, unless they come before the
     /// place we landed on (the page starts a few lines above it): then the target itself is, so the
     /// other device's place comes back unchanged instead of a few lines behind.
-    private func recordLanding(_ here: Locator, target: ReadingPosition?) async {
+    private func recordLanding(_ here: Locator, target: ReadingPosition?, cloud: Double? = nil) async {
         location = here
         let fresh = anchorLocator.flatMap { a in
             a.href == here.href && a.locations.progression == here.locations.progression ? a : nil
@@ -666,16 +680,29 @@ final class ReaderModel {
             .map { var p = $0; p.totalProgression = here.locations.totalProgression ?? p.totalProgression; return p }
         guard !isClosed else { return }
         let chosen = LandingPlace.choose(settled: settled, target: target, at: now)
-        if let json = try? settledLocator.jsonString() {
-            app.library.recordPlace(
-                bookID: bookID,
-                locatorJSON: json,
-                totalProgression: chosen?.totalProgression ?? here.locations.totalProgression ?? 0,
-                progression: here.locations.progression ?? 0,
-                position: chosen,
-                at: now
-            )
+        let landedAt = target?.totalProgression ?? here.locations.totalProgression
+        let json = try? settledLocator.jsonString()
+        let record: @MainActor (Date) -> Void = { [weak self] at in
+            guard let self else { return }
+            // The Cloud's percent for this place stands; reading on adds to it (`CloudScale`).
+            if let cloud, let landedAt {
+                self.app.library.landedOnCloudPlace(bookID: self.bookID, cloud: cloud, landed: landedAt)
+                readerLog.notice("landed: the Cloud says \(cloud, privacy: .public), Readium \(landedAt, privacy: .public)")
+            }
+            if let json {
+                self.app.library.recordPlace(
+                    bookID: self.bookID,
+                    locatorJSON: json,
+                    totalProgression: chosen?.totalProgression ?? here.locations.totalProgression ?? 0,
+                    progression: here.locations.progression ?? 0,
+                    position: chosen.map { var p = $0; p.updated = at; return p },
+                    at: at
+                )
+            }
         }
+        // Behind the shelf nothing is opened yet: recording now would make the book "just read",
+        // shuffle Reading Now under the reader's eyes and send the Cloud a place nobody read. The tap records it.
+        if isWarming { pendingRecord = record } else { record(now) }
         openedLocation = here
         refreshBookmarkState(await page?.visibleRange())
     }
@@ -712,11 +739,13 @@ final class ReaderModel {
         suggestion = nil
         suggestionLocator = nil
         suggestionRemote = nil
+        suggestionCloud = nil
     }
 
     func dismissSuggestion() {
         suggestionLocator = nil
         suggestionRemote = nil
+        suggestionCloud = nil
         withAnimation(Motion.banner) { suggestion = nil }
         hideSlip()
     }
