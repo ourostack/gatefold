@@ -9,6 +9,8 @@ final class AppModel {
     let sync: any SyncService
     let library: LibraryStore
     private(set) var account: CloudAccount?
+    /// The saved sign-in has been read, so a missing account means signed out, not "not yet known".
+    private(set) var hasStarted = false
     /// The Cloud turned the saved sign-in away (expired or revoked). Downloaded books and places stay;
     /// the library offers to reconnect with this email.
     private(set) var needsReconnect: String?
@@ -84,6 +86,7 @@ final class AppModel {
         // The fake Cloud's sign-in comes from its own launch argument, so a reset leaves it alone.
         if LaunchOptions.resetState, !LaunchOptions.fakeCloud, await sync.account != nil { await sync.signOut() }
         account = await sync.account
+        hasStarted = true
         // Listen before the first fetch, so its announcement lands too.
         let changes = sync.changes()
         Task { [weak self] in
@@ -100,6 +103,21 @@ final class AppModel {
                 await library.download(book)
             }
         }
+        #if DEBUG
+        // Screenshots and UI tests: the InkPad reads on while the book is open here.
+        let defaults = UserDefaults.standard
+        if let fake = sync as? FakeSyncService, let id = LaunchOptions.openBook, defaults.object(forKey: "GatefoldRemoteAheadAfter") != nil {
+            let after = defaults.double(forKey: "GatefoldRemoteAheadAfter")
+            let to = defaults.object(forKey: "GatefoldRemoteAheadTo") == nil ? 0.3 : defaults.double(forKey: "GatefoldRemoteAheadTo")
+            Task {
+                try? await Task.sleep(for: .seconds(after))
+                await fake.simulateRemoteRead(bookID: id, totalProgression: to)
+                readerLog.notice("debug: InkPad read on to \(to, privacy: .public), reader open: \(self.activeReader != nil, privacy: .public)")
+                try? await Task.sleep(for: .milliseconds(200))
+                await activeReader?.checkRemote()
+            }
+        }
+        #endif
     }
 
     /// Applies one change from the sync service. Never fetches: the real service announces

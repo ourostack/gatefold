@@ -18,6 +18,9 @@ struct ReaderScreen: View {
     @State private var leafOpacity = 0.0
     @State private var leafFolding = false
     @State private var spineBoost = 0.0
+    /// On the cover screen the status column sits on the page's trailing edge; it stays hidden there.
+    @State private var coverScreen = false
+    @State private var slipHeight: CGFloat = 0
 
     var body: some View {
         GeometryReader { proxy in
@@ -66,6 +69,7 @@ struct ReaderScreen: View {
                         model.dismissSuggestion()
                     }
                     .frame(width: width)
+                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { slipHeight = $0 }
                     // In the top band: under the title when the controls are up, else at the top edge.
                     .offset(
                         x: layout.gutter.map { g in g.maxX + (proxy.size.width - g.maxX - width) / 2 } ?? (proxy.size.width - width) / 2,
@@ -91,6 +95,7 @@ struct ReaderScreen: View {
                 probes(layout)
             }
             .sensoryFeedback(.success, trigger: model.slipCount) { _, _ in model.slipKind == .landed }
+            .onChange(of: clearance.bookmarkLeading, initial: true) { _, taken in coverScreen = taken }
             .onChange(of: input, initial: true) { _, new in
                 readerLog.notice("layout input \(new.containerSize.width, privacy: .public)x\(new.containerSize.height, privacy: .public) fold \(new.division.map { "\($0.frame) active \($0.isActive)" } ?? "none", privacy: .public) hinge \(String(describing: new.hinge), privacy: .public)")
             }
@@ -104,7 +109,7 @@ struct ReaderScreen: View {
         .ignoresSafeArea()
         .observingHinge($hinge)
         .preferredColorScheme(model.theme.colorScheme)
-        .statusBarHidden(!model.chromeVisible)
+        .statusBarHidden(!model.chromeVisible || coverScreen)
         .persistentSystemOverlays(model.chromeVisible ? .automatic : .hidden)
         .sheet(isPresented: $showAppearance) {
             AppearanceSheet(model: model)
@@ -170,7 +175,7 @@ struct ReaderScreen: View {
     private func scrims(proxy: GeometryProxy, layout: ReaderLayout, safeTop: CGFloat) -> some View {
         let fade: CGFloat = 24
         let paper = model.theme.background
-        let top = safeTop + (model.chromeVisible ? ReaderChrome.topBarHeight : 0)
+        let top = safeTop + (model.chromeVisible ? ReaderChrome.topBarHeight : 0) + (model.slip != nil ? 8 + slipHeight + 16 : 0)
         if model.chromeVisible || model.slip != nil {
             LinearGradient(stops: [.init(color: paper, location: 0), .init(color: paper, location: top / (top + fade)), .init(color: paper.opacity(0), location: 1)],
                            startPoint: .top, endPoint: .bottom)

@@ -41,7 +41,7 @@ struct LibraryView: View {
                         .padding(.horizontal, 20)
                         .padding(.bottom, 6)
                     if library.books.isEmpty {
-                        EmptyShelf(signedIn: app.account != nil, isRefreshing: library.isRefreshing) { importing = true }
+                        EmptyShelf(signedIn: app.account != nil, isRefreshing: !app.hasStarted || library.isRefreshing || (app.account != nil && !library.hasRefreshed)) { importing = true }
                             .padding(.top, 48)
                     } else {
                         shelves
@@ -437,12 +437,21 @@ private struct EmptyShelf: View {
     let signedIn: Bool
     let isRefreshing: Bool
     var onImport: () -> Void
+    @State private var patient = false
 
     var body: some View {
         VStack(spacing: 18) {
             if isRefreshing {
-                ProgressView().controlSize(.large)
-                Text("Fetching your books…").font(.display(.title3)).foregroundStyle(Color.ink)
+                // A quick fetch shows plain paper; only a slow one says what's happening, and never with a spinner.
+                if patient {
+                    Image(systemName: "books.vertical")
+                        .font(.system(size: 54, weight: .light))
+                        .foregroundStyle(Color.ribbon)
+                        .symbolEffect(.pulse, options: .repeating)
+                    Text("Fetching your books from the Cloud…").font(.display(.title3)).foregroundStyle(Color.ink)
+                        .multilineTextAlignment(.center)
+                        .transition(.opacity)
+                }
             } else {
                 Image(systemName: "books.vertical")
                     .font(.system(size: 54, weight: .light))
@@ -467,6 +476,12 @@ private struct EmptyShelf: View {
         }
         .frame(maxWidth: .infinity)
         .padding(24)
+        .task(id: isRefreshing) {
+            patient = false
+            guard isRefreshing else { return }
+            try? await Task.sleep(for: .seconds(1.2))
+            withAnimation(.easeOut(duration: 0.3)) { patient = true }
+        }
     }
 }
 

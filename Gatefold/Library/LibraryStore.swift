@@ -11,6 +11,8 @@ final class LibraryStore {
     private(set) var downloads: [String: DownloadState] = [:]
     private(set) var covers: [String: UIImage] = [:]
     private(set) var isRefreshing = false
+    /// The Cloud has answered at least once since launch, so an empty shelf really is empty.
+    private(set) var hasRefreshed = false
     /// An import that failed (shown as an alert: the reader just asked for it).
     var lastError: String?
     /// Why the last refresh didn't reach the Cloud (shown quietly on the shelf, never as an alert).
@@ -70,7 +72,7 @@ final class LibraryStore {
     func refresh() async {
         guard await sync.account != nil else { return }
         isRefreshing = true
-        defer { isRefreshing = false }
+        defer { isRefreshing = false; hasRefreshed = true }
         do {
             // One request per page of books: each book already carries its position.
             let cloudBooks = try await sync.library()

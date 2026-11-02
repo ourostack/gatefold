@@ -1,6 +1,7 @@
 import GatefoldCore
 import ReadiumShared
 import SwiftUI
+import WebKit
 
 @main
 struct GatefoldApp: App {
@@ -12,6 +13,7 @@ struct GatefoldApp: App {
             RootView()
                 .environment(app)
                 .task { await app.start() }
+                .task { WebWarmup.start() }
                 #if DEBUG
                 .task { LaunchMarkRenderer.renderIfAsked() }
                 #endif
@@ -34,6 +36,20 @@ struct GatefoldApp: App {
                 app.library.flushPushes()
             }
         }
+    }
+}
+
+/// Starts WebKit's page process while the shelf is up, so the first book opens on a warm engine
+/// instead of paying for the process launch behind the cover.
+@MainActor
+enum WebWarmup {
+    private static var view: WKWebView?
+
+    static func start() {
+        guard view == nil else { return }
+        let web = WKWebView(frame: CGRect(x: 0, y: 0, width: 10, height: 10))
+        web.loadHTMLString("<html><body style='font-family:serif'>Gatefold</body></html>", baseURL: nil)
+        view = web
     }
 }
 

@@ -63,6 +63,7 @@ final class ReaderModel {
     let cover: UIImage?
     /// The first page is on screen and legible.
     private(set) var pageReady = false
+    let openedAt = Date()
     /// Set once the reader has settled after a reflow (for UI tests): whether the anchor is on screen.
     private(set) var anchorCheck = "pending 0"
     private var anchorReady = false
@@ -177,6 +178,7 @@ final class ReaderModel {
     func load() async {
         let positions = (try? await publication.positionsByReadingOrder().get()) ?? []
         let count = positions.reduce(0) { $0 + $1.count }
+        readerLog.notice("open: positions after \(Date().timeIntervalSince(self.openedAt), privacy: .public) s; location \(self.page?.currentLocation != nil, privacy: .public)")
         var starts: [String: Double] = [:]
         for (i, link) in publication.readingOrder.enumerated() where i < positions.count {
             starts[link.url().removingFragment().string] = positions[i].first?.locations.totalProgression ?? 0
@@ -207,13 +209,16 @@ final class ReaderModel {
             readingOrder: readingOrderHrefs
         )
         mapper = await BookPositions.mapper(for: publication)
+        readerLog.notice("open: mapper after \(Date().timeIntervalSince(self.openedAt), privacy: .public) s; location \(self.page?.currentLocation != nil, privacy: .public)")
         chapterMap = ChapterMap(chapters: toc.filter { $0.level == 0 }.map { .init(title: $0.title, start: $0.progression) }, positionCount: max(1, count))
 
         // The first page can take seconds to lay out on a cold web view; nothing below means anything
         // until the navigator reports where it is.
         await waitForLocation()
+        readerLog.notice("open: location after \(Date().timeIntervalSince(self.openedAt), privacy: .public) s")
         if LaunchOptions.goTo == nil, let initialLocator { await settle(on: initialLocator, move: moves) }
-        markReady()
+        // A test's launch jump shows its page once, after the jump, not the book's start first.
+        if LaunchOptions.goTo == nil { markReady() }
         if let goTo = LaunchOptions.goTo, let locator = await publication.locate(progression: goTo) {
             hasMoved = true
             moves += 1
@@ -239,12 +244,14 @@ final class ReaderModel {
     /// The first page has painted: the cover placeholder cross-fades to it.
     private func markReady() {
         guard !pageReady, page?.currentLocation != nil else { return }
+        readerLog.notice("first page ready after \(Date().timeIntervalSince(self.openedAt), privacy: .public) s")
         withAnimation(.easeOut(duration: 0.3)) { pageReady = true }
     }
 
     /// The cover placeholder's own timeout: a page that never reports in still shows.
     func forceReady() {
         guard !pageReady else { return }
+        readerLog.notice("first page forced ready after \(Date().timeIntervalSince(self.openedAt), privacy: .public) s")
         withAnimation(.easeOut(duration: 0.3)) { pageReady = true }
     }
 
@@ -279,6 +286,7 @@ final class ReaderModel {
         guard !isClosed else { return }
         // A place the Cloud only has as a whole percent compares as one: our own 30.1% reads back as 31%.
         let percentOnly = target.locator == nil
+        readerLog.notice("remote check: remote \(target.totalProgression, privacy: .public) here \(self.totalProgression, privacy: .public)")
         guard JumpSuggestion.isAhead(remote: target.totalProgression, percentOnly: percentOnly, local: totalProgression) else { return }
         let aim = landingTarget(remote, at: target.totalProgression)
         // First time this book opens here: there's no place of ours to protect, so just open where
@@ -543,6 +551,9 @@ final class ReaderModel {
     func locationDidChange(_ locator: Locator, duringTurn: Bool = false) async {
         guard !isClosed else { return }
         location = locator
+        // The navigator opens on the saved place, so its first report is a page worth showing: don't
+        // keep the cover up while the rest of the book is indexed.
+        if !pageReady, LaunchOptions.goTo == nil { markReady() }
         if !duringTurn, hasMoved, isPastStory(locator) { reachedEnd() }
         // A landing records its place once it has settled; the steps on the way are not places.
         guard !landing else { return }

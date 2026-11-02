@@ -205,8 +205,8 @@ public enum ArrivalGreeting {
 /// "Finished · 11 days, 9 sessions".
 public enum FinishLine {
     public static func text(started: Date?, finished: Date, sessions: Int, calendar: Calendar = .current) -> String {
-        guard let started else { return "Finished" }
-        if sessions <= 1 { return "Finished · in one sitting" }
+        guard let started else { return "Every last page, read" }
+        if sessions <= 1 { return "Devoured in one sitting" }
         let days = (calendar.dateComponents([.day], from: calendar.startOfDay(for: started), to: calendar.startOfDay(for: finished)).day ?? 0) + 1
         let span = days <= 1 ? "in a day" : "\(days) days"
         return "Finished · \(span), \(sessions) sessions"

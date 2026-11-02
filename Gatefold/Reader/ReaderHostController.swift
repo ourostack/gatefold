@@ -40,8 +40,10 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             config: .init(
                 preferences: preferences,
                 contentInset: [.compact: (top: 28, bottom: 28), .regular: (top: 44, bottom: 44)],
-                preloadPreviousPositionCount: 2,
-                preloadNextPositionCount: 4,
+                // Readium reports the first place only once every preloaded neighbour has loaded too:
+                // 2 behind and 4 ahead held the cover up for six seconds. Neighbours load on demand.
+                preloadPreviousPositionCount: 0,
+                preloadNextPositionCount: 0,
                 decorationTemplates: HTMLDecorationTemplate.defaultTemplates().merging([.gatefoldSync: .gatefoldSync()]) { a, _ in a }
             )
         )
@@ -54,6 +56,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        if let model = weakModel { readerLog.notice("open: host loads after \(Date().timeIntervalSince(model.openedAt), privacy: .public) s") }
         view.clipsToBounds = true
         addChild(navigator)
         navigator.view.frame = view.bounds
@@ -222,6 +225,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
 
     func navigator(_ navigator: Navigator, locationDidChange locator: Locator) {
         guard let model = weakModel else { return }
+        if model.location == nil { readerLog.notice("open: navigator reports a place after \(Date().timeIntervalSince(model.openedAt), privacy: .public) s") }
         disablePanningIfNeeded()
         Task { await model.locationDidChange(locator, duringTurn: isTurning) }
     }
@@ -466,7 +470,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
 
     // MARK: Jumps
 
-    private var veil: UIImageView?
+    private var veil: UIView?
 
     /// Runs a jump with the old page left on screen, dimmed to 60 %, until the new page has painted;
     /// then the old page cross-fades away over 0.2 s (no blank page, no spinner). With `riffle`, a few
@@ -474,13 +478,21 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     func veiledJump(riffle: Bool, forward: Bool, _ body: () async -> Void) async {
         guard veil == nil, !isTurning, view.window != nil else { return await body() }
         let old = await renderedSnapshot(afterChange: false)
-        let cover = UIImageView(image: old)
-        cover.frame = navigator.view.frame
-        cover.backgroundColor = weakModel?.theme.uiBackground
+        // The old page, opaque, with a wash of paper over it: it reads as dimmed to 60 %, and nothing
+        // of the new page shows through until the cross-fade.
+        let cover = UIView(frame: navigator.view.frame)
         cover.isUserInteractionEnabled = false
+        let image = UIImageView(image: old)
+        image.frame = cover.bounds
+        image.backgroundColor = weakModel?.theme.uiBackground
+        let wash = UIView(frame: cover.bounds)
+        wash.backgroundColor = weakModel?.theme.uiBackground
+        wash.alpha = 0
+        cover.addSubview(image)
+        cover.addSubview(wash)
         view.insertSubview(cover, belowSubview: curlHost.view)
         veil = cover
-        let dim = UIViewPropertyAnimator(duration: 0.15, curve: .easeOut) { cover.alpha = 0.6 }
+        let dim = UIViewPropertyAnimator(duration: 0.15, curve: .easeOut) { wash.alpha = 0.4 }
         dim.startAnimation()
         await body()
         let fresh = await renderedSnapshot(afterChange: true)

@@ -168,9 +168,9 @@ struct FinishLineTests {
         let start = Date(timeIntervalSince1970: 1_800_000_000)
         let end = start.addingTimeInterval(10 * 86400 + 3600)
         #expect(FinishLine.text(started: start, finished: end, sessions: 9, calendar: cal) == "Finished · 11 days, 9 sessions")
-        #expect(FinishLine.text(started: start, finished: start.addingTimeInterval(1800), sessions: 1, calendar: cal) == "Finished · in one sitting")
+        #expect(FinishLine.text(started: start, finished: start.addingTimeInterval(1800), sessions: 1, calendar: cal) == "Devoured in one sitting")
         #expect(FinishLine.text(started: start, finished: start.addingTimeInterval(3600), sessions: 3, calendar: cal) == "Finished · in a day, 3 sessions")
-        #expect(FinishLine.text(started: nil, finished: start, sessions: 0, calendar: cal) == "Finished")
+        #expect(FinishLine.text(started: nil, finished: start, sessions: 0, calendar: cal) == "Every last page, read")
     }
 }
 
