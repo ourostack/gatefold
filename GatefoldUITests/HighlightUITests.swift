@@ -109,8 +109,10 @@ final class HighlightUITests: XCTestCase {
         sleep(1)
         shot("highlights-05-added")
 
-        // Its card says it was made here; Remove takes it away again.
-        page.coordinate(withNormalizedOffset: CGVector(dx: 0.45, dy: 0.78)).tap()
+        // Its card says it was made here; Remove takes it away again. Tap the box itself: the press
+        // picks the nearest word, which can start a little right of the press point.
+        let added = try XCTUnwrap(point("lowest"), "the new highlight is on screen: \(probe.value as? String ?? "")")
+        tap(at: added)
         let provenance = element("highlight.provenance")
         XCTAssertTrue(provenance.waitForExistence(timeout: 10), "tapping the new highlight opens its card")
         XCTAssertEqual(provenance.label, "Highlighted here · just now")

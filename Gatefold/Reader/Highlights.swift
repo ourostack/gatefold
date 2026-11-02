@@ -215,7 +215,7 @@ final class HighlightStore {
     }
 
     /// For UI tests: how many highlight boxes are on screen, and where (in window points) the first
-    /// one and the first note sit, so a test can tap them.
+    /// one, the first note and the lowest box sit, so a test can tap them.
     func measureSoon() {
         guard LaunchOptions.isUITest else { return }
         measure?.cancel()
@@ -228,7 +228,7 @@ final class HighlightStore {
                 guard let json = await Self.evaluate(Self.probeScript, in: web),
                       let probe = try? JSONDecoder().decode(Probe.self, from: Data(json.utf8)) else { continue }
                 drawn += probe.count
-                for (name, xy) in [("first", probe.first), ("note", probe.note)] {
+                for (name, xy) in [("first", probe.first), ("note", probe.note), ("lowest", probe.lowest)] {
                     guard let xy, xy.count == 2 else { continue }
                     let p = web.convert(CGPoint(x: xy[0], y: xy[1]), to: nil)
                     points.append("\(name)=\(Int(p.x)),\(Int(p.y))")
@@ -241,13 +241,14 @@ final class HighlightStore {
         }
     }
 
-    /// For UI tests: `first=x,y;note=x,y` in window points.
+    /// For UI tests: `first=x,y;note=x,y;lowest=x,y` in window points.
     private(set) var drawnPoints = ""
 
     private struct Probe: Decodable {
         var count: Int
         var first: [Double]?
         var note: [Double]?
+        var lowest: [Double]?
     }
 
     private static let probeScript = """
@@ -257,7 +258,8 @@ final class HighlightStore {
       const rects = (q) => Array.from(document.querySelectorAll(q)).map((e) => e.getBoundingClientRect()).filter(seen);
       const mid = (r) => (r ? [r.left + r.width / 2, r.top + r.height / 2] : null);
       const all = rects('.gf-hl');
-      return JSON.stringify({ count: all.length, first: mid(all[0]), note: mid(rects('.gf-note')[0]) });
+      const lowest = all.reduce((a, r) => (!a || r.top > a.top ? r : a), null);
+      return JSON.stringify({ count: all.length, first: mid(all[0]), note: mid(rects('.gf-note')[0]), lowest: mid(lowest) });
     })()
     """
 
