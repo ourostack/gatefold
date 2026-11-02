@@ -269,6 +269,8 @@ struct ContentsSheet: View {
                         .accessibilityIdentifier(current ? "contents.current" : "contents.entry.\(entry.id)")
                         .id(entry.id)
                     }
+                } else if tab == 2 {
+                    HighlightRows(model: model) { dismiss() }
                 } else if model.bookmarks.items.isEmpty {
                     ContentUnavailableView(
                         "No Bookmarks Yet",
@@ -311,9 +313,10 @@ struct ContentsSheet: View {
                     Picker("Show", selection: $tab) {
                         Text("Contents").tag(0)
                         Text("Bookmarks").tag(1)
+                        Text("Highlights").tag(2)
                     }
                     .pickerStyle(.segmented)
-                    .frame(width: 240)
+                    .frame(width: 320)
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") { dismiss() }

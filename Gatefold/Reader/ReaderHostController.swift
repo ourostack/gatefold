@@ -14,7 +14,7 @@ let readerLog = Logger(subsystem: "bot.ouro.gatefold", category: "reader")
 final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGestureRecognizerDelegate, ReaderPage {
     let navigator: EPUBNavigatorViewController
     var currentLocation: Locator? { navigator.currentLocation }
-    private weak var weakModel: ReaderModel?
+    private(set) weak var weakModel: ReaderModel?
     /// The reader outlives this controller in every path but a mid-turn close; callers in tasks guard `weakModel`.
     private var model: ReaderModel { weakModel! }
     private let curl = CurlModel()
@@ -39,6 +39,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             initialLocation: initialLocation,
             config: .init(
                 preferences: preferences,
+                editingActions: Self.highlightEditingActions,
                 contentInset: [.compact: (top: 28, bottom: 28), .regular: (top: 44, bottom: 44)],
                 // Readium shows and reports the first page only once every preloaded neighbour has loaded
                 // too: 2 behind and 4 ahead held the cover up for three to six seconds. Neighbours load on
@@ -46,6 +47,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
                 preloadPreviousPositionCount: 0,
                 preloadNextPositionCount: 0,
                 decorationTemplates: HTMLDecorationTemplate.defaultTemplates().merging([.gatefoldSync: .gatefoldSync()]) { a, _ in a }
+                    .merging(Self.highlightTemplates) { a, _ in a }
             )
         )
         super.init(nibName: nil, bundle: nil)
