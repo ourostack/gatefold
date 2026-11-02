@@ -120,6 +120,25 @@ struct ReaderLayoutTests {
     }
 }
 
+@Suite("With the controls up, no line sits under the title capsule")
+struct ChromeStepTests {
+    // The iPad: status bar 24, bar to 88; text starts at 52 on a 1180-point page lifted to 96 %.
+    @Test func theIPadPageStepsDownBelowTheBar() {
+        let step = PageSafeArea.chromeStep(textTop: 52, height: 1180, barBottom: 88, scale: 0.96)
+        let liftedTop = 590 + 0.96 * (52 - 590) + step
+        #expect(abs(liftedTop - (88 + PageSafeArea.chromeGap)) < 0.001)
+    }
+
+    // The Duo's text already starts below its bar: nothing moves.
+    @Test func aPageAlreadyClearDoesNotMove() {
+        #expect(PageSafeArea.chromeStep(textTop: 140, height: 873, barBottom: 88, scale: 0.96) == 0)
+    }
+
+    @Test func withoutTheLiftTheStepCoversTheWholeOverlap() {
+        #expect(PageSafeArea.chromeStep(textTop: 52, height: 1180, barBottom: 88, scale: 1) == 88 + PageSafeArea.chromeGap - 52)
+    }
+}
+
 @Suite struct PageSafeAreaTests {
     func layout(_ frame: CGRect) -> ReaderLayout {
         ReaderLayout(posture: .single, pageFrame: frame, gutter: nil, deck: nil, columns: .one, spineShadow: 0)

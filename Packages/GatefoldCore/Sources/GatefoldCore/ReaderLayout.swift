@@ -157,6 +157,17 @@ public enum PageSafeArea {
         return shifted(layout, by: needed - (page.minY + textTopInset))
     }
 
+    /// Room between the controls' top bar and the first line while the controls are up.
+    public static let chromeGap: CGFloat = 12
+
+    /// How far the page steps down while the controls are up, so its first line clears the top bar.
+    /// `scale` is the lift (the page shrinks about its centre), which moves a tall page's top only a little.
+    public static func chromeStep(textTop: CGFloat, height: CGFloat, barBottom: CGFloat, scale: CGFloat) -> CGFloat {
+        let centre = height / 2
+        let liftedTop = centre + scale * (textTop - centre)
+        return max(0, barBottom + chromeGap - liftedTop)
+    }
+
     /// The page moved down by `shift` points, keeping its foot.
     public static func shifted(_ layout: ReaderLayout, by shift: CGFloat) -> ReaderLayout {
         guard shift > 0 else { return layout }
