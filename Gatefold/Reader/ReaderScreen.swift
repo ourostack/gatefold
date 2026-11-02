@@ -145,6 +145,11 @@ struct ReaderScreen: View {
         }
         .ignoresSafeArea()
         .observingHinge($hinge)
+        .onChange(of: hinge) { old, new in
+            // The hinge has started to move: hold a picture of the page before a Duo moves the app
+            // to its other screen, so the unfold swings from the page he was reading.
+            if model.layout.posture != .spread, old != new { model.host?.holdPageForUnfold() }
+        }
         .preferredColorScheme(model.theme.colorScheme)
         .statusBarHidden(!model.chromeVisible || coverScreen)
         .persistentSystemOverlays(model.chromeVisible ? .automatic : .hidden)
@@ -400,6 +405,9 @@ struct ReaderScreen: View {
         let now = forced ?? .single
         let next = cycle[((cycle.firstIndex(of: now) ?? 0) + 1) % cycle.count]
         readerLog.notice("posture bell: \(now.rawValue, privacy: .public) → \(next.rawValue, privacy: .public)")
+        // A real hinge's first movement holds a picture of the page; the bell does the same, so the
+        // films go through that path.
+        if next == .spread { model.host?.holdPageForUnfold() }
         hinge = next == .tabletop ? .partiallyOpen(angleDegrees: 110) : .none
         forced = next
     }

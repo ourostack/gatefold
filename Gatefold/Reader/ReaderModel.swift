@@ -120,6 +120,10 @@ final class ReaderModel {
     private var anchorLocator: Locator?
     private var pendingReflowReason: ReflowReason?
     weak var host: ReaderHostController?
+    /// A picture of the page taken as the hinge started to move (`ReaderHostController.holdPageForUnfold`).
+    /// It lives here, not in the host, so it survives the app moving to the Duo's inner screen.
+    @ObservationIgnored var heldPicture: UIImage?
+    @ObservationIgnored var heldPage: HeldPage?
     private(set) var hostController: ReaderHostController?
     /// A scripted page for unit tests; the app always reads the host's.
     @ObservationIgnored private var injectedPage: (any ReaderPage)?

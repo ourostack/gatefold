@@ -1,3 +1,4 @@
+import Foundation
 import CoreGraphics
 
 /// The fold of a foldable display, as `GeometryProxy.reservedRegions(kind: .division, options: .includeInactive)`
@@ -166,5 +167,44 @@ public enum PageSafeArea {
             out.gutter = CGRect(x: gutter.minX, y: gutter.minY + shift, width: gutter.width, height: max(0, gutter.height - shift))
         }
         return out
+    }
+}
+
+/// A picture of the page taken when the hinge started to move, before the app changes screens.
+public struct HeldPage: Equatable, Sendable {
+    public var book: String
+    public var takenAt: Date
+    public init(book: String, takenAt: Date) {
+        self.book = book
+        self.takenAt = takenAt
+    }
+}
+
+/// Which picture of the old page the unfold swings from.
+public enum UnfoldCover: Equatable, Sendable {
+    /// The picture taken as the hinge moved: right whichever screen the reader is on now.
+    case held
+    /// A snapshot of the page as it is now, on this screen.
+    case live
+    /// Neither: a plain reflow, the spread simply appears.
+    case none
+
+    /// A hinge takes about a second to open; older pictures are of some other moment.
+    public static let heldFreshFor: TimeInterval = 5
+
+    public static func choose(held: HeldPage?, liveAvailable: Bool, book: String, now: Date) -> UnfoldCover {
+        if let held, held.book == book {
+            let age = now.timeIntervalSince(held.takenAt)
+            if age >= 0, age <= heldFreshFor { return .held }
+        }
+        return liveAvailable ? .live : .none
+    }
+
+    /// Where the held picture goes on the new page: full height, its own proportions, from the
+    /// leading edge (where the left page will be), never wider than the page.
+    public static func heldFrame(picture: CGSize, in page: CGRect) -> CGRect {
+        guard picture.width > 0, picture.height > 0 else { return page }
+        let width = min(page.width, page.height * picture.width / picture.height)
+        return CGRect(x: page.minX, y: page.minY, width: width, height: page.height)
     }
 }

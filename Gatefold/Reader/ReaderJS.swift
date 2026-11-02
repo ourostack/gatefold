@@ -146,9 +146,50 @@ enum ReaderJS {
           return 1;
         },
         removeVerso: function () {
+          let removed = 0;
           const old = document.getElementById("gatefold-verso");
-          if (old) { old.remove(); return 1; }
-          return 0;
+          if (old) { old.remove(); removed = 1; }
+          const pin = document.getElementById("gatefold-pin");
+          if (pin) { const parent = pin.parentNode; pin.remove(); if (parent) { parent.normalize(); } removed = 1; }
+          return removed;
+        },
+        // Starts a new column at `quote`, so on an unfold the reader's words open the left page instead
+        // of sitting halfway down it. Only when they would be more than two lines down. Returns 1 when
+        // a break went in.
+        pinToTop: function (quote) {
+          if (document.getElementById("gatefold-pin")) { return 0; }
+          const words = norm(quote).split(" ").slice(0, 8).map(function (w) { return w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); });
+          if (!words.length || !words[0]) { return null; }
+          const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+          const nodes = []; let text = "";
+          while (walker.nextNode()) { nodes.push([walker.currentNode, text.length]); text += walker.currentNode.data; }
+          const m = new RegExp(words.join("\\s+")).exec(text);
+          if (!m) { return null; }
+          for (const [node, start] of nodes) {
+            if (start + node.data.length <= m.index) { continue; }
+            const offset = m.index - start;
+            const range = document.createRange();
+            range.setStart(node, offset);
+            range.setEnd(node, Math.min(node.data.length, offset + 1));
+            const rect = range.getBoundingClientRect();
+            const w = window.innerWidth;
+            if (rect.left < 0 || rect.left >= w) { return 0; }
+            // The column's own first line, whatever the page's top margin (the folded Duo clears its camera).
+            const x0 = rect.left >= w / 2 ? w / 2 : 0;
+            const head = first(x0, x0 + w / 2);
+            if (!head) { return 0; }
+            const top = head.getBoundingClientRect().top;
+            const line = parseFloat(getComputedStyle(node.parentElement || document.body).lineHeight) || 24;
+            if (rect.top - top <= line * 2.2) { return 0; }
+            const rest = offset > 0 ? node.splitText(offset) : node;
+            const pin = document.createElement("span");
+            pin.id = "gatefold-pin";
+            pin.setAttribute("aria-hidden", "true");
+            pin.style.cssText = "display:block;height:0;margin:0;padding:0;break-before:column;-webkit-column-break-before:always;";
+            rest.parentNode.insertBefore(pin, rest);
+            return 1;
+          }
+          return null;
         },
         // All the text on screen, whitespace collapsed.
         visibleText: function () {
@@ -188,6 +229,11 @@ enum ReaderJS {
     }
 
     static let toggleVerso = "window.gatefold ? window.gatefold.toggleVerso() : null"
+
+    static func pinToTop(_ quote: String) -> String {
+        let q = (try? JSONEncoder().encode(quote)).map { String(decoding: $0, as: UTF8.self) } ?? "\"\""
+        return "window.gatefold ? window.gatefold.pinToTop(\(q)) : null"
+    }
     static let removeVerso = "window.gatefold ? window.gatefold.removeVerso() : null"
 
     static func setColumns(_ n: Int) -> String { "window.gatefoldColumns = \(n); true" }

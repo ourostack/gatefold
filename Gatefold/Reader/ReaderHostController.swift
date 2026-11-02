@@ -175,6 +175,10 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
                 cover.isUserInteractionEnabled = false
                 container.insertSubview(cover, aboveSubview: page)
                 reflowCover = cover
+            } else if reflowCover == nil, let container = page.superview, let held = heldCover(frame: page.frame) {
+                // The old page's view is gone (the app changed screens): the picture held as the hinge moved stands in.
+                container.insertSubview(held, aboveSubview: page)
+                reflowCover = held
             }
             if reflowCover != nil {
                 page.alpha = 0
@@ -240,10 +244,22 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         model.keeper.restoreDidComplete()
         model.reflowDidFinish(visible: after)
         disablePanningIfNeeded()
-        let cover = reflowCover
+        var cover = reflowCover
         reflowCover = nil
         if unfolding, columns == 2 {
             unfolding = false
+            // The swing starts from the page the reader was on, whichever screen it was drawn on.
+            let choice = UnfoldCover.choose(held: model.heldPage, liveAvailable: cover != nil, book: model.bookID, now: Date())
+            if choice == .held, cover?.tag != Self.heldTag, let container = navigator.view.superview,
+               let held = heldCover(frame: navigator.view.frame) {
+                container.insertSubview(held, aboveSubview: cover ?? navigator.view)
+                cover?.removeFromSuperview()
+                cover = held
+            }
+            if choice == .none { cover?.removeFromSuperview(); cover = nil }
+            model.heldPicture = nil
+            model.heldPage = nil
+            readerLog.notice("unfold: from \(choice == .held ? "the picture held as the hinge moved" : choice == .live ? "the live page" : "nothing (a plain reflow)", privacy: .public)")
             await swingOpen(cover: cover)
             return
         }
@@ -274,7 +290,29 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             stepped = true
             now = await side()
         }
-        guard now == 1 else { return stepped ? await visibleRange() : nil }
+        // Start a fresh column at the reader's words, so they open a page instead of sitting mid-way
+        // down it; the column count shifts, so find the words' spread again.
+        var pinned = false
+        if now == 0 || now == 1,
+           ((try? await navigator.evaluateJavaScript(ReaderJS.pinToTop(text)).get()) as? NSNumber)?.intValue == 1 {
+            pinned = true
+            try? await Task.sleep(for: .milliseconds(120))
+            guard current(), let locator = model.locator(for: anchor) else { return nil }
+            _ = await navigator.go(to: locator, options: .init(animated: false))
+            try? await Task.sleep(for: .milliseconds(160))
+            for _ in 0..<2 {
+                guard current() else { return nil }
+                switch await side() {
+                case 2: _ = await navigator.goForward(options: .init(animated: false))
+                case -1: _ = await navigator.goBackward(options: .init(animated: false))
+                default: break
+                }
+                try? await Task.sleep(for: .milliseconds(120))
+            }
+            now = await side()
+            readerLog.notice("spread: a new column starts at the sentence; it is on side \(now.map(String.init) ?? "nil", privacy: .public)")
+        }
+        guard now == 1 else { return stepped || pinned ? await visibleRange() : nil }
         _ = await navigator.evaluateJavaScript(ReaderJS.toggleVerso)
         try? await Task.sleep(for: .milliseconds(120))
         guard current(), let locator = model.locator(for: anchor) else { return nil }
@@ -293,6 +331,37 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         now = await side()
         readerLog.notice("spread: sentence on the \(now == 0 ? "left" : now == 1 ? "right" : "other", privacy: .public) page after the verso")
         return await visibleRange()
+    }
+
+    private static let heldTag = 0x6A7E
+    private var holding = false
+
+    /// Takes a picture of the page as it is now, for the unfold to swing from. Called when the hinge
+    /// starts to move, before a Duo moves the app from its cover screen to the inner screen.
+    func holdPageForUnfold() {
+        guard columns == 1, !holding, let model = weakModel, model.pageReady, navigator.view.window != nil else { return }
+        holding = true
+        Task {
+            defer { holding = false }
+            let picture = await snapshot()
+            model.heldPicture = picture
+            model.heldPage = HeldPage(book: model.bookID, takenAt: Date())
+            readerLog.notice("unfold: held a picture of the page (\(picture.size.width, privacy: .public)x\(picture.size.height, privacy: .public))")
+        }
+    }
+
+    /// The held picture over paper, set where the left page will be; nil when none is fresh.
+    private func heldCover(frame: CGRect) -> UIView? {
+        guard let model = weakModel, let picture = model.heldPicture,
+              UnfoldCover.choose(held: model.heldPage, liveAvailable: false, book: model.bookID, now: Date()) == .held else { return nil }
+        let cover = UIView(frame: frame)
+        cover.backgroundColor = model.theme.uiBackground
+        cover.isUserInteractionEnabled = false
+        cover.tag = Self.heldTag
+        let image = UIImageView(image: picture)
+        image.frame = UnfoldCover.heldFrame(picture: picture.size, in: CGRect(origin: .zero, size: frame.size))
+        cover.addSubview(image)
+        return cover
     }
 
     /// The unfold: the spread has laid out behind the old page. The left page takes the old page's
@@ -333,8 +402,10 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         right.layer.addSublayer(shade)
         left.alpha = 0
         if let cover {
+            // The left page comes up through the old one; the leaf rises over it from the spine, so the
+            // old page giving way and the leaf opening read as one gesture, with no bare half between.
             container.insertSubview(left, belowSubview: cover)
-            container.insertSubview(right, belowSubview: cover)
+            container.insertSubview(right, aboveSubview: cover)
         } else {
             container.insertSubview(left, aboveSubview: page)
             container.insertSubview(right, aboveSubview: page)
@@ -368,9 +439,9 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             fade.timingFunction = CAMediaTimingFunction(name: .easeIn)
             fade.fillMode = .both
             fade.isRemovedOnCompletion = false
-            // Once the old page is gone and the left page is down, never over either.
+            // Edge-on at first, the leaf rises as the old page starts to go.
             right.isHidden = true
-            try? await Task.sleep(for: .milliseconds(220))
+            try? await Task.sleep(for: .milliseconds(60))
             right.isHidden = false
             fade.beginTime = CACurrentMediaTime()
             shade.add(fade, forKey: "lift")
@@ -770,12 +841,19 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         curl.top = top
         curl.beneath = beneath
         let y = size.height * (0.92 - CGFloat(index % 5) * 0.06)
-        curl.corner = CGPoint(x: forward ? size.width : 0, y: size.height)
-        curl.finger = CGPoint(x: forward ? size.width : 0, y: y)
+        let corner = CGPoint(x: forward ? size.width : 0, y: size.height)
+        let leafWidth = curl.isSpread ? size.width / 2 : size.width
+        curl.corner = corner
+        // The leaf lifts from its corner on a diagonal, then turns. Starting with the finger straight
+        // above the corner put the fold line flat across the page: a full-width grey band over a line.
+        curl.finger = corner
         curl.isActive = true
         await nextFrame()
-        withAnimation(.easeIn(duration: duration)) { curl.finger = turnedTarget() }
-        try? await Task.sleep(for: .seconds(duration))
+        let lift = CGPoint(x: forward ? corner.x - leafWidth * 0.45 : corner.x + leafWidth * 0.45, y: y)
+        withAnimation(.easeIn(duration: duration * 0.4)) { curl.finger = lift }
+        try? await Task.sleep(for: .seconds(duration * 0.4))
+        withAnimation(.linear(duration: duration * 0.6)) { curl.finger = turnedTarget() }
+        try? await Task.sleep(for: .seconds(duration * 0.6))
     }
 
     /// Underlines the other device's words with the ribbon colour: drawn in over 0.6 s, gone after 2.
