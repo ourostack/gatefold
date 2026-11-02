@@ -7,6 +7,8 @@ struct OutboxItem: Codable, Sendable, Hashable {
         case createAnnotation(CloudAnnotation)
         case updateAnnotation(CloudAnnotation)
         case deleteAnnotation(uuid: String)
+        /// `read_status` by the book's file name (`POST /books/status/{name}/{status}`, verified live).
+        case readStatus(name: String, status: String)
     }
 
     var id = UUID()
@@ -29,6 +31,7 @@ struct OutboxItem: Codable, Sendable, Hashable {
         case let .createAnnotation(a): "create|\(fastHash)|\(a.dedupeKey)"
         case let .updateAnnotation(a): "note|\(a.uuid ?? "")"
         case let .deleteAnnotation(uuid): "note|\(uuid)"
+        case .readStatus: "status|\(fastHash)"
         }
     }
 }

@@ -18,7 +18,9 @@ struct TOCEntry: Identifiable, Hashable {
 @MainActor @Observable
 final class ReaderModel {
     let bookID: String
+    /// The title a reader would say ("Frankenstein"); `fullTitle` keeps the subtitle for VoiceOver.
     let title: String
+    let fullTitle: String
     nonisolated(unsafe) let publication: Publication
     private let app: AppModel
 
@@ -35,6 +37,8 @@ final class ReaderModel {
     /// Turns places into PocketBook CFIs and back, from this book's own spine and XHTML.
     private var mapper: PositionMapper?
     private(set) var contents = ContentsIndex(entries: [], readingOrder: [])
+    /// Where back matter (a Project Gutenberg licence) begins; turning past it closes the book.
+    private(set) var storyEnd: ContentsIndex.Entry?
     private var readingOrderHrefs: [String] = []
     private var resourceStarts: [Double] = []
     /// The contents anchor above the first line on screen (from the web view).
@@ -81,7 +85,8 @@ final class ReaderModel {
 
     init(book: LibraryBook, publication: Publication, app: AppModel, page: (any ReaderPage)? = nil) {
         self.bookID = book.id
-        self.title = publication.metadata.title ?? book.title
+        self.fullTitle = publication.metadata.title ?? book.title
+        self.title = BookTitle.display(fullTitle)
         self.publication = publication
         self.app = app
         self.bookmarks = book.bookmarks
@@ -124,6 +129,19 @@ final class ReaderModel {
         }
         return heading ?? chapterMap.chapter(at: totalProgression)?.title ?? location?.title
     }
+    /// The contents entry the reader is in: the one whose anchor is above the first line on screen,
+    /// else the file's own entry, else the chapter by progression.
+    var currentTOCEntryID: Int? {
+        if let href = location?.href.string {
+            let here = toc.filter { ContentsIndex.sameResource($0.link.url().removingFragment().string, href) }
+            if let fragment = contentsFragment, let hit = here.last(where: { $0.link.url().fragment == fragment }) { return hit.id }
+            if let whole = here.first(where: { $0.link.url().fragment == nil }) { return whole.id }
+        }
+        let level0 = toc.filter { $0.level == 0 }
+        guard let i = chapterMap.chapterIndex(at: totalProgression), i < level0.count else { return nil }
+        return level0[i].id
+    }
+
     var pageLabel: String {
         let page = chapterMap.page(at: totalProgression)
         return "\(page) of \(chapterMap.positionCount)"
@@ -156,15 +174,23 @@ final class ReaderModel {
             }
         }
         walk(tocLinks, level: 0)
-        toc = entries
+        let raw = entries.map { ContentsIndex.Entry(title: $0.title, href: $0.link.url().removingFragment().string, fragment: $0.link.url().fragment, level: $0.level) }
+        // Contents start at chapter one, with human titles; the licence marks where the story ends.
+        let kept = ContentsCleaner.clean(raw, bookTitle: fullTitle)
+        toc = kept.enumerated().map { i, k in
+            let e = entries[k.index]
+            return TOCEntry(id: i, title: k.title, level: e.level, link: e.link, progression: e.progression)
+        }
+        if toc.isEmpty { toc = entries }
+        storyEnd = BookEnd.backMatter(in: raw)
         readingOrderHrefs = publication.readingOrder.map { $0.url().removingFragment().string }
         resourceStarts = readingOrderHrefs.map { starts[$0] ?? 0 }
         contents = ContentsIndex(
-            entries: entries.map { .init(title: $0.title, href: $0.link.url().removingFragment().string, fragment: $0.link.url().fragment, level: $0.level) },
+            entries: toc.map { .init(title: $0.title, href: $0.link.url().removingFragment().string, fragment: $0.link.url().fragment, level: $0.level) },
             readingOrder: readingOrderHrefs
         )
         mapper = await BookPositions.mapper(for: publication)
-        chapterMap = ChapterMap(chapters: entries.filter { $0.level == 0 }.map { .init(title: $0.title, start: $0.progression) }, positionCount: max(1, count))
+        chapterMap = ChapterMap(chapters: toc.filter { $0.level == 0 }.map { .init(title: $0.title, start: $0.progression) }, positionCount: max(1, count))
 
         // The first page can take seconds to lay out on a cold web view; nothing below means anything
         // until the navigator reports where it is.

@@ -206,6 +206,31 @@ struct PositionSyncTests {
         #expect(await cloud.pendingChanges() == 0)
     }
 
+    @Test func marksABookReadByItsFileName() async throws {
+        let h = Harness()
+        await h.transport.on("POST", "/books/status/", .ok)
+        let cloud = h.cloud()
+        var book = CloudBook(fastHash: frankenstein)
+        book.name = "Frankenstein's Monster.epub"
+        await cloud.markRead(book)
+        await cloud.markRead(book)
+        await cloud.flushOutbox()
+        let posts = await h.transport.requests("POST", "/books/status/")
+        #expect(posts.count == 1, "two marks coalesce")
+        #expect(posts.first?.url.absoluteString.hasSuffix("/api/v1.0/books/status/Frankenstein%27s%20Monster.epub/read") == true)
+        #expect(await cloud.pendingChanges() == 0)
+    }
+
+    @Test func aBookAlreadyReadIsNotRetried() async throws {
+        let h = Harness()
+        await h.transport.on("POST", "/books/status/", .json("{}", status: 500))
+        let cloud = h.cloud()
+        await cloud.markRead(CloudBook(fastHash: frankenstein))
+        await cloud.flushOutbox()
+        #expect(await h.transport.requests("POST", "/books/status/").count == 1)
+        #expect(await cloud.pendingChanges() == 0)
+    }
+
     @Test func coalescesRapidPageTurnsIntoOneWrite() async throws {
         let h = Harness()
         await h.transport.on("GET", "/fileops/info", remote("2026-10-31T21:00:00Z"))

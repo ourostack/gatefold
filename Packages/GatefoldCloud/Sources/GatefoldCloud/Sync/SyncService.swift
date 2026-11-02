@@ -25,6 +25,8 @@ public protocol SyncService: Sendable {
     // Reading position
     func remotePosition(for book: CloudBook) async throws -> ReadingPosition?
     func push(_ position: ReadingPosition, for book: CloudBook) async
+    /// Marks the book finished in the Cloud (`read_status` "read"). Queued like any write.
+    func markRead(_ book: CloudBook) async
 
     // Annotations
     /// Server copies with any queued local edits applied on top.

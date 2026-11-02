@@ -1,3 +1,4 @@
+import GatefoldCore
 import Foundation
 
 /// JavaScript run in the book's web view. Readium's own first-visible locator returns a whole block
@@ -145,14 +146,7 @@ enum ReaderJS {
     static func setColumns(_ n: Int) -> String { "window.gatefoldColumns = \(n); true" }
 
     /// "CHAPTER XIX." reads as "Chapter XIX": shouting headings are softened, numerals kept.
-    static func tidyHeading(_ s: String) -> String {
-        var t = normalize(s)
-        while let last = t.last, ".:".contains(last) { t.removeLast() }
-        guard t == t.uppercased(), t != t.lowercased() else { return t }
-        return t.split(separator: " ").map { word in
-            word.allSatisfy { "IVXLCDM".contains($0) } ? String(word) : word.capitalized
-        }.joined(separator: " ")
-    }
+    static func tidyHeading(_ s: String) -> String { Headings.tidy(s) }
 
     static func normalize(_ s: String) -> String {
         s.split(whereSeparator: \.isWhitespace).joined(separator: " ")

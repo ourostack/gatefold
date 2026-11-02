@@ -160,6 +160,13 @@ public actor FakeSyncService: SyncService {
         positions[book.id] = position
     }
 
+    /// Books marked read (tests and the end leaf's demo).
+    public private(set) var markedRead: Set<String> = []
+
+    public func markRead(_ book: CloudBook) async {
+        markedRead.insert(book.id)
+    }
+
     public func annotations(for book: CloudBook) async throws -> [CloudAnnotation] {
         annotationsByBook[book.id] ?? []
     }

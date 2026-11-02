@@ -62,7 +62,12 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
 
         // Any touch on the page means the next location is the reader's own (slide and scroll swipes
         // belong to Readium, so they're noticed here rather than in the pan handler).
-        let noticer = TouchNoticer { [weak self] in self?.weakModel?.noteInteraction() }
+        let noticer = TouchNoticer { [weak self] in
+            // Web views loaded since the last location change bring their own scroll pans; switch them
+            // off before this touch can drag the page sideways under the curl.
+            self?.disablePanningIfNeeded()
+            self?.weakModel?.noteInteraction()
+        }
         noticer.delegate = self
         navigator.view.addGestureRecognizer(noticer)
 
@@ -72,6 +77,9 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         curlHost.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         curlHost.view.isUserInteractionEnabled = false
         curlHost.sizingOptions = []
+        // The overlay must sit exactly over the page. With safe-area insets (the folded Duo's camera
+        // column) SwiftUI centred it in the narrower safe area, so the lifted page drew shifted.
+        curlHost.safeAreaRegions = []
         view.addSubview(curlHost.view)
         curlHost.didMove(toParent: self)
 
@@ -281,12 +289,15 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         guard !isTurning, weakModel != nil else { return false }
         isTurning = true
         let size = navigator.view.bounds.size
-        let top = snapshot()
+        // The page on screen now; a black or bare capture (seen in spreads) is retried.
+        let top = await renderedSnapshot(afterChange: false)
         curl.size = size
         curl.style = model.pageTurn == .fade ? .fade : .curl
         curl.isSpread = model.layout.posture == .spread
         curl.mirrored = !forward
         curl.paper = model.theme.background
+        curl.ink = model.theme.text
+        curl.isDark = model.theme.palette.isDark
         curl.top = top
         curl.beneath = nil
         curl.fade = 0
@@ -307,8 +318,17 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             UIImpactFeedbackGenerator(style: .soft).impactOccurred(intensity: 0.4)
             return false
         }
-        try? await Task.sleep(for: .milliseconds(140))
-        curl.beneath = snapshot()
+        // Wait until the destination has painted and stopped changing (a spread lays out two
+        // columns; caught halfway it ghosts).
+        curl.beneath = await renderedSnapshot(afterChange: true)
+        #if DEBUG
+        if ProcessInfo.processInfo.environment["GATEFOLD_DUMP_SNAPSHOTS"] != nil || UserDefaults.standard.bool(forKey: "GatefoldDumpSnapshots") {
+            let dir = URL.temporaryDirectory
+            let stamp = Int(Date().timeIntervalSince1970 * 1000)
+            try? top.pngData()?.write(to: dir.appending(path: "snap-\(stamp)-top.png"))
+            try? curl.beneath?.pngData()?.write(to: dir.appending(path: "snap-\(stamp)-beneath.png"))
+        }
+        #endif
         return true
     }
 
@@ -409,7 +429,12 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     }
 
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
-        true
+        // A curl owns the swipe: a scroll view moving the page at the same time shifts what lifts.
+        if gestureRecognizer is UIPanGestureRecognizer, other.view is UIScrollView,
+           let model = weakModel, model.pageTurn == .curl || model.pageTurn == .fade {
+            return false
+        }
+        return true
     }
 
     /// In curl and fade modes the page must not also slide under the finger.
@@ -437,22 +462,104 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
 
     // MARK: Helpers
 
-    private func snapshot() -> UIImage {
-        let bounds = navigator.view.bounds
+    /// The page as the web views draw it. `drawHierarchy` misplaces a paginated web view's content
+    /// (it drew the page shifted by about a column, with the next one peeking in, and a spread
+    /// black), so each visible web view is asked for its own snapshot and laid out where it sits.
+    func snapshot() async -> UIImage {
+        let host = navigator.view!
+        let bounds = host.bounds
+        var webs: [(WKWebView, CGRect)] = []
+        func walk(_ v: UIView) {
+            if let w = v as? WKWebView {
+                let frame = w.convert(w.bounds, to: host)
+                if !w.isHidden, w.alpha > 0.01, frame.intersects(bounds) { webs.append((w, frame)) }
+                return
+            }
+            v.subviews.forEach(walk)
+        }
+        walk(host)
+        var parts: [(UIImage, CGRect)] = []
+        for (web, frame) in webs {
+            let config = WKSnapshotConfiguration()
+            config.afterScreenUpdates = false
+            if let image = try? await web.takeSnapshot(configuration: config) { parts.append((image, frame)) }
+        }
         let paper = weakModel?.theme.uiBackground ?? .systemBackground
         let format = UIGraphicsImageRendererFormat.preferred()
         format.opaque = true
         return UIGraphicsImageRenderer(bounds: bounds, format: format).image { ctx in
             paper.setFill()
             ctx.fill(bounds)
-            navigator.view.drawHierarchy(in: bounds, afterScreenUpdates: true)
+            if parts.isEmpty {
+                host.drawHierarchy(in: bounds, afterScreenUpdates: false)
+            } else {
+                for (image, frame) in parts { image.draw(in: frame) }
+            }
         }
+    }
+
+    /// A snapshot that shows the page: not black, not bare paper, and (after a change) the same
+    /// twice running, so the layout has settled. Gives up after about 0.7 s with the best it has.
+    func renderedSnapshot(afterChange: Bool) async -> UIImage {
+        let paper = PageSignature.rgb(weakModel?.theme.uiBackground ?? .white)
+        var last: (UIImage, PageSignature)?
+        for attempt in 0..<14 {
+            if afterChange || attempt > 0 { try? await Task.sleep(for: .milliseconds(attempt == 0 ? 60 : 50)) }
+            let image = await snapshot()
+            guard let signature = PageSignature(image) else { return image }
+            let usable = !signature.isBlack(paper: paper) && !signature.isBare(paper: paper)
+            if usable, !afterChange { return image }
+            if usable, let (_, previous) = last, previous.matches(signature) { return image }
+            if usable { last = (image, signature) }
+            if !usable { readerLog.notice("snapshot \(attempt) unusable: black=\(signature.isBlack(paper: paper)) bare=\(signature.isBare(paper: paper))") }
+        }
+        if let last { return last.0 }
+        return await snapshot()
     }
 
     private func nextFrame() async {
         await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
             DispatchQueue.main.async { c.resume() }
         }
+    }
+}
+
+/// A 24×32 greyscale thumbnail of a snapshot, to tell a painted page from a black or bare one and
+/// a settled page from one still laying out.
+struct PageSignature {
+    var pixels: [UInt8]
+
+    init?(_ image: UIImage) {
+        guard let cg = image.cgImage else { return nil }
+        let w = 24, h = 32
+        var buffer = [UInt8](repeating: 0, count: w * h)
+        guard let ctx = CGContext(data: &buffer, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w,
+                                  space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGImageAlphaInfo.none.rawValue) else { return nil }
+        ctx.interpolationQuality = .medium
+        ctx.draw(cg, in: CGRect(x: 0, y: 0, width: w, height: h))
+        pixels = buffer
+    }
+
+    static func rgb(_ color: UIColor) -> UInt8 {
+        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        color.getRed(&r, green: &g, blue: &b, alpha: &a)
+        return UInt8(max(0, min(255, (0.299 * r + 0.587 * g + 0.114 * b) * 255)))
+    }
+
+    var mean: Double { Double(pixels.reduce(0) { $0 + Int($1) }) / Double(pixels.count) }
+
+    /// Nearly black on a theme whose paper is not.
+    func isBlack(paper: UInt8) -> Bool { paper > 40 && mean < 12 }
+
+    /// Paper with nothing on it: no pixel strays more than a little from the paper's grey.
+    func isBare(paper: UInt8) -> Bool {
+        pixels.filter { abs(Int($0) - Int(paper)) > 10 }.count < 3
+    }
+
+    func matches(_ other: PageSignature) -> Bool {
+        guard other.pixels.count == pixels.count else { return false }
+        let diff = zip(pixels, other.pixels).reduce(0) { $0 + abs(Int($1.0) - Int($1.1)) }
+        return Double(diff) / Double(pixels.count) < 1.5
     }
 }
 

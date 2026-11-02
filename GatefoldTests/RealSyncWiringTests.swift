@@ -30,6 +30,8 @@ actor StubSync: SyncService {
         return remote
     }
     func push(_ position: ReadingPosition, for book: CloudBook) async { pushed.append((position, book.fastHash)) }
+    private(set) var markedRead: [String] = []
+    func markRead(_ book: CloudBook) async { markedRead.append(book.fastHash) }
     func annotations(for book: CloudBook) async throws -> [CloudAnnotation] { [] }
     func save(_ annotation: CloudAnnotation, for book: CloudBook) async {}
     func deleteAnnotation(_ annotation: CloudAnnotation, for book: CloudBook) async {}
