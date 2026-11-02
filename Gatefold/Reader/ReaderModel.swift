@@ -256,10 +256,18 @@ final class ReaderModel {
 
     /// The first page has painted: the cover placeholder cross-fades to it.
     private func markReady() {
-        guard !pageReady, !awaitingLanding, page?.currentLocation != nil else { return }
-        readerLog.notice("first page ready after \(Date().timeIntervalSince(self.openedAt), privacy: .public) s")
-        withAnimation(.easeOut(duration: 0.3)) { pageReady = true }
+        guard !pageReady, !awaitingLanding, !revealing, page?.currentLocation != nil else { return }
+        revealing = true
+        Task {
+            // The cover stays until Readium has finished loading the page it reports (its spinner).
+            for _ in 0..<80 where host?.isLoadingPage == true { try? await Task.sleep(for: .milliseconds(100)) }
+            revealing = false
+            guard !pageReady else { return }
+            readerLog.notice("first page ready after \(Date().timeIntervalSince(self.openedAt), privacy: .public) s")
+            withAnimation(.easeOut(duration: 0.3)) { pageReady = true }
+        }
     }
+    private var revealing = false
 
     /// The cover placeholder's own timeout: a page that never reports in still shows.
     func forceReady() {
@@ -726,6 +734,14 @@ final class ReaderModel {
         moves += 1
         rememberPlace()
         await veiled { await self.page?.go(to: entry.link) }
+        await captureAnchor()
+    }
+
+    func follow(_ link: ReadiumShared.Link) async {
+        hasMoved = true
+        moves += 1
+        rememberPlace()
+        await veiled { await self.page?.go(to: link) }
         await captureAnchor()
     }
 

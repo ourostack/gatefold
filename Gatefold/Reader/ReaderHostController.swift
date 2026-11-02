@@ -224,6 +224,14 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
 
     // MARK: EPUBNavigatorDelegate
 
+    /// A link in the book (a contents page, a cross-reference) jumps like the contents sheet does:
+    /// the old page stays, dimmed, until the new one has loaded, and Back returns.
+    func navigator(_ navigator: VisualNavigator, shouldNavigateToLink link: ReadiumShared.Link) -> Bool {
+        guard let model = weakModel else { return true }
+        Task { await model.follow(link) }
+        return false
+    }
+
     func navigator(_ navigator: Navigator, locationDidChange locator: Locator) {
         guard let model = weakModel else { return }
         if model.location == nil { readerLog.notice("open: navigator reports a place after \(Date().timeIntervalSince(model.openedAt), privacy: .public) s") }
@@ -558,6 +566,19 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     /// The page as the web views draw it. `drawHierarchy` misplaces a paginated web view's content
     /// (it drew the page shifted by about a column, with the next one peeking in, and a spread
     /// black), so each visible web view is asked for its own snapshot and laid out where it sits.
+    /// Readium's own loading spinner is showing: the page in view hasn't loaded yet.
+    var isLoadingPage: Bool {
+        let host = navigator.view!
+        func spinning(_ v: UIView) -> Bool {
+            guard !v.isHidden, v.alpha > 0.01 else { return false }
+            if let a = v as? UIActivityIndicatorView {
+                return a.isAnimating && a.convert(a.bounds, to: host).intersects(host.bounds)
+            }
+            return v.subviews.contains(where: spinning)
+        }
+        return spinning(host)
+    }
+
     func snapshot() async -> UIImage {
         let host = navigator.view!
         let bounds = host.bounds
@@ -596,9 +617,12 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     func renderedSnapshot(afterChange: Bool) async -> UIImage {
         let paper = PageSignature.rgb(weakModel?.theme.uiBackground ?? .white)
         var last: (UIImage, PageSignature)?
-        // Up to two seconds: a turn into a chapter that hasn't loaded yet holds the old page until it has.
-        for attempt in 0..<40 {
+        // A turn into a chapter still loading holds the old page until it has: as long as Readium's
+        // spinner is up (up to 8 s), else up to 2 s for a page that is still bare.
+        for attempt in 0..<160 {
             if afterChange || attempt > 0 { try? await Task.sleep(for: .milliseconds(attempt == 0 ? 60 : 50)) }
+            if isLoadingPage { last = nil; continue }
+            if attempt >= 40 { break }
             let image = await snapshot()
             guard let signature = PageSignature(image) else { return image }
             let usable = !signature.isBlack(paper: paper) && !signature.isBare(paper: paper)
