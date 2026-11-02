@@ -86,3 +86,29 @@ public enum BookTitle {
         return head.count >= 3 ? head : trimmed
     }
 }
+
+/// Where a `#fragment` starts inside its file. Readium spaces a book's positions by the bytes of each
+/// file, so a chapter that begins partway through a file begins that fraction of the way through the
+/// file's pages; several chapters sharing one file no longer share its first page.
+public enum FragmentPlace {
+    /// The fraction (0..<1) of `data` before the element whose `id` (or old-style `name`) is `fragment`.
+    public static func fraction(of fragment: String, in data: Data) -> Double? {
+        guard !fragment.isEmpty, !data.isEmpty else { return nil }
+        for attribute in ["id", "name"] {
+            for quote in ["\"", "'"] {
+                guard let needle = "\(attribute)=\(quote)\(fragment)\(quote)".data(using: .utf8),
+                      let found = data.range(of: needle) else { continue }
+                // Back to the start of the element, so a heading's own tag counts as the chapter's.
+                var start = found.lowerBound
+                while start > data.startIndex, data[start] != UInt8(ascii: "<") { start -= 1 }
+                return Double(start - data.startIndex) / Double(data.count)
+            }
+        }
+        return nil
+    }
+
+    /// The book's progression where the fragment starts, given its file's span of the book.
+    public static func progression(fileStart: Double, fileEnd: Double, fraction: Double) -> Double {
+        fileStart + max(0, min(1, fraction)) * max(0, fileEnd - fileStart)
+    }
+}

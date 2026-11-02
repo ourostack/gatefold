@@ -33,3 +33,18 @@ public enum PassageText {
         return String(rest.prefix(120))
     }
 }
+
+/// A quoted passage cut at a character count can stop inside a word ("to compli"); a mark on the page
+/// ends where the word does, so the cut moves forward into the text that follows.
+public enum WordEdge {
+    /// `highlight` extended to the end of its last word, taking the letters from `after`; returns the new
+    /// highlight and what is left of `after`.
+    public static func complete(highlight: String, after: String?) -> (highlight: String, after: String?) {
+        guard let after, let last = highlight.last, last.isLetter || last.isNumber || last == "'" || last == "’" else {
+            return (highlight, after)
+        }
+        let tail = after.prefix { $0.isLetter || $0.isNumber || $0 == "'" || $0 == "’" }
+        guard !tail.isEmpty else { return (highlight, after) }
+        return (highlight + tail, String(after.dropFirst(tail.count)))
+    }
+}

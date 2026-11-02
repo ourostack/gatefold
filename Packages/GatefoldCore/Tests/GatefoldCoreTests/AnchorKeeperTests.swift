@@ -110,6 +110,22 @@ struct AnchorKeeperTests {
         #expect(action == .none)
     }
 
+    @Test func theAnchorHoldsUntilTheRestoreCompletesEvenWithoutAJump() {
+        // An unfold can still move the spread (to keep the sentence on the left page) after a settle
+        // that needed no jump; the pages it passes on the way are not the reader's place.
+        var keeper = AnchorKeeper()
+        let anchor = ReadingAnchor(href: "a.xhtml", progression: 0.40, text: "It was")
+        keeper.userSettled(on: anchor)
+        keeper.reflowWillBegin(.posture)
+        #expect(keeper.reflowDidSettle(visible: VisibleRange(href: "a.xhtml", start: 0.38, end: 0.45)) == .none)
+        keeper.userSettled(on: ReadingAnchor(href: "a.xhtml", progression: 0.36, text: "tom of your"))
+        #expect(keeper.anchor == anchor)
+        keeper.restoreDidComplete()
+        let next = ReadingAnchor(href: "a.xhtml", progression: 0.45, text: nil)
+        keeper.userSettled(on: next)
+        #expect(keeper.anchor == next)
+    }
+
     @Test func aTurnAfterTheRestoreMovesTheAnchorAgain() {
         var keeper = AnchorKeeper()
         keeper.userSettled(on: ReadingAnchor(href: "a.xhtml", progression: 0.40, text: nil))

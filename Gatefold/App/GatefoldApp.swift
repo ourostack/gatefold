@@ -13,7 +13,7 @@ struct GatefoldApp: App {
             RootView()
                 .environment(app)
                 .task { await app.start() }
-                .task { WebWarmup.start() }
+                .task { LaunchClock.firstFrame(); WebWarmup.start() }
                 #if DEBUG
                 .task { LaunchMarkRenderer.renderIfAsked() }
                 #endif
@@ -39,6 +39,23 @@ struct GatefoldApp: App {
     }
 }
 
+/// How long the app took from its process starting to its first frame, in the log for measuring launches.
+@MainActor
+enum LaunchClock {
+    private static var logged = false
+    static func firstFrame() {
+        guard !logged else { return }
+        logged = true
+        var info = kinfo_proc()
+        var size = MemoryLayout<kinfo_proc>.stride
+        var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, getpid()]
+        guard sysctl(&mib, 4, &info, &size, nil, 0) == 0 else { return }
+        let start = info.kp_proc.p_un.__p_starttime
+        let started = Date(timeIntervalSince1970: TimeInterval(start.tv_sec) + TimeInterval(start.tv_usec) / 1_000_000)
+        readerLog.notice("launch: first frame \(Date().timeIntervalSince(started), privacy: .public) s after the process started")
+    }
+}
+
 /// Starts WebKit's page process while the shelf is up, so the first book opens on a warm engine
 /// instead of paying for the process launch behind the cover.
 @MainActor
@@ -47,6 +64,8 @@ enum WebWarmup {
 
     static func start() {
         guard view == nil else { return }
+        let began = Date()
+        defer { readerLog.notice("launch: web warm-up took \(Date().timeIntervalSince(began), privacy: .public) s on the main thread") }
         let web = WKWebView(frame: CGRect(x: 0, y: 0, width: 10, height: 10))
         web.loadHTMLString("<html><body style='font-family:serif'>Gatefold</body></html>", baseURL: nil)
         view = web
@@ -68,8 +87,8 @@ struct RootView: View {
     @State private var reader: ReaderModel?
     @State private var openError: String?
     @State private var opening = false
-    /// The book most likely to be opened next, already open behind the shelf.
-    @State private var warm: ReaderModel?
+    /// The books most likely to be opened next (Reading Now's first few), already open behind the shelf.
+    @State private var warm: [ReaderModel] = []
 
     var body: some View {
         ZStack {
@@ -85,18 +104,16 @@ struct RootView: View {
         // Under the shelf's own paper: never seen, but laid out and painted like the real page. A
         // background, so its arrival can't resize the shelf's stack (it ignores the safe area).
         .background {
-            if let warm, reader == nil { WarmPage(model: warm) }
-        }
-        .task(id: warmKey) { await warmUp() }
-        .fullScreenCover(item: $reader) { model in
-            ReaderScreen(model: model) {
-                // Stop any landing or settle first, so the place sent below is the last one.
-                model.close()
-                reader = nil
-                app.openBookID = nil
-                app.activeReader = nil
-                Task { await app.sendPlaceNow() }
+            if reader == nil {
+                ZStack { ForEach(warm, id: \.bookID) { WarmPage(model: $0) } }
             }
+        }
+        .task(id: warmKeys) { await warmUp() }
+        .task {
+            if let tour = LaunchOptions.openTour { await openTour(tour) }
+        }
+        .fullScreenCover(item: $reader) { model in
+            ReaderScreen(model: model) { closeReader(model) }
             .navigationTransition(.zoom(sourceID: model.bookID, in: covers))
             // The zoom opens onto the page's own colour, never white or black.
             .presentationBackground(model.preferences.resolvedTheme(systemIsDark: colorScheme == .dark).background)
@@ -115,48 +132,86 @@ struct RootView: View {
         }
     }
 
+    private func closeReader(_ model: ReaderModel) {
+        // Stop any landing or settle first, so the place sent below is the last one.
+        model.close()
+        reader = nil
+        app.openBookID = nil
+        app.activeReader = nil
+        Task { await app.sendPlaceNow() }
+    }
+
+    /// Measuring opens without UI automation (which turns on accessibility, and so loads WebKit's
+    /// accessibility bundle into every page process): opens each listed book as a tap would, then closes it.
+    private func openTour(_ ids: [String]) async {
+        try? await Task.sleep(for: .seconds(8))
+        for id in ids {
+            guard let book = app.library.book(id) else { readerLog.notice("tour: no \(id, privacy: .public)"); continue }
+            let asked = Date()
+            open(book)
+            var ready = false
+            for _ in 0..<300 {
+                try? await Task.sleep(for: .milliseconds(20))
+                if let reader, reader.bookID == id, reader.pageReady { ready = true; break }
+            }
+            readerLog.notice("tour: \(id, privacy: .public) ready=\(ready, privacy: .public) after \(Date().timeIntervalSince(asked), privacy: .public) s")
+            try? await Task.sleep(for: .seconds(2))
+            if let reader { closeReader(reader) }
+            try? await Task.sleep(for: .seconds(LaunchOptions.tourRest))
+        }
+        readerLog.notice("tour: done")
+    }
+
     /// What to open ahead of a tap: the first book on Reading Now, at its current place.
-    private var warmKey: String? {
-        guard app.hasOnboarded, reader == nil, !opening, !LaunchOptions.noWarm,
-              let book = app.library.readingNow.first(where: \.isOnDevice) else { return nil }
-        // The book only: the warm reader keeps its own place (a landing moves it), and closing the
-        // reader clears the key, so the next warm one opens where reading stopped.
-        return book.id
+    /// How many of Reading Now's books wait open behind the shelf. Each new page needs its own WebKit
+    /// process, whose start-up is most of an open; a few books ready covers what is likely tapped.
+    private static let warmCount = 3
+
+    private var warmKeys: [String] {
+        guard app.hasOnboarded, reader == nil, !opening, !LaunchOptions.noWarm else { return [] }
+        // The book only: a warm reader keeps its own place (a landing moves it), and closing the
+        // reader clears the keys, so the next warm ones open where reading stopped.
+        return Array(app.library.readingNow.filter(\.isOnDevice).prefix(Self.warmCount).map(\.id))
     }
 
     private func warmUp() async {
-        guard let key = warmKey, case let id = key else { return }
-        if let warm, warm.warmKey == key { return }
-        warm?.close()
-        warm = nil
-        // Let the shelf arrive first; the warm open is the next thing the main thread does, not the first.
-        try? await Task.sleep(for: .milliseconds(700))
-        guard !Task.isCancelled, let book = app.library.book(id), let url = app.library.fileURL(of: book),
-              let publication = try? await BookOpener.shared.open(url), !Task.isCancelled, warmKey == key else { return }
-        let model = ReaderModel(book: book, publication: publication, app: app)
-        model.warmKey = key
-        model.warm()
-        warm = model
+        let keys = warmKeys
+        readerLog.notice("warm: \(keys.joined(separator: ","), privacy: .public)")
+        for model in warm where !keys.contains(model.bookID) { model.close() }
+        warm.removeAll { !keys.contains($0.bookID) }
+        // Let the shelf arrive first; then one book at a time, the most likely first, so the warm
+        // opens are never what the main thread is doing when a tap comes.
+        for id in keys where !warm.contains(where: { $0.bookID == id }) {
+            try? await Task.sleep(for: .milliseconds(700))
+            guard !Task.isCancelled, warmKeys == keys, let book = app.library.book(id), let url = app.library.fileURL(of: book),
+                  let publication = try? await BookOpener.shared.open(url), !Task.isCancelled, warmKeys == keys else { return }
+            let model = ReaderModel(book: book, publication: publication, app: app)
+            model.warmKey = id
+            model.warm()
+            warm.append(model)
+        }
     }
 
     private func open(_ book: LibraryBook) {
-        guard !opening, let url = app.library.fileURL(of: book) else { return }
+        guard !opening, let url = app.library.fileURL(of: book) else {
+            readerLog.notice("open: \(book.id, privacy: .public) refused (opening \(opening, privacy: .public))")
+            return
+        }
         let asked = Date()
-        if let ready = warm, ready.bookID == book.id, !ready.isClosed {
-            warm = nil
+        if let ready = warm.first(where: { $0.bookID == book.id }), !ready.isClosed {
+            warm.removeAll { $0 === ready }
             reader = ready
             app.activeReader = ready
             app.openBookID = book.id
             ready.activate()
             return
         }
-        warm?.close()
-        warm = nil
         opening = true
         Task {
             defer { opening = false }
             do {
                 let publication = try await BookOpener.shared.open(url)
+                readerLog.notice("open: parsed after \(Date().timeIntervalSince(asked), privacy: .public) s")
                 let model = ReaderModel(book: book, publication: publication, app: app)
                 model.askedAt = asked
                 reader = model

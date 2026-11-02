@@ -275,6 +275,8 @@ final class ReaderModel {
         if let mapper { Task { await highlights.start(model: self, mapper: mapper) } }
         readerLog.notice("open: mapper after \(Date().timeIntervalSince(self.openedAt), privacy: .public) s; location \(self.page?.currentLocation != nil, privacy: .public)")
         chapterMap = ChapterMap(chapters: toc.filter { $0.level == 0 }.map { .init(title: $0.title, start: $0.progression) }, positionCount: max(1, count))
+        // Chapters that begin partway through a file take their own page, after the page is up.
+        Task { [weak self] in await self?.placeFragments(starts: starts, positionCount: max(1, count)) }
         // A place of ours that's still in the front matter (a list of illustrations, a title page) isn't
         // reading yet: when the InkPad has the book further on, open there instead of offering a Jump.
         if !awaitingLanding, let local = openedSnapshot?.totalProgression, let cloud = cloudHint, cloud > local + JumpSuggestion.threshold,
@@ -289,6 +291,7 @@ final class ReaderModel {
         await waitForLocation()
         readerLog.notice("open: location after \(Date().timeIntervalSince(self.openedAt), privacy: .public) s")
         if LaunchOptions.goTo == nil, let initialLocator { await settle(on: initialLocator, move: moves) }
+        readerLog.notice("open: settled after \(Date().timeIntervalSince(self.openedAt), privacy: .public) s")
         // A test's launch jump shows its page once, after the jump, not the book's start first.
         if LaunchOptions.goTo == nil { markReady() }
         if let goTo = LaunchOptions.goTo, let locator = await publication.locate(progression: goTo) {
@@ -333,7 +336,9 @@ final class ReaderModel {
         revealing = true
         Task {
             // The cover stays until Readium has finished loading the page it reports (its spinner).
+            let held = Date()
             for _ in 0..<80 where host?.isLoadingPage == true { try? await Task.sleep(for: .milliseconds(100)) }
+            readerLog.notice("open: Readium's loading held \(Date().timeIntervalSince(held), privacy: .public) s (asked \(Date().timeIntervalSince(self.askedAt), privacy: .public) s ago)")
             revealing = false
             guard !pageReady else { return }
             Task { [weak self] in await self?.host?.logTypography() }
@@ -348,6 +353,34 @@ final class ReaderModel {
         guard !pageReady else { return }
         readerLog.notice("first page forced ready after \(Date().timeIntervalSince(self.openedAt), privacy: .public) s")
         withAnimation(.easeOut(duration: 0.3)) { pageReady = true }
+    }
+
+    /// Moves each contents entry that names a place inside its file (`ch.xhtml#ch8`) from the file's first
+    /// page to its own: several chapters in one file otherwise all show that file's first page.
+    private func placeFragments(starts: [String: Double], positionCount: Int) async {
+        var ends: [String: Double] = [:]
+        for (i, href) in readingOrderHrefs.enumerated() {
+            ends[href] = i + 1 < readingOrderHrefs.count ? (starts[readingOrderHrefs[i + 1]] ?? 1) : 1
+        }
+        var files: [String: Data] = [:]
+        var placed = toc
+        for (i, entry) in toc.enumerated() {
+            guard let fragment = entry.link.url().fragment, !fragment.isEmpty else { continue }
+            let file = entry.link.url().removingFragment()
+            let href = file.string
+            guard let start = starts[href], let end = ends[href], end > start else { continue }
+            if files[href] == nil {
+                guard let data = try? await publication.get(file)?.read().get() else { continue }
+                files[href] = data
+            }
+            guard !isClosed, let data = files[href], let fraction = FragmentPlace.fraction(of: fragment, in: data) else { continue }
+            let progression = FragmentPlace.progression(fileStart: start, fileEnd: end, fraction: fraction)
+            placed[i] = TOCEntry(id: entry.id, title: entry.title, level: entry.level, link: entry.link, progression: progression)
+        }
+        guard !isClosed, placed != toc else { return }
+        toc = placed
+        chapterMap = ChapterMap(chapters: toc.filter { $0.level == 0 }.map { .init(title: $0.title, start: $0.progression) }, positionCount: positionCount)
+        readerLog.notice("contents: placed \(placed.filter { $0.link.url().fragment != nil }.count, privacy: .public) chapters inside their files")
     }
 
     private func waitForLocation() async {
@@ -447,7 +480,8 @@ final class ReaderModel {
         let link = publication.readingOrder[index]
         guard let resource = publication.get(link), let data = try? await resource.read().get(),
               let text = PassageText.sentence(inHTML: String(decoding: data, as: UTF8.self), at: within) else { return nil }
-        let words = String(text.prefix(60))
+        // Cut at a word's end, so the underline that marks it never stops mid-word.
+        let words = WordEdge.complete(highlight: String(text.prefix(60)), after: String(text.dropFirst(60))).highlight
         let locator = await publication.locate(link).map {
             $0.copy(locations: { $0.progression = within; $0.totalProgression = total },
                     text: { $0 = Locator.Text(highlight: words) })
@@ -541,7 +575,10 @@ final class ReaderModel {
             return (nil, remote.totalProgression)
         }
         // The first words at the spot let Readium land on the exact page, whatever the layout.
-        let words = found.textAfter.map { String($0.trimmingCharacters(in: .whitespacesAndNewlines).prefix(48)) }
+        let words = found.textAfter.map {
+            let trimmed = $0.trimmingCharacters(in: .whitespacesAndNewlines)
+            return WordEdge.complete(highlight: String(trimmed.prefix(48)), after: String(trimmed.dropFirst(48))).highlight
+        }
         let locator = start.copy(
             locations: {
                 $0.progression = found.progression

@@ -64,8 +64,10 @@ static bool inside(float2 p, float4 r) {
                 // The back of a printed page: paper a shade toward the ink, the front's words
                 // showing through faintly, mirrored.
                 half4 front = layer.sample(src);
-                half4 back = mix(paper, ink, half(0.10));
-                face = mix(back, front, half(0.15));
+                // A dark page's back is barely lighter than its paper, its words showing through more,
+                // so a quick riffle reads as leaves of the same book, not grey card.
+                half4 back = mix(paper, ink, half(dark > 0.5 ? 0.05 : 0.10));
+                face = mix(back, front, half(dark > 0.5 ? 0.28 : 0.15));
             }
             // Light the cylinder. Where the paper rolls toward the light (its crown, d near r) it
             // catches a highlight; it settles as it lies flatter.
@@ -73,7 +75,10 @@ static bool inside(float2 p, float4 r) {
             float rim = d >= 0.0 ? pow(clamp(d / r, 0.0, 1.0), 6.0) : 0.0;
             half3 rgb;
             if (dark > 0.5) {
-                rgb = face.rgb + half3(0.06 + 0.06 * crown) + half3(0.10 * rim);
+                // A highlight band along the roll that falls away across the flat back, as a sheet
+                // catches light where it bends, never one even lift.
+                float fall = d >= 0.0 ? 0.0 : clamp(-d / (r * 6.0), 0.0, 1.0);
+                rgb = face.rgb + half3(0.02 + 0.07 * crown + 0.06 * (1.0 - fall)) + half3(0.10 * rim);
             } else {
                 half shade = d >= 0.0 ? half(0.88 + 0.12 * crown) : half(0.97);
                 rgb = face.rgb * shade + half3(0.08 * rim);
