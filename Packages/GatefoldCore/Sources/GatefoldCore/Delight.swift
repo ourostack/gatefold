@@ -164,6 +164,11 @@ public struct SyncSlip: Equatable, Sendable {
         SyncSlip(title: "From your \(deviceWord(device)) · \(RelativeAge.text(from: updated, to: now))", detail: nil, passage: nil)
     }
 
+    /// The book opened on this app's own last place, kept in the Cloud (after a reinstall, say).
+    public static func resumed(updated: Date, now: Date) -> SyncSlip {
+        SyncSlip(title: "Right where you left off · \(RelativeAge.text(from: updated, to: now))", detail: nil, passage: nil)
+    }
+
     /// The other device is further on: how far, how long ago, and the words it stopped at.
     public static func ahead(device: String, pagesAhead: Int?, approximate: Bool = false, percentAhead: Int?, updated: Date?, now: Date, passage: String?) -> SyncSlip {
         var how: String
@@ -281,6 +286,21 @@ public enum ReadStory {
             return "Started on your \(device) \(when) · finished here on your \(here)"
         }
         return FinishLine.text(started: started, finished: finished, sessions: sessions, calendar: calendar)
+    }
+
+    /// The Finished shelf's line, the same story as the end leaf: counted from the InkPad's start when
+    /// the read began there ("Read over 6 days, InkPad to phone"), else "Read over 12 days, in 9 sittings".
+    /// Sittings are counted only here, so a read begun elsewhere doesn't claim them. Nil when too little is known.
+    public static func shelfLine(otherDevice: String?, otherSince: Date?, started: Date?, finished: Date, sessions: Int,
+                                 here: String, calendar: Calendar = .current) -> String? {
+        if let device = otherDevice, let since = otherSince, since <= (started ?? finished), since <= finished {
+            let days = FinishLine.dayCount(from: since, to: finished, calendar: calendar)
+            return days <= 1 ? "Read in a single day, \(device) to \(here)" : "Read over \(days) days, \(device) to \(here)"
+        }
+        guard let started, finished >= started else { return nil }
+        let days = max(1, FinishLine.dayCount(from: started, to: finished, calendar: calendar))
+        let span = days == 1 ? "Read in a single day" : "Read over \(days) days"
+        return sessions > 1 ? "\(span), in \(sessions) sittings" : span
     }
 }
 

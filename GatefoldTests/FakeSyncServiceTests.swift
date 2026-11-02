@@ -151,6 +151,37 @@ import Testing
         #expect(JumpSuggestion.isAhead(remote: 0.30, percentOnly: false, local: book.localSnapshot?.totalProgression ?? 1))
     }
 
+    @Test func landJumpBackLandAgainReadOnNeverInflatesThePercent() async throws {
+        // The build-7 live film: land on the InkPad's 48 % (Readium 38 %), jump back to chapter 1
+        // (Readium 7 %), then a fresh landing on that place and two pages of reading. What reaches the
+        // Cloud must stay an early-book percent, never the landed 48 % or more.
+        let sync = FakeSyncService(signedIn: true, latency: .zero)
+        let store = LibraryStore(sync: sync, root: URL.temporaryDirectory.appending(path: "library-tests-\(UUID().uuidString)"))
+        await store.refresh()
+        let emma = try #require(store.books.first { $0.title == "Emma" })
+        let cloud = try #require(emma.cloud)
+        store.landedOnCloudPlace(bookID: emma.id, cloud: 0.48, landed: 0.38)
+
+        store.recordPlace(bookID: emma.id, locatorJSON: "{}", totalProgression: 0.07, progression: 0.1)
+        try await Task.sleep(for: .milliseconds(700))
+        let jumpedBack = try #require(try await sync.remotePosition(for: cloud)?.totalProgression)
+        #expect(abs(jumpedBack - 0.48 * 0.07 / 0.38) < 0.001)
+        #expect(ReadingPercent.whole(jumpedBack) < 10)
+
+        // A fresh install lands on that chapter-1 place: its scale comes from an honest pair.
+        store.landedOnCloudPlace(bookID: emma.id, cloud: jumpedBack, landed: 0.07)
+        var last = jumpedBack
+        for page in 1...2 {
+            store.recordPlace(bookID: emma.id, locatorJSON: "{}", totalProgression: 0.07 + Double(page) * 0.002, progression: 0.1)
+            try await Task.sleep(for: .milliseconds(700))
+            let pushed = try #require(try await sync.remotePosition(for: cloud)?.totalProgression)
+            #expect(pushed >= last)
+            #expect(ReadingPercent.whole(pushed) < 12)
+            last = pushed
+        }
+        #expect(ReadingPercent.whole(store.book(emma.id)?.displayProgression ?? 1) < 12)
+    }
+
     @Test func aLandingWhoseCloudPercentIsBehindOursNeedsNoScale() async throws {
         let (store, _) = makeStore()
         await store.refresh()

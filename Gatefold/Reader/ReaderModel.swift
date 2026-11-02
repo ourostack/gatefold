@@ -419,9 +419,12 @@ final class ReaderModel {
     }
 
     private func checkRemoteOnce() async {
-        // Our own place coming back is not news.
         guard let book = app.library.book(bookID), let remote = await app.library.remotePosition(for: book),
-              remote.source != .gatefold, !isClosed else { return }
+              !isClosed else { return }
+        // Our own place coming back is not news, except on a fresh install (a reinstall wipes the
+        // shelf but not the Cloud): then it's where to open, and it's ours, never the InkPad's.
+        let ours = remote.source == .gatefold
+        if ours, openedSnapshot != nil || hasMoved { return }
         let target = await place(of: remote)
         guard !isClosed else { return }
         // A place the Cloud only has as a whole percent compares as one: our own 30.1% reads back as 31%.
@@ -437,7 +440,9 @@ final class ReaderModel {
             guard !isClosed else { return }
             awaitingLanding = false
             markReady()
-            let landed = SyncSlip.landed(device: remote.deviceName, updated: remote.updated, now: Date())
+            let landed = ours
+                ? SyncSlip.resumed(updated: remote.updated, now: Date())
+                : SyncSlip.landed(device: remote.deviceName, updated: remote.updated, now: Date())
             if isWarming {
                 pendingLanded = (landed, target.locator)
             } else {
@@ -445,6 +450,7 @@ final class ReaderModel {
             }
             return
         }
+        if ours { return }
         let made = JumpSuggestion.make(
             local: hasMoved ? app.library.book(bookID)?.localSnapshot : openedSnapshot,
             remote: ProgressSnapshot(totalProgression: target.totalProgression, updated: remote.updated, device: remote.deviceName),
@@ -468,6 +474,8 @@ final class ReaderModel {
             if suggestionLocator == nil { suggestionLocator = found.locator }
         }
         guard !isClosed else { return }
+        // The tap should land at once: load the Cloud place's page now, behind this one.
+        if let locator = suggestionLocator { page?.prepareStandby(at: locator) }
         aheadTab = SyncSlip.tab(device: remote.deviceName, pagesAhead: pages)
         aheadTarget = (target.totalProgression, remote.deviceName)
         slipFolded = false
@@ -607,6 +615,8 @@ final class ReaderModel {
         withAnimation(Motion.banner) { suggestion = nil }
         hideSlip()
         let locator = suggestionLocator, aim = suggestionRemote, cloud = suggestionCloud
+        let tapped = ContinuousClock.now
+        readerLog.notice("catch-up: tapped (exact place \(locator != nil, privacy: .public))")
         suggestionLocator = nil
         suggestionRemote = nil
         suggestionCloud = nil
@@ -616,7 +626,13 @@ final class ReaderModel {
         }
         UINotificationFeedbackGenerator().notificationOccurred(.success)
         if let locator { host?.underline(locator, color: theme.palette.accent) }
+        readerLog.notice("catch-up: underlined \(Self.ms(since: tapped), privacy: .public) ms after the tap")
         holdJumpBack()
+    }
+
+    static func ms(since start: ContinuousClock.Instant) -> Int {
+        let d = ContinuousClock.now - start
+        return Int(d.components.seconds * 1000 + d.components.attoseconds / 1_000_000_000_000_000)
     }
 
     /// The Back pill stays for 8 seconds after a Jump, controls or not.
@@ -654,16 +670,22 @@ final class ReaderModel {
         let move = moves
         landingMove = move
         defer { if landingMove == move { landingMove = nil } }
-        await page?.go(to: locator)
+        let started = ContinuousClock.now
+        let ready = await page?.promoteStandby(for: locator) ?? false
+        if !ready { await page?.go(to: locator) }
+        let went = Self.ms(since: started)
         // Opening another chapter, Readium places the page by progression before the chapter has laid
         // out; once it has, the same jump finds the exact words. Retry until they're on screen.
-        await settle(on: locator, move: move)
+        await settle(on: locator, move: move, loaded: ready)
+        let settled = Self.ms(since: started)
         // Overtaken by a turn, another jump or the close: that move owns the place now.
         guard moves == move, !isClosed else { return }
         await captureAnchor()
+        let anchored = Self.ms(since: started)
         guard moves == move, !isClosed, let here = page?.currentLocation else { return }
         // Landed on the other device's page: that's the reader's place now.
         await recordLanding(here, target: target, cloud: cloud)
+        readerLog.notice("landing timing (standby \(ready, privacy: .public)): go \(went, privacy: .public) ms, settled \(settled, privacy: .public) ms, anchored \(anchored, privacy: .public) ms, recorded \(Self.ms(since: started), privacy: .public) ms")
     }
 
     /// Records a settled landing. The first words on screen are the place, unless they come before the
@@ -710,19 +732,24 @@ final class ReaderModel {
     /// Readium places the page by its own progression, which counts layout, not text; once the
     /// chapter is on screen, find the locator's words in it and turn to their page. Stops as soon as
     /// anything else moves the page (`move` is no longer the latest) or the reader closes.
-    private func settle(on locator: Locator, move: Int) async {
+    private func settle(on locator: Locator, move: Int, loaded: Bool = false) async {
         guard let words = locator.text.highlight.map(ReaderJS.normalize), words.count >= 8 else { return }
         let probe = String(words.prefix(24))
         func current() -> Bool { moves == move && !isClosed }
-        for _ in 0..<4 {
-            try? await Task.sleep(for: .milliseconds(250))
+        let t0 = ContinuousClock.now
+        for round in 0..<4 {
+            // A page already loaded (the standby) can be read at once.
+            if round > 0 || !loaded { try? await Task.sleep(for: .milliseconds(250)) }
             guard current() else { return }
             let onScreen = await page?.visibleRange()?.text.map(ReaderJS.normalize) ?? ""
+            let read = Self.ms(since: t0)
             guard current() else { return }
-            if onScreen.contains(probe) { return }
-            guard let exact = await page?.progression(of: words) else { continue }
+            if onScreen.contains(probe) { readerLog.notice("settle \(round, privacy: .public): on screen at \(read, privacy: .public) ms"); return }
+            guard let exact = await page?.progression(of: words) else { readerLog.notice("settle \(round, privacy: .public): words not found at \(Self.ms(since: t0), privacy: .public) ms (read \(read, privacy: .public))"); continue }
+            let found = Self.ms(since: t0)
             guard current() else { return }
             _ = await page?.go(to: locator.copy(locations: { $0.progression = exact }, text: { $0 = Locator.Text() }))
+            readerLog.notice("settle \(round, privacy: .public): read \(read, privacy: .public), found \(found, privacy: .public), went \(Self.ms(since: t0), privacy: .public) ms")
         }
     }
 
@@ -737,12 +764,14 @@ final class ReaderModel {
         jumpBackTask?.cancel()
         slip = nil
         suggestion = nil
+        page?.dropStandby()
         suggestionLocator = nil
         suggestionRemote = nil
         suggestionCloud = nil
     }
 
     func dismissSuggestion() {
+        page?.dropStandby()
         suggestionLocator = nil
         suggestionRemote = nil
         suggestionCloud = nil

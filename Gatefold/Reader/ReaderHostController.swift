@@ -12,7 +12,13 @@ let readerLog = Logger(subsystem: "bot.ouro.gatefold", category: "reader")
 /// reading anchor's restore after every reflow. Everything else in the reader is SwiftUI.
 @MainActor
 final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGestureRecognizerDelegate, ReaderPage {
-    let navigator: EPUBNavigatorViewController
+    private(set) var navigator: EPUBNavigatorViewController
+    private let publication: Publication
+    private var preferences: EPUBPreferences
+    /// The Cloud place's page, loading behind this one while the catch-up slip is up, so the tap
+    /// finds it ready instead of waiting seconds for a new web view (`prepareStandby`).
+    private var standby: (navigator: EPUBNavigatorViewController, locator: Locator, ready: Task<Void, Never>)?
+    private var noticer: TouchNoticer?
     var currentLocation: Locator? { navigator.currentLocation }
     private(set) weak var weakModel: ReaderModel?
     /// The reader outlives this controller in every path but a mid-turn close; callers in tasks guard `weakModel`.
@@ -38,9 +44,20 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
 
     init(model: ReaderModel, publication: Publication, initialLocation: Locator?, preferences: EPUBPreferences) throws {
         self.weakModel = model
-        navigator = try EPUBNavigatorViewController(
+        self.publication = publication
+        self.preferences = preferences
+        navigator = try Self.makeNavigator(publication: publication, at: initialLocation, preferences: preferences)
+        super.init(nibName: nil, bundle: nil)
+        navigator.delegate = self
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError() }
+
+    private static func makeNavigator(publication: Publication, at location: Locator?, preferences: EPUBPreferences) throws -> EPUBNavigatorViewController {
+        try EPUBNavigatorViewController(
             publication: publication,
-            initialLocation: initialLocation,
+            initialLocation: location,
             config: .init(
                 preferences: preferences,
                 editingActions: Self.highlightEditingActions,
@@ -54,12 +71,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
                     .merging(Self.highlightTemplates) { a, _ in a }
             )
         )
-        super.init(nibName: nil, bundle: nil)
-        navigator.delegate = self
     }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { fatalError() }
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -81,7 +93,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             self?.weakModel?.noteInteraction()
         }
         noticer.delegate = self
-        navigator.view.addGestureRecognizer(noticer)
+        self.noticer = noticer
 
         addChild(curlHost)
         curlHost.view.backgroundColor = .clear
@@ -99,13 +111,103 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         pan.delegate = self
         view.addGestureRecognizer(pan)
 
-        observers.append(navigator.addObserver(.tap { [weak self] event in
-            self?.handleTap(at: event.location) ?? false
-        }))
-        observers.append(navigator.addObserver(.key(.arrowRight) { [weak self] in self?.turn(forward: true) ?? false }))
-        observers.append(navigator.addObserver(.key(.arrowLeft) { [weak self] in self?.turn(forward: false) ?? false }))
-        observers.append(navigator.addObserver(.key(.space) { [weak self] in self?.turn(forward: true) ?? false }))
+        wire(navigator)
         model.host = self
+    }
+
+    /// Taps, keys and touches on the page in view come here.
+    private func wire(_ navigator: EPUBNavigatorViewController) {
+        navigator.delegate = self
+        if let noticer { navigator.view.addGestureRecognizer(noticer) }
+        observers = [
+            navigator.addObserver(.tap { [weak self] event in self?.handleTap(at: event.location) ?? false }),
+            navigator.addObserver(.key(.arrowRight) { [weak self] in self?.turn(forward: true) ?? false }),
+            navigator.addObserver(.key(.arrowLeft) { [weak self] in self?.turn(forward: false) ?? false }),
+            navigator.addObserver(.key(.space) { [weak self] in self?.turn(forward: true) ?? false }),
+        ]
+    }
+
+    private func unwire(_ navigator: EPUBNavigatorViewController) {
+        if let noticer { navigator.view.removeGestureRecognizer(noticer) }
+        for case let token as InputObservableToken in observers { navigator.removeObserver(token) }
+        observers = []
+        navigator.delegate = nil
+    }
+
+    // MARK: The standby page
+
+    /// Starts loading `locator`'s page in a second navigator behind this one. A new chapter needs a
+    /// new web view, and a new web view took two to three seconds to load; loaded while the slip is
+    /// up, the catch-up tap only has to swap it in.
+    func prepareStandby(at locator: Locator) {
+        if let standby, standby.locator == locator { return }
+        dropStandby()
+        guard isViewLoaded, let next = try? Self.makeNavigator(publication: publication, at: locator, preferences: preferences) else { return }
+        let started = ContinuousClock.now
+        addChild(next)
+        next.view.frame = navigator.view.frame
+        next.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        next.view.isUserInteractionEnabled = false
+        // Out of sight and out of VoiceOver's reach until it is the page.
+        next.view.accessibilityElementsHidden = true
+        view.insertSubview(next.view, belowSubview: navigator.view)
+        next.didMove(toParent: self)
+        let columns = columns
+        let ready = Task { @MainActor in
+            // Readium answers JavaScript once the spread has loaded, and fails at once before it has a spread.
+            for _ in 0..<100 where !Task.isCancelled {
+                if case .success = await next.evaluateJavaScript(ReaderJS.install) { break }
+                try? await Task.sleep(for: .milliseconds(100))
+            }
+            _ = await next.evaluateJavaScript(ReaderJS.setColumns(columns))
+            // Readium places the page by progression; turn to the page the words are on, as `settle` does.
+            if let words = locator.text.highlight.map(ReaderJS.normalize), words.count >= 8 {
+                let probe = String(words.prefix(24))
+                for _ in 0..<3 where !Task.isCancelled {
+                    let shown = ((try? await next.evaluateJavaScript(ReaderJS.visibleText).get()) as? String).map(ReaderJS.normalize) ?? ""
+                    if shown.contains(probe) { break }
+                    guard let exact = (try? await next.evaluateJavaScript(ReaderJS.progressionOf(words)).get()) as? Double else { break }
+                    _ = await next.go(to: locator.copy(locations: { $0.progression = exact }, text: { $0 = Locator.Text() }), options: .init(animated: false))
+                    try? await Task.sleep(for: .milliseconds(150))
+                }
+            }
+            readerLog.notice("standby: the Cloud place's page loaded \(ReaderModel.ms(since: started), privacy: .public) ms after the slip")
+        }
+        standby = (next, locator, ready)
+        readerLog.notice("standby: loading the Cloud place's page behind this one")
+    }
+
+    func dropStandby() {
+        guard let old = standby else { return }
+        standby = nil
+        old.ready.cancel()
+        old.navigator.willMove(toParent: nil)
+        old.navigator.view.removeFromSuperview()
+        old.navigator.removeFromParent()
+    }
+
+    /// Puts the standby page in front when it is `locator`'s, waiting for it to finish loading if it
+    /// hasn't. False when there is none, and the caller jumps as usual.
+    func promoteStandby(for locator: Locator) async -> Bool {
+        guard let next = standby, next.locator == locator else { return false }
+        await next.ready.value
+        guard standby?.navigator === next.navigator else { return false }
+        let t0 = ContinuousClock.now
+        defer { readerLog.notice("standby: swapped in, \(ReaderModel.ms(since: t0), privacy: .public) ms on the main thread") }
+        standby = nil
+        let old = navigator
+        unwire(old)
+        next.navigator.view.frame = old.view.frame
+        next.navigator.view.isUserInteractionEnabled = true
+        next.navigator.view.accessibilityElementsHidden = false
+        navigator = next.navigator
+        wire(navigator)
+        old.willMove(toParent: nil)
+        old.view.removeFromSuperview()
+        old.removeFromParent()
+        weakModel?.highlights.navigatorChanged()
+        if let here = navigator.currentLocation { self.navigator(navigator, locationDidChange: here) }
+        return true
     }
 
     /// For measuring opens: when the first web view appears, starts loading and finishes, after the host loads.
@@ -148,6 +250,9 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         // One page becoming two is the unfold: the right page swings open once it has laid out.
         unfolding = reflow && self.columns == 1 && columns == 2
         self.columns = columns
+        self.preferences = preferences
+        // A page laid out in the old type would be the wrong page.
+        dropStandby()
         if reflow { beginReflow(model.consumeReflowReason() ?? .typography) }
         navigator.submitPreferences(preferences)
         if reflow { settleReflowSoon() }
@@ -165,6 +270,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
 
     private func beginReflow(_ reason: ReflowReason) {
         readerLog.notice("reflow begins: \(String(describing: reason), privacy: .public)")
+        dropStandby()
         model.keeper.reflowWillBegin(reason)
         model.reflowDidBegin()
         if !curl.isActive {
@@ -837,11 +943,13 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         var i = 0
         // Leaves of the old page over itself until the new one is ready (a riffle through pages
         // in between); capped so a lost load still ends.
+        let t0 = ContinuousClock.now
         while i < 3 || (!arrived() && i < 40) {
             await leaf(top: old, beneath: old, index: i, size: size, forward: forward, duration: 0.12)
             i += 1
         }
         let page = await fresh()
+        readerLog.notice("riffle: \(i, privacy: .public) leaves, new page ready at \(ReaderModel.ms(since: t0), privacy: .public) ms")
         await leaf(top: old, beneath: page, index: i, size: size, forward: forward, duration: 0.28)
         veil?.alpha = 0
         curl.reset()

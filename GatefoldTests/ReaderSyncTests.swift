@@ -41,6 +41,24 @@ final class ScriptedPage: ReaderPage {
 
     func go(to link: ReadiumShared.Link) async {}
 
+    /// The place loading behind the page (`prepareStandby`), and every one swapped in.
+    private(set) var standby: Locator?
+    private(set) var promoted: [Locator] = []
+
+    func prepareStandby(at locator: Locator) { standby = locator }
+    func dropStandby() { standby = nil }
+
+    func promoteStandby(for locator: Locator) async -> Bool {
+        guard standby == locator else { return false }
+        standby = nil
+        promoted.append(locator)
+        // Loaded and turned to its words before the tap.
+        currentLocation = locator.copy(text: { $0 = Locator.Text() })
+        if let words = locator.text.highlight { visibleText = words + " and on down the page" }
+        if let model { Task { await model.locationDidChange(currentLocation!) } }
+        return true
+    }
+
     func visibleRange() async -> VisibleRange? {
         guard let here = currentLocation else { return nil }
         let start = here.locations.progression ?? 0
@@ -216,7 +234,51 @@ final class ScriptedPage: ReaderPage {
         #expect(f.model.suggestion?.detail.contains("Jump there?") == true)
     }
 
+    @Test func theCatchUpPageLoadsWhileTheSlipIsUpSoTheTapOnlySwapsItIn() async throws {
+        let opened = Date().addingTimeInterval(-600)
+        var target: ReadingPosition?
+        let f = try await Self.make(remote: { pub, mapper in
+            target = try await Self.inkPadPlace(pub, mapper, index: 12, percent: 40)
+            return target
+        }, book: { $0.totalProgression = 0.05; $0.lastOpened = opened }, startAt: 0.05)
+        await f.model.load()
+        #expect(f.model.suggestion != nil)
+        let waiting = try #require(f.page.standby, "the Cloud place's page starts loading as the slip appears")
+        await f.model.acceptSuggestion()
+        #expect(f.page.promoted == [waiting])
+        #expect(f.page.jumps.isEmpty, "no fresh jump: the page was already there")
+        let aim = try #require(target?.parsedCFI)
+        #expect(await f.sent().last?.parsedCFI.map { $0.isSameLocation(as: aim) } == true)
+    }
+
+    @Test func carryingOnHereLetsTheWaitingPageGo() async throws {
+        let opened = Date().addingTimeInterval(-600)
+        let f = try await Self.make(remote: { pub, mapper in
+            try await Self.inkPadPlace(pub, mapper, index: 12, percent: 40)
+        }, book: { $0.totalProgression = 0.05; $0.lastOpened = opened }, startAt: 0.05)
+        await f.model.load()
+        #expect(f.page.standby != nil)
+        f.model.dismissSuggestion()
+        #expect(f.page.standby == nil)
+    }
+
     @Test func ourOwnPlaceComingBackIsNotNews() async throws {
+        // Opened here before: our own place in the Cloud is where we already are.
+        let opened = Date().addingTimeInterval(-600)
+        let f = try await Self.make(remote: { pub, mapper in
+            var p = try await Self.inkPadPlace(pub, mapper)
+            p.source = .gatefold
+            p.updated = opened.addingTimeInterval(60)
+            return p
+        }, book: { $0.totalProgression = 0.05; $0.lastOpened = opened }, startAt: 0.05)
+        await f.model.load()
+        #expect(f.model.suggestion == nil)
+        #expect(f.page.jumps.isEmpty)
+        #expect(await f.sent().isEmpty)
+    }
+
+    @Test func afterAReinstallOurOwnPlaceOpensAndIsNeverCreditedToTheInkPad() async throws {
+        // A fresh shelf (a reinstall), and the Cloud holds a place this app wrote.
         let f = try await Self.make(remote: { pub, mapper in
             var p = try await Self.inkPadPlace(pub, mapper)
             p.source = .gatefold
@@ -224,8 +286,10 @@ final class ScriptedPage: ReaderPage {
         })
         await f.model.load()
         #expect(f.model.suggestion == nil)
-        #expect(f.page.jumps.isEmpty)
-        #expect(await f.sent().isEmpty)
+        #expect(!(await f.sent()).isEmpty, "the book opens on the place it was left at")
+        let title = f.model.slip?.title
+        #expect(title?.hasPrefix("Right where you left off") == true, "got \(title ?? "no slip")")
+        #expect(title?.contains("InkPad") == false)
     }
 
     @Test func aRemotePlaceArrivingWhileTheOpeningSettleRunsWinsAndIsNotPulledBack() async throws {

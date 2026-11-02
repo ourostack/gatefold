@@ -11,8 +11,10 @@ private struct Harness {
     let clock: TestClock
     let directory: URL
     let tokens: InMemoryTokenStore
+    let places: InMemoryPushedPlaces
 
     init(directory: URL = tempDirectory(), transport: ScriptedTransport? = nil, clock: TestClock = TestClock(),
+         places: InMemoryPushedPlaces = InMemoryPushedPlaces(),
          tokens: InMemoryTokenStore = InMemoryTokenStore(StoredSession(
              account: CloudAccount(email: "reader@example.com", store: testStore()),
              token: CloudToken(accessToken: "a1", refreshToken: "r1", expiresAt: utc("2026-12-01T00:00:00Z"))))) {
@@ -20,13 +22,14 @@ private struct Harness {
         self.clock = clock
         self.directory = directory
         self.tokens = tokens
+        self.places = places
     }
 
     func cloud() -> PocketBookCloud {
         let clock = self.clock
         return PocketBookCloud(
             configuration: .init(storageDirectory: directory, autoFlush: false),
-            transport: transport, credentials: creds, tokenStore: tokens,
+            transport: transport, credentials: creds, tokenStore: tokens, pushedPlaces: places,
             now: { clock.now }, jitter: { 1.0 }, sleep: { _ in }
         )
     }
@@ -342,6 +345,42 @@ struct PositionSyncTests {
         let back = try #require(try await cloud.remotePosition(for: CloudBook(fastHash: frankenstein)))
         #expect(back.source == .gatefold)
         #expect(back.cfi == position.cfi)
+    }
+
+    // A reinstall wipes the app's files but not the Keychain: our own place must not come back as
+    // "From your InkPad" (the Cloud record carries no device or client id to tell by).
+    @Test func recognisesItsOwnPositionAfterAReinstall() async throws {
+        let places = InMemoryPushedPlaces()
+        let first = Harness(places: places)
+        await first.transport.on("POST", "/books/read-position", .ok)
+        await first.transport.on("GET", "/fileops/info", remote("2026-10-31T21:00:00Z"))
+        let firstCloud = first.cloud()
+        await firstCloud.push(position, for: CloudBook(fastHash: frankenstein))
+        await firstCloud.flushOutbox()
+
+        let reinstalled = Harness(places: places)
+        await reinstalled.transport.on("GET", "/fileops/info",
+            .json(###"{"fast_hash":"\###(frankenstein)","name":"x","position":{"pointer":"#epubcfi(/6/16[item9]!/4/2[pgepubid00007]/2/1:0)","pointer_pb":"pbr:/external##epubcfi(/6/16[item9]!/4/2[pgepubid00007]/2/1:0)","percent":9,"updated":"2026-10-31T22:00:01Z"}}"###))
+        let back = try #require(try await reinstalled.cloud().remotePosition(for: CloudBook(fastHash: frankenstein)))
+        #expect(back.source == .gatefold)
+    }
+
+    @Test func anotherAccountsPlaceIsNotOurs() async throws {
+        let places = InMemoryPushedPlaces()
+        let first = Harness(places: places)
+        await first.transport.on("POST", "/books/read-position", .ok)
+        await first.transport.on("GET", "/fileops/info", remote("2026-10-31T21:00:00Z"))
+        let firstCloud = first.cloud()
+        await firstCloud.push(position, for: CloudBook(fastHash: frankenstein))
+        await firstCloud.flushOutbox()
+
+        let other = Harness(places: places, tokens: InMemoryTokenStore(StoredSession(
+            account: CloudAccount(email: "someone-else@example.com", store: testStore()),
+            token: CloudToken(accessToken: "a2", refreshToken: "r2", expiresAt: utc("2026-12-01T00:00:00Z")))))
+        await other.transport.on("GET", "/fileops/info",
+            .json(###"{"fast_hash":"\###(frankenstein)","name":"x","position":{"pointer":"#epubcfi(/6/16[item9]!/4/2[pgepubid00007]/2/1:0)","pointer_pb":"pbr:/external##epubcfi(/6/16[item9]!/4/2[pgepubid00007]/2/1:0)","percent":9,"updated":"2026-10-31T22:00:01Z"}}"###))
+        let back = try #require(try await other.cloud().remotePosition(for: CloudBook(fastHash: frankenstein)))
+        #expect(back.source == .pocketBookNative)
     }
 }
 

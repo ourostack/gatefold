@@ -24,8 +24,17 @@ struct CloudScaleTests {
         }
     }
 
-    @Test func goingBackBeforeTheLandedPlaceKeepsTheCloudsPercent() {
-        #expect(scale.onCloudScale(0.10) == 0.36)
+    // A jump back to chapter 1 is a real move back: it must read as an early place, never as the
+    // landed percent, or the Cloud would hold a chapter-1 place labelled half-read.
+    @Test func goingBackBeforeTheLandedPlaceReadsInProportion() {
+        #expect(abs(scale.onCloudScale(0.10) - 0.36 * 0.10 / 0.25) < 1e-12)
+        #expect(scale.onCloudScale(0) == 0)
+        #expect(scale.onCloudScale(0.10) < scale.onCloudScale(0.25))
+    }
+
+    @Test func theTwoSidesMeetAtTheLandedPlace() {
+        #expect(abs(scale.onCloudScale(0.25 - 1e-9) - 0.36) < 1e-6)
+        #expect(abs(scale.onCloudScale(0.25 + 1e-9) - 0.36) < 1e-6)
     }
 
     @Test func theEndOfTheBookIsStillTheEnd() {
@@ -38,7 +47,7 @@ struct CloudScaleTests {
         for i in 0...1000 {
             let shown = scale.onCloudScale(Double(i) / 1000)
             #expect(shown >= last)
-            #expect(shown >= 0.36)
+            if Double(i) / 1000 >= 0.25 { #expect(shown >= 0.36) }
             last = shown
         }
     }

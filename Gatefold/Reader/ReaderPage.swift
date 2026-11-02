@@ -15,4 +15,15 @@ protocol ReaderPage: AnyObject {
     func progression(of quote: String) async -> Double?
     /// The first words on the page the reader is on.
     func currentAnchor() async -> (ReadingAnchor, Locator)?
+    /// Starts loading `locator`'s page out of sight, so a jump there later is quick.
+    func prepareStandby(at locator: Locator)
+    func dropStandby()
+    /// Shows the page `prepareStandby` loaded for `locator`; false when there is none.
+    func promoteStandby(for locator: Locator) async -> Bool
+}
+
+extension ReaderPage {
+    func prepareStandby(at locator: Locator) {}
+    func dropStandby() {}
+    func promoteStandby(for locator: Locator) async -> Bool { false }
 }

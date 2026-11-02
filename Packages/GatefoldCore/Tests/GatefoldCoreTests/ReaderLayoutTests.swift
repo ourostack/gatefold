@@ -120,6 +120,33 @@ struct ReaderLayoutTests {
     }
 }
 
+@Suite("With the controls up, no line sits under the title capsule")
+struct ChromeLiftTests {
+    func top(_ l: PageSafeArea.Lift, textTop: CGFloat, height: CGFloat) -> CGFloat {
+        let a = l.anchorY * height
+        return a + l.scale * (textTop - a)
+    }
+    func foot(_ l: PageSafeArea.Lift, height: CGFloat) -> CGFloat {
+        let a = l.anchorY * height
+        return a + l.scale * (height - a)
+    }
+
+    // The iPad: status bar 24, bar to 88; text starts at 52.
+    @Test(arguments: [CGFloat(1180), 820])
+    func theIPadPageLiftsItsFirstLineBelowTheBar(height: CGFloat) {
+        let lift = PageSafeArea.chromeLift(textTop: 52, height: height, barBottom: 88)
+        #expect(abs(top(lift, textTop: 52, height: height) - (88 + PageSafeArea.chromeGap)) < 0.001)
+        // The foot still rises off the bottom bar as much as the plain lift's.
+        #expect(foot(lift, height: height) <= height - 0.02 * height + 0.001)
+        #expect(lift.scale > 0.85 && lift.scale < 0.96)
+    }
+
+    // A page whose text is already clear keeps the plain lift.
+    @Test func aPageAlreadyClearKeepsThePlainLift() {
+        #expect(PageSafeArea.chromeLift(textTop: 140, height: 873, barBottom: 88) == PageSafeArea.Lift(scale: 0.96, anchorY: 0.5))
+    }
+}
+
 @Suite struct PageSafeAreaTests {
     func layout(_ frame: CGRect) -> ReaderLayout {
         ReaderLayout(posture: .single, pageFrame: frame, gutter: nil, deck: nil, columns: .one, spineShadow: 0)

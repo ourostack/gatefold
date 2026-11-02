@@ -41,43 +41,7 @@ final class LiveSyncUITests: XCTestCase {
 
     /// Sign in from a clean install, find Frankenstein, download it, read a few pages, close.
     func test1_signInReadAndClose() throws {
-        launch(reset: true)
-        let signIn = element("welcome.signIn")
-        XCTAssertTrue(signIn.waitForExistence(timeout: 20))
-        shot("live-01-welcome")
-        signIn.tap()
-
-        let email = element("signIn.email")
-        XCTAssertTrue(email.waitForExistence(timeout: 10))
-        email.tap()
-        email.typeText(env["GATEFOLD_LIVE_EMAIL"]!)
-        shot("live-02-email")
-        element("signIn.continue").tap()
-
-        // One store for this email goes straight to the password; several show the picker.
-        let password = element("signIn.password")
-        let store = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'signIn.store.'")).firstMatch
-        let deadline = Date().addingTimeInterval(75)
-        while Date() < deadline, !password.exists, !store.exists { usleep(250_000) }
-        if store.exists {
-            shot("live-03-store-picker")
-            store.tap()
-        }
-        XCTAssertTrue(password.waitForExistence(timeout: 15))
-        password.tap()
-        // The driver left the password in a private file; DEBUG-only code reads it in,
-        // so it never appears in the test's log (simctl's pasteboard is broken on Xcode 27.1).
-        let fill = element("debug.fillPassword")
-        XCTAssertTrue(fill.waitForExistence(timeout: 5))
-        XCTAssertEqual(fill.label, "filled", "the app read the driver's credential file")
-        shot("live-04-password")
-        element("signIn.continue").tap()
-
-        let book = element(frankenstein)
-        XCTAssertTrue(book.waitForExistence(timeout: 60), "Frankenstein on the shelf from the Cloud")
-        sleep(3) // covers
-        shot("live-05-library")
-        XCTAssertFalse(element("book.gutenberg-moby-dick").exists, "no demo books on a real account")
+        let book = signInFromACleanStart()
 
         // In the Cloud: the first tap downloads, the next opens.
         book.tap()
@@ -115,10 +79,16 @@ final class LiveSyncUITests: XCTestCase {
         XCTAssertTrue(banner.waitForExistence(timeout: 60), "the further-ahead banner")
         sleep(1)
         shot("live-09-banner")
+        let probe = element("reader.visibleText")
+        let arrived = NSPredicate { _, _ in self.normalize(probe.value as? String ?? "").contains(self.normalize(expected)) }
+        let tapped = Date()
         element("banner.jump").tap()
-        sleep(3)
+        // The page loads behind the slip, so the catch-up lands in about a second; 40 s is only a
+        // ceiling for a stalled simulator, and the time it took is printed for the record.
+        _ = XCTWaiter.wait(for: [expectation(for: arrived, evaluatedWith: probe)], timeout: 40)
+        print("LIVE catch-up: the words were on screen \(String(format: "%.1f", Date().timeIntervalSince(tapped))) s after the tap")
         waitForSettled()
-        let words = element("reader.visibleText").value as? String ?? ""
+        let words = probe.value as? String ?? ""
         print("LIVE after jump: \(words.prefix(200))")
         shot("live-10-after-jump")
         XCTAssertTrue(normalize(words).contains(normalize(expected)), "landed on the web reader's passage: \(words.prefix(200))")
@@ -198,6 +168,120 @@ final class LiveSyncUITests: XCTestCase {
         sleep(6) // the Cloud write goes out
         close()
         sleep(4)
+    }
+
+    /// After landing on the InkPad's place and reading on, jump back to the first chapter: the place
+    /// sent to the Cloud must read as an early percent (the driver reads it back), never the landed one.
+    func test4_jumpBackToTheStart() throws {
+        launch(reset: false)
+        let book = element(frankenstein)
+        XCTAssertTrue(book.waitForExistence(timeout: 30))
+        book.tap()
+        let page = element("reader.page")
+        XCTAssertTrue(page.waitForExistence(timeout: 30))
+        waitForSettled()
+        page.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        // A tap near the scrubber's start jumps there: back into the first letters.
+        let scrubber = element("reader.scrubber")
+        XCTAssertTrue(scrubber.waitForExistence(timeout: 5))
+        print("LIVE before jumping back: \(scrubber.value as? String ?? "")")
+        scrubber.coordinate(withNormalizedOffset: CGVector(dx: 0.04, dy: 0.5)).tap()
+        sleep(3)
+        waitForSettled()
+        let words = element("reader.visibleText").value as? String ?? ""
+        print("LIVE after jumping back: \(words.prefix(160))")
+        print("LIVE after jumping back, scrubber: \(scrubber.value as? String ?? "")")
+        shot("live-17-jumped-back")
+        close()
+        sleep(6) // the place goes out on close
+        shot("live-18-shelf-after-jumping-back")
+        if let tile = app.descendants(matching: .any).matching(identifier: frankenstein).allElementsBoundByIndex.first {
+            print("LIVE shelf after jumping back: \(tile.label)")
+        }
+    }
+
+    /// A clean start, as after a reinstall: the book opens on the place this app left in the Cloud,
+    /// says so honestly (never "From your InkPad"), and reading on keeps the percent early.
+    func test5_aCleanStartLandsOnOurOwnPlace() throws {
+        let expected = try XCTUnwrap(env["GATEFOLD_LIVE_EXPECT_TEXT"], "the jumped-back page's first words")
+        let book = signInFromACleanStart()
+        let page = downloadAndOpen(book)
+        let slip = app.descendants(matching: .any).matching(NSPredicate(format: "label BEGINSWITH 'Right where you left off' OR label BEGINSWITH 'From your'")).firstMatch
+        XCTAssertTrue(slip.waitForExistence(timeout: 60), "a landing slip")
+        print("LIVE landing slip: \(slip.label)")
+        shot("live-19-clean-start-landed")
+        XCTAssertTrue(slip.label.hasPrefix("Right where you left off"), "our own place, labelled honestly: \(slip.label)")
+        waitForSettled()
+        let words = element("reader.visibleText").value as? String ?? ""
+        print("LIVE clean start page: \(words.prefix(160))")
+        XCTAssertTrue(normalize(words).contains(normalize(expected)), "landed on the jumped-back page: \(words.prefix(200))")
+        for _ in 0..<2 {
+            page.coordinate(withNormalizedOffset: CGVector(dx: 0.92, dy: 0.6)).tap()
+            sleep(2)
+        }
+        shot("live-20-read-on-after-clean-start")
+        close()
+        sleep(6)
+        shot("live-21-shelf-after-clean-start")
+        if let tile = app.descendants(matching: .any).matching(identifier: frankenstein).allElementsBoundByIndex.first {
+            print("LIVE shelf after clean start: \(tile.label)")
+        }
+    }
+
+    /// Sign in from a clean start (the shelf, outbox and sign-in wiped; the Keychain kept, as after a
+    /// reinstall) and wait for Frankenstein on the shelf.
+    @discardableResult
+    private func signInFromACleanStart() -> XCUIElement {
+        launch(reset: true)
+        let signIn = element("welcome.signIn")
+        XCTAssertTrue(signIn.waitForExistence(timeout: 20))
+        shot("live-01-welcome")
+        signIn.tap()
+
+        let email = element("signIn.email")
+        XCTAssertTrue(email.waitForExistence(timeout: 10))
+        email.tap()
+        email.typeText(env["GATEFOLD_LIVE_EMAIL"]!)
+        shot("live-02-email")
+        element("signIn.continue").tap()
+
+        // One store for this email goes straight to the password; several show the picker.
+        let password = element("signIn.password")
+        let store = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'signIn.store.'")).firstMatch
+        let deadline = Date().addingTimeInterval(75)
+        while Date() < deadline, !password.exists, !store.exists { usleep(250_000) }
+        if store.exists {
+            shot("live-03-store-picker")
+            store.tap()
+        }
+        XCTAssertTrue(password.waitForExistence(timeout: 15))
+        password.tap()
+        // The driver left the password in a private file; DEBUG-only code reads it in,
+        // so it never appears in the test's log (simctl's pasteboard is broken on Xcode 27.1).
+        let fill = element("debug.fillPassword")
+        XCTAssertTrue(fill.waitForExistence(timeout: 5))
+        XCTAssertEqual(fill.label, "filled", "the app read the driver's credential file")
+        shot("live-04-password")
+        element("signIn.continue").tap()
+
+        let book = element(frankenstein)
+        XCTAssertTrue(book.waitForExistence(timeout: 60), "Frankenstein on the shelf from the Cloud")
+        sleep(3) // covers
+        shot("live-05-library")
+        XCTAssertFalse(element("book.gutenberg-moby-dick").exists, "no demo books on a real account")
+
+        return book
+    }
+
+    /// The first tap downloads a Cloud book, the next opens it.
+    private func downloadAndOpen(_ book: XCUIElement) -> XCUIElement {
+        book.tap()
+        let onDevice = NSPredicate(format: "NOT (value CONTAINS 'Cloud') AND NOT (value CONTAINS 'downloading')")
+        XCTAssertEqual(XCTWaiter.wait(for: [expectation(for: onDevice, evaluatedWith: book)], timeout: 120), .completed, "downloaded")
+        book.tap()
+        let opened = element("reader.page")
+        XCTAssertTrue(opened.waitForExistence(timeout: 30))
+        return opened
     }
 
     private func waitForSettled() {
