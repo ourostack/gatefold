@@ -261,7 +261,20 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         func side() async -> Int? {
             ((try? await navigator.evaluateJavaScript(ReaderJS.sideOf(text)).get()) as? NSNumber)?.intValue
         }
-        guard await side() == 1 else { return nil }
+        // A jump can land one spread past the words: a word hyphenated across pages leaves the
+        // sentence's first letters on the spread before. Step to the spread where it starts.
+        var now = await side()
+        readerLog.notice("spread: the sentence starts on side \(now.map(String.init) ?? "nil", privacy: .public)")
+        var stepped = false
+        if now == -1 || now == 2 {
+            if now == -1 { _ = await navigator.goBackward(options: .init(animated: false)) }
+            else { _ = await navigator.goForward(options: .init(animated: false)) }
+            try? await Task.sleep(for: .milliseconds(120))
+            guard current() else { return nil }
+            stepped = true
+            now = await side()
+        }
+        guard now == 1 else { return stepped ? await visibleRange() : nil }
         _ = await navigator.evaluateJavaScript(ReaderJS.toggleVerso)
         try? await Task.sleep(for: .milliseconds(120))
         guard current(), let locator = model.locator(for: anchor) else { return nil }
@@ -277,7 +290,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             }
             try? await Task.sleep(for: .milliseconds(120))
         }
-        let now = await side()
+        now = await side()
         readerLog.notice("spread: sentence on the \(now == 0 ? "left" : now == 1 ? "right" : "other", privacy: .public) page after the verso")
         return await visibleRange()
     }

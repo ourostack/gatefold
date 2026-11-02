@@ -74,15 +74,10 @@ public struct AnchorKeeper: Sendable {
     }
 
     /// The navigator finished laying out. Returns the jump that brings the anchor back on screen.
+    /// The reflow stays open until `restoreDidComplete`: the restore can still move the page (a
+    /// spread keeping the sentence on its left page), and the pages it passes are not the reader's.
     public mutating func reflowDidSettle(visible: VisibleRange) -> RestoreAction {
-        guard let anchor else {
-            reflowing = nil
-            return .none
-        }
-        if visible.contains(anchor) {
-            reflowing = nil
-            return .none
-        }
+        guard let anchor, !visible.contains(anchor) else { return .none }
         return .jump(anchor)
     }
 
