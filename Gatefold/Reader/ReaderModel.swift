@@ -68,6 +68,8 @@ final class ReaderModel {
     let highlights: HighlightStore
     /// The first page is on screen and legible.
     private(set) var pageReady = false
+    /// Reopened at launch: the page as he left it, shown until the live page has laid out beneath it.
+    var reopenPicture: UIImage?
     let openedAt = Date()
     /// When the reader asked for the book: the tap, for a book opened ahead of it behind the shelf.
     var askedAt = Date()
@@ -363,16 +365,30 @@ final class ReaderModel {
             guard !pageReady else { return }
             Task { [weak self] in await self?.host?.logTypography() }
             readerLog.notice("first page ready after \(Date().timeIntervalSince(self.isWarming ? self.openedAt : self.askedAt), privacy: .public) s\(self.isWarming ? " (behind the shelf)" : "", privacy: .public)")
-            withAnimation(.easeOut(duration: 0.3)) { pageReady = true }
+            showPage()
         }
     }
     private var revealing = false
+
+    /// The cover gives way to the page. A reopen's picture of the page stays over it a moment longer,
+    /// while the running head and footer come up beneath, then goes at once: the two are the same
+    /// page, so nothing moves.
+    private func showPage() {
+        withAnimation(.easeOut(duration: 0.3)) { pageReady = true }
+        guard reopenPicture != nil else { return }
+        Task {
+            try? await Task.sleep(for: .milliseconds(400))
+            await host?.waitForSettledPage()
+            reopenPicture = nil
+            readerLog.notice("reopen: the live page took the picture's place at \(LaunchClock.sinceLaunch, privacy: .public) s after launch")
+        }
+    }
 
     /// The cover placeholder's own timeout: a page that never reports in still shows.
     func forceReady() {
         guard !pageReady else { return }
         readerLog.notice("first page forced ready after \(Date().timeIntervalSince(self.openedAt), privacy: .public) s")
-        withAnimation(.easeOut(duration: 0.3)) { pageReady = true }
+        showPage()
     }
 
     /// Moves each contents entry that names a place inside its file (`ch.xhtml#ch8`) from the file's first
@@ -995,6 +1011,11 @@ final class ReaderModel {
 
     func setChrome(_ visible: Bool) {
         withAnimation(Motion.chrome) { chromeVisible = visible }
+    }
+
+    /// Without the animation: the controls go down before the page is pictured for a reopen.
+    func setChromeNow(_ visible: Bool) {
+        chromeVisible = visible
     }
 
     // MARK: Jumps

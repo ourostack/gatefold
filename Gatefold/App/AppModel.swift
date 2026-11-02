@@ -36,13 +36,22 @@ final class AppModel {
         didSet { UserDefaults.standard.set(hasOnboarded, forKey: Keys.onboarded) }
     }
 
-    /// The open book, if any.
-    var openBookID: String?
+    /// The open book, if any. Remembered across launches, so that if iOS ends Gatefold while he is
+    /// reading (or he relaunches it), it reopens at his page instead of the shelf.
+    var openBookID: String? {
+        didSet {
+            guard LaunchOptions.allowsReopen else { return }
+            UserDefaults.standard.set(openBookID, forKey: Keys.reopenBook)
+        }
+    }
+    /// The book being reopened at launch, until its reader is up.
+    var reopenBookID: String?
 
     private enum Keys {
         static let onboarded = "onboarded"
         static let preferences = "readerPreferences"
         static let accountInitial = "accountInitial"
+        static let reopenBook = "reopenBook"
     }
 
     init(sync: (any SyncService)? = nil, libraryRoot: URL = LibraryStore.defaultRoot) {
@@ -50,6 +59,7 @@ final class AppModel {
             UserDefaults.standard.removeObject(forKey: Keys.onboarded)
             UserDefaults.standard.removeObject(forKey: Keys.preferences)
             UserDefaults.standard.removeObject(forKey: Keys.accountInitial)
+            UserDefaults.standard.removeObject(forKey: Keys.reopenBook)
         }
         self.accountInitial = UserDefaults.standard.string(forKey: Keys.accountInitial)
         let service = sync ?? Self.makeSyncService()
@@ -79,7 +89,11 @@ final class AppModel {
             forced.matchSystemAppearance = false
             preferences = PreferencesStore(defaults: forced)
         }
-        self.openBookID = LaunchOptions.openBook
+        if LaunchOptions.openBook == nil, LaunchOptions.allowsReopen, hasOnboarded,
+           let id = UserDefaults.standard.string(forKey: Keys.reopenBook) {
+            reopenBookID = id
+        }
+        self.openBookID = LaunchOptions.openBook ?? reopenBookID
     }
 
     /// PocketBook Cloud, unless a launch argument asks for the fake (previews, UI tests, screenshots).
