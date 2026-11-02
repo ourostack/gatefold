@@ -81,12 +81,34 @@ final class LiveSyncUITests: XCTestCase {
         shot("live-09-banner")
         let probe = element("reader.visibleText")
         let arrived = NSPredicate { _, _ in self.normalize(probe.value as? String ?? "").contains(self.normalize(expected)) }
+        let underline = element("reader.underline")
         let tapped = Date()
         element("banner.jump").tap()
-        // The page loads behind the slip, so the catch-up lands in about a second; 40 s is only a
-        // ceiling for a stalled simulator, and the time it took is printed for the record.
-        _ = XCTWaiter.wait(for: [expectation(for: arrived, evaluatedWith: probe)], timeout: 40)
-        print("LIVE catch-up: the words were on screen \(String(format: "%.1f", Date().timeIntervalSince(tapped))) s after the tap")
+        // A strip of real screenshots from the tap on, each named by its milliseconds after the tap:
+        // unlike the screen recording it drops nothing, so what the reader saw is on record.
+        let strip = env["GATEFOLD_SHOTS"].map { URL(fileURLWithPath: $0).appendingPathComponent("strip") }
+        if let strip { try? FileManager.default.createDirectory(at: strip, withIntermediateDirectories: true) }
+        var checked: Set<Int> = []
+        var firstOnScreen: Double?
+        while Date().timeIntervalSince(tapped) < 6.6 {
+            let at = Date().timeIntervalSince(tapped)
+            let image = XCUIScreen.main.screenshot()
+            if let strip { try? image.pngRepresentation.write(to: strip.appendingPathComponent(String(format: "t%05d.png", Int(at * 1000)))) }
+            let words = probe.value as? String ?? ""
+            let onScreen = normalize(words).contains(normalize(expected))
+            if onScreen, firstOnScreen == nil { firstOnScreen = at }
+            // Three and six seconds after the tap the reader is still on the InkPad's words, underlined.
+            for mark in [3, 6] where at >= Double(mark) && !checked.contains(mark) {
+                checked.insert(mark)
+                let drawn = underline.value as? String ?? ""
+                print("LIVE at tap+\(mark) s (\(String(format: "%.2f", at)) s): words on screen \(onScreen), \(drawn) [\(words.prefix(60))]")
+                XCTAssertTrue(onScreen, "tap+\(mark) s: the InkPad's words are no longer on screen: \(words.prefix(160))")
+                XCTAssertTrue(drawn.hasPrefix("underline ") && drawn != "underline 0", "tap+\(mark) s: the line is not underlined (\(drawn))")
+            }
+        }
+        // 40 s is only a ceiling for a stalled simulator.
+        if firstOnScreen == nil { _ = XCTWaiter.wait(for: [expectation(for: arrived, evaluatedWith: probe)], timeout: 40) }
+        print("LIVE catch-up: the words were on screen \(String(format: "%.1f", firstOnScreen ?? Date().timeIntervalSince(tapped))) s after the tap")
         waitForSettled()
         let words = probe.value as? String ?? ""
         print("LIVE after jump: \(words.prefix(200))")

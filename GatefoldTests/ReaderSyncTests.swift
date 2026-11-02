@@ -262,6 +262,45 @@ final class ScriptedPage: ReaderPage {
         #expect(f.page.standby == nil)
     }
 
+    @Test func aReflowWhileTheSlipIsUpLoadsTheWaitingPageAgain() async throws {
+        let opened = Date().addingTimeInterval(-600)
+        let f = try await Self.make(remote: { pub, mapper in
+            try await Self.inkPadPlace(pub, mapper, index: 12, percent: 40)
+        }, book: { $0.totalProgression = 0.05; $0.lastOpened = opened }, startAt: 0.05)
+        await f.model.load()
+        let waiting = try #require(f.page.standby)
+        // The host throws the page away when the type or the size changes…
+        f.page.dropStandby()
+        f.model.reflowDidFinish(visible: nil)
+        // …and the catch-up still on offer gets a new one once the page has settled.
+        #expect(f.page.standby == waiting)
+        await f.model.acceptSuggestion()
+        #expect(f.page.promoted == [waiting])
+    }
+
+    @Test func theSwapIsTheLandingAndTheOpeningSettleNeverPullsBack() async throws {
+        let pub = try await Self.publication()
+        let early = try #require(await Self.locate(pub, 0.05))
+        let saved = early.copy(text: { $0 = Locator.Text(highlight: "words of the saved page that never show") })
+        let json = try #require(try saved.jsonString())
+        let f = try await Self.make(remote: { pub, mapper in
+            try await Self.inkPadPlace(pub, mapper, index: 12, percent: 40)
+        }, book: { $0.locatorJSON = json; $0.totalProgression = 0.05; $0.lastOpened = Date().addingTimeInterval(-3600) })
+        let savedHref = saved.href.string
+        f.page.showsWords = { $0.href.string != savedHref }
+        let loading = Task { await f.model.load() }
+        for _ in 0..<100 where f.page.jumps.isEmpty { try await Task.sleep(for: .milliseconds(50)) }
+        await f.model.checkRemote()
+        #expect(f.page.standby != nil)
+        await f.model.acceptSuggestion()
+        let afterSwap = f.page.jumps.count
+        await loading.value
+        try await Task.sleep(for: .seconds(1))
+        #expect(f.page.promoted.count == 1)
+        #expect(f.page.jumps.count == afterSwap, "nothing moved the page after the swap")
+        #expect(f.page.currentLocation?.href.string != savedHref)
+    }
+
     @Test func ourOwnPlaceComingBackIsNotNews() async throws {
         // Opened here before: our own place in the Cloud is where we already are.
         let opened = Date().addingTimeInterval(-600)

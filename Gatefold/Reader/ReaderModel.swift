@@ -625,9 +625,28 @@ final class ReaderModel {
             await self.land(on: locator, progression: s.targetProgression, target: aim, cloud: cloud, rememberBack: true)
         }
         UINotificationFeedbackGenerator().notificationOccurred(.success)
-        if let locator { host?.underline(locator, color: theme.palette.accent) }
+        if let locator {
+            host?.underline(locator, color: theme.palette.accent)
+            watchUnderline()
+        }
         readerLog.notice("catch-up: underlined \(Self.ms(since: tapped), privacy: .public) ms after the tap")
         holdJumpBack()
+    }
+
+    /// For UI tests: the underline boxes drawn on screen, read every quarter second while it lasts.
+    private(set) var underlineProbe = ""
+    @ObservationIgnored private var underlineWatch: Task<Void, Never>?
+
+    private func watchUnderline() {
+        guard LaunchOptions.isUITest else { return }
+        underlineWatch?.cancel()
+        underlineWatch = Task { [weak self] in
+            for _ in 0..<44 {
+                guard let self, !Task.isCancelled, let host = self.host else { return }
+                self.underlineProbe = "underline \(await host.underlineProbe())"
+                try? await Task.sleep(for: .milliseconds(250))
+            }
+        }
     }
 
     static func ms(since start: ContinuousClock.Instant) -> Int {
@@ -808,6 +827,8 @@ final class ReaderModel {
 
     func reflowDidFinish(visible: VisibleRange?) {
         reflowSettledAt = Date()
+        // A reflow throws away the page loading behind this one; the catch-up still on offer gets a new one.
+        if let waiting = suggestionLocator, !isClosed { page?.prepareStandby(at: waiting) }
         if let visible, let anchor = keeper.anchor {
             anchorCheck = (visible.contains(anchor) ? "anchor-visible " : "anchor-lost ") + "\(reflowCount)"
             anchorDetail = "anchor \(anchor.href)@\(anchor.progression) [\(anchor.text?.prefix(40) ?? "-")] visible \(visible.href) \(visible.start)..\(visible.end) [\(visible.text?.prefix(60) ?? "nil")]"
@@ -826,6 +847,8 @@ final class ReaderModel {
     func locationDidChange(_ locator: Locator, duringTurn: Bool = false) async {
         guard !isClosed else { return }
         location = locator
+        // The reader turning on: the other device's line has done its job.
+        if !landing, duringTurn || touchedSinceLocation { host?.clearUnderline() }
         refreshAheadTab()
         // The navigator opens on the saved place, so its first report is a page worth showing: don't
         // keep the cover up while the rest of the book is indexed.

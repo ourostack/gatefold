@@ -190,11 +190,11 @@ struct FinishLineTests {
         let start = Date(timeIntervalSince1970: 1_800_000_000)
         let end = start.addingTimeInterval(11 * 86400 + 3600)
         #expect(ReadStory.text(otherDevice: "InkPad", otherSince: start, started: start.addingTimeInterval(86400), finished: end,
-                               sessions: 4, here: "phone", calendar: cal) == "Started on your InkPad 11 days ago · finished here on your phone")
+                               sessions: 4, here: "phone", calendar: cal) == "Started on your InkPad, finished here on your phone · read over 12 days")
         #expect(ReadStory.text(otherDevice: "InkPad", otherSince: end.addingTimeInterval(-3600), started: nil, finished: end,
-                               sessions: 1, here: "iPad", calendar: cal) == "Started on your InkPad earlier today · finished here on your iPad")
+                               sessions: 1, here: "iPad", calendar: cal) == "Started on your InkPad, finished here on your iPad · read in a single day")
         #expect(ReadStory.text(otherDevice: "InkPad", otherSince: start, started: start, finished: start.addingTimeInterval(86400),
-                               sessions: 2, here: "phone", calendar: cal) == "Started on your InkPad yesterday · finished here on your phone")
+                               sessions: 2, here: "phone", calendar: cal) == "Started on your InkPad, finished here on your phone · read over 2 days")
     }
 
     @Test func beganHereOrUnknown() {
@@ -211,12 +211,13 @@ struct FinishLineTests {
     }
 
     // The Finished shelf and the end leaf tell one story: when the InkPad began the book, the span
-    // counts from there, never "a single day" for a book begun on the InkPad days before.
+    // counts from there, never "a single day" for a book begun on the InkPad days before, and both say
+    // the same "over 6 days" so nobody has to do sums between them.
     @Test func theShelfCountsFromWhereTheReadBegan() {
         let start = Date(timeIntervalSince1970: 1_800_000_000)
         let today = start.addingTimeInterval(5 * 86400 + 3600)
         #expect(ReadStory.text(otherDevice: "InkPad", otherSince: start, started: today, finished: today,
-                               sessions: 1, here: "phone", calendar: cal) == "Started on your InkPad 5 days ago · finished here on your phone")
+                               sessions: 1, here: "phone", calendar: cal) == "Started on your InkPad, finished here on your phone · read over 6 days")
         #expect(ReadStory.shelfLine(otherDevice: "InkPad", otherSince: start, started: today, finished: today,
                                     sessions: 1, here: "phone", calendar: cal) == "Read over 6 days, InkPad to phone")
     }

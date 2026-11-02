@@ -255,7 +255,7 @@ struct ReaderScreen: View {
             // covered or half faded beside the Back pill or under the bar. Until that line is measured
             // (a moment, while the footer fades in) it ends where it must.
             let need = proxy.size.height - bottom
-            let top = footerLine.map { min(need, $0 - proxy.frame(in: .global).minY - 3) } ?? need
+            let top = footerLine.map { min(need, $0 - proxy.frame(in: .global).minY) } ?? need
             paper
                 .frame(width: proxy.size.width, height: proxy.size.height - top)
                 .offset(y: top)
@@ -297,6 +297,12 @@ struct ReaderScreen: View {
                 .opacity(0.01)
                 .accessibilityIdentifier("reader.visibleText")
                 .accessibilityValue(model.visibleTextProbe)
+                .allowsHitTesting(false)
+            Text("underline")
+                .font(.system(size: 1))
+                .opacity(0.01)
+                .accessibilityIdentifier("reader.underline")
+                .accessibilityValue(model.underlineProbe)
                 .allowsHitTesting(false)
             Text(model.anchorCheck)
                 .font(.system(size: 1))

@@ -265,7 +265,7 @@ public enum FinishLine {
 }
 
 /// The end leaf's line about the read itself, the two-device story when there is one:
-/// "Started on your InkPad 11 days ago · finished here on your phone".
+/// "Started on your InkPad, finished here on your phone · read over 12 days".
 public enum ReadStory {
     /// - Parameters:
     ///   - otherDevice: the other device's word ("InkPad") when the book was already being read there
@@ -276,14 +276,10 @@ public enum ReadStory {
     public static func text(otherDevice: String?, otherSince: Date?, started: Date?, finished: Date, sessions: Int,
                             here: String, calendar: Calendar = .current) -> String {
         if let device = otherDevice, let since = otherSince, since <= (started ?? finished) {
-            let days = FinishLine.dayCount(from: since, to: finished, calendar: calendar) - 1
-            let when: String
-            switch days {
-            case ...0: when = "earlier today"
-            case 1: when = "yesterday"
-            default: when = "\(days) days ago"
-            }
-            return "Started on your \(device) \(when) · finished here on your \(here)"
+            // The same span, in the same words, as the Finished shelf's line.
+            let days = FinishLine.dayCount(from: since, to: finished, calendar: calendar)
+            let span = days <= 1 ? "read in a single day" : "read over \(days) days"
+            return "Started on your \(device), finished here on your \(here) · \(span)"
         }
         return FinishLine.text(started: started, finished: finished, sessions: sessions, calendar: calendar)
     }

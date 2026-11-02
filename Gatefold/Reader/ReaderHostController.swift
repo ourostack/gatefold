@@ -190,8 +190,24 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     /// hasn't. False when there is none, and the caller jumps as usual.
     func promoteStandby(for locator: Locator) async -> Bool {
         guard let next = standby, next.locator == locator else { return false }
-        await next.ready.value
+        // A page that hasn't loaded in 1.5 s may never load: the plain jump is no slower than waiting on.
+        let ready = next.ready
+        let loaded = await withTaskGroup(of: Bool.self) { group in
+            group.addTask { await ready.value; return true }
+            group.addTask { try? await Task.sleep(for: .milliseconds(1500)); return false }
+            let first = await group.next() ?? false
+            group.cancelAll()
+            return first
+        }
+        guard loaded else {
+            readerLog.notice("standby: not loaded 1.5 s after the tap; jumping the plain way")
+            dropStandby()
+            return false
+        }
         guard standby?.navigator === next.navigator else { return false }
+        // The swap is the landing: nothing queued for the old page may move the new one.
+        reflowTask?.cancel()
+        reflowGeneration += 1
         let t0 = ContinuousClock.now
         defer { readerLog.notice("standby: swapped in, \(ReaderModel.ms(since: t0), privacy: .public) ms on the main thread") }
         standby = nil
@@ -291,8 +307,64 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             } else {
                 UIView.animate(withDuration: 0.12) { page.alpha = 0 }
             }
+            if unfolding { liftLeaf() }
         }
         settleReflowSoon()
+    }
+
+    /// The leaf that starts rising from the spine at the bell, while the spread lays out behind.
+    private var leaf: (view: UIView, shade: CAGradientLayer, lift: UIViewPropertyAnimator)?
+
+    /// The unfold starts at the bell: the right leaf rises slowly from the spine, edge-on at first, so
+    /// the reader sees the book opening while the spread is laid out, not a page standing still.
+    /// `swingOpen` gives it the real page and lays it flat from wherever it has got to.
+    private func liftLeaf() {
+        guard leaf == nil, !(weakModel?.reduceMotion ?? true), let container = navigator.view.superview else { return }
+        let frame = navigator.view.frame
+        let spine = spineOffset(in: frame)
+        let view = UIView(frame: CGRect(x: frame.minX + spine, y: frame.minY, width: frame.width - spine, height: frame.height))
+        view.backgroundColor = weakModel?.theme.uiBackground ?? .systemBackground
+        view.isUserInteractionEnabled = false
+        let shade = Self.leafShade(bounds: view.bounds, dark: weakModel?.theme.palette.isDark ?? false)
+        view.layer.addSublayer(shade)
+        view.layer.anchorPoint = CGPoint(x: 0, y: 0.5)
+        view.layer.position = CGPoint(x: frame.minX + spine, y: frame.midY)
+        view.layer.transform = Self.leafAngle(-.pi * 0.495, width: frame.width)
+        container.insertSubview(view, aboveSubview: reflowCover ?? navigator.view)
+        // A long ease-out: it is still moving, if slowly, whenever the spread is ready.
+        let lift = UIViewPropertyAnimator(duration: 2.6, controlPoint1: CGPoint(x: 0.2, y: 0.6), controlPoint2: CGPoint(x: 0.35, y: 1))
+        lift.addAnimations { view.layer.transform = Self.leafAngle(-.pi * 0.30, width: frame.width) }
+        lift.startAnimation()
+        leaf = (view, shade, lift)
+        readerLog.notice("unfold: the leaf starts to lift at the bell")
+    }
+
+    private func dropLeaf() {
+        guard let leaf else { return }
+        leaf.lift.stopAnimation(true)
+        leaf.view.removeFromSuperview()
+        self.leaf = nil
+    }
+
+    private func spineOffset(in frame: CGRect) -> CGFloat {
+        guard let model = weakModel, let gutter = model.layout.gutter else { return frame.width / 2 }
+        return min(frame.width, max(0, gutter.midX - model.layout.pageFrame.minX))
+    }
+
+    private static func leafAngle(_ angle: CGFloat, width: CGFloat) -> CATransform3D {
+        var t = CATransform3DIdentity
+        t.m34 = -1 / max(600, width * 1.2)
+        return CATransform3DRotate(t, angle, 0, 1, 0)
+    }
+
+    /// The leaf's shade: deepest at the spine while it stands up, gone once it lies flat.
+    private static func leafShade(bounds: CGRect, dark: Bool) -> CAGradientLayer {
+        let shade = CAGradientLayer()
+        shade.frame = bounds
+        shade.startPoint = CGPoint(x: 0, y: 0.5)
+        shade.endPoint = CGPoint(x: 1, y: 0.5)
+        shade.colors = [UIColor.black.withAlphaComponent(dark ? 0.55 : 0.30).cgColor, UIColor.black.withAlphaComponent(dark ? 0.25 : 0.08).cgColor]
+        return shade
     }
 
     private func settleReflowSoon() {
@@ -361,6 +433,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
                 container.insertSubview(held, aboveSubview: cover ?? navigator.view)
                 cover?.removeFromSuperview()
                 cover = held
+                if let leaf { container.bringSubviewToFront(leaf.view) }
             }
             if choice == .none { cover?.removeFromSuperview(); cover = nil }
             model.heldPicture = nil
@@ -370,6 +443,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             return
         }
         unfolding = false
+        dropLeaf()
         UIView.animate(withDuration: 0.25) {
             self.navigator.view.alpha = 1
             cover?.alpha = 0
@@ -488,14 +562,12 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         guard let container = page.superview else {
             page.alpha = 1
             cover?.removeFromSuperview()
+            dropLeaf()
             return
         }
         let image = await snapshot()
         let frame = page.frame
-        let spine: CGFloat = {
-            guard let model = weakModel, let gutter = model.layout.gutter else { return frame.width / 2 }
-            return min(frame.width, max(0, gutter.midX - model.layout.pageFrame.minX))
-        }()
+        let spine = spineOffset(in: frame)
         let paper = weakModel?.theme.uiBackground ?? .systemBackground
         func half(_ x: CGFloat, _ w: CGFloat) -> UIView {
             let v = UIView(frame: CGRect(x: frame.minX + x, y: frame.minY, width: w, height: frame.height))
@@ -507,17 +579,42 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             return v
         }
         let left = half(0, spine)
-        let right = half(spine, frame.width - spine)
-        // The leaf's shade: deepest at the spine while it stands up, gone once it lies flat.
-        let shade = CAGradientLayer()
-        shade.frame = right.bounds
-        shade.startPoint = CGPoint(x: 0, y: 0.5)
-        shade.endPoint = CGPoint(x: 1, y: 0.5)
         let dark = weakModel?.theme.palette.isDark ?? false
-        shade.colors = [UIColor.black.withAlphaComponent(dark ? 0.55 : 0.30).cgColor, UIColor.black.withAlphaComponent(dark ? 0.25 : 0.08).cgColor]
-        right.layer.addSublayer(shade)
+        let reduce = weakModel?.reduceMotion ?? false
+        // The leaf already rising since the bell carries on from where it is, now with the real page on it.
+        let lifted = reduce ? nil : leaf
+        if lifted == nil { dropLeaf() }
+        let right: UIView
+        let shade: CAGradientLayer
+        if let lifted {
+            leaf = nil
+            lifted.lift.stopAnimation(true)
+            right = lifted.view
+            shade = lifted.shade
+            right.layer.transform = right.layer.presentation()?.transform ?? right.layer.transform
+            right.layer.bounds = CGRect(x: 0, y: 0, width: frame.width - spine, height: frame.height)
+            right.layer.position = CGPoint(x: frame.minX + spine, y: frame.midY)
+            shade.frame = right.bounds
+            let words = CALayer()
+            words.frame = right.bounds
+            words.contents = image.cgImage
+            words.contentsScale = image.scale
+            words.contentsRect = CGRect(x: spine / frame.width, y: 0, width: (frame.width - spine) / frame.width, height: 1)
+            right.layer.insertSublayer(words, below: shade)
+            let show = CABasicAnimation(keyPath: "opacity")
+            show.fromValue = 0
+            show.toValue = 1
+            show.duration = 0.18
+            words.add(show, forKey: "show")
+        } else {
+            right = half(spine, frame.width - spine)
+            shade = Self.leafShade(bounds: right.bounds, dark: dark)
+            right.layer.addSublayer(shade)
+        }
         left.alpha = 0
-        if let cover {
+        if lifted != nil {
+            container.insertSubview(left, belowSubview: cover ?? right)
+        } else if let cover {
             // The left page comes up through the old one; the leaf rises over it from the spine, so the
             // old page giving way and the leaf opening read as one gesture, with no bare half between.
             container.insertSubview(left, belowSubview: cover)
@@ -526,8 +623,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             container.insertSubview(left, aboveSubview: page)
             container.insertSubview(right, aboveSubview: page)
         }
-        let reduce = weakModel?.reduceMotion ?? false
-        readerLog.notice("unfold: the right page swings open (reduce motion \(reduce, privacy: .public))")
+        readerLog.notice("unfold: the right page swings open (reduce motion \(reduce, privacy: .public), lifted at the bell \(lifted != nil, privacy: .public))")
         // The old page gives way to the new left page through paper, never through each other.
         let out = UIViewPropertyAnimator(duration: 0.12, curve: .easeIn) { cover?.alpha = 0 }
         let into = UIViewPropertyAnimator(duration: 0.16, curve: .easeOut) { left.alpha = 1 }
@@ -541,13 +637,12 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
                 UIView.animate(withDuration: 0.25, delay: 0.1, options: .curveEaseOut) { right.alpha = 1 } completion: { _ in c.resume() }
             }
         } else {
-            right.layer.anchorPoint = CGPoint(x: 0, y: 0.5)
-            right.layer.position = CGPoint(x: frame.minX + spine, y: frame.midY)
-            var start = CATransform3DIdentity
-            start.m34 = -1 / max(600, frame.width * 1.2)
-            right.layer.transform = CATransform3DRotate(start, -.pi * 0.47, 0, 1, 0)
-            var flat = CATransform3DIdentity
-            flat.m34 = start.m34
+            if lifted == nil {
+                right.layer.anchorPoint = CGPoint(x: 0, y: 0.5)
+                right.layer.position = CGPoint(x: frame.minX + spine, y: frame.midY)
+                right.layer.transform = Self.leafAngle(-.pi * 0.47, width: frame.width)
+            }
+            let flat = Self.leafAngle(0, width: frame.width)
             let fade = CABasicAnimation(keyPath: "opacity")
             fade.fromValue = 1
             fade.toValue = 0
@@ -556,9 +651,11 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             fade.fillMode = .both
             fade.isRemovedOnCompletion = false
             // Edge-on at first, the leaf rises as the old page starts to go.
-            right.isHidden = true
-            try? await Task.sleep(for: .milliseconds(60))
-            right.isHidden = false
+            if lifted == nil {
+                right.isHidden = true
+                try? await Task.sleep(for: .milliseconds(60))
+                right.isHidden = false
+            }
             fade.beginTime = CACurrentMediaTime()
             shade.add(fade, forKey: "lift")
             await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
@@ -981,7 +1078,10 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         withTransaction(still) { curl.isActive = false }
     }
 
-    /// Underlines the other device's words with the ribbon colour: drawn in over 0.6 s, gone after 2.
+    private var underlineTask: Task<Void, Never>?
+
+    /// Underlines the other device's words with the ribbon colour: drawn in over 0.6 s, held while the
+    /// Back pill is up (8 s), then faded. A page turn takes it away sooner (`clearUnderline`).
     func underline(_ locator: Locator, color: UInt32) {
         guard let quote = locator.text.highlight, !quote.isEmpty else { return }
         // The mark ends where a word does, not where the quote's character count did.
@@ -989,10 +1089,38 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         let locator = locator.copy(text: { $0.highlight = edge.highlight; $0.after = edge.after })
         let decoration = Decoration(id: "sync", locator: locator, style: .init(id: .gatefoldSync, config: ThemePalette.hexString(color)))
         navigator.apply(decorations: [decoration], in: "gatefold-sync")
-        Task { [weak self] in
-            try? await Task.sleep(for: .seconds(3))
-            self?.navigator.apply(decorations: [], in: "gatefold-sync")
+        underlineTask?.cancel()
+        underlineTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(9))
+            guard !Task.isCancelled else { return }
+            self?.clearUnderline()
         }
+    }
+
+    func clearUnderline() {
+        underlineTask?.cancel()
+        underlineTask = nil
+        navigator.apply(decorations: [], in: "gatefold-sync")
+    }
+
+    /// For UI tests: how many underline boxes are on screen and drawn (opaque).
+    func underlineProbe() async -> Int {
+        let js = """
+        (() => { const vw = window.innerWidth, vh = window.innerHeight;
+          return Array.from(document.querySelectorAll('.gatefold-sync')).filter((e) => {
+            const r = e.getBoundingClientRect();
+            return r.width > 0 && r.right > 0 && r.left < vw && r.bottom > 0 && r.top < vh && parseFloat(getComputedStyle(e).opacity) > 0.5;
+          }).length; })()
+        """
+        var count = 0
+        func walk(_ v: UIView) -> [WKWebView] {
+            if let w = v as? WKWebView { return w.isHidden || w.alpha < 0.01 ? [] : [w] }
+            return v.subviews.flatMap(walk)
+        }
+        for web in walk(navigator.view) {
+            if let n = (try? await web.evaluateJavaScript(js)) as? Int { count += n }
+        }
+        return count
     }
 
     // MARK: Helpers
@@ -1012,8 +1140,8 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         readerLog.notice("typography columns=\(self.columns) \(line, privacy: .public)")
     }
 
-    /// The top (in window points) of the highest line of text on screen that reaches into `band` (window
-    /// points), so paper laid over the page's foot can end in the gap above it rather than across it.
+    /// Where paper laid over the page's foot may end (window points): in the gap above the highest line
+    /// of text that reaches into `band`, below the last line kept whole, so its descenders are never cut.
     func lineTop(crossing band: ClosedRange<CGFloat>) async -> CGFloat? {
         let host = navigator.view!
         var best: CGFloat?
@@ -1037,7 +1165,12 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             var tw=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT);
             while((n=tw.nextNode())){if(!n.textContent.trim())continue;r.selectNodeContents(n);var rs=r.getClientRects();
             for(var i=0;i<rs.length;i++){var q=rs[i];if(q.width<1||q.right<=0||q.left>=w)continue;
-            if(q.bottom>y0&&q.top<y1&&(best<0||q.top<best))best=q.top;}}return best;})(\(y0),\(y1))
+            if(q.bottom>y0&&q.top<y1&&(best<0||q.top<best))best=q.top;}}
+            if(best<0)return -1;var above=-1;tw=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT);
+            while((n=tw.nextNode())){if(!n.textContent.trim())continue;r.selectNodeContents(n);var rs=r.getClientRects();
+            for(var i=0;i<rs.length;i++){var q=rs[i];if(q.width<1||q.right<=0||q.left>=w)continue;
+            if(q.top<best-1&&q.bottom>above)above=q.bottom;}}
+            if(above<0)return best-3;var gap=best-above;return gap>=2?above+Math.min(1.5,gap/2):(above+best)/2;})(\(y0),\(y1))
             """
             guard let top = (try? await web.evaluateJavaScript(js)) as? Double, top >= 0 else { continue }
             let y = web.convert(CGPoint(x: 0, y: CGFloat(top)), to: window).y
@@ -1198,7 +1331,7 @@ extension Decoration.Style.Id {
 }
 
 extension HTMLDecorationTemplate {
-    /// A ribbon-coloured underline that draws itself in from the left, then fades.
+    /// A ribbon-coloured underline that draws itself in from the left, holds with the Back pill, then fades.
     static func gatefoldSync() -> HTMLDecorationTemplate { HTMLDecorationTemplate(
         layout: .boxes,
         element: { decoration in
@@ -1210,10 +1343,10 @@ extension HTMLDecorationTemplate {
             box-sizing: border-box;
             border-bottom: 2px solid var(--gf-tint);
             clip-path: inset(0 100% 0 0);
-            animation: gatefold-draw 0.6s ease-out forwards, gatefold-fade 2s ease-in 0.6s forwards;
+            animation: gatefold-draw 0.6s ease-out forwards, gatefold-fade 1s ease-in 7.6s forwards;
         }
         @media (prefers-reduced-motion: reduce) {
-            .gatefold-sync { clip-path: none; animation: gatefold-fade 2s ease-in 0.6s forwards; }
+            .gatefold-sync { clip-path: none; animation: gatefold-fade 1s ease-in 7.6s forwards; }
         }
         @keyframes gatefold-draw { to { clip-path: inset(0 0 0 0); } }
         @keyframes gatefold-fade { from { opacity: 1; } to { opacity: 0; } }
