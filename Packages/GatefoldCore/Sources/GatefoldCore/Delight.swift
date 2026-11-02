@@ -194,22 +194,92 @@ public struct SyncSlip: Equatable, Sendable {
 public enum ArrivalGreeting {
     public static func text(bookCount: Int, waitingTitle: String?, waitingPercent: Int?) -> String? {
         guard bookCount > 0 else { return nil }
-        let books = bookCount == 1 ? "1 book" : "\(bookCount) books"
         if let title = waitingTitle, let percent = waitingPercent, percent > 0 {
-            return "\(books) from your PocketBook. \(BookTitle.display(title)) is waiting at \(percent)%."
+            return "Welcome back. \(BookTitle.display(title))’s been holding your place at \(percent)%."
         }
-        return "\(books) from your PocketBook, ready when you are."
+        let books = bookCount == 1 ? "1 book" : "\(bookCount) books"
+        return "Welcome back. \(books) came over from your InkPad, ready when you are."
+    }
+}
+
+/// The quiet line under "Library" about the Cloud.
+public enum SyncHealth: Equatable, Sendable {
+    case checking
+    case upToDate(Date)
+    case offline(lastSynced: Date?)
+
+    public func text(now: Date) -> String {
+        switch self {
+        case .checking:
+            return "Checking your InkPad…"
+        case let .upToDate(date):
+            return "Up to date with your InkPad · \(RelativeAge.text(from: date, to: now))"
+        case let .offline(last):
+            guard let last else { return "Offline for now. Read on; your place will catch up later." }
+            return "Offline for now · last synced \(RelativeAge.text(from: last, to: now)). Read on; your place will catch up."
+        }
     }
 }
 
 /// "Finished · 11 days, 9 sessions".
 public enum FinishLine {
     public static func text(started: Date?, finished: Date, sessions: Int, calendar: Calendar = .current) -> String {
-        guard let started else { return "Every last page, read" }
+        guard let started else { return fallback }
         if sessions <= 1 { return "Devoured in one sitting" }
-        let days = (calendar.dateComponents([.day], from: calendar.startOfDay(for: started), to: calendar.startOfDay(for: finished)).day ?? 0) + 1
+        let days = dayCount(from: started, to: finished, calendar: calendar)
         let span = days <= 1 ? "in a day" : "\(days) days"
         return "Finished · \(span), \(sessions) sessions"
+    }
+
+    /// When nothing is known about the read: still about the read, never generic praise.
+    public static let fallback = "Closed on the very last page"
+
+    /// Calendar days touched, counting both ends: started and finished the same day is 1.
+    static func dayCount(from start: Date, to end: Date, calendar: Calendar) -> Int {
+        (calendar.dateComponents([.day], from: calendar.startOfDay(for: start), to: calendar.startOfDay(for: end)).day ?? 0) + 1
+    }
+}
+
+/// The end leaf's line about the read itself, the two-device story when there is one:
+/// "Started on your InkPad 11 days ago · finished here on your phone".
+public enum ReadStory {
+    /// - Parameters:
+    ///   - otherDevice: the other device's word ("InkPad") when the book was already being read there
+    ///     before it was first opened here; nil when it began here.
+    ///   - otherSince: the earliest sign of reading there.
+    ///   - started: the first open here.
+    ///   - here: this device's word ("phone", "iPad").
+    public static func text(otherDevice: String?, otherSince: Date?, started: Date?, finished: Date, sessions: Int,
+                            here: String, calendar: Calendar = .current) -> String {
+        if let device = otherDevice, let since = otherSince, since <= (started ?? finished) {
+            let days = FinishLine.dayCount(from: since, to: finished, calendar: calendar) - 1
+            let when: String
+            switch days {
+            case ...0: when = "earlier today"
+            case 1: when = "yesterday"
+            default: when = "\(days) days ago"
+            }
+            return "Started on your \(device) \(when) · finished here on your \(here)"
+        }
+        return FinishLine.text(started: started, finished: finished, sessions: sessions, calendar: calendar)
+    }
+}
+
+/// Cover sizes for the shelf, scaled to the screen so an iPad shelf is as full as a phone's.
+public struct ShelfMetrics: Equatable, Sendable {
+    /// Reading Now's covers.
+    public var large: CGFloat
+    /// The grid's (and Finished shelf's) smallest cover.
+    public var grid: CGFloat
+    public var gutter: CGFloat
+    public var spacing: CGFloat
+
+    public static func forWidth(_ width: CGFloat) -> ShelfMetrics {
+        switch width {
+        case ..<500: ShelfMetrics(large: 150, grid: 100, gutter: 20, spacing: 14)
+        case ..<900: ShelfMetrics(large: 200, grid: 124, gutter: 32, spacing: 22)
+        default: ShelfMetrics(large: 220, grid: 140, gutter: 44, spacing: 26)
+        }
     }
 }
 
@@ -242,6 +312,17 @@ public struct ChromeClearance: Equatable, Sendable {
             }
         }
         return c
+    }
+
+    /// How far a header row `width` wide must move down so nothing in it sits under an occlusion that
+    /// reaches into its band (`band` points from the top). Books moves the whole header down rather than
+    /// squeezing buttons away from the trailing edge. Regions outside the row (the folded Duo's status
+    /// column sits in the trailing safe area, beside the content) don't move it.
+    public static func headerDrop(occlusions: [CGRect], band: CGFloat, width: CGFloat) -> CGFloat {
+        occlusions
+            .filter { $0.width > 0 && $0.height > 0 && $0.maxY > 0 && $0.minY < band && $0.minX < width && $0.maxX > 0 }
+            .map { $0.maxY + spare }
+            .max() ?? 0
     }
 
     /// Where the ribbon hangs: near the page's trailing edge, but never under an occlusion.

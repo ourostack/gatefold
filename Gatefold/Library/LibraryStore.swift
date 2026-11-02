@@ -17,6 +17,16 @@ final class LibraryStore {
     var lastError: String?
     /// Why the last refresh didn't reach the Cloud (shown quietly on the shelf, never as an alert).
     private(set) var syncProblem: SyncProblem?
+    /// When the Cloud last answered, kept across launches for "Up to date with your InkPad · 5 min ago".
+    private(set) var lastSynced: Date? {
+        didSet { UserDefaults.standard.set(lastSynced, forKey: Self.lastSyncedKey) }
+    }
+    /// The last Cloud fetch came back with no books at all: only then is an empty shelf really empty.
+    private(set) var cloudIsEmpty = false
+    /// Covers that couldn't be fetched: these books wear a typeset cover. Every other book without its
+    /// cover yet is about to get one, so it shows plain paper instead of flashing a made-up cover.
+    private(set) var coverless: Set<String> = []
+    private static let lastSyncedKey = "lastSynced"
     /// The push task waiting or running per book. Each removes itself when it ends, so this holds only
     /// books with a push in flight.
     @ObservationIgnored private var pushes: [String: (id: UUID, task: Task<Void, Never>)] = [:]
@@ -77,6 +87,8 @@ final class LibraryStore {
             // One request per page of books: each book already carries its position.
             let cloudBooks = try await sync.library()
             syncProblem = nil
+            cloudIsEmpty = cloudBooks.isEmpty
+            lastSynced = Date()
             prune(keeping: Set(cloudBooks.map(\.id)))
             await merge(cloudBooks)
         } catch {
@@ -106,8 +118,9 @@ final class LibraryStore {
             if let i = books.firstIndex(where: { $0.id == cloudBook.id }) {
                 books[i].cloud = cloudBook
                 books[i].remote = cloudBook.position ?? books[i].remote
+                books[i].noteOtherDevice(cloudBook.position)
             } else {
-                books.append(LibraryBook(
+                var book = LibraryBook(
                     id: cloudBook.id,
                     title: cloudBook.title,
                     author: cloudBook.authors ?? "",
@@ -115,13 +128,47 @@ final class LibraryStore {
                     cloud: cloudBook,
                     remote: cloudBook.position,
                     added: cloudBook.createdAt ?? cloudBook.modifiedAt ?? Date()
-                ))
+                )
+                book.noteOtherDevice(cloudBook.position)
+                books.append(book)
             }
         }
+        if !cloudBooks.isEmpty { cloudIsEmpty = false }
         save()
-        for cloudBook in cloudBooks where covers[cloudBook.id] == nil {
-            if let url = cloudBook.largeCoverURL ?? cloudBook.coverURL { await loadCover(id: cloudBook.id, from: url) }
+        await loadCovers(for: cloudBooks)
+    }
+
+    /// Fetches the missing covers side by side; a big shelf shouldn't fill in one cover at a time.
+    private func loadCovers(for cloudBooks: [CloudBook]) async {
+        let wanted = cloudBooks.compactMap { book -> (String, URL)? in
+            guard covers[book.id] == nil else { return nil }
+            guard let url = book.largeCoverURL ?? book.coverURL else {
+                coverless.insert(book.id)
+                return nil
+            }
+            return (book.id, url)
         }
+        guard !wanted.isEmpty else { return }
+        await withTaskGroup(of: (String, Data?).self) { group in
+            for (id, url) in wanted {
+                group.addTask {
+                    if url.isFileURL { return (id, try? Data(contentsOf: url)) }
+                    return (id, try? await URLSession.shared.data(from: url).0)
+                }
+            }
+            for await (id, data) in group {
+                if let data, let image = UIImage(data: data) {
+                    storeCover(image, id: id)
+                } else if covers[id] == nil {
+                    coverless.insert(id)
+                }
+            }
+        }
+    }
+
+    /// The book has no cover coming: show the typeset one.
+    func isCoverless(_ book: LibraryBook) -> Bool {
+        covers[book.id] == nil && (book.cloud == nil || coverless.contains(book.id))
     }
 
     /// The book left PocketBook Cloud: a cloud-only book leaves the shelf; a downloaded one stays, unlinked.
@@ -158,6 +205,7 @@ final class LibraryStore {
             downloads[book.id] = nil
             if covers[book.id] == nil, let meta = try? await BookOpener.shared.metadata(of: target), let cover = meta.cover {
                 storeCover(cover, id: book.id)
+                coverless.remove(book.id)
             }
         } catch {
             downloads[book.id] = .failed(error.localizedDescription)
@@ -293,7 +341,12 @@ final class LibraryStore {
     func remotePosition(for book: LibraryBook) async -> ReadingPosition? {
         guard let cloud = book.cloud else { return nil }
         let remote = try? await sync.remotePosition(for: cloud)
-        if let remote { update(book.id) { $0.remote = remote } }
+        if let remote {
+            update(book.id) {
+                $0.remote = remote
+                $0.noteOtherDevice(remote)
+            }
+        }
         return remote
     }
 
@@ -316,16 +369,6 @@ final class LibraryStore {
 
     func cover(for book: LibraryBook) -> UIImage? { covers[book.id] }
 
-    private func loadCover(id: String, from url: URL) async {
-        let data: Data?
-        if url.isFileURL {
-            data = try? Data(contentsOf: url)
-        } else {
-            data = try? await URLSession.shared.data(from: url).0
-        }
-        if let data, let image = UIImage(data: data) { storeCover(image, id: id) }
-    }
-
     private func storeCover(_ image: UIImage, id: String) {
         let prepared = image.preparingThumbnail(of: CGSize(width: 600, height: 900 * image.size.height / max(image.size.width * 1.5, 1))) ?? image
         covers[id] = prepared
@@ -337,6 +380,7 @@ final class LibraryStore {
     // MARK: Persistence
 
     private func load() {
+        lastSynced = UserDefaults.standard.object(forKey: Self.lastSyncedKey) as? Date
         guard let data = try? Data(contentsOf: indexURL),
               let saved = try? JSONDecoder().decode([LibraryBook].self, from: data) else { return }
         books = saved.map { book in
@@ -364,6 +408,8 @@ final class LibraryStore {
         books = []
         covers = [:]
         downloads = [:]
+        coverless = []
+        lastSynced = nil
         try? FileManager.default.removeItem(at: root)
         try? FileManager.default.createDirectory(at: booksDir, withIntermediateDirectories: true)
         try? FileManager.default.createDirectory(at: coversDir, withIntermediateDirectories: true)

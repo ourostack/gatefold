@@ -5,6 +5,8 @@ import SwiftUI
 struct AppearanceSheet: View {
     let model: ReaderModel
     @State private var confirmedDefault = false
+    /// Room for the cover screen's camera when the sheet is pulled up under it.
+    @State private var topClearance: CGFloat = 0
 
     var body: some View {
         let prefs = model.preferences
@@ -36,18 +38,27 @@ struct AppearanceSheet: View {
                             }
                         }
                     }
+                    let pair = Self.dayAndNight(prefs)
                     Toggle(isOn: Binding(
                         get: { prefs.matchSystemAppearance },
-                        set: { on in model.setPreferences { $0.matchSystemAppearance = on } }
+                        set: { on in
+                            model.setPreferences {
+                                // A dark page picked by hand becomes the night theme, with a light one for the day.
+                                if on { ($0.theme, $0.darkTheme) = Self.dayAndNight($0) }
+                                $0.matchSystemAppearance = on
+                            }
+                        }
                     )) {
                         VStack(alignment: .leading, spacing: 2) {
                             Text("Match Light and Dark")
-                            Text("\(prefs.theme.displayName) by day, \(prefs.darkTheme.displayName) at night")
+                            Text("\(pair.day.displayName) while the sun's up, \(pair.night.displayName) once it sets")
                                 .font(.footnote)
                                 .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
                     }
                     .tint(.ribbon)
+                    .accessibilityIdentifier("appearance.matchSystem")
                 }
 
                 VStack(alignment: .leading, spacing: 12) {
@@ -116,14 +127,34 @@ struct AppearanceSheet: View {
                 .accessibilityIdentifier("appearance.useAsDefault")
             }
             .padding(.horizontal, 22)
-            .padding(.top, 26)
+            .padding(.top, 26 + topClearance)
             .padding(.bottom, 20)
+            .frame(maxWidth: 560)
+            .frame(maxWidth: .infinity)
+        }
+        // The folded Duo keeps a column at the trailing edge for its camera and clock, but only up top:
+        // down here the sheet uses its full width, so it sits symmetric with the toggle at the edge.
+        .ignoresSafeArea(.container, edges: .horizontal)
+        .background {
+            GeometryReader { geo in
+                Color.clear.onGeometryChange(for: CGFloat.self) { _ in
+                    // An occlusion reaching into the sheet's top: move the content down below it.
+                    let reaching = FoldReader.occlusions(in: geo).filter { $0.maxY > 0 && $0.minY < 80 && $0.minX < geo.size.width }
+                    return reaching.map { $0.maxY - 12 }.max().map { max(0, $0) } ?? 0
+                } action: { topClearance = $0 }
+            }
         }
         .presentationDetents([.medium, .large])
         .presentationBackgroundInteraction(.enabled(upThrough: .medium))
         .presentationDragIndicator(.visible)
         .sensoryFeedback(.selection, trigger: model.preferences)
         .animation(.snappy, value: model.preferences)
+    }
+
+    /// The pair "Match Light and Dark" follows: a light page by day, a dark one by night. A dark theme
+    /// picked by hand is the night half, with Vellum for the day.
+    static func dayAndNight(_ prefs: ReaderPreferences) -> (day: ReaderTheme, night: ReaderTheme) {
+        prefs.theme.palette.isDark ? (.vellum, prefs.theme) : (prefs.theme, prefs.darkTheme.palette.isDark ? prefs.darkTheme : .dusk)
     }
 
     private func labeled<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {

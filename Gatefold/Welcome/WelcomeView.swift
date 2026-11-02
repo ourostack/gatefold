@@ -10,6 +10,9 @@ struct WelcomeView: View {
     @State private var markCenter: CGFloat?
     @State private var screenCenter: CGFloat?
     @State private var signingIn = false
+    /// The cover screen keeps a column at its trailing edge for the camera and clock; the hero centres
+    /// on the paper you can see, not on what's left of the safe area.
+    @State private var centreOnPaper = false
 
     var body: some View {
         NavigationStack {
@@ -28,7 +31,7 @@ struct WelcomeView: View {
                     Text("Your PocketBook shelf, now in your pocket. Open a book and land on the very page your InkPad left off.")
                         .font(.title3)
                         .multilineTextAlignment(.center)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Color.secondaryInk)
                         .frame(maxWidth: 380)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -62,12 +65,19 @@ struct WelcomeView: View {
                 .padding(.bottom, 24)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .ignoresSafeArea(.container, edges: centreOnPaper ? .horizontal : [])
             .background {
                 // The launch screen centres its mark in the safe area; so does the first frame here.
                 GeometryReader { geo in
                     Color.paper
                         .ignoresSafeArea()
                         .onGeometryChange(for: CGFloat.self) { _ in geo.frame(in: .global).midY } action: { screenCenter = $0 }
+                        .onGeometryChange(for: Bool.self) { _ in
+                            // Only the camera's column is reserved there; everything below it is open paper.
+                            // (Stable either way: it doesn't depend on the width this view is given.)
+                            let regions = FoldReader.occlusions(in: geo)
+                            return !regions.isEmpty && regions.allSatisfy { $0.maxY < geo.size.height * 0.4 }
+                        } action: { centreOnPaper = $0 }
                 }
             }
             .navigationDestination(isPresented: $signingIn) { SignInFlow() }
@@ -201,7 +211,7 @@ struct SignInFlow: View {
                 .contentTransition(.opacity)
                 .fixedSize(horizontal: false, vertical: true)
             Text(subtitle)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Color.secondaryInk)
                 .lineLimit(nil)
                 .fixedSize(horizontal: false, vertical: true)
             switch step {
@@ -325,16 +335,16 @@ struct SignInFlow: View {
     private var title: String {
         switch step {
         case .email: "Sign In"
-        case .store: "Choose Your Store"
+        case .store: "Which Store?"
         case .password: "Password"
         }
     }
 
     private var subtitle: String {
         switch step {
-        case .email: "Use the email you use for PocketBook Cloud on your InkPad."
-        case .store: "\(email) has accounts in more than one PocketBook store."
-        case .password: "For \(email)\(store.map { " at \($0.name)" } ?? "")."
+        case .email: "Your PocketBook Cloud email: the same one your InkPad knows you by."
+        case .store: "\(email) has a shelf in more than one PocketBook store. Which one holds your books?"
+        case .password: "For \(email)\(store.map { " at \($0.name)" } ?? ""). One more step and your shelf comes over."
         }
     }
 

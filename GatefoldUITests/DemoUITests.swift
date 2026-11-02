@@ -31,4 +31,31 @@ final class DemoUITests: XCTestCase {
         page.coordinate(withNormalizedOffset: CGVector(dx: 0.93, dy: 0.5)).tap()
         sleep(3)
     }
+
+    /// The library at a glance: the shelf arrives, the sync line settles on "Up to date", and a
+    /// relaunch puts the cached shelf back at once, without an empty or dusting shelf in between.
+    func testShelfDemo() {
+        let app = XCUIApplication()
+        app.launchArguments = [
+            "-GatefoldUITest", "YES", "-GatefoldFakeCloud", "YES", "-GatefoldReset", "YES", "-GatefoldSkipWelcome", "YES", "-GatefoldSignedIn", "YES",
+            "-GatefoldTheme", "vellum",
+        ]
+        app.launch()
+        let health = app.descendants(matching: .any)["library.syncHealth"]
+        XCTAssertTrue(health.waitForExistence(timeout: 30))
+        _ = XCTWaiter.wait(for: [expectation(for: NSPredicate(format: "label CONTAINS 'Up to date'"), evaluatedWith: health)], timeout: 30)
+        XCTAssertTrue(health.label.contains("Up to date with your InkPad"), health.label)
+        XCTAssertTrue(app.staticTexts["Moby-Dick"].firstMatch.waitForExistence(timeout: 10))
+        sleep(2)
+
+        app.terminate()
+        app.launchArguments = [
+            "-GatefoldUITest", "YES", "-GatefoldFakeCloud", "YES", "-GatefoldSkipWelcome", "YES", "-GatefoldSignedIn", "YES", "-GatefoldTheme", "vellum",
+        ]
+        app.launch()
+        XCTAssertTrue(app.staticTexts["Moby-Dick"].firstMatch.waitForExistence(timeout: 10))
+        XCTAssertFalse(app.descendants(matching: .any)["library.empty"].exists, "a cached shelf never shows as empty")
+        XCTAssertFalse(app.descendants(matching: .any)["library.dusting"].exists, "a cached shelf never waits on the fetch")
+        sleep(2)
+    }
 }
