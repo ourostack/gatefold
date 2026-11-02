@@ -43,15 +43,20 @@ struct GatefoldApp: App {
 @MainActor
 enum LaunchClock {
     private static var logged = false
-    static func firstFrame() {
-        guard !logged else { return }
-        logged = true
+    /// When this process started, from the kernel.
+    static let processStarted: Date? = {
         var info = kinfo_proc()
         var size = MemoryLayout<kinfo_proc>.stride
         var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, getpid()]
-        guard sysctl(&mib, 4, &info, &size, nil, 0) == 0 else { return }
+        guard sysctl(&mib, 4, &info, &size, nil, 0) == 0 else { return nil }
         let start = info.kp_proc.p_un.__p_starttime
-        let started = Date(timeIntervalSince1970: TimeInterval(start.tv_sec) + TimeInterval(start.tv_usec) / 1_000_000)
+        return Date(timeIntervalSince1970: TimeInterval(start.tv_sec) + TimeInterval(start.tv_usec) / 1_000_000)
+    }()
+
+    static func firstFrame() {
+        guard !logged else { return }
+        logged = true
+        guard let started = processStarted else { return }
         readerLog.notice("launch: first frame \(Date().timeIntervalSince(started), privacy: .public) s after the process started")
     }
 }
@@ -166,6 +171,7 @@ struct RootView: View {
     /// How many of Reading Now's books wait open behind the shelf. Each new page needs its own WebKit
     /// process, whose start-up is most of an open; a few books ready covers what is likely tapped.
     private static let warmCount = 3
+    private static var tappedSinceLaunch = false
 
     private var warmKeys: [String] {
         guard app.hasOnboarded, reader == nil, !opening, !LaunchOptions.noWarm else { return [] }
@@ -198,6 +204,12 @@ struct RootView: View {
             return
         }
         let asked = Date()
+        if !Self.tappedSinceLaunch {
+            Self.tappedSinceLaunch = true
+            let ready = warm.first(where: { $0.bookID == book.id && !$0.isClosed })
+            // Release-visible: what the first tap after launch found (`log show --predicate 'subsystem == "bot.ouro.gatefold"'`).
+            readerLog.notice("first tap after launch: \(book.id, privacy: .public) at \(LaunchClock.processStarted.map { Date().timeIntervalSince($0) } ?? -1, privacy: .public) s after launch; warm \(ready != nil, privacy: .public), page ready \(ready?.pageReady ?? false, privacy: .public); warm set \(warm.map(\.bookID).joined(separator: ","), privacy: .public)")
+        }
         if let ready = warm.first(where: { $0.bookID == book.id }), !ready.isClosed {
             warm.removeAll { $0 === ready }
             reader = ready

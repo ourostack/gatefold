@@ -78,6 +78,8 @@ final class ReaderModel {
     private(set) var isWarming = false
     private var activation: CheckedContinuation<Void, Never>?
     private var loadStarted = false
+    /// A landing made behind the shelf, recorded when the reader taps the book.
+    @ObservationIgnored private var pendingRecord: (@MainActor (Date) -> Void)?
 
     /// Opens the book behind the shelf, so a tap on it shows a page that's already there.
     func warm() {
@@ -95,6 +97,10 @@ final class ReaderModel {
         if pageReady { readerLog.notice("first page ready after 0 s (opened ahead of the tap)") }
         activation?.resume()
         activation = nil
+        if let record = pendingRecord {
+            pendingRecord = nil
+            record(Date())
+        }
         if let landed = pendingLanded {
             pendingLanded = nil
             // After the zoom has brought the page up, so the line draws in where the reader can see it.
@@ -674,21 +680,29 @@ final class ReaderModel {
             .map { var p = $0; p.totalProgression = here.locations.totalProgression ?? p.totalProgression; return p }
         guard !isClosed else { return }
         let chosen = LandingPlace.choose(settled: settled, target: target, at: now)
-        // The Cloud's percent for this place stands; reading on adds to it (`CloudScale`).
-        if let cloud, let landed = target?.totalProgression ?? here.locations.totalProgression {
-            app.library.landedOnCloudPlace(bookID: bookID, cloud: cloud, landed: landed)
-            readerLog.notice("landed: the Cloud says \(cloud, privacy: .public), Readium \(landed, privacy: .public)")
+        let landedAt = target?.totalProgression ?? here.locations.totalProgression
+        let json = try? settledLocator.jsonString()
+        let record: @MainActor (Date) -> Void = { [weak self] at in
+            guard let self else { return }
+            // The Cloud's percent for this place stands; reading on adds to it (`CloudScale`).
+            if let cloud, let landedAt {
+                self.app.library.landedOnCloudPlace(bookID: self.bookID, cloud: cloud, landed: landedAt)
+                readerLog.notice("landed: the Cloud says \(cloud, privacy: .public), Readium \(landedAt, privacy: .public)")
+            }
+            if let json {
+                self.app.library.recordPlace(
+                    bookID: self.bookID,
+                    locatorJSON: json,
+                    totalProgression: chosen?.totalProgression ?? here.locations.totalProgression ?? 0,
+                    progression: here.locations.progression ?? 0,
+                    position: chosen.map { var p = $0; p.updated = at; return p },
+                    at: at
+                )
+            }
         }
-        if let json = try? settledLocator.jsonString() {
-            app.library.recordPlace(
-                bookID: bookID,
-                locatorJSON: json,
-                totalProgression: chosen?.totalProgression ?? here.locations.totalProgression ?? 0,
-                progression: here.locations.progression ?? 0,
-                position: chosen,
-                at: now
-            )
-        }
+        // Behind the shelf nothing is opened yet: recording now would make the book "just read",
+        // shuffle Reading Now under the reader's eyes and send the Cloud a place nobody read. The tap records it.
+        if isWarming { pendingRecord = record } else { record(now) }
         openedLocation = here
         refreshBookmarkState(await page?.visibleRange())
     }
