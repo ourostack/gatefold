@@ -910,8 +910,10 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         walk(host)
         for web in webs {
             guard let window = web.window else { continue }
-            let origin = web.convert(CGPoint.zero, to: window)
-            let y0 = band.lowerBound - origin.y, y1 = band.upperBound - origin.y
+            // Through the web view's own conversion both ways: the page steps back (scaled 0.96) while
+            // the controls are up, and a line's offset inside it shrinks with it.
+            let y0 = web.convert(CGPoint(x: 0, y: band.lowerBound), from: window).y
+            let y1 = web.convert(CGPoint(x: 0, y: band.upperBound), from: window).y
             let js = """
             (function(y0,y1){var w=window.innerWidth,best=-1,n,r=document.createRange();
             var tw=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT);
@@ -920,7 +922,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             if(q.bottom>y0&&q.top<y1&&(best<0||q.top<best))best=q.top;}}return best;})(\(y0),\(y1))
             """
             guard let top = (try? await web.evaluateJavaScript(js)) as? Double, top >= 0 else { continue }
-            let y = origin.y + CGFloat(top)
+            let y = web.convert(CGPoint(x: 0, y: CGFloat(top)), to: window).y
             best = min(best ?? y, y)
         }
         return best

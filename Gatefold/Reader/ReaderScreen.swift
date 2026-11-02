@@ -275,6 +275,7 @@ struct ReaderScreen: View {
         let global = proxy.frame(in: .global)
         let need = global.minY + proxy.size.height - bottom
         let line = await model.host?.lineTop(crossing: (need - 1)...(need + 1))
+        readerLog.notice("footer paper: needs \(need, privacy: .public), line measured at \(line.map { "\($0)" } ?? "none", privacy: .public)")
         withAnimation(.easeOut(duration: 0.15)) { footerLine = line }
     }
 
