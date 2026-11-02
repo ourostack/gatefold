@@ -264,12 +264,13 @@ final class LibraryStore {
     /// reader could make one; without it the Cloud gets a percent.
     func recordPlace(bookID: String, locatorJSON: String, totalProgression readium: Double, progression: Double,
                      position exact: ReadingPosition? = nil, at now: Date = Date()) {
-        // After landing on a Cloud place, every number we show or send stays on the Cloud's scale, so a
-        // difference in how two readers count never shows as lost progress.
+        // The place is kept on Readium's scale, the one this reader compares places on. After landing on
+        // a Cloud place, what we send is on the Cloud's scale (and the shelf shows it, `displayProgression`),
+        // so a difference in how two readers count never shows as lost progress.
         let totalProgression = book(bookID)?.cloudScale?.onCloudScale(readium) ?? readium
         update(bookID) {
             $0.locatorJSON = locatorJSON
-            $0.totalProgression = totalProgression
+            $0.totalProgression = readium
             $0.lastOpened = now
         }
         guard let cloud = book(bookID)?.cloud else { return }

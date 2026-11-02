@@ -1,4 +1,5 @@
 import Foundation
+import GatefoldCore
 import Testing
 @testable import Gatefold
 
@@ -134,6 +135,20 @@ import Testing
         // The scale outlives a relaunch.
         let reopened = LibraryStore(sync: sync, root: store.root)
         #expect(reopened.book(emma.id)?.cloudScale == store.book(emma.id)?.cloudScale)
+    }
+
+    @Test func afterALandingTheReadersOwnPlaceStaysOnItsOwnScale() async throws {
+        // The place this reader compares (for "your InkPad read on") stays Readium's: a later InkPad
+        // place at Readium 30 % is ahead of our 26 %, even though the shelf shows 37 %.
+        let (store, _) = makeStore()
+        await store.refresh()
+        let emma = try #require(store.books.first { $0.title == "Emma" })
+        store.landedOnCloudPlace(bookID: emma.id, cloud: 0.36, landed: 0.25)
+        store.recordPlace(bookID: emma.id, locatorJSON: "{}", totalProgression: 0.26, progression: 0.5)
+        let book = try #require(store.book(emma.id))
+        #expect(book.localSnapshot?.totalProgression == 0.26)
+        #expect(book.displayPercent >= 36)
+        #expect(JumpSuggestion.isAhead(remote: 0.30, percentOnly: false, local: book.localSnapshot?.totalProgression ?? 1))
     }
 
     @Test func aLandingWhoseCloudPercentIsBehindOursNeedsNoScale() async throws {

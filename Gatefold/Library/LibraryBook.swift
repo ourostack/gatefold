@@ -41,8 +41,9 @@ struct LibraryBook: Identifiable, Codable, Equatable {
     var isDemo: Bool { id.hasPrefix("gutenberg-") }
     var isFinished: Bool { finished != nil || cloud?.readStatus == "read" }
 
+    /// On the Cloud's scale once he has landed on a Cloud place (`cloudScale`), so the shelf agrees with the InkPad.
     var displayProgression: Double {
-        max(totalProgression, lastOpened == nil ? (remote?.totalProgression ?? 0) : 0)
+        max(cloudScale?.onCloudScale(totalProgression) ?? totalProgression, lastOpened == nil ? (remote?.totalProgression ?? 0) : 0)
     }
 
     /// The shelf's "percent read": the same whole percent PocketBook's readers show for this place.
