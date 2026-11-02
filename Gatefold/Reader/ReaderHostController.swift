@@ -52,14 +52,6 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         )
         super.init(nibName: nil, bundle: nil)
         navigator.delegate = self
-        let probeHref = initialLocation?.href ?? publication.readingOrder.first?.url()
-        nonisolated(unsafe) let pub = publication
-        Task.detached {
-            let t = Date()
-            guard let href = probeHref, let r = pub.get(href) else { return }
-            let d = try? await r.read().get()
-            readerLog.notice("profile: read \(href.string, privacy: .public) \(d?.count ?? -1) bytes in \(Date().timeIntervalSince(t), privacy: .public) s")
-        }
     }
 
     @available(*, unavailable)
@@ -109,31 +101,6 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         observers.append(navigator.addObserver(.key(.arrowLeft) { [weak self] in self?.turn(forward: false) ?? false }))
         observers.append(navigator.addObserver(.key(.space) { [weak self] in self?.turn(forward: true) ?? false }))
         model.host = self
-        probeWebViews()
-    }
-
-    private func probeWebViews() {
-        guard let model = weakModel else { return }
-        let opened = model.openedAt
-        var lastBeat = Date()
-        let timer = Timer(timeInterval: 0.01, repeats: true) { t in
-            let now = Date(); let gap = now.timeIntervalSince(lastBeat); lastBeat = now
-            if gap > 0.08 { readerLog.notice("probe main blocked \(String(format: "%.2f", gap), privacy: .public) s ending +\(String(format: "%.2f", now.timeIntervalSince(opened)), privacy: .public)") }
-            if now.timeIntervalSince(opened) > 9 { t.invalidate() }
-        }
-        RunLoop.main.add(timer, forMode: .common)
-        var last = ""
-        Task { @MainActor [weak self] in
-            for _ in 0..<120 {
-                guard let self else { return }
-                var webs: [WKWebView] = []
-                func walk(_ v: UIView) { if let w = v as? WKWebView { webs.append(w) }; v.subviews.forEach(walk) }
-                walk(self.navigator.view)
-                let line = webs.map { w in "\(ObjectIdentifier(w).hashValue % 10000):\(w.url?.lastPathComponent.suffix(14) ?? "-") load=\(w.isLoading) p=\(String(format: "%.1f", w.estimatedProgress)) a=\(String(format: "%.1f", w.scrollView.alpha)) sz=\(Int(w.bounds.width)) win=\(w.window != nil) hid=\(sequence(first: w as UIView, next: { $0.superview }).contains { $0.isHidden || $0.alpha < 0.01 })" }.joined(separator: " | ")
-                if line != last { readerLog.notice("probe +\(String(format: "%.2f", Date().timeIntervalSince(model.openedAt)), privacy: .public) \(line, privacy: .public)"); last = line }
-                try? await Task.sleep(for: .milliseconds(50))
-            }
-        }
     }
 
     override func viewDidLayoutSubviews() {
@@ -625,22 +592,19 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
 
     // MARK: Helpers
 
-    /// The page as the web views draw it. `drawHierarchy` misplaces a paginated web view's content
-    /// (it drew the page shifted by about a column, with the next one peeking in, and a spread
-    /// black), so each visible web view is asked for its own snapshot and laid out where it sits.
-    /// Where the first page's time went, from the web view's own clock (profiling the open).
-    func logOpenProfile() async {
-        guard let model = weakModel else { return }
+    /// The page's typography as WebKit set it: its language (hyphenation needs one), whether it
+    /// hyphenates, and about how many characters a line holds. Logged once per open, for evidence.
+    func logTypography() async {
         let js = """
-        (function(){var n=performance.getEntriesByType('navigation')[0];var r=performance.getEntriesByType('resource');
-        return JSON.stringify({origin:performance.timeOrigin,
-          nav:n?{fetch:Math.round(n.fetchStart),req:Math.round(n.requestStart),rs:Math.round(n.responseStart),resp:Math.round(n.responseEnd),dcl:Math.round(n.domContentLoadedEventEnd),load:Math.round(n.loadEventStart)}:null,
-          res:r.map(function(e){return e.initiatorType+' '+e.name.split('/').pop().slice(-28)+' '+Math.round(e.startTime)+'+'+Math.round(e.duration)}),
-          imgs:document.images.length, fonts:document.fonts.size, chars:(document.body&&document.body.innerText||'').length,
-          href:location.href.split('/').pop()});})()
+        (function(){var p=[].slice.call(document.querySelectorAll('p')).find(function(e){return (e.innerText||'').length>200});
+        if(!p)return 'no paragraph';var cs=getComputedStyle(p);var c=document.createElement('canvas').getContext('2d');
+        c.font=cs.fontStyle+' '+cs.fontWeight+' '+cs.fontSize+' '+cs.fontFamily;var t=p.innerText;var avg=c.measureText(t).width/t.length;
+        var w=p.getBoundingClientRect().width;
+        return 'lang='+(document.documentElement.getAttribute('lang')||document.documentElement.getAttribute('xml:lang')||'-')+
+          ' hyphens='+(cs.webkitHyphens||cs.hyphens)+' align='+cs.textAlign+' width='+Math.round(w)+' charsPerLine='+Math.round(w/avg);})()
         """
-        let json = (try? await navigator.evaluateJavaScript(js).get()) as? String ?? "nil"
-        readerLog.notice("profile: opened at \(model.openedAt.timeIntervalSince1970 * 1000, privacy: .public) ms; now +\(Date().timeIntervalSince(model.openedAt), privacy: .public) s; \(json, privacy: .public)")
+        let line = (try? await navigator.evaluateJavaScript(js).get()) as? String ?? "nil"
+        readerLog.notice("typography \(line, privacy: .public)")
     }
 
     /// Readium's own loading spinner is showing: the page in view hasn't loaded yet.
@@ -656,6 +620,9 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         return spinning(host)
     }
 
+    /// The page as the web views draw it. `drawHierarchy` misplaces a paginated web view's content
+    /// (it drew the page shifted by about a column, with the next one peeking in, and a spread
+    /// black), so each visible web view is asked for its own snapshot and laid out where it sits.
     func snapshot() async -> UIImage {
         let host = navigator.view!
         let bounds = host.bounds

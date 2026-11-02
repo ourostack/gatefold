@@ -107,9 +107,6 @@ struct ReaderScreen: View {
             }
             .sensoryFeedback(.success, trigger: model.slipCount) { _, _ in model.slipKind == .landed }
             .onChange(of: clearance.bookmarkLeading, initial: true) { _, taken in coverScreen = taken }
-            .onChange(of: FoldReader.occlusions(in: proxy), initial: true) { _, rects in
-                readerLog.notice("occlusions \(rects.map { "\($0)" }.joined(separator: " "), privacy: .public) safe \(proxy.safeAreaInsets.top, privacy: .public),\(proxy.safeAreaInsets.leading, privacy: .public),\(proxy.safeAreaInsets.bottom, privacy: .public),\(proxy.safeAreaInsets.trailing, privacy: .public) size \(proxy.size.width, privacy: .public)x\(proxy.size.height, privacy: .public)")
-            }
             .onChange(of: input, initial: true) { _, new in
                 readerLog.notice("layout input \(new.containerSize.width, privacy: .public)x\(new.containerSize.height, privacy: .public) fold \(new.division.map { "\($0.frame) active \($0.isActive)" } ?? "none", privacy: .public) hinge \(String(describing: new.hinge), privacy: .public)")
             }

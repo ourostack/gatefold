@@ -334,9 +334,9 @@ final class ReaderModel {
         Task {
             // The cover stays until Readium has finished loading the page it reports (its spinner).
             for _ in 0..<80 where host?.isLoadingPage == true { try? await Task.sleep(for: .milliseconds(100)) }
-            await host?.logOpenProfile()
             revealing = false
             guard !pageReady else { return }
+            Task { [weak self] in await self?.host?.logTypography() }
             readerLog.notice("first page ready after \(Date().timeIntervalSince(self.isWarming ? self.openedAt : self.askedAt), privacy: .public) s\(self.isWarming ? " (behind the shelf)" : "", privacy: .public)")
             withAnimation(.easeOut(duration: 0.3)) { pageReady = true }
         }
@@ -1001,14 +1001,17 @@ final class ReaderModel {
             columnCount: columns == .two ? .two : .one,
             fontFamily: prefs.font.cssFamily.map { FontFamily(rawValue: $0) },
             fontSize: prefs.fontScale,
-            hyphens: prefs.justify ? true : nil,
+            // Gutenberg justifies its own text; without hyphenation the narrow page opens rivers.
+            // ReadiumCSS applies hyphens only in its advanced mode, which on its own changes nothing
+            // else (every other user setting stays nil unless chosen).
+            hyphens: true,
             language: language,
             lineHeight: custom ? prefs.lineSpacing.lineHeight : nil,
             // Facing pages give their width to the line, not the margins (the spine is margin enough),
             // so each page keeps a book's measure.
             pageMargins: tabletop ? min(prefs.margins.factor, PageMargins.normal.factor)
                 : columns == .two ? min(prefs.margins.factor, PageMargins.narrow.factor) : prefs.margins.factor,
-            publisherStyles: !custom,
+            publisherStyles: false,
             scroll: prefs.pageTurn == .scroll,
             textAlign: prefs.justify ? .justify : nil,
             textColor: ReadiumNavigator.Color(hex: ThemePalette.hexString(theme.palette.text)),
