@@ -120,6 +120,7 @@ struct ReaderScreen: View {
         .sheet(isPresented: $showContents) {
             ContentsSheet(model: model)
         }
+        .highlightLayer(model)
         .onChange(of: colorScheme, initial: true) { _, scheme in
             let dark = scheme == .dark
             if model.systemIsDark != dark {

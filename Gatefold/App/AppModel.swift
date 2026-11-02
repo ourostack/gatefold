@@ -183,6 +183,7 @@ final class AppModel {
             await refresh()
         }
         await activeReader?.checkRemote()
+        await activeReader?.highlights.refresh()
     }
 
     /// Sign-in first needs PocketBook's web-app client pair, which takes a while to fetch; start it

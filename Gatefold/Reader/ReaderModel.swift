@@ -61,6 +61,8 @@ final class ReaderModel {
     private(set) var endLeaf: EndLeaf?
     /// The book's cover, shown while the first page lays out and on the end leaf.
     let cover: UIImage?
+    /// The InkPad's highlights and notes, and the reader's own (Highlights.swift).
+    let highlights: HighlightStore
     /// The first page is on screen and legible.
     private(set) var pageReady = false
     let openedAt = Date()
@@ -114,6 +116,7 @@ final class ReaderModel {
         self.awaitingLanding = book.localSnapshot == nil
             && ((book.remote?.totalProgression ?? 0) > JumpSuggestion.threshold || (book.cloud?.readPercent ?? 0) > 0)
         self.cover = app.library.cover(for: book)
+        self.highlights = HighlightStore(bookID: book.id, cloudBook: book.cloud, sync: app.sync)
         let initial = book.locatorJSON.flatMap { try? Locator(jsonString: $0) }
         self.initialLocator = initial
         let prefs = app.preferences.effective(for: book.id)
@@ -214,6 +217,7 @@ final class ReaderModel {
             readingOrder: readingOrderHrefs
         )
         mapper = await BookPositions.mapper(for: publication)
+        if let mapper { Task { await highlights.start(model: self, mapper: mapper) } }
         readerLog.notice("open: mapper after \(Date().timeIntervalSince(self.openedAt), privacy: .public) s; location \(self.page?.currentLocation != nil, privacy: .public)")
         chapterMap = ChapterMap(chapters: toc.filter { $0.level == 0 }.map { .init(title: $0.title, start: $0.progression) }, positionCount: max(1, count))
 
@@ -742,6 +746,15 @@ final class ReaderModel {
         moves += 1
         rememberPlace()
         await veiled { await self.page?.go(to: link) }
+        await captureAnchor()
+    }
+
+    /// A highlight's exact place: Readium finds its words, so the page is the one they are on.
+    func go(to locator: Locator, rememberBack: Bool) async {
+        hasMoved = true
+        moves += 1
+        if rememberBack { rememberPlace() }
+        await veiled { _ = await self.page?.go(to: locator) }
         await captureAnchor()
     }
 

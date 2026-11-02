@@ -101,7 +101,7 @@ public actor PositionMapper {
         return nil
     }
 
-    private func document(_ href: String) async -> CFIDocument? {
+    func document(_ href: String) async -> CFIDocument? {
         if let cached = documents[href] { return cached }
         guard let data = try? await load(href), let document = try? CFIDocument(xhtml: data) else { return nil }
         documents[href] = document
