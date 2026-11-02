@@ -339,22 +339,25 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     /// Takes a picture of the page as it is now, for the unfold to swing from. Called when the hinge
     /// starts to move, before a Duo moves the app from its cover screen to the inner screen.
     func holdPageForUnfold() {
+        Task { await holdPage() }
+    }
+
+    /// Takes the picture and returns once it is held (or dropped), so a caller can let the hinge move only after.
+    func holdPage() async {
         guard columns == 1, !holding, let model = weakModel, model.pageReady, navigator.view.window != nil else { return }
         let reflowing = reflowCover != nil || navigator.view.alpha < 0.5
         let reflowsAtStart = reflowGeneration
         holding = true
-        Task {
-            defer { holding = false }
-            let picture = await snapshot()
-            // A reflow redraws the page underneath; a picture taken across one would swing from a half-laid-out page.
-            guard UnfoldCover.pictureIsThePage(reflowingAtStart: reflowing, reflowsAtStart: reflowsAtStart, reflowsAtEnd: reflowGeneration) else {
-                readerLog.notice("unfold: a reflow was under way; kept the picture held before it")
-                return
-            }
-            model.heldPicture = picture
-            model.heldPage = HeldPage(book: model.bookID, takenAt: Date())
-            readerLog.notice("unfold: held a picture of the page (\(picture.size.width, privacy: .public)x\(picture.size.height, privacy: .public))")
+        defer { holding = false }
+        let picture = await snapshot()
+        // A reflow redraws the page underneath; a picture taken across one would swing from a half-laid-out page.
+        guard UnfoldCover.pictureIsThePage(reflowingAtStart: reflowing, reflowsAtStart: reflowsAtStart, reflowsAtEnd: reflowGeneration) else {
+            readerLog.notice("unfold: a reflow was under way; no new picture taken")
+            return
         }
+        model.heldPicture = picture
+        model.heldPage = HeldPage(book: model.bookID, takenAt: Date())
+        readerLog.notice("unfold: held a picture of the page (\(picture.size.width, privacy: .public)x\(picture.size.height, privacy: .public))")
     }
 
     /// The held picture over paper, set where the left page will be; nil when none is fresh.

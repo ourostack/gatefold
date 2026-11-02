@@ -426,11 +426,13 @@ struct ReaderScreen: View {
         let now = forced ?? .single
         let next = cycle[((cycle.firstIndex(of: now) ?? 0) + 1) % cycle.count]
         readerLog.notice("posture bell: \(now.rawValue, privacy: .public) → \(next.rawValue, privacy: .public)")
-        // A real hinge's first movement holds a picture of the page; the bell does the same, so the
-        // films go through that path.
-        if next == .spread { model.host?.holdPageForUnfold() }
-        hinge = next == .tabletop ? .partiallyOpen(angleDegrees: 110) : .none
-        forced = next
+        // A real hinge's first movement holds a picture of the page before the window moves; the bell
+        // does the same, and lets the posture change only once the picture is held.
+        Task {
+            if next == .spread { await model.host?.holdPage() }
+            hinge = next == .tabletop ? .partiallyOpen(angleDegrees: 110) : .none
+            forced = next
+        }
     }
 
     private func turnPostureOnTimer() async {
