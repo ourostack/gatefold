@@ -225,11 +225,14 @@ public struct CloudScale: Codable, Equatable, Sendable {
         self.landed = landed
     }
 
-    /// Readium's `local` progression, as the Cloud would count it.
+    /// Readium's `local` progression, as the Cloud would count it: in proportion before the landed place, and
+    /// from the Cloud's number to the end after it.
     public func onCloudScale(_ local: Double) -> Double {
         guard local.isFinite else { return cloud }
         let local = min(1, max(0, local))
-        guard local > landed else { return cloud }
+        // Before the landed place, in proportion: a jump back to chapter 1 is an early place, never
+        // the landed percent. The two sides meet at the landed place, so the scale never steps.
+        guard local > landed else { return landed > 0 ? cloud * local / landed : cloud }
         return min(1, cloud + (local - landed) * (1 - cloud) / (1 - landed))
     }
 }
