@@ -843,17 +843,24 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         let y = size.height * (0.92 - CGFloat(index % 5) * 0.06)
         let corner = CGPoint(x: forward ? size.width : 0, y: size.height)
         let leafWidth = curl.isSpread ? size.width / 2 : size.width
-        curl.corner = corner
         // The leaf lifts from its corner on a diagonal, then turns. Starting with the finger straight
         // above the corner put the fold line flat across the page: a full-width grey band over a line.
-        curl.finger = corner
-        curl.isActive = true
+        // The jump back to the corner is never animated (an interpolated jump drew that band too).
+        var still = Transaction()
+        still.disablesAnimations = true
+        withTransaction(still) {
+            curl.corner = corner
+            curl.finger = corner
+            curl.isActive = true
+        }
         await nextFrame()
         let lift = CGPoint(x: forward ? corner.x - leafWidth * 0.45 : corner.x + leafWidth * 0.45, y: y)
         withAnimation(.easeIn(duration: duration * 0.4)) { curl.finger = lift }
         try? await Task.sleep(for: .seconds(duration * 0.4))
         withAnimation(.linear(duration: duration * 0.6)) { curl.finger = turnedTarget() }
-        try? await Task.sleep(for: .seconds(duration * 0.6))
+        try? await Task.sleep(for: .seconds(duration * 0.6 + 0.02))
+        // Turned away: nothing drawn until the next leaf lifts, so no in-between frame shows a band.
+        withTransaction(still) { curl.isActive = false }
     }
 
     /// Underlines the other device's words with the ribbon colour: drawn in over 0.6 s, gone after 2.
