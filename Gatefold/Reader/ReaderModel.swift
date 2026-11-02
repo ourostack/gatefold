@@ -239,9 +239,12 @@ final class ReaderModel {
                 try? await Task.sleep(for: .milliseconds(200))
             }
         }
-        try? await Task.sleep(for: .milliseconds(300))
-        await captureAnchor()
-        markReady()
+        // A book about to land on the InkPad's place takes its first place there, not on the cover.
+        if !awaitingLanding {
+            try? await Task.sleep(for: .milliseconds(300))
+            await captureAnchor()
+            markReady()
+        }
         app.library.noteSession(bookID)
         await checkRemote()
         // Landed (or there was nowhere to land): show the page.
@@ -415,7 +418,8 @@ final class ReaderModel {
 
     /// A jump keeps the old page on screen, dimmed, until the new one has painted, then cross-fades.
     private func veiled(riffle: Bool = false, forward: Bool = true, _ body: @escaping () async -> Void) async {
-        if let host {
+        // Behind the cover placeholder there's nothing to veil.
+        if let host, pageReady {
             await host.veiledJump(riffle: riffle && !reduceMotion && pageTurn == .curl, forward: forward, body)
         } else {
             await body()
@@ -708,6 +712,12 @@ final class ReaderModel {
         if let locator = await publication.locate(progression: progression) {
             await veiled { _ = await self.page?.go(to: locator) }
             await captureAnchor()
+            // Behind the cover nothing hides a chapter still loading, so keep the cover up until the
+            // words are there.
+            for _ in 0..<25 where !pageReady && keeper.anchor?.text == nil && !isClosed {
+                try? await Task.sleep(for: .milliseconds(200))
+                await captureAnchor()
+            }
         }
     }
 
