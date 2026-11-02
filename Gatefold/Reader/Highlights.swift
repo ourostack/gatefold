@@ -404,9 +404,11 @@ struct HighlightLook: Hashable {
         case .red, .magenta: 3
         default: 0
         }
-        // Light: yellow, blue, green, rose pencil. Dark: the same, as dim inks that brighten the glyphs.
-        let light: [UInt32] = [0xFBE08A, 0xC4DFF5, 0xD3EABD, 0xF5C9D1]
-        let night: [UInt32] = [0x5C4A1C, 0x1F3D57, 0x2A4626, 0x5A2633]
+        // Light: yellow, periwinkle, green, rose pencil. Dark: the same, as dim inks that brighten the glyphs.
+        // The blue is a pencil's violet-blue, not the system's sky blue, so a highlight never reads as
+        // a text selection.
+        let light: [UInt32] = [0xFBE08A, 0xCFC6EC, 0xD3EABD, 0xF5C9D1]
+        let night: [UInt32] = [0x5C4A1C, 0x3A3160, 0x2A4626, 0x5A2633]
         fill = ThemePalette.hexString(dark ? night[family] : light[family])
         blend = dark ? "screen" : "multiply"
         mark = ThemePalette.hexString(theme.palette.accent)
@@ -545,6 +547,7 @@ struct HighlightCard: View {
             Text(item.quote)
                 .font(.system(.title3, design: .serif))
                 .lineLimit(6)
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.leading, 14)
                 .overlay(alignment: .leading) {
                     Capsule().fill(Color.ribbon.opacity(0.75)).frame(width: 3)
@@ -554,6 +557,7 @@ struct HighlightCard: View {
             if let note = item.note {
                 Text(note)
                     .font(.body)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier("highlight.note")
             }
@@ -586,6 +590,8 @@ struct HighlightCard: View {
         .padding(.top, 26)
         .padding(.bottom, 12)
         .frame(maxWidth: 560, alignment: .leading)
+        // Centred in a wider sheet, so the card is balanced rather than hugging the left.
+        .frame(maxWidth: .infinity)
         .presentationDetents([.medium])
         .presentationDragIndicator(.visible)
         .accessibilityElement(children: .contain)

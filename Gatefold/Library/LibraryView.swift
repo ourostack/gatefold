@@ -175,18 +175,21 @@ struct LibraryView: View {
                 importing = true
             } label: {
                 Image(systemName: "plus")
-                    .font(.system(size: 17, weight: .semibold))
-                    .frame(width: 44, height: 44)
+                    .font(.system(size: trailingReserved ? 15 : 17, weight: .semibold))
+                    // On the cover screen, the account badge's size: a pair, not a bubble and a dot.
+                    .frame(width: trailingReserved ? 36 : 44, height: trailingReserved ? 36 : 44)
             }
-            .buttonStyle(.glass)
-            .buttonBorderShape(.circle)
+            .modifier(AddButtonStyle(compact: trailingReserved))
             .accessibilityLabel("Add Books from Files")
             .accessibilityIdentifier("library.import")
             // A menu is hosted by UIKit and ignores the shelf's fade-in; it waits until the shelf has settled.
             if width > 0, shelfState != .waiting { accountMenu } else { Color.clear.frame(width: 44, height: 44) }
         }
         .tint(Color.ink)
-        .padding(.horizontal, metrics.gutter)
+        .padding(.leading, metrics.gutter)
+        // Beside the cover screen's reserved column the buttons sit against it, together, not a
+        // gutter short of it with a dead slot between.
+        .padding(.trailing, trailingReserved ? 6 : metrics.gutter)
         .padding(.top, max(8, headerDrop))
         .padding(.bottom, 2)
     }
@@ -485,7 +488,8 @@ struct CoverView: View {
             } else if coverless {
                 GeneratedCover(title: BookTitle.display(book.title), author: book.author)
             } else {
-                Color.ink.opacity(0.07)
+                PendingCover(title: BookTitle.display(book.title))
+                    .transition(.opacity)
             }
             // The spine: light catches the hinge of a real cover.
             LinearGradient(
@@ -501,6 +505,62 @@ struct CoverView: View {
         .animation(.easeOut(duration: 0.35), value: image == nil)
         .clipShape(.rect(topLeadingRadius: 3, bottomLeadingRadius: 3, bottomTrailingRadius: 6, topTrailingRadius: 6))
         .shadow(color: .black.opacity(0.22), radius: 8, x: 0, y: 6)
+    }
+}
+
+/// Add's glass button; beside the cover screen's reserved column, a glass circle the account badge's
+/// size, so the two read as a pair.
+private struct AddButtonStyle: ViewModifier {
+    let compact: Bool
+
+    func body(content: Content) -> some View {
+        if compact {
+            content.buttonStyle(.plain).glassEffect(.regular.interactive(), in: .circle)
+        } else {
+            content.buttonStyle(.glass).buttonBorderShape(.circle)
+        }
+    }
+}
+
+/// A cover still on its way: the book's cloth binding, its title blind-stamped in, waiting for the
+/// jacket. The jacket settles over it when it arrives, so the shelf is a row of books from the start,
+/// never grey cards.
+private struct PendingCover: View {
+    let title: String
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var lit = false
+
+    var body: some View {
+        let palette = [0x8A5A44, 0x4F6B7A, 0x5E7454, 0x6E5A7A, 0x8A7444] as [UInt32]
+        let hue = palette[Int(title.unicodeScalars.reduce(0) { ($0 &* 31 &+ $1.value) % 9973 }) % palette.count]
+        ZStack {
+            Color.paper
+            Color(hex: hue).opacity(0.20)
+            VStack(spacing: 8) {
+                Rectangle().fill(Color.ink.opacity(0.18)).frame(width: 22, height: 1)
+                Text(title)
+                    .font(.system(.footnote, design: .serif))
+                    .multilineTextAlignment(.center)
+                    .lineLimit(3)
+                    .minimumScaleFactor(0.7)
+                    .foregroundStyle(Color.ink.opacity(0.38))
+                Rectangle().fill(Color.ink.opacity(0.18)).frame(width: 22, height: 1)
+            }
+            .padding(10)
+            // Light moving slowly across the cloth while the jacket is fetched.
+            LinearGradient(colors: [.clear, .white.opacity(0.22), .clear], startPoint: .leading, endPoint: .trailing)
+                .frame(width: 60)
+                .rotationEffect(.degrees(12))
+                .offset(x: lit ? 160 : -160)
+                .opacity(reduceMotion ? 0 : 1)
+                .blendMode(.plusLighter)
+        }
+        .clipped()
+        .accessibilityHidden(true)
+        .onAppear {
+            guard !reduceMotion else { return }
+            withAnimation(.easeInOut(duration: 2.4).repeatForever(autoreverses: false)) { lit = true }
+        }
     }
 }
 

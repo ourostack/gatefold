@@ -75,6 +75,10 @@ enum LaunchOptions {
     static var skipWelcome: Bool { defaults.bool(forKey: "GatefoldSkipWelcome") }
     /// Measure a cold open: no book is opened ahead of the tap.
     static var noWarm: Bool { defaults.bool(forKey: "GatefoldNoWarm") }
+    /// Book IDs to open and close one after another, as taps would (see `RootView.openTour`).
+    /// Seconds an open tour rests on the shelf between books (the warm books reopen meanwhile).
+    static var tourRest: Double { defaults.object(forKey: "GatefoldTourRest") == nil ? 3 : defaults.double(forKey: "GatefoldTourRest") }
+    static var openTour: [String]? { defaults.string(forKey: "GatefoldOpenTour").map { $0.split(separator: ",").map(String.init) } }
     /// Use the in-memory `FakeSyncService` (bundled public-domain books) instead of PocketBook Cloud.
     /// For previews, UI tests and screenshots; a real launch always talks to the Cloud.
     /// `-GatefoldSignedIn` means "a fake account is already signed in", so it implies the fake too.
@@ -93,6 +97,8 @@ enum LaunchOptions {
     /// this many seconds, and back after `GatefoldFlipBackAfter` more, to film the unfold.
     static var flipAfter: Double? { defaults.object(forKey: "GatefoldFlipAfter") == nil ? nil : defaults.double(forKey: "GatefoldFlipAfter") }
     static var flipTo: Posture { defaults.string(forKey: "GatefoldFlipTo").flatMap(Posture.init(rawValue:)) ?? .spread }
+    /// DEBUG films: turn the posture every this many seconds (folded → spread → tabletop → folded).
+    static var postureEvery: Double? { defaults.object(forKey: "GatefoldPostureEvery") == nil ? nil : defaults.double(forKey: "GatefoldPostureEvery") }
     static var flipBackAfter: Double? { defaults.object(forKey: "GatefoldFlipBackAfter") == nil ? nil : defaults.double(forKey: "GatefoldFlipBackAfter") }
     /// Screenshots: open the end leaf as if the last page had been turned.
     static var showEnd: Bool { defaults.bool(forKey: "GatefoldShowEnd") }

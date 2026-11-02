@@ -17,10 +17,11 @@ struct ReaderScreen: View {
     @State private var leafAngle = 0.0
     @State private var leafOpacity = 0.0
     @State private var leafFolding = false
-    @State private var spineBoost = 0.0
     /// On the cover screen the status column sits on the page's trailing edge; it stays hidden there.
     @State private var coverScreen = false
     @State private var slipHeight: CGFloat = 0
+    /// Where the line the bottom paper would reach begins (global points), when there is one.
+    @State private var footerLine: CGFloat?
 
     var body: some View {
         GeometryReader { proxy in
@@ -60,6 +61,14 @@ struct ReaderScreen: View {
                     .animation(reduceMotion ? .easeOut(duration: 0.2) : .spring(duration: 0.4, bounce: 0.1), value: push)
 
                 scrims(proxy: proxy, layout: layout, safeTop: safeTop)
+                    .task(id: "\(footerNeed(proxy: proxy, layout: layout))-\(model.totalProgression)-\(proxy.size.width)x\(proxy.size.height)-\(model.pageReady)") {
+                        // Let a turn or a reflow settle before reading where the lines are.
+                        try? await Task.sleep(for: .milliseconds(120))
+                        guard !Task.isCancelled else { return }
+                        await measureFooterLine(proxy: proxy, layout: layout)
+                    }
+
+                runningHead(layout: layout, proxy: proxy, clearance: clearance, hidden: aheadOpen || lifted)
 
                 if let deck = layout.deck {
                     TabletopDeck(model: model, showAppearance: $showAppearance, showContents: $showContents)
@@ -158,6 +167,10 @@ struct ReaderScreen: View {
         }
         .task { await model.load() }
         .task { await flipForFilming() }
+        #if DEBUG
+        .onReceive(NotificationCenter.default.publisher(for: PostureBell.rang)) { _ in turnPosture() }
+        .task { await turnPostureOnTimer() }
+        #endif
         .alert("Something went wrong", isPresented: .constant(model.errorMessage != nil)) {
             Button("OK") { model.errorMessage = nil }
         } message: {
@@ -176,13 +189,7 @@ struct ReaderScreen: View {
             }
 
             if let gutter = layout.gutter {
-                // The right page swings open from the spine.
-                if leafOpacity > 0 {
-                    UnfoldLeaf(theme: model.theme, angle: leafAngle, opacity: leafOpacity)
-                        .frame(width: max(0, layout.pageFrame.maxX - gutter.midX), height: layout.pageFrame.height)
-                        .offset(x: gutter.midX, y: layout.pageFrame.minY)
-                }
-                SpineShade(theme: model.theme, depth: min(1, layout.spineShadow + spineBoost))
+                SpineShade(theme: model.theme, depth: min(1, layout.spineShadow))
                     .frame(width: gutter.width * 2, height: gutter.height)
                     .offset(x: gutter.midX - gutter.width, y: gutter.minY)
                     .allowsHitTesting(false)
@@ -211,7 +218,6 @@ struct ReaderScreen: View {
         let paper = model.theme.background
         // Without the controls the page moves out of the ahead slip's way (see `push`), so it needs no paper.
         let aheadSlip = model.slip != nil && model.slipKind == .ahead && !model.slipFolded && model.chromeVisible
-        let landedSlip = model.slip != nil && model.slipKind == .landed
         let top = safeTop + (model.chromeVisible ? ReaderChrome.topBarHeight : 0) + (aheadSlip ? 8 + slipHeight + 16 : 0)
         if model.chromeVisible || aheadSlip {
             LinearGradient(stops: [.init(color: paper, location: 0), .init(color: paper, location: top / (top + fade)), .init(color: paper.opacity(0), location: 1)],
@@ -221,22 +227,43 @@ struct ReaderScreen: View {
                 .transition(.opacity)
                 .accessibilityHidden(true)
         }
-        let backAlone = model.showJumpBack && !model.chromeVisible && layout.deck == nil && model.backLocator != nil
-        if (model.chromeVisible && layout.deck == nil) || landedSlip || backAlone {
-            let bottom = max(
-                model.chromeVisible && layout.deck == nil ? max(proxy.safeAreaInsets.bottom, 12) + ReaderChrome.bottomBarHeight + (model.backLocator != nil ? 52 : 0) : 0,
-                // After a Jump the Back pill gets its own paper footer: it never sits on a line.
-                backAlone ? max(proxy.safeAreaInsets.bottom, 12) + 52 : 0,
-                landedSlip ? slipBottomBand(proxy) + slipHeight + 16 : 0
-            )
-            LinearGradient(stops: [.init(color: paper.opacity(0), location: 0), .init(color: paper, location: fade / (bottom + fade)), .init(color: paper, location: 1)],
-                           startPoint: .top, endPoint: .bottom)
-                .frame(width: proxy.size.width, height: bottom + fade)
-                .offset(y: proxy.size.height - bottom - fade)
+        let bottom = footerNeed(proxy: proxy, layout: layout)
+        if bottom > 0 {
+            // The paper ends in the gap above the first line it would reach, so no line is ever half
+            // covered or half faded beside the Back pill or under the bar. Until that line is measured
+            // (a moment, while the footer fades in) it ends where it must.
+            let need = proxy.size.height - bottom
+            let top = footerLine.map { min(need, $0 - proxy.frame(in: .global).minY - 3) } ?? need
+            paper
+                .frame(width: proxy.size.width, height: proxy.size.height - top)
+                .offset(y: top)
                 .allowsHitTesting(false)
                 .transition(.opacity)
                 .accessibilityHidden(true)
         }
+    }
+
+    /// How much of the screen's foot the bottom paper must cover (0: none).
+    private func footerNeed(proxy: GeometryProxy, layout: ReaderLayout) -> CGFloat {
+        let landedSlip = model.slip != nil && model.slipKind == .landed
+        let backAlone = model.showJumpBack && !model.chromeVisible && layout.deck == nil && model.backLocator != nil
+        guard (model.chromeVisible && layout.deck == nil) || landedSlip || backAlone else { return 0 }
+        return max(
+            model.chromeVisible && layout.deck == nil ? max(proxy.safeAreaInsets.bottom, 12) + ReaderChrome.bottomBarHeight + (model.backLocator != nil ? 52 : 0) : 0,
+            // After a Jump the Back pill gets its own paper footer: it never sits on a line.
+            backAlone ? max(proxy.safeAreaInsets.bottom, 12) + 52 : 0,
+            landedSlip ? slipBottomBand(proxy) + slipHeight + 16 : 0
+        )
+    }
+
+    /// Measures the line the bottom paper would reach, whenever the paper or the page changes.
+    private func measureFooterLine(proxy: GeometryProxy, layout: ReaderLayout) async {
+        let bottom = footerNeed(proxy: proxy, layout: layout)
+        guard bottom > 0 else { footerLine = nil; return }
+        let global = proxy.frame(in: .global)
+        let need = global.minY + proxy.size.height - bottom
+        let line = await model.host?.lineTop(crossing: (need - 1)...(need + 1))
+        withAnimation(.easeOut(duration: 0.15)) { footerLine = line }
     }
 
     @ViewBuilder
@@ -290,6 +317,37 @@ struct ReaderScreen: View {
 
     /// How far down the page its first line sits: Readium's inset, pushed below anything the system
     /// covers at the top (the folded Duo's camera).
+    /// The cover screen keeps a band above the text clear of the camera. A printed book's head margin
+    /// carries its running head; so does this band: the chapter in small capitals, beside the camera,
+    /// never under it.
+    @ViewBuilder
+    private func runningHead(layout: ReaderLayout, proxy: GeometryProxy, clearance: ChromeClearance, hidden: Bool) -> some View {
+        let camera = FoldReader.occlusions(in: proxy).filter { $0.height <= 120 && $0.minY < 80 }.min { $0.minY < $1.minY }
+        let textTop = layout.pageFrame.minY + pageTopClearance(layout, clearance: clearance)
+        let side: CGFloat = 24
+        if layout.deck == nil, let camera, textTop - camera.maxY >= -camera.height / 2, textTop >= 40,
+           model.slip == nil, let words = model.chapterTitle ?? Optional(model.title) {
+            // Whichever side of the camera has the more room.
+            let left = (layout.pageFrame.minX + side, min(layout.pageFrame.maxX - side, camera.minX - 14))
+            let right = (max(layout.pageFrame.minX + side, camera.maxX + 14), layout.pageFrame.maxX - side)
+            let (start, end) = left.1 - left.0 >= right.1 - right.0 ? left : right
+            Text(words)
+                .font(.system(.caption, design: .serif).smallCaps())
+                .tracking(0.8)
+                .foregroundStyle(model.theme.text.opacity(0.42))
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .frame(width: max(0, end - start), height: camera.height, alignment: .leading)
+                .offset(x: start, y: camera.minY)
+                .opacity(hidden || !model.pageReady ? 0 : 1)
+                .animation(.easeOut(duration: 0.25), value: hidden)
+                .animation(.easeOut(duration: 0.25), value: words)
+                .allowsHitTesting(false)
+                .accessibilityIdentifier("reader.runningHead")
+                .accessibilityLabel(words)
+        }
+    }
+
     func pageTopClearance(_ layout: ReaderLayout, clearance: ChromeClearance) -> CGFloat {
         PageSafeArea.textTopInset
     }
@@ -314,21 +372,11 @@ struct ReaderScreen: View {
         return clearance.ribbonX(pageMaxX: layout.pageFrame.maxX, ribbonWidth: Ribbon.width)
     }
 
+    /// The unfold itself is the host's: it swings a picture of the laid-out right page open from the
+    /// spine once the spread is ready (`ReaderHostController.swingOpen`).
     private func unfold() {
         leafFolding = false
-        guard !reduceMotion else {
-            leafAngle = 0
-            leafOpacity = 1
-            withAnimation(.easeOut(duration: 0.35).delay(0.3)) { leafOpacity = 0 }
-            return
-        }
-        leafAngle = -70
-        leafOpacity = 1
-        withAnimation(.spring(duration: 0.45, bounce: 0.1)) { leafAngle = 0 }
-        withAnimation(.easeOut(duration: 0.3)) { spineBoost = 0.35 }
-        withAnimation(.easeInOut(duration: 0.5).delay(0.35)) { spineBoost = 0 }
-        // The reflow has laid out the right page by now; the paper gives way to it.
-        withAnimation(.easeOut(duration: 0.28).delay(0.5)) { leafOpacity = 0 }
+        leafOpacity = 0
     }
 
     private func fold() {
@@ -342,6 +390,30 @@ struct ReaderScreen: View {
             withAnimation(.easeIn(duration: 0.2).delay(0.3)) { leafOpacity = 0 }
         }
     }
+
+    #if DEBUG
+    /// Filming without a hinge: each ring (`notifyutil -p \(PostureBell.name)` in the simulator, or the
+    /// `GatefoldPostureEvery` timer) moves to the next posture, folded → spread → tabletop → folded,
+    /// through the same layout change a real hinge drives.
+    private func turnPosture() {
+        let cycle: [Posture] = [.single, .spread, .tabletop]
+        let now = forced ?? .single
+        let next = cycle[((cycle.firstIndex(of: now) ?? 0) + 1) % cycle.count]
+        readerLog.notice("posture bell: \(now.rawValue, privacy: .public) → \(next.rawValue, privacy: .public)")
+        hinge = next == .tabletop ? .partiallyOpen(angleDegrees: 110) : .none
+        forced = next
+    }
+
+    private func turnPostureOnTimer() async {
+        PostureBell.listen()
+        guard let every = LaunchOptions.postureEvery else { return }
+        while !Task.isCancelled {
+            try? await Task.sleep(for: .seconds(every))
+            guard !Task.isCancelled else { return }
+            turnPosture()
+        }
+    }
+    #endif
 
     /// Screenshots and films: flip the posture on a timer, as if the phone were opened.
     private func flipForFilming() async {

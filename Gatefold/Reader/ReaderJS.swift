@@ -111,6 +111,45 @@ enum ReaderJS {
           }
           return null;
         },
+        // Which page of the spread `quote` starts on: 0 left, 1 right, -1 before the spread, 2 after it.
+        sideOf: function (quote) {
+          const words = norm(quote).split(" ").slice(0, 8).map(function (w) { return w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); });
+          if (!words.length || !words[0]) { return null; }
+          const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+          const nodes = []; let text = "";
+          while (walker.nextNode()) { nodes.push([walker.currentNode, text.length]); text += walker.currentNode.data; }
+          const m = new RegExp(words.join("\\s+")).exec(text);
+          if (!m) { return null; }
+          for (const [node, start] of nodes) {
+            if (start + node.data.length <= m.index) { continue; }
+            const range = document.createRange();
+            const offset = m.index - start;
+            range.setStart(node, offset);
+            range.setEnd(node, Math.min(node.data.length, offset + 1));
+            const left = range.getBoundingClientRect().left, w = window.innerWidth;
+            if (left < 0) { return -1; }
+            if (left >= w) { return 2; }
+            return left >= w / 2 ? 1 : 0;
+          }
+          return null;
+        },
+        // A blank verso before the file's first page, which moves every page one side over, so a
+        // spread can keep the reader's sentence on its left page. Returns 1 when the verso is in.
+        toggleVerso: function () {
+          const old = document.getElementById("gatefold-verso");
+          if (old) { old.remove(); return 0; }
+          const d = document.createElement("div");
+          d.id = "gatefold-verso";
+          d.setAttribute("aria-hidden", "true");
+          d.style.cssText = "height:1px;margin:0;padding:0;break-after:column;-webkit-column-break-after:always;";
+          document.body.insertBefore(d, document.body.firstChild);
+          return 1;
+        },
+        removeVerso: function () {
+          const old = document.getElementById("gatefold-verso");
+          if (old) { old.remove(); return 1; }
+          return 0;
+        },
         // All the text on screen, whitespace collapsed.
         visibleText: function () {
           const w = window.innerWidth;
@@ -142,6 +181,14 @@ enum ReaderJS {
     }
 
     static let pageEnd = "window.gatefold ? window.gatefold.pageEnd() : null"
+
+    static func sideOf(_ quote: String) -> String {
+        let q = (try? JSONEncoder().encode(quote)).map { String(decoding: $0, as: UTF8.self) } ?? "\"\""
+        return "window.gatefold ? window.gatefold.sideOf(\(q)) : null"
+    }
+
+    static let toggleVerso = "window.gatefold ? window.gatefold.toggleVerso() : null"
+    static let removeVerso = "window.gatefold ? window.gatefold.removeVerso() : null"
 
     static func setColumns(_ n: Int) -> String { "window.gatefoldColumns = \(n); true" }
 

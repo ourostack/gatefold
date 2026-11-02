@@ -26,6 +26,8 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     private var reflowGeneration = 0
     /// The old page, held over the web view while it repaginates, so a reflow never shows bare paper.
     private var reflowCover: UIView?
+    /// Set while a reflow from one page to a spread is the unfold.
+    private var unfolding = false
     /// True from the moment a turn begins until it lands or springs back.
     private(set) var isTurning = false
     private var panStart: CGPoint = .zero
@@ -62,6 +64,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     override func viewDidLoad() {
         super.viewDidLoad()
         if let model = weakModel { readerLog.notice("open: host loads after \(Date().timeIntervalSince(model.openedAt), privacy: .public) s") }
+        if LaunchOptions.isUITest || LaunchOptions.openTour != nil { traceWebViews() }
         view.clipsToBounds = true
         addChild(navigator)
         navigator.view.frame = view.bounds
@@ -105,6 +108,30 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         model.host = self
     }
 
+    /// For measuring opens: when the first web view appears, starts loading and finishes, after the host loads.
+    private func traceWebViews() {
+        let start = Date()
+        Task { [weak self] in
+            var seen = false, loading = false
+            for _ in 0..<300 {
+                guard let self, let web = Self.firstWebView(in: self.navigator.view) else {
+                    try? await Task.sleep(for: .milliseconds(20)); continue
+                }
+                let t = Date().timeIntervalSince(start)
+                if !seen { seen = true; readerLog.notice("open: web view made after \(t, privacy: .public) s") }
+                if web.isLoading, !loading { loading = true; readerLog.notice("open: web view loading after \(t, privacy: .public) s") }
+                if loading, !web.isLoading { readerLog.notice("open: web view loaded after \(t, privacy: .public) s"); return }
+                try? await Task.sleep(for: .milliseconds(20))
+            }
+        }
+    }
+
+    private static func firstWebView(in view: UIView) -> WKWebView? {
+        if let web = view as? WKWebView { return web }
+        for sub in view.subviews { if let web = firstWebView(in: sub) { return web } }
+        return nil
+    }
+
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         let size = view.bounds.size
@@ -118,11 +145,14 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     // MARK: Preferences
 
     func apply(_ preferences: EPUBPreferences, columns: Int, reflow: Bool) {
+        // One page becoming two is the unfold: the right page swings open once it has laid out.
+        unfolding = reflow && self.columns == 1 && columns == 2
         self.columns = columns
         if reflow { beginReflow(model.consumeReflowReason() ?? .typography) }
         navigator.submitPreferences(preferences)
         if reflow { settleReflowSoon() }
         Task {
+            if columns == 1 { _ = await navigator.evaluateJavaScript(ReaderJS.removeVerso) }
             _ = await navigator.evaluateJavaScript(ReaderJS.setColumns(columns))
             if reflow, model.pageReady {
                 try? await Task.sleep(for: .seconds(1))
@@ -187,8 +217,9 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         let visible = await laidOutRange(within: .seconds(3))
         guard current() else { return }
         var after = visible
-        if let visible,
-           case let .jump(anchor) = model.keeper.reflowDidSettle(visible: visible),
+        let action = visible.map { model.keeper.reflowDidSettle(visible: $0) } ?? RestoreAction.none
+        let held = model.keeper.anchor
+        if case let .jump(anchor) = action,
            let locator = model.locator(for: anchor) {
             // A jump made while the book is still settling can land short of the place; try again.
             let jumpBudget = ContinuousClock.now + .seconds(4)
@@ -201,15 +232,145 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
                 if after?.contains(anchor) == true || ContinuousClock.now >= jumpBudget { break }
             }
         }
+        // A spread keeps the reader's sentence on its left page, the page he was on.
+        var target: ReadingAnchor? = held
+        if case let .jump(anchor) = action { target = anchor }
+        if columns == 2, let target, let moved = await keepOnLeft(target, current: current) { after = moved }
+        guard current() else { return }
         model.keeper.restoreDidComplete()
         model.reflowDidFinish(visible: after)
         disablePanningIfNeeded()
         let cover = reflowCover
         reflowCover = nil
+        if unfolding, columns == 2 {
+            unfolding = false
+            await swingOpen(cover: cover)
+            return
+        }
+        unfolding = false
         UIView.animate(withDuration: 0.25) {
             self.navigator.view.alpha = 1
             cover?.alpha = 0
         } completion: { _ in cover?.removeFromSuperview() }
+    }
+
+    /// Moves the spread so `anchor`'s words start its left page: a blank verso before the file's first
+    /// page shifts every page one side over. Returns what's on screen after a move, nil when none was needed.
+    private func keepOnLeft(_ anchor: ReadingAnchor, current: () -> Bool) async -> VisibleRange? {
+        guard let text = anchor.text?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else { return nil }
+        func side() async -> Int? {
+            ((try? await navigator.evaluateJavaScript(ReaderJS.sideOf(text)).get()) as? NSNumber)?.intValue
+        }
+        guard await side() == 1 else { return nil }
+        _ = await navigator.evaluateJavaScript(ReaderJS.toggleVerso)
+        try? await Task.sleep(for: .milliseconds(120))
+        guard current(), let locator = model.locator(for: anchor) else { return nil }
+        _ = await navigator.go(to: locator, options: .init(animated: false))
+        try? await Task.sleep(for: .milliseconds(160))
+        // The progression moved with the verso; step to the spread that holds the words.
+        for _ in 0..<2 {
+            guard current() else { return nil }
+            switch await side() {
+            case 2: _ = await navigator.goForward(options: .init(animated: false))
+            case -1: _ = await navigator.goBackward(options: .init(animated: false))
+            default: break
+            }
+            try? await Task.sleep(for: .milliseconds(120))
+        }
+        let now = await side()
+        readerLog.notice("spread: sentence on the \(now == 0 ? "left" : now == 1 ? "right" : "other", privacy: .public) page after the verso")
+        return await visibleRange()
+    }
+
+    /// The unfold: the spread has laid out behind the old page. The left page takes the old page's
+    /// place; the right page, a picture of the real one, swings open from the spine, its shadow
+    /// lifting as it lies flat; then the live page is shown, pixel for pixel the same.
+    private func swingOpen(cover: UIView?) async {
+        let page = navigator.view!
+        guard let container = page.superview else {
+            page.alpha = 1
+            cover?.removeFromSuperview()
+            return
+        }
+        let image = await snapshot()
+        let frame = page.frame
+        let spine: CGFloat = {
+            guard let model = weakModel, let gutter = model.layout.gutter else { return frame.width / 2 }
+            return min(frame.width, max(0, gutter.midX - model.layout.pageFrame.minX))
+        }()
+        let paper = weakModel?.theme.uiBackground ?? .systemBackground
+        func half(_ x: CGFloat, _ w: CGFloat) -> UIView {
+            let v = UIView(frame: CGRect(x: frame.minX + x, y: frame.minY, width: w, height: frame.height))
+            v.backgroundColor = paper
+            v.layer.contents = image.cgImage
+            v.layer.contentsScale = image.scale
+            v.layer.contentsRect = CGRect(x: x / frame.width, y: 0, width: w / frame.width, height: 1)
+            v.isUserInteractionEnabled = false
+            return v
+        }
+        let left = half(0, spine)
+        let right = half(spine, frame.width - spine)
+        // The leaf's shade: deepest at the spine while it stands up, gone once it lies flat.
+        let shade = CAGradientLayer()
+        shade.frame = right.bounds
+        shade.startPoint = CGPoint(x: 0, y: 0.5)
+        shade.endPoint = CGPoint(x: 1, y: 0.5)
+        let dark = weakModel?.theme.palette.isDark ?? false
+        shade.colors = [UIColor.black.withAlphaComponent(dark ? 0.55 : 0.30).cgColor, UIColor.black.withAlphaComponent(dark ? 0.25 : 0.08).cgColor]
+        right.layer.addSublayer(shade)
+        left.alpha = 0
+        if let cover {
+            container.insertSubview(left, belowSubview: cover)
+            container.insertSubview(right, belowSubview: cover)
+        } else {
+            container.insertSubview(left, aboveSubview: page)
+            container.insertSubview(right, aboveSubview: page)
+        }
+        let reduce = weakModel?.reduceMotion ?? false
+        readerLog.notice("unfold: the right page swings open (reduce motion \(reduce, privacy: .public))")
+        // The old page gives way to the new left page through paper, never through each other.
+        let out = UIViewPropertyAnimator(duration: 0.12, curve: .easeIn) { cover?.alpha = 0 }
+        let into = UIViewPropertyAnimator(duration: 0.16, curve: .easeOut) { left.alpha = 1 }
+        out.addCompletion { _ in cover?.removeFromSuperview() }
+        out.startAnimation()
+        into.startAnimation(afterDelay: 0.1)
+        if reduce {
+            right.alpha = 0
+            shade.opacity = 0
+            await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+                UIView.animate(withDuration: 0.25, delay: 0.1, options: .curveEaseOut) { right.alpha = 1 } completion: { _ in c.resume() }
+            }
+        } else {
+            right.layer.anchorPoint = CGPoint(x: 0, y: 0.5)
+            right.layer.position = CGPoint(x: frame.minX + spine, y: frame.midY)
+            var start = CATransform3DIdentity
+            start.m34 = -1 / max(600, frame.width * 1.2)
+            right.layer.transform = CATransform3DRotate(start, -.pi * 0.47, 0, 1, 0)
+            var flat = CATransform3DIdentity
+            flat.m34 = start.m34
+            let fade = CABasicAnimation(keyPath: "opacity")
+            fade.fromValue = 1
+            fade.toValue = 0
+            fade.duration = 0.8
+            fade.timingFunction = CAMediaTimingFunction(name: .easeIn)
+            fade.fillMode = .both
+            fade.isRemovedOnCompletion = false
+            // Once the old page is gone and the left page is down, never over either.
+            right.isHidden = true
+            try? await Task.sleep(for: .milliseconds(220))
+            right.isHidden = false
+            fade.beginTime = CACurrentMediaTime()
+            shade.add(fade, forKey: "lift")
+            await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+                UIView.animate(withDuration: 0.85, delay: 0, usingSpringWithDamping: 0.95, initialSpringVelocity: 0) {
+                    right.layer.transform = flat
+                } completion: { _ in c.resume() }
+            }
+        }
+        page.alpha = 1
+        left.removeFromSuperview()
+        right.removeFromSuperview()
+        cover?.removeFromSuperview()
     }
 
     /// What's on screen now: the resource, its progression range and the visible text.
@@ -606,7 +767,10 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
 
     /// Underlines the other device's words with the ribbon colour: drawn in over 0.6 s, gone after 2.
     func underline(_ locator: Locator, color: UInt32) {
-        guard locator.text.highlight?.isEmpty == false else { return }
+        guard let quote = locator.text.highlight, !quote.isEmpty else { return }
+        // The mark ends where a word does, not where the quote's character count did.
+        let edge = WordEdge.complete(highlight: quote, after: locator.text.after)
+        let locator = locator.copy(text: { $0.highlight = edge.highlight; $0.after = edge.after })
         let decoration = Decoration(id: "sync", locator: locator, style: .init(id: .gatefoldSync, config: ThemePalette.hexString(color)))
         navigator.apply(decorations: [decoration], in: "gatefold-sync")
         Task { [weak self] in
@@ -630,6 +794,38 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         """
         let line = (try? await navigator.evaluateJavaScript(js).get()) as? String ?? "nil"
         readerLog.notice("typography columns=\(self.columns) \(line, privacy: .public)")
+    }
+
+    /// The top (in window points) of the highest line of text on screen that reaches into `band` (window
+    /// points), so paper laid over the page's foot can end in the gap above it rather than across it.
+    func lineTop(crossing band: ClosedRange<CGFloat>) async -> CGFloat? {
+        let host = navigator.view!
+        var best: CGFloat?
+        func walk(_ v: UIView) {
+            if let web = v as? WKWebView {
+                if !web.isHidden, web.alpha > 0.01, web.convert(web.bounds, to: host).intersects(host.bounds) { webs.append(web) }
+                return
+            }
+            v.subviews.forEach(walk)
+        }
+        var webs: [WKWebView] = []
+        walk(host)
+        for web in webs {
+            guard let window = web.window else { continue }
+            let origin = web.convert(CGPoint.zero, to: window)
+            let y0 = band.lowerBound - origin.y, y1 = band.upperBound - origin.y
+            let js = """
+            (function(y0,y1){var w=window.innerWidth,best=-1,n,r=document.createRange();
+            var tw=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT);
+            while((n=tw.nextNode())){if(!n.textContent.trim())continue;r.selectNodeContents(n);var rs=r.getClientRects();
+            for(var i=0;i<rs.length;i++){var q=rs[i];if(q.width<1||q.right<=0||q.left>=w)continue;
+            if(q.bottom>y0&&q.top<y1&&(best<0||q.top<best))best=q.top;}}return best;})(\(y0),\(y1))
+            """
+            guard let top = (try? await web.evaluateJavaScript(js)) as? Double, top >= 0 else { continue }
+            let y = origin.y + CGFloat(top)
+            best = min(best ?? y, y)
+        }
+        return best
     }
 
     /// Readium's own loading spinner is showing: the page in view hasn't loaded yet.
