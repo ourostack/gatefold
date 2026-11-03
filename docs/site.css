@@ -1,0 +1,70 @@
+:root {
+  --paper: #F6F1E7;
+  --ink: #23201C;
+  --soft-ink: #5C564E;
+  --ribbon: #9A3B26;
+  --rule: #E2D9C8;
+  color-scheme: light dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #1B1A18;
+    --ink: #EDE6DA;
+    --soft-ink: #B9B1A4;
+    --ribbon: #E08A6A;
+    --rule: #34302A;
+  }
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font: 18px/1.6 ui-serif, "New York", Georgia, "Times New Roman", serif;
+}
+main, header, footer {
+  max-width: 38rem;
+  margin: 0 auto;
+  padding: 0 16px;
+}
+header { padding-top: 3.5rem; }
+.mark { display: inline-flex; align-items: center; gap: .6rem; color: var(--ink); text-decoration: none; font-weight: 600; letter-spacing: .01em; }
+.mark svg { width: 28px; height: 28px; }
+h1 {
+  font-size: clamp(2rem, 6vw, 2.8rem);
+  line-height: 1.15;
+  margin: 2.2rem 0 .6rem;
+  font-weight: 600;
+}
+h2 {
+  font-size: 1.25rem;
+  margin: 2.4rem 0 .4rem;
+  font-weight: 600;
+}
+h2::before {
+  content: "";
+  display: inline-block;
+  width: .5rem;
+  height: 1rem;
+  margin-right: .6rem;
+  background: var(--ribbon);
+  clip-path: polygon(0 0, 100% 0, 100% 100%, 50% 78%, 0 100%);
+  vertical-align: -.05rem;
+}
+p, li { color: var(--ink); }
+.lede { font-size: 1.2rem; color: var(--soft-ink); margin-top: 0; }
+.quiet { color: var(--soft-ink); font-size: .95rem; }
+a { color: var(--ribbon); text-underline-offset: .18em; }
+ul { padding-left: 1.2rem; }
+li { margin: .35rem 0; }
+nav.pages { display: flex; flex-wrap: wrap; gap: .4rem 1.4rem; margin: 2rem 0 0; font-size: 1rem; }
+footer {
+  margin-top: 4rem;
+  padding-top: 1.2rem;
+  padding-bottom: 3rem;
+  border-top: 1px solid var(--rule);
+  color: var(--soft-ink);
+  font-size: .9rem;
+}
+footer p { color: var(--soft-ink); margin: .3rem 0; }
