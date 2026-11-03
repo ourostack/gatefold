@@ -1,203 +1,7 @@
 import GatefoldCore
 import SwiftUI
 
-/// Themes and type. Laid out openly: rows separated by space, not boxes.
-struct AppearanceSheet: View {
-    let model: ReaderModel
-    @State private var confirmedDefault = false
-    /// Room for the cover screen's camera when the sheet is pulled up under it.
-    @State private var topClearance: CGFloat = 0
-
-    var body: some View {
-        let prefs = model.preferences
-        ScrollView {
-            VStack(alignment: .leading, spacing: 26) {
-                HStack(spacing: 12) {
-                    TextSizeControl(model: model, idPrefix: "appearance")
-                    Spacer()
-                    Picker("Page Turn", selection: Binding(
-                        get: { prefs.pageTurn },
-                        set: { style in model.setPreferences { $0.pageTurn = style } }
-                    )) {
-                        ForEach(PageTurnStyle.choices, id: \.self) { Text($0.displayName).tag($0) }
-                    }
-                    .pickerStyle(.segmented)
-                    .frame(maxWidth: 210)
-                    .accessibilityIdentifier("appearance.pageTurn")
-                }
-
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("Theme").font(.display(.headline))
-                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: 3), spacing: 14) {
-                        ForEach(ReaderTheme.allCases, id: \.self) { theme in
-                            ThemeSwatch(theme: theme, isSelected: prefs.theme == theme && !prefs.matchSystemAppearance) {
-                                model.setPreferences {
-                                    $0.theme = theme
-                                    $0.matchSystemAppearance = false
-                                }
-                            }
-                        }
-                    }
-                    let pair = Self.dayAndNight(prefs)
-                    Toggle(isOn: Binding(
-                        get: { prefs.matchSystemAppearance },
-                        set: { on in
-                            model.setPreferences {
-                                // A dark page picked by hand becomes the night theme, with a light one for the day.
-                                if on { ($0.theme, $0.darkTheme) = Self.dayAndNight($0) }
-                                $0.matchSystemAppearance = on
-                            }
-                        }
-                    )) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Match Light and Dark")
-                            Text("\(pair.day.displayName) while the sun's up, \(pair.night.displayName) once it sets")
-                                .font(.footnote)
-                                .foregroundStyle(.secondary)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                    }
-                    .tint(.ribbon)
-                    .accessibilityIdentifier("appearance.matchSystem")
-                }
-
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("Font").font(.display(.headline))
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 10) {
-                            ForEach(ReaderFont.allCases, id: \.self) { font in
-                                FontChip(font: font, isSelected: prefs.font == font) {
-                                    model.setPreferences { $0.font = font }
-                                }
-                            }
-                        }
-                        .padding(.trailing, 24)
-                    }
-                    // More fonts lie past the edge: the row fades out instead of cutting a name in half.
-                    .mask {
-                        HStack(spacing: 0) {
-                            Color.black
-                            LinearGradient(colors: [.black, .clear], startPoint: .leading, endPoint: .trailing).frame(width: 24)
-                        }
-                    }
-                }
-
-                VStack(alignment: .leading, spacing: 14) {
-                    Text("Layout").font(.display(.headline))
-                    labeled("Line Spacing") {
-                        Picker("Line Spacing", selection: Binding(
-                            get: { prefs.lineSpacing },
-                            set: { v in model.setPreferences { $0.lineSpacing = v } }
-                        )) {
-                            Image(systemName: "text.alignleft").tag(LineSpacing.compact).accessibilityLabel("Compact")
-                            Image(systemName: "line.3.horizontal").tag(LineSpacing.normal).accessibilityLabel("Normal")
-                            Image(systemName: "text.line.first.and.arrowtriangle.forward").tag(LineSpacing.relaxed).accessibilityLabel("Relaxed")
-                        }
-                        .pickerStyle(.segmented)
-                    }
-                    labeled("Margins") {
-                        Picker("Margins", selection: Binding(
-                            get: { prefs.margins },
-                            set: { v in model.setPreferences { $0.margins = v } }
-                        )) {
-                            Text("Narrow").tag(PageMargins.narrow)
-                            Text("Normal").tag(PageMargins.normal)
-                            Text("Wide").tag(PageMargins.wide)
-                        }
-                        .pickerStyle(.segmented)
-                    }
-                    Toggle("Justify Text", isOn: Binding(
-                        get: { prefs.justify },
-                        set: { v in model.setPreferences { $0.justify = v } }
-                    ))
-                    .tint(.ribbon)
-                }
-
-                Button {
-                    model.useAsDefault()
-                    confirmedDefault.toggle()
-                } label: {
-                    Label(model.followsDefault ? "These Are Your Defaults" : "Use as Default for All Books",
-                          systemImage: model.followsDefault ? "checkmark" : "books.vertical")
-                        .frame(maxWidth: .infinity, minHeight: 44)
-                }
-                .buttonStyle(.glass)
-                .disabled(model.followsDefault)
-                .sensoryFeedback(.success, trigger: confirmedDefault)
-                .accessibilityIdentifier("appearance.useAsDefault")
-            }
-            .padding(.horizontal, 22)
-            .padding(.top, 26 + topClearance)
-            .padding(.bottom, 20)
-            .frame(maxWidth: 560)
-            .frame(maxWidth: .infinity)
-        }
-        // The folded Duo keeps a column at the trailing edge for its camera and clock, but only up top:
-        // down here the sheet uses its full width, so it sits symmetric with the toggle at the edge.
-        .ignoresSafeArea(.container, edges: .horizontal)
-        .background {
-            GeometryReader { geo in
-                Color.clear.onGeometryChange(for: CGFloat.self) { _ in
-                    // An occlusion reaching into the sheet's top: move the content down below it.
-                    let reaching = FoldReader.occlusions(in: geo).filter { $0.maxY > 0 && $0.minY < 80 && $0.minX < geo.size.width }
-                    return reaching.map { $0.maxY - 12 }.max().map { max(0, $0) } ?? 0
-                } action: { topClearance = $0 }
-            }
-        }
-        .presentationDetents([.medium, .large])
-        .presentationBackgroundInteraction(.enabled(upThrough: .medium))
-        .presentationDragIndicator(.visible)
-        .sensoryFeedback(.selection, trigger: model.preferences)
-        .animation(.snappy, value: model.preferences)
-    }
-
-    /// The pair "Match Light and Dark" follows: a light page by day, a dark one by night. A dark theme
-    /// picked by hand is the night half, with Vellum for the day.
-    static func dayAndNight(_ prefs: ReaderPreferences) -> (day: ReaderTheme, night: ReaderTheme) {
-        prefs.theme.palette.isDark ? (.vellum, prefs.theme) : (prefs.theme, prefs.darkTheme.palette.isDark ? prefs.darkTheme : .dusk)
-    }
-
-    private func labeled<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
-        HStack {
-            Text(title)
-            Spacer(minLength: 20)
-            content().frame(maxWidth: 230)
-        }
-    }
-}
-
-private struct ThemeSwatch: View {
-    @Environment(\.colorScheme) private var colorScheme
-    let theme: ReaderTheme
-    let isSelected: Bool
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            VStack(spacing: 6) {
-                Text("Aa")
-                    .font(.system(size: 26, weight: .regular, design: .serif))
-                    .foregroundStyle(theme.text)
-                    .frame(maxWidth: .infinity, minHeight: 64)
-                    .background(theme.background, in: .rect(cornerRadius: 14))
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 14)
-                            // In dark mode a dark swatch would vanish into the sheet without its edge.
-                            .strokeBorder(isSelected ? Color.ribbon : Color.primary.opacity(colorScheme == .dark ? 0.25 : 0.12), lineWidth: isSelected ? 2.5 : 1)
-                    }
-                Text(theme.displayName)
-                    .font(.caption.weight(isSelected ? .semibold : .regular))
-                    .foregroundStyle(isSelected ? .primary : .secondary)
-            }
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(theme.displayName)
-        .accessibilityAddTraits(isSelected ? .isSelected : [])
-        .accessibilityIdentifier("theme.\(theme.rawValue)")
-    }
-}
-
-private struct FontChip: View {
+struct FontChip: View {
     let font: ReaderFont
     let isSelected: Bool
     let action: () -> Void
@@ -208,19 +12,24 @@ private struct FontChip: View {
                 .font(preview)
                 .padding(.horizontal, 14)
                 .frame(minHeight: 44)
-                .foregroundStyle(isSelected ? Color.ribbon : .primary)
+                .foregroundStyle(Color.primary)
+                .background(isSelected ? Color.primary.opacity(0.12) : Color.primary.opacity(0.05), in: .capsule)
+                .overlay { if isSelected { Capsule().strokeBorder(Color.primary, lineWidth: 2) } }
         }
-        .buttonStyle(.glass)
+        .buttonStyle(.plain)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
         .accessibilityIdentifier("font.\(font.rawValue)")
     }
 
-    private var preview: Font {
+    private var preview: Font { Self.preview(font, size: 17) }
+
+    /// The font as the page will set it (Original shows the system's book face, New York).
+    static func preview(_ font: ReaderFont, size: CGFloat) -> Font {
         switch font {
-        case .original, .system: .body
-        case .newYork: .system(.body, design: .serif)
-        case .iowan: .custom("Iowan Old Style", size: 17, relativeTo: .body)
-        case .georgia: .custom("Georgia", size: 17, relativeTo: .body)
+        case .original, .newYork: .system(size: size, design: .serif)
+        case .system: .system(size: size)
+        case .iowan: .custom("Iowan Old Style", size: size, relativeTo: .body)
+        case .georgia: .custom("Georgia", size: size, relativeTo: .body)
         }
     }
 }
@@ -258,7 +67,7 @@ struct ContentsSheet: View {
                         // The ribbon marks where you are, the way a bookmark sits in a printed contents page.
                         .overlay(alignment: .leading) {
                             if current {
-                                RibbonShape().fill(Color.ribbon.gradient)
+                                RibbonShape().fill(Color.ribbon)
                                     .frame(width: 6, height: 22)
                                     .offset(x: -14)
                                     .accessibilityHidden(true)

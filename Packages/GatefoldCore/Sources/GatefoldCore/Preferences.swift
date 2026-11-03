@@ -6,7 +6,7 @@ public enum ReaderTheme: String, CaseIterable, Codable, Sendable {
     public var displayName: String {
         switch self {
         case .daylight: "Daylight"
-        case .vellum: "Vellum"
+        case .vellum: "Linen"
         case .fog: "Fog"
         case .sage: "Sage"
         case .dusk: "Dusk"
@@ -16,12 +16,12 @@ public enum ReaderTheme: String, CaseIterable, Codable, Sendable {
 
     public var palette: ThemePalette {
         switch self {
-        case .daylight: ThemePalette(background: 0xFFFFFF, text: 0x1D1D1F, accent: 0x9A3B26)
-        case .vellum: ThemePalette(background: 0xF5EDDC, text: 0x3A2E1F, accent: 0x8C3A1E)
-        case .fog: ThemePalette(background: 0xE7E6E2, text: 0x222222, accent: 0x3E5C76)
-        case .sage: ThemePalette(background: 0xE3E9DB, text: 0x22301E, accent: 0x4A6A35)
-        case .dusk: ThemePalette(background: 0x2A2826, text: 0xE7E0D3, accent: 0xE0A15E)
-        case .midnight: ThemePalette(background: 0x000000, text: 0xC9C4B9, accent: 0xD9A35A)
+        case .daylight: ThemePalette(background: 0xFFFFFF, text: 0x1D1D1F, accent: 0x2F5D8A, head: 0x737378)
+        case .vellum: ThemePalette(background: 0xF7F5F0, text: 0x2A2927, accent: 0x6E5844, head: 0x6C6B67)
+        case .fog: ThemePalette(background: 0xECEDEF, text: 0x1F2328, accent: 0x3B5B7C, head: 0x63666B)
+        case .sage: ThemePalette(background: 0xE8ECE6, text: 0x1E2820, accent: 0x46654F, head: 0x5E655E)
+        case .dusk: ThemePalette(background: 0x1C1C1E, text: 0xD9D9DE, accent: 0x8DB0DA, head: 0x8E8E93)
+        case .midnight: ThemePalette(background: 0x000000, text: 0xB8B8BE, accent: 0x7F9FC7, head: 0x76767C)
         }
     }
 }
@@ -31,6 +31,15 @@ public struct ThemePalette: Equatable, Sendable {
     public var background: UInt32
     public var text: UInt32
     public var accent: UInt32
+    /// Running heads and page numbers: quiet grey furniture, at least 4.5:1 on the paper.
+    public var head: UInt32
+
+    public init(background: UInt32, text: UInt32, accent: UInt32, head: UInt32? = nil) {
+        self.background = background
+        self.text = text
+        self.accent = accent
+        self.head = head ?? text
+    }
 
     public var isDark: Bool { Self.luminance(background) < 0.2 }
 

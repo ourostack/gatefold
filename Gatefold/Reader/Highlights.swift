@@ -413,7 +413,7 @@ struct HighlightLook: Hashable {
         // Light: yellow, periwinkle, green, rose pencil. Dark: the same, as dim inks that brighten the glyphs.
         // The blue is a pencil's violet-blue, not the system's sky blue, so a highlight never reads as
         // a text selection.
-        let light: [UInt32] = [0xFBE08A, 0xCFC6EC, 0xD3EABD, 0xF5C9D1]
+        let light: [UInt32] = [0xF6E3A1, 0xCFC6EC, 0xD3EABD, 0xF5C9D1]
         let night: [UInt32] = [0x5C4A1C, 0x3A3160, 0x2A4626, 0x5A2633]
         // A highlight with a note is a warm apricot wash whatever its colour, so a note reads as
         // pencil in the margin, never as a system text selection.

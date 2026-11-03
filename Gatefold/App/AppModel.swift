@@ -104,6 +104,11 @@ final class AppModel {
             forced.matchSystemAppearance = false
             preferences = PreferencesStore(defaults: forced)
         }
+        if let turn = LaunchOptions.pageTurn {
+            var forced = preferences.defaults
+            forced.pageTurn = turn
+            preferences = PreferencesStore(defaults: forced)
+        }
         if LaunchOptions.openBook == nil, LaunchOptions.allowsReopen, hasOnboarded,
            let id = UserDefaults.standard.string(forKey: Keys.reopenBook) {
             reopenBookID = id

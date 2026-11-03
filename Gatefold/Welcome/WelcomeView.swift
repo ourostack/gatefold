@@ -11,9 +11,6 @@ struct WelcomeView: View {
     @State private var markCenter: CGFloat?
     @State private var screenCenter: CGFloat?
     @State private var signingIn = false
-    /// The cover screen keeps a column at its trailing edge for the camera and clock; the hero centres
-    /// on the paper you can see, not on what's left of the safe area.
-    @State private var centreOnPaper = false
 
     var body: some View {
         NavigationStack {
@@ -27,7 +24,7 @@ struct WelcomeView: View {
                     .accessibilityHidden(true)
                 VStack(spacing: 12) {
                     Text("Gatefold")
-                        .font(.system(size: 44, weight: .bold, design: .serif))
+                        .font(.wordmark(size: 44))
                         .foregroundStyle(Color.ink)
                     Text("Your PocketBook shelf, now in your pocket. Open a book and land on the very page your InkPad left off.")
                         .font(.title3)
@@ -66,19 +63,15 @@ struct WelcomeView: View {
                 .padding(.bottom, 24)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .ignoresSafeArea(.container, edges: centreOnPaper ? .horizontal : [])
+            // Inside the safe area on every edge, however the system reports it: on Ari's folded Duo the
+            // status column was a full-height trailing inset, and a hero centred on the whole paper ran
+            // its Sign In button underneath it.
             .background {
                 // The launch screen centres its mark in the safe area; so does the first frame here.
                 GeometryReader { geo in
                     Color.paper
                         .ignoresSafeArea()
                         .onGeometryChange(for: CGFloat.self) { _ in geo.frame(in: .global).midY } action: { screenCenter = $0 }
-                        .onGeometryChange(for: Bool.self) { _ in
-                            // Only the camera's column is reserved there; everything below it is open paper.
-                            // (Stable either way: it doesn't depend on the width this view is given.)
-                            let regions = FoldReader.occlusions(in: geo)
-                            return !regions.isEmpty && regions.allSatisfy { $0.maxY < geo.size.height * 0.4 }
-                        } action: { centreOnPaper = $0 }
                 }
             }
             .navigationDestination(isPresented: $signingIn) { SignInFlow() }
@@ -114,10 +107,10 @@ struct GatefoldMark: View {
             ZStack {
                 // Centre panel with a ribbon.
                 RoundedRectangle(cornerRadius: 4)
-                    .fill(Color(light: 0xFFFDF8, dark: 0x2C2A27))
+                    .fill(Color.surface)
                     .frame(width: w, height: h)
                     .overlay(alignment: .top) {
-                        RibbonShape().fill(Color.ribbon.gradient).frame(width: w * 0.2, height: h * 0.42)
+                        RibbonShape().fill(Color.ribbon).frame(width: w * 0.2, height: h * 0.42)
                             .offset(x: w * 0.22)
                     }
                     .overlay {
@@ -139,7 +132,7 @@ struct GatefoldMark: View {
     private func panel(w: CGFloat, h: CGFloat, leading: Bool) -> some View {
         RoundedRectangle(cornerRadius: 4)
             .fill(LinearGradient(
-                colors: [Color(light: 0xF2E9D8, dark: 0x3A3631), Color(light: 0xE6DAC4, dark: 0x302D29)],
+                colors: [Color(light: 0xF2F2F7, dark: 0x1C1C1E), Color(light: 0xE5E5EA, dark: 0x2C2C2E)],
                 startPoint: leading ? .trailing : .leading,
                 endPoint: leading ? .leading : .trailing
             ))

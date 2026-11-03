@@ -11,15 +11,22 @@ extension Color {
     static let ribbon = Color("AccentColor")
     /// Labels on a ribbon-coloured fill: white on the light ribbon, ink on the dark one (4.5:1 both).
     static let onRibbon = Color(light: Brand.light.onRibbon, dark: Brand.dark.onRibbon)
-    /// Warm paper, for the welcome and empty states.
-    static let paper = Color(light: 0xF6F1E7, dark: 0x1B1A18)
-    static let ink = Color(light: 0x23201C, dark: 0xEDE6DA)
-    /// Secondary words on paper: softer than ink, still comfortably readable (about 6.5:1 light, 9:1 dark).
-    static let secondaryInk = Color(light: 0x5C564E, dark: 0xB9B1A4)
+    /// The room: plain white by day, true black by night, so the covers are the only colour on screen.
+    static let paper = Color(light: 0xFFFFFF, dark: 0x000000)
+    static let ink = Color(light: 0x1D1D1F, dark: 0xF5F5F7)
+    /// Secondary words: neutral grey (5.1:1 light, 7.3:1 dark; deeper under Increase Contrast).
+    static let secondaryInk = Color(light: 0x6E6E73, dark: 0x98989D, highContrastLight: 0x515154, highContrastDark: 0xAEAEB2)
+    /// A step of structure without a warm pixel: inset fields, empty-cover cloth, grouped rows.
+    static let surface = Color(light: 0xF2F2F7, dark: 0x1C1C1E)
+    /// A line instead of a box.
+    static let hairline = Color(uiColor: UIColor { $0.userInterfaceStyle == .dark ? UIColor(white: 1, alpha: 0.10) : UIColor(white: 0, alpha: 0.08) })
 
-    init(light: UInt32, dark: UInt32) {
+    init(light: UInt32, dark: UInt32, highContrastLight: UInt32? = nil, highContrastDark: UInt32? = nil) {
         self.init(uiColor: UIColor { traits in
-            let c = ThemePalette.components(traits.userInterfaceStyle == .dark ? dark : light)
+            let high = traits.accessibilityContrast == .high
+            let isDark = traits.userInterfaceStyle == .dark
+            let hex = isDark ? (high ? highContrastDark ?? dark : dark) : (high ? highContrastLight ?? light : light)
+            let c = ThemePalette.components(hex)
             return UIColor(red: c.r, green: c.g, blue: c.b, alpha: 1)
         })
     }
@@ -29,6 +36,8 @@ extension ReaderTheme {
     var background: Color { Color(hex: palette.background) }
     var text: Color { Color(hex: palette.text) }
     var accent: Color { Color(hex: palette.accent) }
+    /// Running heads and page numbers.
+    var head: Color { Color(hex: palette.head) }
     var uiBackground: UIColor {
         let c = ThemePalette.components(palette.background)
         return UIColor(red: c.r, green: c.g, blue: c.b, alpha: 1)
@@ -52,9 +61,13 @@ extension View {
 }
 
 extension Font {
-    /// Display type: New York, for titles. Books uses SF; serif keeps us our own.
-    static func display(_ style: Font.TextStyle, weight: Font.Weight = .semibold) -> Font {
-        .system(style, design: .serif, weight: weight)
+    /// Chrome titles: SF, like the rest of the room. Serif lives in the book.
+    static func display(_ style: Font.TextStyle, weight: Font.Weight = .bold) -> Font {
+        .system(style, design: .default, weight: weight)
+    }
+    /// The one serif moment: the Gatefold wordmark and titles printed on generated covers (New York).
+    static func wordmark(size: CGFloat, weight: Font.Weight = .bold) -> Font {
+        .system(size: size, weight: weight, design: .serif)
     }
 }
 
@@ -98,6 +111,8 @@ enum LaunchOptions {
     static var goTo: Double? { defaults.object(forKey: "GatefoldGoTo") == nil ? nil : defaults.double(forKey: "GatefoldGoTo") }
     static var forcedPosture: Posture? { defaults.string(forKey: "GatefoldForcePosture").flatMap(Posture.init(rawValue:)) }
     static var theme: ReaderTheme? { defaults.string(forKey: "GatefoldTheme").flatMap(ReaderTheme.init(rawValue:)) }
+    /// Tests: every book turns its pages this way.
+    static var pageTurn: PageTurnStyle? { defaults.string(forKey: "GatefoldPageTurn").flatMap(PageTurnStyle.init(rawValue:)) }
     static var showChrome: Bool { defaults.bool(forKey: "GatefoldShowChrome") }
     static var noLatency: Bool { defaults.bool(forKey: "GatefoldNoLatency") }
     static var downloadAll: Bool { defaults.bool(forKey: "GatefoldDownloadAll") }

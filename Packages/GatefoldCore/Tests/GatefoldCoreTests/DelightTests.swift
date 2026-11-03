@@ -353,6 +353,40 @@ struct ContrastTests {
         }
     }
 
+    /// Running heads and page numbers: quiet grey, still AA on every page (calm redesign, 2026-11-03).
+    @Test func runningHeadsAndPageNumbers() {
+        for theme in ReaderTheme.allCases {
+            let p = theme.palette
+            #expect(p.head != p.text, "\(theme) has its own head grey")
+            #expect(ThemePalette.contrast(p.head, p.background) >= 4.5, "\(theme) head \(ThemePalette.contrast(p.head, p.background)):1")
+        }
+    }
+
+    /// The calm palette: white by day, black by night, Inkwell blue as the one accent.
+    @Test func calmBrand() {
+        #expect(Brand.light.paper == 0xFFFFFF && Brand.dark.paper == 0x000000)
+        #expect(Brand.light.ribbon == 0x2F5D8A && Brand.dark.ribbon == 0x7FA6D6)
+        #expect(ThemePalette.contrast(Brand.light.ribbon, Brand.light.paper) >= 6.8)
+        #expect(ThemePalette.contrast(Brand.dark.ribbon, Brand.dark.paper) >= 8.2)
+        #expect(ThemePalette.contrast(Brand.light.ink, Brand.light.paper) >= 16)
+        #expect(ThemePalette.contrast(Brand.dark.ink, Brand.dark.paper) >= 19)
+        // Increased contrast variants of the accent and the secondary grey.
+        #expect(ThemePalette.contrast(0x244A70, 0xFFFFFF) >= 9)
+        #expect(ThemePalette.contrast(0xA3C2E8, 0x000000) >= 11)
+        #expect(ThemePalette.contrast(0x6E6E73, 0xFFFFFF) >= 4.5 && ThemePalette.contrast(0x98989D, 0x000000) >= 4.5)
+        #expect(ThemePalette.contrast(0x515154, 0xFFFFFF) >= 7 && ThemePalette.contrast(0xAEAEB2, 0x000000) >= 7)
+    }
+
+    /// No theme keeps the old cream or rust; Vellum shows as Linen, its saved name unchanged.
+    @Test func noCreamNoRust() {
+        let old: Set<UInt32> = [0xF6F1E7, 0xF5EDDC, 0x9A3B26, 0x8C3A1E, 0xE08A6A]
+        for theme in ReaderTheme.allCases {
+            #expect(!old.contains(theme.palette.background) && !old.contains(theme.palette.accent), "\(theme)")
+        }
+        #expect(ReaderTheme.vellum.displayName == "Linen")
+        #expect(ReaderTheme(rawValue: "vellum") == .vellum)
+    }
+
     /// Captions, the slip's detail and the end leaf's line are the theme's text at 80 % over its page.
     @Test func softenedCaptions() {
         func blend(_ fg: UInt32, _ bg: UInt32, _ a: Double) -> UInt32 {

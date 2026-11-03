@@ -137,6 +137,11 @@ final class ReaderModel {
     private var anchorReady = false
     /// For UI tests: what the last check compared.
     private(set) var anchorDetail = ""
+    /// The bands above and below the text on the page (the host's own measure of where the words
+    /// start and end), for the running heads and page numbers that sit in them.
+    var textBand: (top: CGFloat, bottom: CGFloat) = (28, 28)
+    /// For UI tests: how the last turn landed: "landed <n> leaf <frames> page <frames> in place|moved".
+    var turnPlacement = "none"
 
     var keeper = AnchorKeeper()
     private var anchorLocator: Locator?
@@ -585,6 +590,22 @@ final class ReaderModel {
     }
 
     @ObservationIgnored private var aheadTarget: (progression: Double, device: String)?
+
+    /// Up to `limit` places where `query` occurs, in reading order, each with a little text around it.
+    func search(_ query: String, limit: Int) async -> [Locator] {
+        nonisolated(unsafe) let publication = publication
+        guard case let .success(iterator) = await publication.search(query: query) else {
+            readerLog.notice("search: this book can't be searched")
+            return []
+        }
+        nonisolated(unsafe) let pages = iterator
+        var found: [Locator] = []
+        while found.count < limit, !Task.isCancelled, case let .success(collection?) = await pages.next() {
+            found += collection.locators
+        }
+        pages.close()
+        return Array(found.prefix(limit))
+    }
 
     /// The folded tab counts down as the reader catches up, and goes once they're there.
     private func refreshAheadTab() {

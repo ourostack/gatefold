@@ -43,6 +43,9 @@ struct LibraryView: View {
     var body: some View {
         let library = app.library
         NavigationStack {
+            // The screen's safe area, measured outside the scroll view: its size is the safe size and its
+            // insets the system's own, however the hardware reports them.
+            GeometryReader { outer in
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
                     header
@@ -78,36 +81,49 @@ struct LibraryView: View {
                             .transition(.opacity)
                     }
                 }
-                // Exactly the screen's width from the first frame: a shelf still waiting for its books
-                // would otherwise hug the header and centre it, and a row wider than the screen (the
-                // dusting shelf's ghosts on an iPad) would push it off the left edge.
-                .containerRelativeFrame(.horizontal, alignment: .leading)
+                // Exactly the safe width, placed by the shelf itself from `outer`: on the folded
+                // Duo the hardware reports its status column differently from the simulator, and a frame
+                // taken from the scroll view's container ran wider than the safe area, shoving the shelf
+                // off the left edge (build 13, on Ari's device). Placing it from the measured insets holds
+                // whatever the system reports.
+                .frame(width: outer.size.width > 0 ? outer.size.width : nil, alignment: .leading)
+                .padding(.leading, outer.safeAreaInsets.leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
                 // Nothing shows until the shelf knows its width, so the header never flies in from a zero-wide layout.
                 .opacity(width > 0 ? 1 : 0)
                 .animation(.easeOut(duration: 0.3), value: shelfState)
             }
+            // The scroll view spans the whole width and adds no horizontal margins of its own; the shelf
+            // places itself inside the safe area, and the scroll bar keeps clear of a side column.
+            .contentMargins(.horizontal, 0, for: .scrollContent)
+            .contentMargins(.leading, outer.safeAreaInsets.leading, for: .scrollIndicators)
+            .contentMargins(.trailing, outer.safeAreaInsets.trailing, for: .scrollIndicators)
+            .ignoresSafeArea(.container, edges: .horizontal)
             .background(Color.paper)
-            .background {
-                GeometryReader { proxy in
-                    Color.clear.onGeometryChange(for: [CGFloat].self) { _ in
-                        // The header's band: the camera and status column at the cover screen's top corner.
-                        [ChromeClearance.headerDrop(occlusions: FoldReader.occlusions(in: proxy), band: 60, width: proxy.size.width),
-                         proxy.size.width, proxy.safeAreaInsets.trailing]
-                    } action: { values in
-                        // Measurements arrive after the first layout (the camera band later still): apply
-                        // them without animation, and start from the band this screen width had last time.
-                        let key = "GatefoldHeaderDrop-\(Int(values[1]))"
-                        var drop = values[0]
-                        if drop > 0 { UserDefaults.standard.set(Double(drop), forKey: key) }
-                        else { drop = CGFloat(UserDefaults.standard.double(forKey: key)) }
-                        var quiet = Transaction()
-                        quiet.disablesAnimations = true
-                        withTransaction(quiet) {
-                            headerDrop = drop
-                            width = values[1]
-                            trailingReserved = values[2] > 0
-                        }
-                    }
+            .onGeometryChange(for: [CGFloat].self) { _ in
+                // The header's band: the camera at the cover screen's top corner, in the safe area's own
+                // space, where the header row runs from 0 to the safe width. A status column beside the
+                // safe area isn't in the row and doesn't move it.
+                let occlusions = FoldReader.occlusions(in: outer)
+                return [ChromeClearance.headerDrop(occlusions: occlusions, band: 60, width: outer.size.width),
+                        outer.size.width, outer.safeAreaInsets.trailing, CGFloat(occlusions.count)]
+            } action: { values in
+                // Measurements arrive after the first layout (the camera band later still): apply them
+                // without animation, and until the system has reported its regions, start from the band
+                // this screen width had last time. (Versioned: build 13 measured some bands too low.)
+                let key = "GatefoldHeaderDrop2-\(Int(values[1]))"
+                var drop = values[0]
+                if values[3] > 0 { UserDefaults.standard.set(Double(drop), forKey: key) }
+                else { drop = CGFloat(UserDefaults.standard.double(forKey: key)) }
+                #if DEBUG
+                readerLog.notice("shelf header: drop \(drop, privacy: .public) from \(Int(values[3]), privacy: .public) occlusions")
+                #endif
+                var quiet = Transaction()
+                quiet.disablesAnimations = true
+                withTransaction(quiet) {
+                    headerDrop = drop
+                    width = values[1]
+                    trailingReserved = values[2] > 0
                 }
             }
             .sensoryFeedback(.impact(weight: .light, intensity: 0.4), trigger: arrivalTaps)
@@ -137,6 +153,12 @@ struct LibraryView: View {
             }
             .sheet(isPresented: $reconnecting) {
                 NavigationStack { SignInFlow(prefilledEmail: app.needsReconnect, onDone: { reconnecting = false }) }
+            }
+            #if DEBUG
+            .onGeometryChange(for: [CGFloat].self) { _ in [outer.size.width, outer.safeAreaInsets.leading, outer.safeAreaInsets.trailing] } action: { v in
+                readerLog.notice("shelf placement: safe width \(v[0], privacy: .public) leading \(v[1], privacy: .public) trailing \(v[2], privacy: .public)")
+            }
+            #endif
             }
         }
     }
@@ -506,21 +528,30 @@ struct CoverView: View {
                 PendingCover(title: BookTitle.display(book.title))
                     .transition(.opacity)
             }
-            // The spine: light catches the hinge of a real cover.
+            // The spine: a 6 pt hint of the hinge, light at the fold and a breath of shade after it.
             LinearGradient(
                 stops: [
-                    .init(color: .black.opacity(0.28), location: 0),
-                    .init(color: .white.opacity(0.16), location: 0.025),
-                    .init(color: .clear, location: 0.06),
+                    .init(color: .white.opacity(0.18), location: 0),
+                    .init(color: .black.opacity(0.06), location: 0.7),
+                    .init(color: .clear, location: 1),
                 ],
                 startPoint: .leading,
                 endPoint: .trailing
             )
+            .frame(width: 6)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .animation(.easeOut(duration: 0.35), value: image == nil)
-        .clipShape(.rect(topLeadingRadius: 3, bottomLeadingRadius: 3, bottomTrailingRadius: 6, topTrailingRadius: 6))
-        .shadow(color: .black.opacity(0.22), radius: 8, x: 0, y: 6)
+        .clipShape(Self.shape)
+        // In the dark a shadow vanishes into black, so a hairline keeps the cover's edge instead.
+        .overlay { if scheme == .dark { Self.shape.stroke(Color.hairline, lineWidth: 1) } }
+        // By day a crisp contact line and a soft halo: a book resting on a table.
+        .shadow(color: .black.opacity(scheme == .dark ? 0 : 0.10), radius: 1, x: 0, y: 1)
+        .shadow(color: .black.opacity(scheme == .dark ? 0 : 0.12), radius: 12, x: 0, y: 8)
     }
+
+    @Environment(\.colorScheme) private var scheme
+    private static let shape = UnevenRoundedRectangle(topLeadingRadius: 3, bottomLeadingRadius: 3, bottomTrailingRadius: 6, topTrailingRadius: 6)
 }
 
 /// Add's glass button; beside the cover screen's reserved column, a glass circle the account badge's
@@ -546,15 +577,15 @@ private struct PendingCover: View {
     @State private var lit = false
 
     var body: some View {
-        let palette = [0x8A5A44, 0x4F6B7A, 0x5E7454, 0x6E5A7A, 0x8A7444] as [UInt32]
+        let palette = GeneratedCover.cloth
         let hue = palette[Int(title.unicodeScalars.reduce(0) { ($0 &* 31 &+ $1.value) % 9973 }) % palette.count]
         ZStack {
-            Color.paper
-            Color(hex: hue).opacity(0.20)
+            Color.surface
+            Color(hex: hue).opacity(0.12)
             VStack(spacing: 8) {
                 Rectangle().fill(Color.ink.opacity(0.18)).frame(width: 22, height: 1)
                 Text(title)
-                    .font(.system(.footnote, design: .serif))
+                    .font(.footnote)
                     .multilineTextAlignment(.center)
                     .lineLimit(3)
                     .minimumScaleFactor(0.7)
@@ -580,11 +611,13 @@ private struct PendingCover: View {
 }
 
 private struct GeneratedCover: View {
+    /// Muted cloth: slate, moss, umber, indigo and stone, a well-kept linen library.
+    static let cloth: [UInt32] = [0x3E4A5C, 0x4E5D52, 0x5C5048, 0x46506A, 0x6A6460]
     let title: String
     let author: String
 
     var body: some View {
-        let palette = [0x7A2E22, 0x2E4A5E, 0x3E5A34, 0x5B3A6B, 0x6B5326] as [UInt32]
+        let palette = Self.cloth
         // A stable colour per title (String.hashValue changes every launch).
         let hue = palette[Int(title.unicodeScalars.reduce(0) { ($0 &* 31 &+ $1.value) % 9973 }) % palette.count]
         ZStack {
@@ -592,7 +625,7 @@ private struct GeneratedCover: View {
             VStack(spacing: 10) {
                 Rectangle().fill(.white.opacity(0.5)).frame(width: 30, height: 1)
                 Text(title)
-                    .font(.system(.headline, design: .serif))
+                    .font(.system(.headline, design: .serif))  // the one serif moment, like a colophon
                     .multilineTextAlignment(.center)
                     .minimumScaleFactor(0.6)
                 Text(author.uppercased())
@@ -750,10 +783,10 @@ private struct AccountBadge: View {
         ZStack(alignment: .topTrailing) {
             if let initial {
                 Text(initial)
-                    .font(.system(.headline, design: .serif, weight: .bold))
+                    .font(.headline.bold())
                     .foregroundStyle(Color.onRibbon)
                     .frame(width: 36, height: 36)
-                    .background(Color.ribbon.gradient, in: .circle)
+                    .background(Color.ribbon, in: .circle)
             } else {
                 Image(systemName: "person.crop.circle")
                     .font(.system(size: 30, weight: .regular))
@@ -908,13 +941,13 @@ struct FinishedColophon: View {
                 .padding(.vertical, 6)
             if let finished = book.finished {
                 Text("Last page turned \(finished.formatted(.dateTime.day().month(.wide)))")
-                    .font(.system(.footnote, design: .serif).italic())
-                    .foregroundStyle(.secondary)
+                    .font(.footnote)
+                    .foregroundStyle(Color.secondaryInk)
             }
             if let line = Self.journey(book) {
                 Text(line)
-                    .font(.system(.footnote, design: .serif).italic())
-                    .foregroundStyle(.secondary)
+                    .font(.footnote)
+                    .foregroundStyle(Color.secondaryInk)
             }
         }
         .accessibilityElement(children: .combine)
@@ -928,3 +961,4 @@ struct FinishedColophon: View {
                                    here: UIDevice.current.userInterfaceIdiom == .pad ? "iPad" : "phone")
     }
 }
+

@@ -411,9 +411,9 @@ public struct Brand: Sendable {
     public var paper: UInt32
     public var ink: UInt32
 
-    public static let light = Brand(ribbon: 0x9A3B26, onRibbon: 0xFFFFFF, paper: 0xF6F1E7, ink: 0x23201C)
-    /// White on the dark ribbon is 2.6:1, so labels there are ink (about 6.6:1).
-    public static let dark = Brand(ribbon: 0xE08A6A, onRibbon: 0x1B1A18, paper: 0x1B1A18, ink: 0xEDE6DA)
+    public static let light = Brand(ribbon: 0x2F5D8A, onRibbon: 0xFFFFFF, paper: 0xFFFFFF, ink: 0x1D1D1F)
+    /// White on the light blue of the night accent would be too faint, so labels there are near-black (6.8:1).
+    public static let dark = Brand(ribbon: 0x7FA6D6, onRibbon: 0x1C1C1E, paper: 0x000000, ink: 0xF5F5F7)
 }
 
 extension ThemePalette {
