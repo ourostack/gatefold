@@ -21,7 +21,16 @@ struct GatefoldApp: App {
         .onChange(of: scenePhase) { _, phase in
             switch phase {
             case .active:
+                ReopenSnapshot.setAside()
                 Task { await app.didBecomeActive() }
+            case .inactive:
+                // He may be leaving: picture the page while it can still be drawn, for a reopen.
+                if let reader = app.activeReader, !reader.isWarming {
+                    ReopenSnapshot.keep(model: reader)
+                } else {
+                    readerLog.notice("reopen: leaving with no reader open (\(app.activeReader == nil ? "none" : "a warm one", privacy: .public))")
+                }
+                app.library.flushPushes()
             case .background:
                 // Finish sending the place even if the app is suspended mid-request.
                 // iOS ends the grace period if the network hangs; whichever comes first ends the task once.
@@ -52,6 +61,9 @@ enum LaunchClock {
         let start = info.kp_proc.p_un.__p_starttime
         return Date(timeIntervalSince1970: TimeInterval(start.tv_sec) + TimeInterval(start.tv_usec) / 1_000_000)
     }()
+
+    /// Seconds since the process started, for the log.
+    static var sinceLaunch: Double { processStarted.map { Date().timeIntervalSince($0) } ?? -1 }
 
     static func firstFrame() {
         guard !logged else { return }
@@ -107,6 +119,9 @@ struct RootView: View {
     @State private var opening = false
     /// The books most likely to be opened next (Reading Now's first few), already open behind the shelf.
     @State private var warm: [ReaderModel] = []
+    /// Reopening at launch: the page as he left it, up from the first frame until the reader is.
+    @State private var reopenPicture: ReopenSnapshot.Picture?
+    @State private var reopenLooked = false
 
     var body: some View {
         ZStack {
@@ -118,6 +133,15 @@ struct RootView: View {
                     .transition(.opacity)
             }
         }
+        .overlay {
+            if let picture = reopenPicture, reader?.reopenPicture != nil || reader == nil {
+                ReopenPictureView(image: picture.image) { app.queueReopenTurn(forward: $0) }
+                    .onAppear {
+                        readerLog.notice("reopen: his page on screen at \(LaunchClock.sinceLaunch, privacy: .public) s after launch (saved \(picture.meta.savedAt.formatted(.iso8601), privacy: .public))")
+                    }
+            }
+        }
+        .onGeometryChange(for: CGSize.self) { $0.size } action: { size in lookForReopenPicture(size: size) }
         .animation(Motion.open, value: app.hasOnboarded)
         // Under the shelf's own paper: never seen, but laid out and painted like the real page. A
         // background, so its arrival can't resize the shelf's stack (it ignores the safe area).
@@ -132,7 +156,10 @@ struct RootView: View {
         }
         .fullScreenCover(item: $reader) { model in
             ReaderScreen(model: model) { closeReader(model) }
-            .navigationTransition(.zoom(sourceID: model.bookID, in: covers))
+            // Zooms from its cover, except when reopening onto his page's picture: a zoom there drew a
+            // shrunken second copy of the page over the picture for a few frames. Decided once per
+            // reader: switching it when the picture went rebuilt the reader and blanked its page.
+            .modifier(ZoomFromCover(enabled: !model.reopened, id: model.bookID, namespace: covers))
             // The zoom opens onto the page's own colour, never white or black.
             .presentationBackground(model.preferences.resolvedTheme(systemIsDark: colorScheme == .dark).background)
             // The zoom's swipe-to-dismiss would take edge drags meant for turning back a page.
@@ -150,9 +177,23 @@ struct RootView: View {
         }
     }
 
+    /// The first layout: if a book is being reopened, find its picture for this window and theme.
+    private func lookForReopenPicture(size: CGSize) {
+        guard !reopenLooked else { return }
+        reopenLooked = true
+        guard let id = app.reopenBookID else { return }
+        // The window's own size, safe area and all, as the picture was taken.
+        let window = UIApplication.shared.connectedScenes.compactMap { ($0 as? UIWindowScene)?.keyWindow ?? ($0 as? UIWindowScene)?.windows.first }.first
+        let full = window?.bounds.size ?? size
+        let theme = app.preferences.effective(for: id).resolvedTheme(systemIsDark: colorScheme == .dark)
+        reopenPicture = ReopenSnapshot.load(book: id, size: full, theme: theme)
+        readerLog.notice("reopen: \(id, privacy: .public) at \(Int(full.width), privacy: .public)x\(Int(full.height), privacy: .public), picture \(reopenPicture != nil, privacy: .public), at \(LaunchClock.sinceLaunch, privacy: .public) s after launch")
+    }
+
     private func closeReader(_ model: ReaderModel) {
         // Stop any landing or settle first, so the place sent below is the last one.
         model.close()
+        reopenPicture = nil
         reader = nil
         app.openBookID = nil
         app.activeReader = nil
@@ -252,7 +293,24 @@ struct RootView: View {
                 readerLog.notice("open: parsed after \(Date().timeIntervalSince(asked), privacy: .public) s")
                 let model = ReaderModel(book: book, publication: publication, app: app)
                 model.askedAt = asked
-                reader = model
+                if book.id == app.reopenBookID {
+                    // Reopening: no zoom from the shelf; the reader comes up over his page's picture.
+                    app.reopenBookID = nil
+                    model.reopenPicture = reopenPicture?.image
+                    model.reopenPageFrame = reopenPicture?.meta.page.flatMap { $0.count == 4 ? CGRect(x: $0[0], y: $0[1], width: $0[2], height: $0[3]) : nil }
+                    // A transaction without animation still slid the cover up over the picture: UIKit
+                    // presents it, so UIKit's animations are held off until it is up.
+                    var still = Transaction()
+                    still.disablesAnimations = true
+                    UIView.setAnimationsEnabled(false)
+                    withTransaction(still) { reader = model }
+                    Task { @MainActor in
+                        try? await Task.sleep(for: .milliseconds(100))
+                        UIView.setAnimationsEnabled(true)
+                    }
+                } else {
+                    reader = model
+                }
                 app.activeReader = model
                 app.openBookID = book.id
             } catch {
@@ -302,3 +360,18 @@ enum LaunchMarkRenderer {
     }
 }
 #endif
+
+/// The reader's zoom from its cover on the shelf, or no transition at all.
+private struct ZoomFromCover: ViewModifier {
+    let enabled: Bool
+    let id: String
+    let namespace: Namespace.ID
+
+    @ViewBuilder func body(content: _ViewModifier_Content<Self>) -> some View {
+        if enabled {
+            content.navigationTransition(.zoom(sourceID: id, in: namespace))
+        } else {
+            content
+        }
+    }
+}

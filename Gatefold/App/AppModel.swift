@@ -36,13 +36,30 @@ final class AppModel {
         didSet { UserDefaults.standard.set(hasOnboarded, forKey: Keys.onboarded) }
     }
 
-    /// The open book, if any.
-    var openBookID: String?
+    /// The open book, if any. Remembered across launches, so that if iOS ends Gatefold while he is
+    /// reading (or he relaunches it), it reopens at his page instead of the shelf.
+    var openBookID: String? {
+        didSet {
+            guard LaunchOptions.allowsReopen else { return }
+            UserDefaults.standard.set(openBookID, forKey: Keys.reopenBook)
+        }
+    }
+    /// The book being reopened at launch, until its reader is up.
+    var reopenBookID: String?
+    /// The first turn asked for on the reopen picture (true is forward), played when the live page lands.
+    var reopenQueuedTurn: Bool?
+
+    func queueReopenTurn(forward: Bool) {
+        guard reopenQueuedTurn == nil else { return }
+        reopenQueuedTurn = forward
+        readerLog.notice("reopen: a \(forward ? "forward" : "back", privacy: .public) turn asked of the picture at \(LaunchClock.sinceLaunch, privacy: .public) s after launch; kept for the live page")
+    }
 
     private enum Keys {
         static let onboarded = "onboarded"
         static let preferences = "readerPreferences"
         static let accountInitial = "accountInitial"
+        static let reopenBook = "reopenBook"
     }
 
     init(sync: (any SyncService)? = nil, libraryRoot: URL = LibraryStore.defaultRoot) {
@@ -50,6 +67,7 @@ final class AppModel {
             UserDefaults.standard.removeObject(forKey: Keys.onboarded)
             UserDefaults.standard.removeObject(forKey: Keys.preferences)
             UserDefaults.standard.removeObject(forKey: Keys.accountInitial)
+            UserDefaults.standard.removeObject(forKey: Keys.reopenBook)
         }
         self.accountInitial = UserDefaults.standard.string(forKey: Keys.accountInitial)
         let service = sync ?? Self.makeSyncService()
@@ -79,7 +97,13 @@ final class AppModel {
             forced.matchSystemAppearance = false
             preferences = PreferencesStore(defaults: forced)
         }
-        self.openBookID = LaunchOptions.openBook
+        if LaunchOptions.openBook == nil, LaunchOptions.allowsReopen, hasOnboarded,
+           let id = UserDefaults.standard.string(forKey: Keys.reopenBook) {
+            reopenBookID = id
+            // His book is what the first frames are for: start reading it in before the shelf.
+            if let book = library.book(id), let url = library.fileURL(of: book) { BookOpener.shared.openEarly(url) }
+        }
+        self.openBookID = LaunchOptions.openBook ?? reopenBookID
     }
 
     /// PocketBook Cloud, unless a launch argument asks for the fake (previews, UI tests, screenshots).

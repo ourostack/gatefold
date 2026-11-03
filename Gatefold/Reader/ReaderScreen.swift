@@ -134,7 +134,12 @@ struct ReaderScreen: View {
                     .zIndex(2)
                 }
 
-                if !model.pageReady {
+                if let picture = model.reopenPicture {
+                    // Reopened at launch: his page as he left it, until the live one is laid out beneath.
+                    ReopenPictureView(image: picture) { model.queueReopenTurn(forward: $0) }
+                        .transition(model.reopenFades ? .opacity : .identity)
+                        .zIndex(3)
+                } else if !model.pageReady {
                     OpeningPlaceholder(model: model)
                         .transition(.opacity)
                         .zIndex(3)
@@ -383,7 +388,8 @@ struct ReaderScreen: View {
                 .offset(x: start, y: camera.minY)
                 .opacity(hidden || !model.pageReady ? 0 : 1)
                 .animation(.easeOut(duration: 0.25), value: hidden)
-                .animation(.easeOut(duration: 0.25), value: words)
+                // Quick enough to finish as a riffle's last leaf does (`riffleLeaves`).
+                .animation(.easeOut(duration: 0.18), value: words)
                 .allowsHitTesting(false)
                 .accessibilityIdentifier("reader.runningHead")
                 .accessibilityLabel(words)

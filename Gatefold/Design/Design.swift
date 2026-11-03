@@ -88,6 +88,10 @@ enum LaunchOptions {
     /// Fake Cloud only: start signed in.
     static var signedIn: Bool { defaults.bool(forKey: "GatefoldSignedIn") }
     static var openBook: String? { defaults.string(forKey: "GatefoldOpenBook") }
+    /// Reopening the last book at launch. UI tests and the open tours start from the shelf unless they ask.
+    static var allowsReopen: Bool {
+        defaults.bool(forKey: "GatefoldAllowReopen") || (!isUITest && defaults.object(forKey: "GatefoldOpenTour") == nil)
+    }
     static var goTo: Double? { defaults.object(forKey: "GatefoldGoTo") == nil ? nil : defaults.double(forKey: "GatefoldGoTo") }
     static var forcedPosture: Posture? { defaults.string(forKey: "GatefoldForcePosture").flatMap(Posture.init(rawValue:)) }
     static var theme: ReaderTheme? { defaults.string(forKey: "GatefoldTheme").flatMap(ReaderTheme.init(rawValue:)) }

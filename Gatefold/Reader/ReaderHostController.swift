@@ -671,12 +671,15 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             container.insertSubview(right, aboveSubview: page)
         }
         readerLog.notice("unfold: the right page swings open (reduce motion \(reduce, privacy: .public), lifted at the bell \(lifted != nil, privacy: .public))")
-        // The old page gives way to the new left page through paper, never through each other.
+        // The old page gives way to the new left page through paper, never through each other: the new
+        // one starts only once the old has gone (an overlap showed both layouts at half strength).
         let out = UIViewPropertyAnimator(duration: 0.12, curve: .easeIn) { cover?.alpha = 0 }
         let into = UIViewPropertyAnimator(duration: 0.16, curve: .easeOut) { left.alpha = 1 }
-        out.addCompletion { _ in cover?.removeFromSuperview() }
+        out.addCompletion { _ in
+            cover?.removeFromSuperview()
+            into.startAnimation()
+        }
         out.startAnimation()
-        into.startAnimation(afterDelay: 0.1)
         if reduce {
             right.alpha = 0
             shade.opacity = 0
@@ -706,9 +709,13 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             fade.beginTime = CACurrentMediaTime()
             shade.add(fade, forKey: "lift")
             await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
-                UIView.animate(withDuration: 0.85, delay: 0, usingSpringWithDamping: 0.95, initialSpringVelocity: 0) {
-                    right.layer.transform = flat
-                } completion: { _ in c.resume() }
+                // A curve that lands, not a spring that settles: a spring's long tail left the words on
+                // the leaf visibly keystoned (tilted) for a third of a second on the tall iPad page.
+                let timing = UICubicTimingParameters(controlPoint1: CGPoint(x: 0.3, y: 0.55), controlPoint2: CGPoint(x: 0.45, y: 1))
+                let swing = UIViewPropertyAnimator(duration: 0.5, timingParameters: timing)
+                swing.addAnimations { right.layer.transform = flat }
+                swing.addCompletion { _ in c.resume() }
+                swing.startAnimation()
             }
         }
         page.alpha = 1
@@ -1064,7 +1071,8 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         dim.startAnimation()
         await body()
         _ = await renderedSnapshot(afterChange: true)
-        weakModel?.heldRunningHead = nil
+        // The head changes chapter with the page, cross-fading as the veil lifts.
+        withAnimation(.easeInOut(duration: 0.2)) { weakModel?.heldRunningHead = nil }
         await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
             UIView.animate(withDuration: 0.2, delay: 0, options: [.curveEaseInOut, .beginFromCurrentState]) {
                 cover.alpha = 0
@@ -1089,19 +1097,27 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         curl.ink = model.theme.text
         curl.isDark = model.theme.palette.isDark
         var i = 0
-        // Leaves of the old page over itself until the new one is ready (a riffle through pages
-        // in between); capped so a lost load still ends.
+        // Leaves of the old page over itself until the new one is ready and pictured (a riffle through
+        // pages in between); capped so a lost load still ends. The picture is taken while the leaves
+        // keep turning, so the thumb never stops on the bare old page waiting for it: one sweep.
         let t0 = ContinuousClock.now
-        while i < 3 || (!arrived() && i < 40) {
+        var page: UIImage?
+        let picturing = Task { @MainActor in page = await fresh() }
+        while i < 3 || (page == nil && i < 40) {
             await leaf(top: old, beneath: old, index: i, size: size, forward: forward, duration: 0.12)
             i += 1
         }
-        let page = await fresh()
-        readerLog.notice("riffle: \(i, privacy: .public) leaves, new page ready at \(ReaderModel.ms(since: t0), privacy: .public) ms")
-        await leaf(top: old, beneath: page, index: i, size: size, forward: forward, duration: 0.28)
-        // The last leaf has turned away and the new page lies open: its chapter comes up now, not
-        // while the old page is still under the leaf.
-        model.heldRunningHead = nil
+        await picturing.value
+        readerLog.notice("riffle: \(i, privacy: .public) leaves, new page pictured at \(ReaderModel.ms(since: t0), privacy: .public) ms")
+        // The last leaf uncovers the new page, and its chapter comes up in the head as it does:
+        // the head cross-fades while the leaf turns away, not after.
+        let last = 0.28
+        let head = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(last * 0.4))
+            withAnimation(.easeInOut(duration: last * 0.6)) { model.heldRunningHead = nil }
+        }
+        await leaf(top: old, beneath: page ?? old, index: i, size: size, forward: forward, duration: last)
+        await head.value
         veil?.alpha = 0
         curl.reset()
     }
@@ -1284,6 +1300,11 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
 
     /// A snapshot that shows the page: not black, not bare paper, and (after a change) the same
     /// twice running, so the layout has settled. Gives up after about 0.7 s with the best it has.
+    /// Returns once the page on screen has painted and stopped changing.
+    func waitForSettledPage() async {
+        _ = await renderedSnapshot(afterChange: true)
+    }
+
     func renderedSnapshot(afterChange: Bool) async -> UIImage {
         let paper = PageSignature.rgb(weakModel?.theme.uiBackground ?? .white)
         var last: (UIImage, PageSignature)?

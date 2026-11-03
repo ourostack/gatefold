@@ -109,6 +109,10 @@ struct EndLeafView: View {
     @Environment(AppModel.self) private var app
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var settled = false
+    @Environment(\.horizontalSizeClass) private var widthClass
+    @Environment(\.verticalSizeClass) private var heightClass
+    /// A regular-by-regular page: the iPad, or an unfolded spread.
+    private var tall: Bool { widthClass == .regular && heightClass == .regular }
 
     /// "Started on your InkPad, finished here on your phone" over "Read over 12 days", from what the shelf knows.
     private var story: String {
@@ -154,7 +158,11 @@ struct EndLeafView: View {
                 .padding(.top, 10)
                 .padding(.horizontal, 28)
                 .accessibilityIdentifier("endLeaf.line")
+            // A tall page (the iPad) keeps the buttons near the words, the whole leaf sitting a little
+            // above the middle, instead of a wide band of bare paper between them; the phone's page is
+            // short enough that the buttons rest at its foot.
             Spacer(minLength: 28)
+                .frame(maxHeight: tall ? 64 : .infinity)
             VStack(spacing: 12) {
                 Button(action: onLibrary) {
                     Text("Back to Library")
@@ -189,6 +197,10 @@ struct EndLeafView: View {
             .frame(maxWidth: 360)
             .padding(.horizontal, 28)
             .padding(.bottom, 30)
+            if tall {
+                // The rest of the paper is shared above and below the leaf.
+                Spacer(minLength: 0)
+            }
         }
         .foregroundStyle(theme.text)
         .tint(theme.text)
