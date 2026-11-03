@@ -39,10 +39,11 @@ struct ReaderScreen: View {
             let aheadOpen = model.slip != nil && model.slipKind == .ahead && !model.slipFolded && !model.chromeVisible && layout.deck == nil
             // A slip hangs below the camera as well as the status bar's room: with the status bar hidden,
             // a Dynamic Island leaves the safe area but stays among the occlusions (the 6.9" iPhone's
-            // island sat on the catch-up offer).
+            // island sat on the catch-up offer). On an iPhone the island isn't an occlusion, so the slip
+            // also keeps below the status bar's room as last seen in portrait.
             let slipWidth = min(proxy.size.width - 32 - clearance.leading - clearance.trailing, 460)
             let slipX = layout.gutter.map { g in g.maxX + (proxy.size.width - g.maxX - slipWidth) / 2 } ?? (proxy.size.width - slipWidth) / 2
-            let slipTop = PageSafeArea.slipTop(safeTop: safeTop, occlusions: FoldReader.occlusions(in: proxy), span: slipX...(slipX + max(1, slipWidth)))
+            let slipTop = PageSafeArea.slipTop(safeTop: ReaderChrome.StatusRoom.slipSafeTop(safeTop, size: proxy.size), occlusions: FoldReader.occlusions(in: proxy), span: slipX...(slipX + max(1, slipWidth)))
             let push: CGFloat = aheadOpen
                 ? max(0, slipTop + slipHeight + 14 - (layout.pageFrame.minY + pageTopClearance(layout, clearance: clearance)))
                 : 0

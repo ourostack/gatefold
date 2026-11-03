@@ -36,6 +36,22 @@ struct ReaderChrome: View {
     }
 
     static func safeTop(_ insets: EdgeInsets) -> CGFloat { max(insets.top, 12) }
+
+    /// The status bar's room in portrait, remembered from any screen that shows it. With the status bar
+    /// hidden an iPhone's Dynamic Island leaves the safe area, and it isn't among the occlusion regions
+    /// either, so a slip hung from the top would slide under it.
+    enum StatusRoom {
+        private static let key = "GatefoldStatusRoom"
+        static func note(_ insets: EdgeInsets, size: CGSize) {
+            guard size.height > size.width, insets.top > 20, insets.top != remembered else { return }
+            UserDefaults.standard.set(Double(insets.top), forKey: key)
+        }
+        static var remembered: CGFloat { CGFloat(UserDefaults.standard.double(forKey: key)) }
+        /// Where a slip's top may start: below the remembered room in portrait, else the safe area.
+        static func slipSafeTop(_ safeTop: CGFloat, size: CGSize) -> CGFloat {
+            size.height > size.width ? max(safeTop, remembered) : safeTop
+        }
+    }
     /// The bars' heights, for the paper fade beneath them.
     static let topBarHeight: CGFloat = 4 + 8 + 44 + 8
     static let bottomBarHeight: CGFloat = 4 + 8 + 48 + 8
