@@ -135,21 +135,37 @@ public actor PocketBookCloud: SyncService {
     public func cachedLibrary() -> [CloudBook] { books }
 
     public func library() async throws -> [CloudBook] {
-        var fetched: [CloudBook] = []
-        var total = Int.max
-        while fetched.count < total {
-            let (data, _) = try await session.send(.get("/books", query: ["limit": String(pageSize), "offset": String(fetched.count)]))
-            let page = try WireDecoder.booksPage(data)
-            total = page.total
-            fetched += page.items
-            if page.items.isEmpty { break }
-        }
+        var fetched = try await fetchListing()
+        // A Cloud that suddenly lists nothing while we know of books is more likely having a bad moment
+        // than emptied: ask once more before announcing every book gone.
+        if fetched.isEmpty, !books.isEmpty { fetched = try await fetchListing() }
+        try Task.checkCancellation()
         let email = await session.account?.email
         fetched = fetched.map { markOwnPosition($0, account: email) }
         announceDifferences(from: books, to: fetched)
         books = fetched
         JSONFile.write(books, to: libraryFile)
         if !state.items.isEmpty { scheduleFlush(after: 0) }
+        return fetched
+    }
+
+    /// Every page of `/books`, or an error: never a listing cut short.
+    private func fetchListing() async throws -> [CloudBook] {
+        var fetched: [CloudBook] = []
+        // Entries the Cloud listed, readable or not: the next page starts after them.
+        var listed = 0
+        var total = Int.max
+        while listed < total {
+            let (data, _) = try await session.send(.get("/books", query: ["limit": String(pageSize), "offset": String(listed)]))
+            let page = try WireDecoder.booksPage(data)
+            total = page.total
+            fetched += page.items
+            listed += page.listed
+            if page.listed == 0 { break }
+        }
+        // A page that came back empty before the total was reached is a listing cut short, not a shelf
+        // that shrank: announcing it would take the missing books off his shelf.
+        if total != Int.max, listed < total { throw CloudError.unexpectedResponse("library cut short at \(listed) of \(total)") }
         return fetched
     }
 

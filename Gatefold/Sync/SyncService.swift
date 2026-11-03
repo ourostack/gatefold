@@ -5,16 +5,8 @@ import Foundation
 // `FakeSyncService` conforms for previews, tests and the prototype, and `PocketBookCloud` is the real one.
 
 extension CloudError: @retroactive LocalizedError {
-    public var errorDescription: String? {
-        switch self {
-        case .noAccount: "There's no PocketBook Cloud account with that email."
-        case .invalidCredentials: "That password didn't work. Check it and try again."
-        case .offline, .network: "You're offline. Your books and place are safe; we'll sync when you're back."
-        case .notFound: "That book isn't in your Cloud library any more."
-        case .authenticationRequired, .notSignedIn: "Sign in to PocketBook Cloud again to keep syncing."
-        default: "PocketBook Cloud didn't answer as expected. Try again in a moment."
-        }
-    }
+    /// The reader's words for it (`FriendlyError`), so even a stray `localizedDescription` reads kindly.
+    public var errorDescription: String? { FriendlyError(self).message }
 }
 
 extension ReadingPosition {

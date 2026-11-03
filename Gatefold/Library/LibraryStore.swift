@@ -79,20 +79,31 @@ final class LibraryStore {
 
     // MARK: Cloud
 
+    /// Fetches the shelf. Only a whole, successful listing changes it: a cancelled pull, an error or a
+    /// listing that comes back empty once (while the shelf has Cloud books) leaves every book where it is.
     func refresh() async {
         guard await sync.account != nil else { return }
         isRefreshing = true
         defer { isRefreshing = false; hasRefreshed = true }
         do {
             // One request per page of books: each book already carries its position.
-            let cloudBooks = try await sync.library()
+            var cloudBooks = try await sync.library()
+            if cloudBooks.isEmpty, books.contains(where: { $0.origin == .cloud }) {
+                // A Cloud that suddenly lists nothing is more likely having a bad moment than emptied:
+                // ask once more before taking his books off the shelf.
+                cloudBooks = try await sync.library()
+            }
+            // Signed out while the listing was on its way: it no longer belongs on the shelf.
+            guard await sync.account != nil else { return }
             syncProblem = nil
             cloudIsEmpty = cloudBooks.isEmpty
             lastSynced = Date()
             prune(keeping: Set(cloudBooks.map(\.id)))
             await merge(cloudBooks)
         } catch {
-            syncProblem = SyncProblem(error)
+            // A cancelled refresh (the pull let go) is not a problem: keep whatever the shelf said before.
+            guard let problem = SyncProblem(error) else { return }
+            syncProblem = problem
         }
     }
 
@@ -208,7 +219,11 @@ final class LibraryStore {
                 coverless.remove(book.id)
             }
         } catch {
-            downloads[book.id] = .failed(error.localizedDescription)
+            if let message = FriendlyError.message(for: error) {
+                downloads[book.id] = .failed(message)
+            } else {
+                downloads[book.id] = nil // called off: back to waiting in the Cloud
+            }
         }
     }
 
@@ -233,7 +248,9 @@ final class LibraryStore {
                 added.append(book)
             } catch {
                 try? FileManager.default.removeItem(at: target)
-                lastError = "\(url.lastPathComponent): \(error.localizedDescription)"
+                if !FriendlyError.isCancellation(error) {
+                    lastError = "“\(url.deletingPathExtension().lastPathComponent)” didn't want to come aboard. Gatefold reads EPUB books; is this one?"
+                }
             }
         }
         save()
@@ -362,17 +379,20 @@ final class LibraryStore {
         return remote
     }
 
-    /// What the shelf shows when the Cloud can't be reached.
+    /// What the shelf shows when the Cloud can't be reached. Always in the reader's words (`FriendlyError`).
     enum SyncProblem: Equatable {
         case offline
         case signInExpired
         case other(String)
 
-        init(_ error: Error) {
-            switch error as? CloudError {
-            case .offline?, .network(_)?: self = .offline
-            case .authenticationRequired?, .notSignedIn?: self = .signInExpired
-            default: self = .other(error.localizedDescription)
+        /// Nil for a cancellation: that is not a problem, and nothing is shown.
+        init?(_ error: Error) {
+            let friendly = FriendlyError(error)
+            switch friendly {
+            case .cancelled: return nil
+            case .offline: self = .offline
+            case .sessionExpired: self = .signInExpired
+            default: self = .other(friendly.message ?? FriendlyError.unknown.message!)
             }
         }
     }

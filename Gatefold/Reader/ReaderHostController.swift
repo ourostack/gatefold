@@ -812,7 +812,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     }
 
     func navigator(_ navigator: Navigator, presentError error: NavigatorError) {
-        model.errorMessage = error.localizedDescription
+        model.errorMessage = "This page got itself in a tangle. Try turning again?"
     }
 
     func navigator(_ navigator: Navigator, didFailToLoadResourceAt href: RelativeURL, withError error: ReadError) {

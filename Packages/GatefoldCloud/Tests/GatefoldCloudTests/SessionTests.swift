@@ -167,7 +167,9 @@ struct SessionTests {
         #expect(await store.load()?.token.accessToken == "a2")
     }
 
-    @Test func aDeadRefreshTokenSignsOutAndAsksForSignIn() async throws {
+    /// Build 13 signed out here, wiping the Keychain on one refused renewal. Now a refusal is asked
+    /// twice before it counts, and even a confirmed one keeps the session: the app asks him to sign in again.
+    @Test func aConfirmedDeadRefreshTokenAsksForSignInButKeepsTheSession() async throws {
         let t = ScriptedTransport()
         let store = InMemoryTokenStore()
         let clock = TestClock()
@@ -175,8 +177,88 @@ struct SessionTests {
         clock.advance(8000)
         await t.on("POST", "/auth/renew-token", .json(#"{"error_code":3}"#, status: 401))
         await #expect(throws: CloudError.authenticationRequired) { _ = try await session.send(.get("/books")) }
-        #expect(await store.load() == nil)
-        #expect(await session.account == nil)
+        #expect(await t.requests("POST", "/auth/renew-token").count == 2, "asked twice before believing it")
+        #expect(await store.load()?.account.email == "reader@example.com")
+        #expect(await session.account?.email == "reader@example.com")
+    }
+
+    @Test func aSingleRefusedRenewalThatThenWorksKeepsGoing() async throws {
+        let t = ScriptedTransport()
+        let store = InMemoryTokenStore()
+        let clock = TestClock()
+        let session = try await signedIn(t, clock: clock, store: store)
+        clock.advance(8000)
+        await t.on("POST", "/auth/renew-token", .json(#"{"error_code":222,"error_msg":"Invalid refresh token"}"#, status: 403), .json(tokenJSON("a2", refresh: "r2")))
+        await t.on("GET", "/books", .json(#"{"total":0,"items":[]}"#))
+        _ = try await session.send(.get("/books"))
+        #expect(await store.load()?.token.accessToken == "a2")
+    }
+
+    @Test func aSingle401IsRetriedWithARenewedTokenAndIsNotAnError() async throws {
+        let t = ScriptedTransport()
+        let store = InMemoryTokenStore()
+        let session = try await signedIn(t, store: store)
+        await t.on("GET", "/books", .json("{}", status: 401), .json(#"{"total":0,"items":[]}"#))
+        await t.on("POST", "/auth/renew-token", .json(tokenJSON("a2", refresh: "r2")))
+        _ = try await session.send(.get("/books"))
+        #expect(await t.requests("GET", "/books").last?.headers["Authorization"] == "Bearer a2")
+        #expect(await session.account != nil)
+    }
+
+    @Test func aConfirmed401AfterARenewedTokenAsksForSignInButKeepsTheSession() async throws {
+        let t = ScriptedTransport()
+        let store = InMemoryTokenStore()
+        let session = try await signedIn(t, store: store)
+        await t.on("GET", "/books", .json("{}", status: 401))
+        await t.on("POST", "/auth/renew-token", .json(tokenJSON("a2", refresh: "r2")))
+        await #expect(throws: CloudError.authenticationRequired) { _ = try await session.send(.get("/books")) }
+        #expect(await store.load()?.account.email == "reader@example.com")
+        #expect(await session.account != nil)
+    }
+
+    /// The live Cloud answers a bad token with 403 "Wrong token format" (error_code 222), not 401.
+    @Test func a403AboutTheTokenIsTreatedLikeA401() async throws {
+        let t = ScriptedTransport()
+        let session = try await signedIn(t)
+        await t.on("GET", "/books", .json(#"{"error_code":222,"error_msg":"Wrong token format"}"#, status: 403), .json(#"{"total":0,"items":[]}"#))
+        await t.on("POST", "/auth/renew-token", .json(tokenJSON("a2", refresh: "r2")))
+        _ = try await session.send(.get("/books"))
+        #expect(await t.requests("POST", "/auth/renew-token").count == 1)
+    }
+
+    @Test func aRenewalThatFailsOnTheNetworkKeepsTheSession() async throws {
+        let t = ScriptedTransport()
+        let store = InMemoryTokenStore()
+        let clock = TestClock()
+        let session = try await signedIn(t, clock: clock, store: store)
+        clock.advance(8000)
+        await t.setOffline(true)
+        await #expect(throws: CloudError.offline) { _ = try await session.send(.get("/books")) }
+        await t.on("POST", "/auth/renew-token", .json("{}", status: 503))
+        await t.setOffline(false)
+        await #expect(throws: CloudError.server(status: 503)) { _ = try await session.send(.get("/books")) }
+        #expect(await store.load()?.token.accessToken == "a1")
+        #expect(await session.account != nil)
+    }
+
+    /// Pull-to-refresh lets go while the token is being renewed: the renewal finishes and is kept.
+    @Test func cancellingACallMidRenewalKeepsTheSessionAndTheNewToken() async throws {
+        let t = ScriptedTransport()
+        let store = InMemoryTokenStore()
+        let clock = TestClock()
+        let session = try await signedIn(t, clock: clock, store: store)
+        clock.advance(8000)
+        await t.on("POST", "/auth/renew-token", .json(tokenJSON("a2", refresh: "r2")))
+        await t.on("GET", "/books", .json(#"{"total":0,"items":[]}"#))
+        await t.setDelay(.milliseconds(300))
+        let call = Task { try await session.send(.get("/books")) }
+        try await waitForRequest(t, "POST", "/auth/renew-token")
+        call.cancel()
+        _ = try? await call.value
+        let deadline = ContinuousClock.now + .seconds(10)
+        while await store.load()?.token.accessToken != "a2", ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(20)) }
+        #expect(await store.load()?.token.accessToken == "a2")
+        #expect(await session.account?.email == "reader@example.com")
     }
 
     @Test func aRateLimitedRefreshKeepsTheSession() async throws {

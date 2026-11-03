@@ -802,8 +802,17 @@ private struct SyncStatusLine: View {
                     NavigationStack { SignInFlow(prefilledEmail: email, onDone: { reconnecting = false }) }
                 }
             } else if case let .other(message)? = app.library.syncProblem, app.account != nil {
-                Label(message, systemImage: "exclamationmark.icloud")
-                    .foregroundStyle(.secondary)
+                // Always the reader's words (`FriendlyError`), with a way to try again.
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Label(message, systemImage: "exclamationmark.icloud")
+                        .foregroundStyle(.secondary)
+                        .accessibilityIdentifier("library.syncTrouble")
+                    Button("Try Again") { Task { await app.refresh() } }
+                        .fontWeight(.semibold)
+                        .tint(.ribbon)
+                        .disabled(app.library.isRefreshing)
+                        .accessibilityIdentifier("library.syncRetry")
+                }
             } else if let health {
                 // Relative times tick over on their own ("just now" becomes "1 min ago").
                 TimelineView(.periodic(from: .now, by: 30)) { context in

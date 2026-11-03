@@ -1,3 +1,4 @@
+import GatefoldCore
 import SwiftUI
 
 /// First run: a gatefold opens to show the app, then sign-in.
@@ -171,6 +172,9 @@ struct SignInFlow: View {
     @State private var working = false
     @State private var error: String?
     @State private var failures = 0
+    /// The gentle word under the email field, once he has paused on (or tried to send) an address that can't be one.
+    @State private var emailHint: EmailCheck.Problem?
+    @State private var passwordFocused = false
     /// Live UI tests: what the debug password fill did (never the password).
     @State private var debugFill = ""
     @FocusState private var focused: Bool
@@ -226,6 +230,16 @@ struct SignInFlow: View {
                         .onSubmit(next)
                         .accessibilityIdentifier("signIn.email")
                 }
+                if let emailHint {
+                    Label(Self.hint(for: emailHint), systemImage: "envelope.badge")
+                        .font(.footnote)
+                        .foregroundStyle(Color.secondaryInk)
+                        .lineLimit(nil)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.top, -12)
+                        .transition(.opacity.combined(with: .move(edge: .top)))
+                        .accessibilityIdentifier("signIn.emailHint")
+                }
             case .store:
                 VStack(spacing: 0) {
                     ForEach(stores) { s in
@@ -247,14 +261,10 @@ struct SignInFlow: View {
                     }
                 }
             case .password:
-                field {
-                    SecureField("Password", text: $password)
-                        .textContentType(.password)
-                        .submitLabel(.go)
-                        .onSubmit(next)
-                        .accessibilityIdentifier("signIn.password")
-                }
-                .modifier(Shake(amount: CGFloat(failures)))
+                PasswordField(text: $password, isFocused: $passwordFocused, onSubmit: next)
+                    .padding(.vertical, 2)
+                    .overlay(alignment: .bottom) { Rectangle().fill(Color.ink.opacity(0.25)).frame(height: 1) }
+                    .modifier(Shake(amount: CGFloat(failures)))
                 #if DEBUG
                 if LaunchOptions.isUITest {
                     // Live UI tests only: the driver writes the test account's password to a private file and
@@ -302,6 +312,17 @@ struct SignInFlow: View {
         .background(Color.paper)
         .animation(Motion.open, value: step)
         .animation(.default, value: error)
+        .animation(.easeOut(duration: 0.25), value: emailHint)
+        // A gentle word, not a scolding: it waits until he pauses typing, and leaves the moment the address is fine.
+        .task(id: email) {
+            guard step == .email else { return }
+            let problem = email.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : EmailCheck.problem(email)
+            if problem == nil { emailHint = nil; return }
+            if emailHint != nil { emailHint = problem; return }
+            try? await Task.sleep(for: .milliseconds(1200))
+            guard !Task.isCancelled else { return }
+            emailHint = problem
+        }
         .sensoryFeedback(.error, trigger: failures)
         .onAppear {
             if let prefilledEmail, !prefilledEmail.isEmpty, email.isEmpty { email = prefilledEmail }
@@ -316,10 +337,23 @@ struct SignInFlow: View {
 
     private func focusSoon() {
         focused = false
+        passwordFocused = false
         guard step != .store else { return }
         Task {
             try? await Task.sleep(for: .milliseconds(350))
-            focused = true
+            if step == .password { passwordFocused = true } else { focused = true }
+        }
+    }
+
+    /// The hint for each slip, kind and a little playful.
+    static func hint(for problem: EmailCheck.Problem) -> String {
+        switch problem {
+        case .space: "Emails don't do spaces, and one is hiding in there."
+        case .missingAt: "That one's missing its @. Emails look like name@example.com."
+        case .tooManyAts: "One @ is plenty: an email only gets the one."
+        case .missingName: "Something goes before the @: your name, usually."
+        case .missingDomain: "Nearly! It just needs the part after the @, like example.com."
+        case .missingDot: "The part after the @ needs a dot, like mendelow.me."
         }
     }
 
@@ -358,6 +392,11 @@ struct SignInFlow: View {
 
     private func next() {
         guard !working else { return }
+        if step == .email, let problem = EmailCheck.problem(email) {
+            // Never sent, never spun: say what's off, right away.
+            emailHint = problem
+            return
+        }
         error = nil
         working = true
         Task {
@@ -365,7 +404,7 @@ struct SignInFlow: View {
             do {
                 switch step {
                 case .email:
-                    stores = try await app.sync.stores(forEmail: email.trimmingCharacters(in: .whitespaces))
+                    stores = try await app.sync.stores(forEmail: email.trimmingCharacters(in: .whitespacesAndNewlines))
                     if stores.count == 1 {
                         store = stores[0]
                         step = .password
@@ -383,8 +422,10 @@ struct SignInFlow: View {
                     break
                 }
             } catch {
+                // Called off (the sheet closed): nothing to say.
+                guard let message = FriendlyError.message(for: error) else { return }
                 failures += 1
-                self.error = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+                self.error = message
             }
         }
     }

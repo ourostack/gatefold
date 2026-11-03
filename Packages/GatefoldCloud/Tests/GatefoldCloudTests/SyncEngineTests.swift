@@ -322,6 +322,72 @@ struct PositionSyncTests {
         #expect(await cloud.pendingChanges() == 0)
     }
 
+    @Test func aListingCutShortIsAnErrorAndLeavesTheShelfAlone() async throws {
+        let h = Harness()
+        let cloud = h.cloud()
+        await cloud.setPageSize(2)
+        await h.transport.on("GET", "/books?limit=2&offset=0", .json(page([book("aa"), book("bb")], total: 3)))
+        await h.transport.on("GET", "/books?limit=2&offset=2", .json(page([book("cc")], total: 3)))
+        _ = try await cloud.library()
+        // The Cloud has a bad moment: the second page comes back empty though it still counts three.
+        await h.transport.on("GET", "/books?limit=2&offset=2", .json(page([], total: 3)))
+        await #expect(throws: CloudError.self) { _ = try await cloud.library() }
+        #expect(await cloud.cachedLibrary().map(\.fastHash) == ["aa", "bb", "cc"])
+    }
+
+    @Test func aBookTheCloudListsButWeCantReadDoesNotCutTheListingShort() async throws {
+        let h = Harness()
+        let cloud = h.cloud()
+        await cloud.setPageSize(2)
+        await h.transport.on("GET", "/books?limit=2&offset=0", .json(page([book("aa"), #"{"id":"2"}"#], total: 3)))
+        await h.transport.on("GET", "/books?limit=2&offset=2", .json(page([book("cc")], total: 3)))
+        #expect(try await cloud.library().map(\.fastHash) == ["aa", "cc"])
+    }
+
+    @Test func anEmptyListingIsAskedAgainBeforeEveryBookIsAnnouncedGone() async throws {
+        let h = Harness()
+        let cloud = h.cloud()
+        await h.transport.on("GET", "/books", .json(page([book("aa"), book("bb")])))
+        _ = try await cloud.library()
+        // One empty answer, then the real shelf again.
+        await h.transport.on("GET", "/books", .json(page([])), .json(page([book("aa"), book("bb")])))
+        #expect(try await cloud.library().map(\.fastHash) == ["aa", "bb"])
+        #expect(await h.transport.requests("GET", "/books").count == 3)
+        // Empty twice in a row: he really did clear his Cloud.
+        await h.transport.on("GET", "/books", .json(page([])))
+        #expect(try await cloud.library().isEmpty)
+    }
+
+    @Test func aCancelledFetchChangesNothing() async throws {
+        let h = Harness()
+        let cloud = h.cloud()
+        await h.transport.on("GET", "/books", .json(page([book("aa"), book("bb")])))
+        _ = try await cloud.library()
+        await h.transport.on("GET", "/books", .json(page([book("aa")])))
+        await h.transport.setDelay(.milliseconds(300))
+        let fetch = Task { try await cloud.library() }
+        try await Task.sleep(for: .milliseconds(50))
+        fetch.cancel()
+        await #expect(throws: (any Error).self) { _ = try await fetch.value }
+        #expect(await cloud.cachedLibrary().map(\.fastHash) == ["aa", "bb"])
+        #expect(await h.tokens.load() != nil)
+    }
+
+    @Test func aServerErrorOrAConfirmedRefusalNeverSignsOut() async throws {
+        let h = Harness()
+        let cloud = h.cloud()
+        await h.transport.on("GET", "/books", .json(page([book("aa")])))
+        _ = try await cloud.library()
+        await h.transport.on("GET", "/books", .json("{}", status: 503))
+        await #expect(throws: CloudError.server(status: 503)) { _ = try await cloud.library() }
+        await h.transport.on("GET", "/books", .json("{}", status: 401))
+        await h.transport.on("POST", "/auth/renew-token", .json("{}", status: 401))
+        await #expect(throws: CloudError.authenticationRequired) { _ = try await cloud.library() }
+        #expect(await cloud.account?.email == "reader@example.com")
+        #expect(await h.tokens.load() != nil)
+        #expect(await cloud.cachedLibrary().map(\.fastHash) == ["aa"])
+    }
+
     @Test func keepsWorkQueuedWhenSignInExpires() async throws {
         let h = Harness()
         await h.transport.on("GET", "/fileops/info", .json("{}", status: 401))

@@ -13,15 +13,30 @@ actor StubSync: SyncService {
     var remote: ReadingPosition?
     private(set) var remoteReads = 0
 
+    /// Answers for the next fetches, any error at all, before `libraryResult` takes over.
+    var libraryQueue: [Result<[CloudBook], any Error>] = []
+    private(set) var libraryFetches = 0
+    /// Reads of `account` that come back empty first (a Keychain that reads empty for a moment).
+    var emptyAccountReads = 0
+
     func setLibrary(_ result: Result<[CloudBook], CloudError>) { libraryResult = result }
+    func queueLibrary(_ results: [Result<[CloudBook], any Error>]) { libraryQueue = results }
+    func setEmptyAccountReads(_ n: Int) { emptyAccountReads = n }
     func setRemote(_ position: ReadingPosition?) { remote = position }
 
-    var account: CloudAccount? { signedInAccount }
+    var account: CloudAccount? {
+        if emptyAccountReads > 0 { emptyAccountReads -= 1; return nil }
+        return signedInAccount
+    }
     func stores(forEmail email: String) async throws -> [CloudStore] { FakeSyncService.stores }
     func signIn(email: String, password: String, store: CloudStore) async throws -> CloudAccount { signedInAccount! }
     func signOut() async { signedInAccount = nil }
     func cachedLibrary() async -> [CloudBook] { [] }
-    func library() async throws -> [CloudBook] { try libraryResult.get() }
+    func library() async throws -> [CloudBook] {
+        libraryFetches += 1
+        if !libraryQueue.isEmpty { return try libraryQueue.removeFirst().get() }
+        return try libraryResult.get()
+    }
     func download(_ book: CloudBook) async throws -> URL { throw CloudError.notFound }
     func upload(fileAt url: URL) async throws -> CloudBook { throw CloudError.notFound }
     func delete(_ book: CloudBook) async throws {}
