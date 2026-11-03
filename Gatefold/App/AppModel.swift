@@ -143,6 +143,8 @@ final class AppModel {
                 try? await Task.sleep(for: Self.keychainRetryDelay)
                 saved = await sync.account
             }
+            // The window that started us closed mid-wait: leave the account alone for the next one to read.
+            if saved == nil, Task.isCancelled { startCalled = false; return }
         }
         hasStarted = true
         account = saved

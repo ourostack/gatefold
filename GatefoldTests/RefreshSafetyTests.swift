@@ -115,6 +115,21 @@ import Testing
         await app.start()
         expectUntouched(app, "read again")
     }
+
+    @Test func aWindowClosingWhileTheKeychainIsLookedAtAgainLeavesItToTheNextWindow() async {
+        AppModel.keychainRetryDelay = .milliseconds(200)
+        UserDefaults.standard.set("R", forKey: "accountInitial")
+        let sync = StubSync()
+        await sync.setEmptyAccountReads(4) // the first window's read and its three looks again
+        await sync.setLibrary(.success([eden, mistborn, wind]))
+        let app = AppModel(sync: sync, libraryRoot: URL.temporaryDirectory.appending(path: "refresh-safety-\(UUID().uuidString)"))
+        let first = Task { await app.start() }
+        first.cancel()
+        await first.value
+        #expect(app.account == nil)
+        await app.start() // the next window
+        expectUntouched(app, "next window")
+    }
 }
 
 /// No raw Swift or Foundation error text ever reaches the screen.

@@ -117,7 +117,7 @@ public actor CloudSession {
         guard response.statusCode == 403, let body = try? WireDecoder.loose(data) else { return false }
         let code = body["error_code"]?.int
         let message = body["error_msg"]?.string?.lowercased() ?? ""
-        return code == 221 || code == 222 || message.contains("token")
+        return code == 222 || message == "wrong token format" || message == "invalid refresh token"
     }
 
     /// The current access token, refreshed if it is about to expire. For URLs that need it in a query.

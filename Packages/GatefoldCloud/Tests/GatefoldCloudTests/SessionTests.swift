@@ -226,6 +226,19 @@ struct SessionTests {
         #expect(await t.requests("POST", "/auth/renew-token").count == 1)
     }
 
+    @Test func a403ThatIsNotAboutTheTokenIsNotASignInProblem() async throws {
+        let t = ScriptedTransport()
+        let session = try await signedIn(t)
+        await t.on("GET", "/books", .json(#"{"error_code":403,"error_msg":"Access to this token's shop is forbidden"}"#, status: 403))
+        do {
+            _ = try await session.send(.get("/books"))
+            Issue.record("expected an error")
+        } catch let error as CloudError {
+            #expect(error != .authenticationRequired)
+        }
+        #expect(await t.requests("POST", "/auth/renew-token").isEmpty)
+    }
+
     @Test func aRenewalThatFailsOnTheNetworkKeepsTheSession() async throws {
         let t = ScriptedTransport()
         let store = InMemoryTokenStore()
