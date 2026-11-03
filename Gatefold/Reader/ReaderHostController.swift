@@ -1003,11 +1003,8 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         lifted.beneath = await renderedSnapshot(afterChange: true)
         let t = lifted.turnedFinger
         let target = lifted.mirrored ? CGPoint(x: lifted.size.width - t.x, y: t.y) : t
-        await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
-            withAnimation(.timingCurve(0.3, 0.1, 0.25, 1, duration: 0.42), completionCriteria: .removed) {
-                lifted.finger = target
-            } completion: { c.resume() }
-        }
+        withAnimation(.timingCurve(0.3, 0.1, 0.25, 1, duration: 0.42)) { lifted.finger = target }
+        try? await Task.sleep(for: .seconds(0.44))
         return true
     }
 
