@@ -32,7 +32,7 @@ final class DemoUITests: XCTestCase {
         sleep(3)
     }
 
-    /// The library at a glance: the shelf arrives, the sync line settles on "Up to date", and a
+    /// The library at a glance: the shelf arrives, the sync line settles on "In step", and a
     /// relaunch puts the cached shelf back at once, without an empty or dusting shelf in between.
     func testShelfDemo() {
         let app = XCUIApplication()
@@ -43,8 +43,8 @@ final class DemoUITests: XCTestCase {
         app.launch()
         let health = app.descendants(matching: .any)["library.syncHealth"]
         XCTAssertTrue(health.waitForExistence(timeout: 30))
-        _ = XCTWaiter.wait(for: [expectation(for: NSPredicate(format: "label CONTAINS 'Up to date'"), evaluatedWith: health)], timeout: 30)
-        XCTAssertTrue(health.label.contains("Up to date with your InkPad"), health.label)
+        _ = XCTWaiter.wait(for: [expectation(for: NSPredicate(format: "label CONTAINS 'In step'"), evaluatedWith: health)], timeout: 30)
+        XCTAssertTrue(health.label.contains("In step with your InkPad"), health.label)
         XCTAssertTrue(app.staticTexts["Moby-Dick"].firstMatch.waitForExistence(timeout: 10))
         sleep(2)
 

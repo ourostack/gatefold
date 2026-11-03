@@ -17,7 +17,7 @@ final class LibraryStore {
     var lastError: String?
     /// Why the last refresh didn't reach the Cloud (shown quietly on the shelf, never as an alert).
     private(set) var syncProblem: SyncProblem?
-    /// When the Cloud last answered, kept across launches for "Up to date with your InkPad · 5 min ago".
+    /// When the Cloud last answered, kept across launches for "In step with your InkPad · 5 min ago".
     private(set) var lastSynced: Date? {
         didSet { UserDefaults.standard.set(lastSynced, forKey: Self.lastSyncedKey) }
     }

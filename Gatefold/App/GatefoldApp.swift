@@ -135,7 +135,8 @@ struct RootView: View {
         }
         .overlay {
             if let picture = reopenPicture, reader?.reopenPicture != nil || reader == nil {
-                ReopenPictureView(image: picture.image) { app.queueReopenTurn(forward: $0) }
+                ReopenPictureView(image: picture.image, leaf: picture.meta.navigatorFrame, isSpread: picture.meta.columns == 2,
+                                  theme: ReaderTheme(rawValue: picture.meta.theme) ?? .vellum, curl: app.reopenCurl) { app.queueReopenTurn(forward: $0) }
                     .onAppear {
                         readerLog.notice("reopen: his page on screen at \(LaunchClock.sinceLaunch, privacy: .public) s after launch (saved \(picture.meta.savedAt.formatted(.iso8601), privacy: .public))")
                     }
@@ -297,7 +298,10 @@ struct RootView: View {
                     // Reopening: no zoom from the shelf; the reader comes up over his page's picture.
                     app.reopenBookID = nil
                     model.reopenPicture = reopenPicture?.image
-                    model.reopenPageFrame = reopenPicture?.meta.page.flatMap { $0.count == 4 ? CGRect(x: $0[0], y: $0[1], width: $0[2], height: $0[3]) : nil }
+                    model.reopenPageFrame = reopenPicture?.meta.pageFrame
+                    model.reopenLeaf = reopenPicture?.meta.navigatorFrame
+                    model.reopenSpread = reopenPicture?.meta.columns == 2
+                    model.reopenAdapted = reopenPicture?.adapted ?? false
                     // A transaction without animation still slid the cover up over the picture: UIKit
                     // presents it, so UIKit's animations are held off until it is up.
                     var still = Transaction()

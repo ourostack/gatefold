@@ -49,10 +49,15 @@ final class AppModel {
     /// The first turn asked for on the reopen picture (true is forward), played when the live page lands.
     var reopenQueuedTurn: Bool?
 
-    func queueReopenTurn(forward: Bool) {
-        guard reopenQueuedTurn == nil else { return }
+    /// The reopen picture's leaf, lifted at the tap and landed on the live page.
+    let reopenCurl = CurlModel()
+
+    @discardableResult
+    func queueReopenTurn(forward: Bool) -> Bool {
+        guard reopenQueuedTurn == nil else { return false }
         reopenQueuedTurn = forward
         readerLog.notice("reopen: a \(forward ? "forward" : "back", privacy: .public) turn asked of the picture at \(LaunchClock.sinceLaunch, privacy: .public) s after launch; kept for the live page")
+        return true
     }
 
     private enum Keys {

@@ -75,6 +75,9 @@ enum LaunchOptions {
     static var skipWelcome: Bool { defaults.bool(forKey: "GatefoldSkipWelcome") }
     /// Measure a cold open: no book is opened ahead of the tap.
     static var noWarm: Bool { defaults.bool(forKey: "GatefoldNoWarm") }
+    /// Films only: the spread's pages stay unpainted for this many seconds as the unfold swings, as on
+    /// a busy device, to show the old page holding until they paint.
+    static var unfoldPaintDelay: Double? { defaults.object(forKey: "GatefoldUnfoldPaintDelay") == nil ? nil : defaults.double(forKey: "GatefoldUnfoldPaintDelay") }
     /// Book IDs to open and close one after another, as taps would (see `RootView.openTour`).
     /// Seconds an open tour rests on the shelf between books (the warm books reopen meanwhile).
     /// Seconds after launch before an open tour's first tap (default 8: the warm books are ready).

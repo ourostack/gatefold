@@ -604,9 +604,42 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             dropLeaf()
             return
         }
-        let image = await snapshot()
         let frame = page.frame
         let spine = spineOffset(in: frame)
+        if let delay = LaunchOptions.unfoldPaintDelay {
+            var webs: [WKWebView] = []
+            func walk(_ v: UIView) { if let w = v as? WKWebView { webs.append(w) } else { v.subviews.forEach(walk) } }
+            walk(page)
+            webs.forEach { $0.isHidden = true }
+            readerLog.notice("unfold: the spread kept unpainted for \(delay, privacy: .public) s (film)")
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(delay))
+                webs.forEach { $0.isHidden = false }
+            }
+        }
+        // The old page stays up until the spread has painted both its pages: swung from a picture
+        // taken too soon (a busy device), the left page showed bare paper, then the words snapped in.
+        var image = await snapshot()
+        let paperLevel = PageSignature.rgb(weakModel?.theme.uiBackground ?? .white)
+        let waitStart = ContinuousClock.now
+        var waits = 0
+        var previous: PageSignature?
+        while waits < 60 {
+            let halves = Self.paintedHalves(image, spine: spine / max(1, frame.width), paper: paperLevel)
+            let signature = PageSignature(image)
+            // A chapter can end on the left page: a bare right page counts once it holds still.
+            let settled = signature.map { s in previous.map { s.matches($0) } ?? false } ?? true
+            if halves.left && (halves.right || settled) { break }
+            previous = halves.left ? signature : nil
+            waits += 1
+            try? await Task.sleep(for: .milliseconds(50))
+            if isLoadingPage { await unveilPlacedPages() }
+            if isLoadingPage { previous = nil; continue }
+            image = await snapshot()
+        }
+        if waits > 0 {
+            readerLog.notice("unfold: held the old page \(ReaderModel.ms(since: waitStart), privacy: .public) ms until the spread had painted (\(waits, privacy: .public) looks)")
+        }
         let paper = weakModel?.theme.uiBackground ?? .systemBackground
         func half(_ x: CGFloat, _ w: CGFloat) -> UIView {
             let v = UIView(frame: CGRect(x: frame.minX + x, y: frame.minY, width: w, height: frame.height))
@@ -922,6 +955,30 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         } else if let model = weakModel {
             Task { await model.captureAnchor() }
         }
+    }
+
+    /// Lands a turn whose leaf was lifted on the reopen picture: the live page moves on beneath the
+    /// picture, the leaf's underside becomes that page, and the leaf turns away over it. Returns false
+    /// (the leaf laid back down) at the start or end of the book.
+    func landLiftedTurn(forward: Bool, curl lifted: CurlModel) async -> Bool {
+        guard !isTurning else { return false }
+        isTurning = true
+        defer { isTurning = false }
+        let moved = forward
+            ? await navigator.goForward(options: .init(animated: false))
+            : await navigator.goBackward(options: .init(animated: false))
+        guard moved else {
+            withAnimation(.easeOut(duration: 0.25)) { lifted.finger = lifted.corner }
+            try? await Task.sleep(for: .milliseconds(270))
+            if forward { weakModel?.reachedEnd() }
+            return false
+        }
+        lifted.beneath = await renderedSnapshot(afterChange: true)
+        let t = lifted.turnedFinger
+        let target = lifted.mirrored ? CGPoint(x: lifted.size.width - t.x, y: t.y) : t
+        withAnimation(.timingCurve(0.3, 0.1, 0.25, 1, duration: 0.42)) { lifted.finger = target }
+        try? await Task.sleep(for: .seconds(0.44))
+        return true
     }
 
     private func turnedTarget() -> CGPoint {
@@ -1249,6 +1306,58 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         return best
     }
 
+    /// A page that opens partway into its file is kept hidden by Readium, spinner up, for a fixed
+    /// 0.3 s after it has scrolled there ("the rendering is sometimes very slow"), on top of 0.2 s
+    /// before it scrolls. That 0.3 s was most of a warm book's open. Instead, each hidden page in view
+    /// is shown as soon as it has scrolled to its place and painted a frame there.
+    func unveilPlacedPages() async {
+        guard let host = navigator.view else { return }
+        var hidden: [WKWebView] = []
+        func walk(_ v: UIView) {
+            if let w = v as? WKWebView {
+                if w.scrollView.alpha < 0.01, !w.isLoading, w.window != nil,
+                   w.convert(w.bounds, to: host).intersects(host.bounds) { hidden.append(w) }
+                return
+            }
+            v.subviews.forEach(walk)
+        }
+        walk(host)
+        for web in hidden {
+            // Scrolled off the file's first page: Readium has been to the place (before, the view
+            // is still at its start). Then two frames, so the words at the place are painted.
+            let placed = try? await web.callAsyncJavaScript(
+                """
+                if (!(window.readium && window.readium.link) || window.scrollX === 0) { return 0; }
+                await Promise.race([
+                    new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))),
+                    new Promise(r => setTimeout(r, 80))
+                ]);
+                return window.scrollX === 0 ? 0 : 1;
+                """, contentWorld: .page)
+            guard (placed as? NSNumber)?.intValue == 1, web.scrollView.alpha < 0.01 else { continue }
+            web.scrollView.alpha = 1
+            func stopSpinner(_ v: UIView) {
+                if let a = v as? UIActivityIndicatorView { a.stopAnimating(); return }
+                v.subviews.forEach(stopSpinner)
+            }
+            if let spread = web.superview { stopSpinner(spread) }
+            readerLog.notice("open: page shown once placed and painted, not after Readium's fixed wait")
+        }
+    }
+
+    /// Which pages of a spread picture carry words: left of `spine` (a fraction of the width), and right.
+    private static func paintedHalves(_ image: UIImage, spine: CGFloat, paper: UInt8) -> (left: Bool, right: Bool) {
+        func painted(_ cg: CGImage?) -> Bool {
+            guard let cg, let signature = PageSignature(UIImage(cgImage: cg)) else { return true }
+            return !signature.isBare(paper: paper) && !signature.isBlack(paper: paper)
+        }
+        guard let cg = image.cgImage else { return (true, true) }
+        let split = Int((CGFloat(cg.width) * spine).rounded())
+        guard split > 8, split < cg.width - 8 else { let whole = painted(cg); return (whole, whole) }
+        return (painted(cg.cropping(to: CGRect(x: 0, y: 0, width: split, height: cg.height))),
+                painted(cg.cropping(to: CGRect(x: split, y: 0, width: cg.width - split, height: cg.height))))
+    }
+
     /// Readium's own loading spinner is showing: the page in view hasn't loaded yet.
     var isLoadingPage: Bool {
         let host = navigator.view!
@@ -1312,7 +1421,10 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         // spinner is up (up to 8 s), else up to 2 s for a page that is still bare.
         for attempt in 0..<160 {
             if afterChange || attempt > 0 { try? await Task.sleep(for: .milliseconds(attempt == 0 ? 60 : 50)) }
-            if isLoadingPage { last = nil; continue }
+            if isLoadingPage {
+                await unveilPlacedPages()
+                if isLoadingPage { last = nil; continue }
+            }
             if attempt >= 40 { break }
             let image = await snapshot()
             guard let signature = PageSignature(image) else { return image }

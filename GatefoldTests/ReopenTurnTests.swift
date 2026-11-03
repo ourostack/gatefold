@@ -27,8 +27,8 @@ struct ReopenTurnTests {
 
     @Test func onlyTheFirstTurnIsKept() {
         let app = AppModel(sync: StubSync(), libraryRoot: URL.temporaryDirectory.appending(path: "reopen-turn-\(UUID().uuidString)"))
-        app.queueReopenTurn(forward: true)
-        app.queueReopenTurn(forward: false)
+        #expect(app.queueReopenTurn(forward: true))
+        #expect(!app.queueReopenTurn(forward: false))
         #expect(app.reopenQueuedTurn == true)
     }
 }

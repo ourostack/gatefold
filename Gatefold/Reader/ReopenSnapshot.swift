@@ -20,12 +20,22 @@ enum ReopenSnapshot {
         /// The page's frame when pictured (x, y, width, height): the live page matches it only if it
         /// lays out the same way.
         var page: [Double]?
+        /// The reading view's frame (x, y, width, height): the leaf a turn asked of the picture lifts.
+        var navigator: [Double]?
+        /// 2 for a spread.
+        var columns: Int?
+
+        var navigatorFrame: CGRect? { navigator.flatMap { $0.count == 4 ? CGRect(x: $0[0], y: $0[1], width: $0[2], height: $0[3]) : nil } }
+        var pageFrame: CGRect? { page.flatMap { $0.count == 4 ? CGRect(x: $0[0], y: $0[1], width: $0[2], height: $0[3]) : nil } }
     }
 
     /// A picture that fits this launch.
     struct Picture {
         let image: UIImage
         let meta: Meta
+        /// Made from a picture taken in another paper or window (recoloured, or its page set into this
+        /// window): his page, but not pixel for pixel the live one, which fades in over it.
+        var adapted = false
     }
 
     private static var directory: URL {
@@ -37,14 +47,82 @@ enum ReopenSnapshot {
         return "\(safe)-\(Int(size.width.rounded()))x\(Int(size.height.rounded()))"
     }
 
-    /// The saved picture of `book` for a window of `size` in `theme`, if there is one.
-    static func load(book: String, size: CGSize, theme: ReaderTheme) -> Picture? {
-        let base = directory.appending(path: name(book: book, size: size))
+    private static func read(_ base: URL, book: String) -> Picture? {
         guard let data = try? Data(contentsOf: base.appendingPathExtension("json")),
-              let meta = try? JSONDecoder().decode(Meta.self, from: data),
-              meta.book == book, meta.theme == theme.rawValue,
-              let image = UIImage(contentsOfFile: base.appendingPathExtension("png").path) else { return nil }
-        return Picture(image: image, meta: meta)
+              let meta = try? JSONDecoder().decode(Meta.self, from: data), meta.book == book,
+              let file = UIImage(contentsOfFile: base.appendingPathExtension("png").path), let cg = file.cgImage, meta.width > 0 else { return nil }
+        // Read from disk a picture has scale 1; it was drawn at the screen's scale.
+        return Picture(image: UIImage(cgImage: cg, scale: CGFloat(cg.width) / meta.width, orientation: .up), meta: meta)
+    }
+
+    /// The saved picture of `book` for a window of `size` in `theme`. Taken in another paper (the
+    /// system turned dark) it is recoloured; taken in a window of another size (the iPad turned, the
+    /// Duo opened or closed) its page is set into this one. Only the cover is left when there is none.
+    static func load(book: String, size: CGSize, theme: ReaderTheme) -> Picture? {
+        let began = Date()
+        let exact = read(directory.appending(path: name(book: book, size: size)), book: book)
+        if let exact, exact.meta.theme == theme.rawValue { return exact }
+        // Leaving keeps one picture per book (`take` empties the others), so any other is his page.
+        let found = exact ?? otherSize(book: book, size: size)
+        guard let found, let from = ReaderTheme(rawValue: found.meta.theme) else { return nil }
+        let sameSize = abs(found.meta.width - size.width) < 1 && abs(found.meta.height - size.height) < 1
+        guard let image = adapt(found, to: size, sameSize: sameSize, from: from, to: theme) else { return nil }
+        readerLog.notice("reopen: picture adapted from \(Int(found.meta.width), privacy: .public)x\(Int(found.meta.height), privacy: .public) \(from.rawValue, privacy: .public) to \(Int(size.width), privacy: .public)x\(Int(size.height), privacy: .public) \(theme.rawValue, privacy: .public) in \(Date().timeIntervalSince(began), privacy: .public) s")
+        var meta = found.meta
+        meta.theme = theme.rawValue
+        if !sameSize { meta.width = size.width; meta.height = size.height; meta.page = nil; meta.navigator = nil; meta.columns = nil }
+        return Picture(image: image, meta: meta, adapted: true)
+    }
+
+    private static func otherSize(book: String, size: CGSize) -> Picture? {
+        let prefix = name(book: book, size: .zero).replacingOccurrences(of: "-0x0", with: "-")
+        let files = (try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? []
+        return files.filter { $0.hasPrefix(prefix) && $0.hasSuffix(".json") }
+            .compactMap { read(directory.appending(path: String($0.dropLast(5))), book: book) }
+            .max { $0.meta.savedAt < $1.meta.savedAt }
+    }
+
+    /// The picture redrawn for this window and paper.
+    private static func adapt(_ found: Picture, to size: CGSize, sameSize: Bool, from: ReaderTheme, to theme: ReaderTheme) -> UIImage? {
+        var image = found.image
+        if !sameSize {
+            let source = CGSize(width: found.meta.width, height: found.meta.height)
+            let page = found.meta.navigatorFrame ?? found.meta.pageFrame ?? CGRect(origin: .zero, size: source)
+            let column = ReopenFit.firstColumn(page: page, columns: found.meta.columns ?? 1)
+            let target = ReopenFit.place(column: column, from: source, in: size)
+            let scale = image.scale
+            guard let cg = image.cgImage?.cropping(to: CGRect(x: column.minX * scale, y: column.minY * scale, width: column.width * scale, height: column.height * scale)) else { return nil }
+            let format = UIGraphicsImageRendererFormat.preferred()
+            format.opaque = true
+            format.scale = scale
+            let paper = from.uiBackground
+            image = UIGraphicsImageRenderer(size: size, format: format).image { ctx in
+                paper.setFill()
+                ctx.fill(CGRect(origin: .zero, size: size))
+                UIImage(cgImage: cg, scale: scale, orientation: .up).draw(in: target)
+            }
+        }
+        return from == theme ? image : recolor(image, from: from.palette, to: theme.palette)
+    }
+
+    private static func recolor(_ image: UIImage, from: ThemePalette, to: ThemePalette) -> UIImage? {
+        guard let cg = image.cgImage else { return nil }
+        let w = cg.width, h = cg.height
+        var pixels = [UInt8](repeating: 0, count: w * h * 4)
+        guard let ctx = CGContext(data: &pixels, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4,
+                                  space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else { return nil }
+        ctx.draw(cg, in: CGRect(x: 0, y: 0, width: w, height: h))
+        let table = PictureRecolor.table(from: from, to: to)
+        pixels.withUnsafeMutableBufferPointer { p in
+            var i = 0
+            while i < p.count {
+                let c = table[PictureRecolor.luma(p[i], p[i + 1], p[i + 2])]
+                p[i] = c.r; p[i + 1] = c.g; p[i + 2] = c.b
+                i += 4
+            }
+        }
+        guard let out = ctx.makeImage() else { return nil }
+        return UIImage(cgImage: out, scale: image.scale, orientation: .up)
     }
 
     private static var taking: Task<Void, Never>?
@@ -83,8 +161,11 @@ enum ReopenSnapshot {
         let image = await picture(of: window, page: host)
         guard !Task.isCancelled else { return }
         let frame = model.layout.pageFrame
+        let nav = host.navigator.view.convert(host.navigator.view.bounds, to: window)
         let meta = Meta(book: model.bookID, width: size.width, height: size.height, theme: model.theme.rawValue, savedAt: Date(),
-                        page: [frame.minX, frame.minY, frame.width, frame.height])
+                        page: [frame.minX, frame.minY, frame.width, frame.height],
+                        navigator: [nav.minX, nav.minY, nav.width, nav.height],
+                        columns: model.layout.columns == .two ? 2 : 1)
         let pictured = Date().timeIntervalSince(began)
         keptFor = base
         // Encoding and writing off the main thread; the picture itself had to be drawn on it.
@@ -95,6 +176,13 @@ enum ReopenSnapshot {
                 try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
                 try png.write(to: base.appendingPathExtension("png"), options: .atomic)
                 try JSONEncoder().encode(meta).write(to: base.appendingPathExtension("json"), options: .atomic)
+                // One picture per book: one kept for another window size is of an older page now.
+                let mine = base.lastPathComponent
+                let prefix = String(mine[..<(mine.lastIndex(of: "-") ?? mine.endIndex)]) + "-"
+                for file in (try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? []
+                where file.hasPrefix(prefix) && file.hasSuffix(".json") && file != mine + ".json" {
+                    try? Data().write(to: directory.appending(path: file))
+                }
             } catch {
                 readerLog.notice("reopen: couldn't keep the picture: \(error.localizedDescription, privacy: .public)")
             }
@@ -117,14 +205,20 @@ enum ReopenSnapshot {
         let format = UIGraphicsImageRendererFormat.preferred()
         format.opaque = true
         format.scale = window.screen.scale
-        // The window without the page: hide the page's view, draw the window (paper, head, footer, ribbon).
-        let pageView = host.navigator.view!
-        let alpha = pageView.alpha
-        pageView.alpha = 0
-        let overlays = UIGraphicsImageRenderer(bounds: bounds, format: format).image { _ in
-            window.drawHierarchy(in: bounds, afterScreenUpdates: true)
+        // The window without the page (paper, head, footer, ribbon). Drawn from the layer tree in this
+        // process, with the page's layer hidden only for the drawing and shown again before anything
+        // is committed: the screen never sees it hidden. (`drawHierarchy` with screen updates committed
+        // the hidden page, which blinked the page blank as he left, or pulled down Control Center.)
+        let pageLayer = host.navigator.view.layer
+        let overlays = UIGraphicsImageRenderer(bounds: bounds, format: format).image { ctx in
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            let hidden = pageLayer.isHidden
+            pageLayer.isHidden = true
+            window.layer.render(in: ctx.cgContext)
+            pageLayer.isHidden = hidden
+            CATransaction.commit()
         }
-        pageView.alpha = alpha
         let theme = host.weakModel?.theme
         let paper = theme?.uiBackground ?? .systemBackground
         let dark = theme?.palette.isDark ?? false
@@ -142,30 +236,80 @@ enum ReopenSnapshot {
 /// The saved page, full-window, while the live one lays out beneath it.
 struct ReopenPictureView: View {
     let image: UIImage
-    /// A turn asked for on the picture (forward or back), played once the live page is up.
-    var onTurn: (Bool) -> Void = { _ in }
+    /// Where the reading view was when pictured: the leaf a turn lifts. Nil lifts nothing (the turn
+    /// still plays when the live page lands).
+    var leaf: CGRect? = nil
+    var isSpread = false
+    var theme: ReaderTheme = .vellum
+    /// The lifted leaf, shared with the reader so it can land the turn on the live page.
+    var curl: CurlModel? = nil
+    /// A turn asked for on the picture (forward or back); returns whether it was kept (only the first is).
+    var onTurn: (Bool) -> Bool = { _ in false }
     @State private var width: CGFloat = 0
 
     var body: some View {
-        Image(uiImage: image)
-            .resizable()
-            .interpolation(.none)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .ignoresSafeArea()
-            .accessibilityIdentifier("reader.reopenPicture")
-            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
-            // The picture can't turn, but a turn asked of it isn't lost: the same edges and swipes as
-            // the live page, kept until it is up beneath (`ReaderModel.playQueuedTurn`).
-            .contentShape(.rect)
-            .gesture(
-                DragGesture(minimumDistance: 0)
-                    .onEnded { value in
-                        readerLog.notice("reopen: touch on the picture at x \(Int(value.startLocation.x), privacy: .public) moved \(Int(value.translation.width), privacy: .public),\(Int(value.translation.height), privacy: .public) of width \(Int(width), privacy: .public)")
-                        if let forward = ReopenTurn.forward(start: value.startLocation, translation: value.translation, width: width) {
-                            onTurn(forward)
-                        }
+        ZStack(alignment: .topLeading) {
+            Image(uiImage: image)
+                .resizable()
+                .interpolation(.none)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            if let curl, let leaf, curl.isActive {
+                CurlOverlay(model: curl)
+                    .frame(width: leaf.width, height: leaf.height)
+                    .offset(x: leaf.minX, y: leaf.minY)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .ignoresSafeArea()
+        .accessibilityElement(children: .ignore)
+        .accessibilityIdentifier("reader.reopenPicture")
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
+        // The picture can't turn yet, but it answers the finger at once: the leaf's corner lifts
+        // (the same leaf as the live page's), and the turn lands when the live page is up beneath
+        // (`ReaderHostController.landLiftedTurn`).
+        .contentShape(.rect)
+        .gesture(
+            DragGesture(minimumDistance: 0)
+                .onEnded { value in
+                    readerLog.notice("reopen: touch on the picture at x \(Int(value.startLocation.x), privacy: .public) moved \(Int(value.translation.width), privacy: .public),\(Int(value.translation.height), privacy: .public) of width \(Int(width), privacy: .public)")
+                    if let forward = ReopenTurn.forward(start: value.startLocation, translation: value.translation, width: width), onTurn(forward) {
+                        lift(forward: forward)
                     }
-            )
+                }
+        )
+    }
+
+    private func lift(forward: Bool) {
+        guard let curl, let leaf, !curl.isActive, leaf.width > 1, leaf.height > 1 else { return }
+        let scale = image.scale
+        guard let cg = image.cgImage?.cropping(to: CGRect(x: leaf.minX * scale, y: leaf.minY * scale, width: leaf.width * scale, height: leaf.height * scale)) else { return }
+        let top = UIImage(cgImage: cg, scale: scale, orientation: .up)
+        let size = leaf.size
+        var still = Transaction()
+        still.disablesAnimations = true
+        withTransaction(still) {
+            curl.size = size
+            curl.style = .curl
+            curl.isSpread = isSpread
+            curl.mirrored = !forward
+            curl.paper = theme.background
+            curl.ink = theme.text
+            curl.isDark = theme.palette.isDark
+            curl.top = top
+            // Beneath, for now, the page itself: the corner lifts off a stack of them.
+            curl.beneath = top
+            curl.fade = 0
+            curl.corner = CGPoint(x: forward ? size.width : 0, y: size.height)
+            curl.finger = curl.corner
+            curl.isActive = true
+        }
+        let leafWidth = isSpread ? size.width / 2 : size.width
+        let lifted = CGPoint(x: forward ? size.width - leafWidth * 0.2 : leafWidth * 0.2, y: size.height - size.height * 0.15)
+        Task { @MainActor in
+            await Task.yield()
+            withAnimation(.easeOut(duration: 0.18)) { curl.finger = lifted }
+            readerLog.notice("reopen: lifted the leaf's corner at \(LaunchClock.sinceLaunch, privacy: .public) s after launch")
+        }
     }
 }
 

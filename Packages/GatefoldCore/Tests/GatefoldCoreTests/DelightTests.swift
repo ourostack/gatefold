@@ -244,8 +244,8 @@ struct SyncHealthTests {
     @Test func words() {
         let now = Date(timeIntervalSince1970: 1_800_000_000)
         #expect(SyncHealth.checking.text(now: now) == "Checking your InkPad…")
-        #expect(SyncHealth.upToDate(now.addingTimeInterval(-10)).text(now: now) == "Up to date with your InkPad · just now")
-        #expect(SyncHealth.upToDate(now.addingTimeInterval(-300)).text(now: now) == "Up to date with your InkPad · 5 min ago")
+        #expect(SyncHealth.upToDate(now.addingTimeInterval(-10)).text(now: now) == "In step with your InkPad · just now")
+        #expect(SyncHealth.upToDate(now.addingTimeInterval(-300)).text(now: now) == "In step with your InkPad · 5 min ago")
         #expect(SyncHealth.offline(lastSynced: nil).text(now: now) == "Offline for now. Read on; your place will catch up later.")
         #expect(SyncHealth.offline(lastSynced: now.addingTimeInterval(-7200)).text(now: now).hasPrefix("Offline for now · last synced 2 h ago"))
     }

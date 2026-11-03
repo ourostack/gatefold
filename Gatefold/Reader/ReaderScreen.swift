@@ -37,8 +37,14 @@ struct ReaderScreen: View {
             // An open "ahead" offer gets its own band: the page slides down below it, its foot fading
             // at the screen's edge, and slides back when the offer folds. No line sits under the slip.
             let aheadOpen = model.slip != nil && model.slipKind == .ahead && !model.slipFolded && !model.chromeVisible && layout.deck == nil
+            // A slip hangs below the camera as well as the status bar's room: with the status bar hidden,
+            // a Dynamic Island leaves the safe area but stays among the occlusions (the 6.9" iPhone's
+            // island sat on the catch-up offer).
+            let slipWidth = min(proxy.size.width - 32 - clearance.leading - clearance.trailing, 460)
+            let slipX = layout.gutter.map { g in g.maxX + (proxy.size.width - g.maxX - slipWidth) / 2 } ?? (proxy.size.width - slipWidth) / 2
+            let slipTop = PageSafeArea.slipTop(safeTop: safeTop, occlusions: FoldReader.occlusions(in: proxy), span: slipX...(slipX + max(1, slipWidth)))
             let push: CGFloat = aheadOpen
-                ? max(0, safeTop + 8 + slipHeight + 14 - (layout.pageFrame.minY + pageTopClearance(layout, clearance: clearance)))
+                ? max(0, slipTop + slipHeight + 14 - (layout.pageFrame.minY + pageTopClearance(layout, clearance: clearance)))
                 : 0
             // The page steps back while the controls or a slip are up, so nothing sits on its text.
             let lifted = (model.chromeVisible && layout.deck == nil) || (model.slip != nil && !model.slipFolded && push == 0)
@@ -113,7 +119,7 @@ struct ReaderScreen: View {
                 }
 
                 if let slip = model.slip, let kind = model.slipKind, !model.slipFolded {
-                    let width = min(proxy.size.width - 32 - clearance.leading - clearance.trailing, 460)
+                    let width = slipWidth
                     SyncSlipView(slip: slip, kind: kind, theme: model.theme) {
                         Task { await model.acceptSuggestion() }
                     } onStay: {
@@ -124,10 +130,10 @@ struct ReaderScreen: View {
                     // "Ahead" sits in the top band, under the title when the controls are up. "Landed" sits
                     // at the foot, so the passage it underlines (the top line of the page) stays in view.
                     .offset(
-                        x: layout.gutter.map { g in g.maxX + (proxy.size.width - g.maxX - width) / 2 } ?? (proxy.size.width - width) / 2,
+                        x: slipX,
                         y: kind == .landed
                             ? proxy.size.height - slipBottomBand(proxy) - slipHeight
-                            : safeTop + 8 + (model.chromeVisible ? ReaderChrome.topBarHeight : 0)
+                            : (model.chromeVisible ? safeTop + 8 + ReaderChrome.topBarHeight : slipTop)
                     )
                     .animation(Motion.chrome, value: model.chromeVisible)
                     .transition(reduceMotion ? .opacity : .move(edge: kind == .landed ? .bottom : .top).combined(with: .opacity))
@@ -136,7 +142,8 @@ struct ReaderScreen: View {
 
                 if let picture = model.reopenPicture {
                     // Reopened at launch: his page as he left it, until the live one is laid out beneath.
-                    ReopenPictureView(image: picture) { model.queueReopenTurn(forward: $0) }
+                    ReopenPictureView(image: picture, leaf: model.reopenLeaf, isSpread: model.reopenSpread, theme: model.theme,
+                                      curl: model.reopenCurl) { model.queueReopenTurn(forward: $0) }
                         .transition(model.reopenFades ? .opacity : .identity)
                         .zIndex(3)
                 } else if !model.pageReady {
