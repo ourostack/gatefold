@@ -79,7 +79,7 @@ final class SyncSafetyUITests: XCTestCase {
         pullToRefresh()
         let trouble = element("library.syncTrouble")
         XCTAssertTrue(trouble.waitForExistence(timeout: 10))
-        XCTAssertTrue(trouble.label.contains("PocketBook Cloud is having a little lie-down"), trouble.label)
+        XCTAssertTrue(trouble.label.contains("PocketBook Cloud is having a little lie\u{2011}down"), trouble.label)
         XCTAssertTrue(element("library.syncRetry").exists, "a way to try again")
         assertNoRawErrorText("server trouble")
         XCTAssertEqual(bookCount, before, "no book left the shelf")

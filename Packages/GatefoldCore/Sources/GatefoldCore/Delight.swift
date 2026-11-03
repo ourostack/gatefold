@@ -394,8 +394,15 @@ public enum Measure {
 }
 
 extension ReaderPreferences {
-    /// On a regular-width screen (iPad) the first book starts a step larger.
+    /// On a regular-width screen (iPad) the first book starts a step larger. Build 15 sets it larger
+    /// again, for Apple Books' default density.
     public static func initialFontScale(forContentSizeRank rank: Int, regularWidth: Bool) -> Double {
+        let raised = legacyInitialFontScale(forContentSizeRank: rank, regularWidth: regularWidth) * densityRaise(regularWidth: regularWidth)
+        return min(fontScaleRange.upperBound, (raised * 100).rounded() / 100)
+    }
+
+    /// Build 14's first size, for telling a size never changed from one he chose.
+    public static func legacyInitialFontScale(forContentSizeRank rank: Int, regularWidth: Bool) -> Double {
         let base = initialFontScale(forContentSizeRank: rank)
         return regularWidth ? (base * 1.15 * 100).rounded() / 100 : base
     }

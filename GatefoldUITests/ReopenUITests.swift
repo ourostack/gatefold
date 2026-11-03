@@ -14,7 +14,7 @@ final class ReopenUITests: XCTestCase {
     private let common = [
         "-GatefoldUITest", "YES", "-GatefoldFakeCloud", "YES", "-GatefoldSkipWelcome", "YES",
         "-GatefoldSignedIn", "YES", "-GatefoldTheme", "vellum", "-GatefoldAllowReopen", "YES",
-    ]
+    ] + (ProcessInfo.processInfo.environment["GATEFOLD_FONT_SCALE"].map { ["-GatefoldFontScale", $0] } ?? [])
 
     /// Forty characters from the middle of a page's words.
     private static func middle(of text: String) -> String {

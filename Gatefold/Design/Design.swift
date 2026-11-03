@@ -108,6 +108,8 @@ enum LaunchOptions {
     static var allowsReopen: Bool {
         defaults.bool(forKey: "GatefoldAllowReopen") || (!isUITest && defaults.object(forKey: "GatefoldOpenTour") == nil)
     }
+    /// Tests: the first launch's type size, in place of the one Dynamic Type gives.
+    static var fontScale: Double? { defaults.object(forKey: "GatefoldFontScale") == nil ? nil : defaults.double(forKey: "GatefoldFontScale") }
     static var goTo: Double? { defaults.object(forKey: "GatefoldGoTo") == nil ? nil : defaults.double(forKey: "GatefoldGoTo") }
     static var forcedPosture: Posture? { defaults.string(forKey: "GatefoldForcePosture").flatMap(Posture.init(rawValue:)) }
     static var theme: ReaderTheme? { defaults.string(forKey: "GatefoldTheme").flatMap(ReaderTheme.init(rawValue:)) }

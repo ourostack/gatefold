@@ -78,6 +78,21 @@ enum ReaderJS {
           const node = r.startContainer, text = node.textContent;
           let start = r.startOffset;
           while (start > 0 && !/\s/.test(text[start - 1])) { start--; }
+          // A word hyphenated across the page turn ("her Lady-" | "ship would"): its start is on the
+          // page before, and a place there reopens a page early. The place is the page's first whole word.
+          if (start < r.startOffset) {
+            const x0 = fx ? w / 2 : 0;
+            const head = document.createRange();
+            head.setStart(node, start);
+            head.setEnd(node, start + 1);
+            const at = head.getBoundingClientRect();
+            if (at.right <= x0 + 1 || at.bottom <= 0) {
+              let next = r.startOffset;
+              while (next < text.length && !/\s/.test(text[next])) { next++; }
+              while (next < text.length && /\s/.test(text[next])) { next++; }
+              start = next < text.length ? next : r.startOffset;
+            }
+          }
           const highlight = text.substr(start, 64);
           if (!norm(highlight)) { return null; }
           return { highlight: highlight, before: text.substr(Math.max(0, start - 32), Math.min(32, start)), heading: headingBefore(node), contents: contentsBefore(node, ids) };

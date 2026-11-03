@@ -100,6 +100,20 @@ struct LibraryView: View {
             .contentMargins(.trailing, outer.safeAreaInsets.trailing, for: .scrollIndicators)
             .ignoresSafeArea(.container, edges: .horizontal)
             .background(Color.paper)
+            #if DEBUG
+            // UI tests: the side insets the shelf keeps clear of, as it measured them (verbatim, so an
+            // iPad's 1032 isn't grouped as "1,032").
+            .overlay(alignment: .topLeading) {
+                if LaunchOptions.isUITest {
+                    Text("shelf insets")
+                        .font(.system(size: 1))
+                        .opacity(0.01)
+                        .accessibilityIdentifier("library.safeInsets")
+                        .accessibilityLabel(Text(verbatim: "leading \(Int(outer.safeAreaInsets.leading)) trailing \(Int(outer.safeAreaInsets.trailing)) width \(Int(outer.size.width))"))
+                        .allowsHitTesting(false)
+                }
+            }
+            #endif
             .onGeometryChange(for: [CGFloat].self) { _ in
                 // The header's band: the camera at the cover screen's top corner, in the safe area's own
                 // space, where the header row runs from 0 to the safe width. A status column beside the
