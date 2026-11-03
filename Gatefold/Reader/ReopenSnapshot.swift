@@ -309,6 +309,22 @@ struct ReopenPictureView: View {
             await Task.yield()
             withAnimation(.easeOut(duration: 0.18)) { curl.finger = lifted }
             readerLog.notice("reopen: lifted the leaf's corner at \(LaunchClock.sinceLaunch, privacy: .public) s after launch")
+            // Held between finger and thumb while the live page comes up: the corner settles a little
+            // and rises again, slowly, so it reads as waiting rather than stuck. Still with Reduce Motion.
+            guard !UIAccessibility.isReduceMotionEnabled else { return }
+            curl.holding = true
+            try? await Task.sleep(for: .milliseconds(220))
+            let settled = ReopenTurn.breath(lifted: lifted, corner: curl.corner, leafWidth: leafWidth, height: size.height)
+            var low = true
+            var breaths = 0
+            while curl.holding, curl.isActive, curl.top === top {
+                withAnimation(.easeInOut(duration: 1.3)) { curl.finger = low ? settled : lifted }
+                low.toggle()
+                breaths += 1
+                readerLog.debug("reopen: held corner breath \(breaths, privacy: .public) at \(LaunchClock.sinceLaunch, privacy: .public) s")
+                try? await Task.sleep(for: .milliseconds(1300))
+            }
+            readerLog.notice("reopen: held corner breathed \(breaths, privacy: .public) times")
         }
     }
 }
@@ -316,6 +332,12 @@ struct ReopenPictureView: View {
 /// Which way a touch on the reopen picture turns, by the live page's rules: a horizontal swipe turns
 /// against its direction; a tap in the outer quarter turns that way; anything else turns nothing.
 enum ReopenTurn {
+    /// Where a corner lifted at `lifted` settles to as it breathes: a little back towards the edge it
+    /// came from (15% of the way), never down onto it.
+    static func breath(lifted: CGPoint, corner: CGPoint, leafWidth: CGFloat, height: CGFloat) -> CGPoint {
+        CGPoint(x: lifted.x + (corner.x - lifted.x) * 0.15, y: lifted.y + (corner.y - lifted.y) * 0.15)
+    }
+
     static func forward(start: CGPoint, translation: CGSize, width: CGFloat) -> Bool? {
         if abs(translation.width) > 30, abs(translation.width) > abs(translation.height) {
             return translation.width < 0

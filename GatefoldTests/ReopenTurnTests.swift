@@ -25,6 +25,14 @@ struct ReopenTurnTests {
         #expect(ReopenTurn.forward(start: CGPoint(x: 380, y: 300), translation: CGSize(width: 10, height: 120), width: width) == nil)
     }
 
+    @Test func theHeldCornerBreathesALittle() {
+        let corner = CGPoint(x: 466, y: 631), lifted = CGPoint(x: 373, y: 536)
+        let settled = ReopenTurn.breath(lifted: lifted, corner: corner, leafWidth: 466, height: 631)
+        // Back towards the corner, but only a few points: still clearly lifted.
+        #expect(settled.x > lifted.x && settled.x < lifted.x + 20)
+        #expect(settled.y > lifted.y && settled.y < lifted.y + 20)
+    }
+
     @Test func onlyTheFirstTurnIsKept() {
         let app = AppModel(sync: StubSync(), libraryRoot: URL.temporaryDirectory.appending(path: "reopen-turn-\(UUID().uuidString)"))
         #expect(app.queueReopenTurn(forward: true))

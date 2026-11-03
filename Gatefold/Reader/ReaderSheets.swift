@@ -287,7 +287,7 @@ struct ContentsSheet: View {
                             VStack(alignment: .leading, spacing: 3) {
                                 Text(mark.title).font(.body)
                                 if let text = mark.anchor.text {
-                                    Text("“\(text)…”").font(.footnote).foregroundStyle(.secondary).lineLimit(2)
+                                    Text(PassageQuote.quoted(text, cut: true)).font(.footnote).foregroundStyle(.secondary).lineLimit(2)
                                 }
                                 Text("Page \(model.chapterMap.page(at: mark.totalProgression)) · \(mark.created.formatted(.relative(presentation: .named)))")
                                     .font(.caption).foregroundStyle(.secondary)

@@ -24,6 +24,8 @@ final class CurlModel {
     var paper: Color = .white
     var ink: Color = .black
     var isDark = false
+    /// A leaf lifted on the reopen picture, waiting for the live page: it breathes until it lands.
+    var holding = false
 
     /// The finger position that leaves the leaf fully turned.
     var turnedFinger: CGPoint {
@@ -38,6 +40,7 @@ final class CurlModel {
 
     func reset() {
         isActive = false
+        holding = false
         top = nil
         beneath = nil
         fade = 0
