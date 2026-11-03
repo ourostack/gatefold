@@ -117,6 +117,7 @@ struct ReaderScreen: View {
                     // Low over the page (or the spread), inside the safe area, the top of the page in view.
                     SettingsPanel(model: model, width: proxy.size.width) { showAppearance = false }
                         .frame(maxWidth: 560)
+                        .frame(maxHeight: max(200, proxy.size.height - max(proxy.safeAreaInsets.top, 16) - max(proxy.safeAreaInsets.bottom, 16) - 16))
                         .padding(.leading, 16 + max(proxy.safeAreaInsets.leading, clearance.leading))
                         .padding(.trailing, 16 + max(proxy.safeAreaInsets.trailing, clearance.trailing))
                         .padding(.bottom, max(proxy.safeAreaInsets.bottom, 16))

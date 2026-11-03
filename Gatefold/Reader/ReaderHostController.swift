@@ -414,7 +414,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             try? await Task.sleep(for: .milliseconds(550))
             guard !Task.isCancelled, let self, self.weakModel != nil else { return }
             await self.restoreAnchor(generation: generation)
-            if generation == self.reflowGeneration { self.settledGeneration = generation }
+            if generation == self.reflowGeneration { self.settledGeneration = generation; self.reflowRetries = 0 }
         }
         // A reflow that begins before the book's web view has loaded (a spread opened straight onto a
         // place, cold) can wait forever on its first script; the page then stays covered. If this one
@@ -872,8 +872,8 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             Task {
                 let moved = forward ? await navigator.goForward(options: .init(animated: true)) : await navigator.goBackward(options: .init(animated: true))
                 isTurning = false
-                if moved { await reportLanding(drawn: liveWebFrames()) }
                 if moved { weakModel?.userTurnedPage() } else if forward { weakModel?.reachedEnd() }
+                if moved, Self.probesLanding { let drawn = liveWebFrames(); Task { await reportLanding(drawn: drawn) } }
             }
         case .curl, .fade:
             Task { await animatedTurn(forward: forward, from: nil) }
@@ -957,10 +957,18 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             let target = complete ? turnedTarget() : curl.corner
             // The overlay lifts when the leaf has landed, not on a timer: on a busy device a timer
             // can end the turn with the leaf still beside the page, and the page then snaps in.
+            // A timer a little past the curve's end backs it up, in case the completion never comes
+            // (the book closed or the view left the window mid-turn); whichever is first resumes.
             await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+                var resumed = false
+                let resume = { if !resumed { resumed = true; c.resume() } }
                 withAnimation(.timingCurve(0.3, 0.1, 0.25, 1, duration: duration), completionCriteria: .removed) {
                     curl.finger = target
-                } completion: { c.resume() }
+                } completion: { resume() }
+                Task { @MainActor in
+                    try? await Task.sleep(for: .seconds(duration + 0.25))
+                    resume()
+                }
             }
         }
         if !complete {
@@ -973,7 +981,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         let uncovered = curl.beneath
         curl.reset()
         isTurning = false
-        if complete { let drawn = beneathFrames; Task { await reportLanding(drawn: drawn, image: uncovered) } }
+        if complete, Self.probesLanding { let drawn = beneathFrames; Task { await reportLanding(drawn: drawn, image: uncovered) } }
         // Record the place once the turn has landed, not while the overlay hid it. A turn that sprang
         // back is no move: just take the anchor again from the page that's showing.
         if complete {
@@ -1475,6 +1483,15 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         let band = (top: max(0, text.minY), bottom: max(0, navigator.view.bounds.height - text.maxY))
         if let model = weakModel, model.textBand != band { model.textBand = band }
     }
+
+    /// The landing probe only runs in debug builds and UI tests: it costs a snapshot per turn.
+    private static let probesLanding: Bool = {
+        #if DEBUG
+        true
+        #else
+        ProcessInfo.processInfo.arguments.contains("-GatefoldUITest")
+        #endif
+    }()
 
     private func reportLanding(drawn: [CGRect], image: UIImage? = nil) async {
         let overlay = curlHost.view.convert(curlHost.view.bounds, to: nil)

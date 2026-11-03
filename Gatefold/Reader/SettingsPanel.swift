@@ -32,12 +32,12 @@ struct SettingsPanel: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             header
-            if customizing {
-                customize
-                    .transition(.asymmetric(insertion: .move(edge: .trailing), removal: .move(edge: .trailing)).combined(with: .opacity))
-            } else {
-                main
-                    .transition(.asymmetric(insertion: .move(edge: .leading), removal: .move(edge: .leading)).combined(with: .opacity))
+            // Compact when it fits; on a short screen (landscape, the cover screen) the body scrolls
+            // and Close stays in reach above it.
+            ViewThatFits(in: .vertical) {
+                content
+                ScrollView(.vertical) { content }
+                    .scrollBounceBehavior(.basedOnSize)
             }
         }
         .padding(16)
@@ -49,6 +49,16 @@ struct SettingsPanel: View {
         .sensoryFeedback(.selection, trigger: model.preferences)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("appearance.panel")
+    }
+
+    @ViewBuilder private var content: some View {
+        if customizing {
+            customize
+                .transition(.asymmetric(insertion: .move(edge: .trailing), removal: .move(edge: .trailing)).combined(with: .opacity))
+        } else {
+            main
+                .transition(.asymmetric(insertion: .move(edge: .leading), removal: .move(edge: .leading)).combined(with: .opacity))
+        }
     }
 
     private var header: some View {
