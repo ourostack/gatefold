@@ -62,7 +62,7 @@ enum FriendlyError: Equatable {
         switch self {
         case .cancelled: nil
         case .offline: "You're offline. Your books and places are tucked in safe; we'll catch up the moment you're back."
-        case .server: "PocketBook Cloud is having a little lie-down. Give it a moment and try again."
+        case .server: "PocketBook Cloud is having a little lie\u{2011}down. Give it a moment and try again."
         case .sessionExpired: "PocketBook Cloud would like you to sign in again."
         case .noAccount: "We couldn't find a PocketBook Cloud account for that email. A stray letter, perhaps?"
         case .wrongPassword: "That password didn't open the door. Give it another go?"

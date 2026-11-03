@@ -27,15 +27,30 @@ final class CurlModel {
     /// A leaf lifted on the reopen picture, waiting for the live page: it breathes until it lands.
     var holding = false
 
-    /// The finger position that leaves the leaf fully turned.
+    /// The finger position that leaves the leaf fully turned. A single page's leaf leaves the screen,
+    /// past the roll. A spread's leaf lands on the other page: its corner on that page's outer
+    /// corner, exactly, where the leaf's back lies over the page beneath with no offset. (Build 14
+    /// overshot by the roll's length, so the landed leaf sat about 55 pt toward the outer edge with
+    /// the old page showing beside it, and jumped back when the overlay lifted.)
     var turnedFinger: CGPoint {
-        let spine = isSpread ? size.width / 2 : 0
-        return CGPoint(x: 2 * spine - size.width - .pi * radius - 8, y: corner.y)
+        isSpread ? CGPoint(x: spreadLanding, y: corner.y) : CGPoint(x: -size.width - .pi * baseRadius - 8, y: corner.y)
     }
 
-    var radius: CGFloat {
+    /// Where a spread's corner lands, in the leaf's own (unmirrored) space: the spine reflected.
+    var spreadLanding: CGFloat { 2 * (size.width / 2) - size.width }
+
+    private var baseRadius: CGFloat {
         let leafWidth = isSpread ? size.width / 2 : size.width
         return max(18, leafWidth * 0.075)
+    }
+
+    /// The roll's radius. A spread's leaf flattens over the last stretch of its travel, so it lies
+    /// flat on the page as it lands, the way a sheet settles, and nothing changes when the overlay lifts.
+    var radius: CGFloat {
+        guard isSpread else { return baseRadius }
+        let leafFinger = mirrored ? size.width - finger.x : finger.x
+        let travel = (leafFinger - spreadLanding) / max(1, size.width / 2 * 0.3)
+        return max(0.5, baseRadius * min(1, max(0, travel)))
     }
 
     func reset() {
@@ -85,7 +100,9 @@ struct CurlOverlay: View {
         let leafMinX = model.isSpread ? size.width / 2 : 0
         // In mirrored (backward) space the leaf is the left page, drawn as if it were the right one.
         let corner = model.mirrored ? CGPoint(x: size.width - model.corner.x, y: model.corner.y) : model.corner
-        let finger = model.mirrored ? CGPoint(x: size.width - model.finger.x, y: model.finger.y) : model.finger
+        let raw = model.mirrored ? CGPoint(x: size.width - model.finger.x, y: model.finger.y) : model.finger
+        // A spread's leaf never goes past its landing: dragged further, it lies where it lands.
+        let finger = model.isSpread ? CGPoint(x: max(raw.x, model.spreadLanding), y: raw.y) : raw
         // The leaf's back in a spread shows the destination page, passed to the shader as an image
         // (laying it beside the page in a double-width layer drew everything shifted).
         let back = Image(uiImage: beneath ?? top)

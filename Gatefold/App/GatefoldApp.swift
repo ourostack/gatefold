@@ -408,10 +408,12 @@ private struct ZoomFromCover: ViewModifier {
 }
 
 #if DEBUG
-/// Tests only: `-GatefoldSystemInsets "top,leading,bottom,trailing"` (points) adds to the safe area the
-/// way the system's own does, through `additionalSafeAreaInsets` on every controller on screen, so the
-/// simulator can stand in for a device whose status column or camera sits at a side edge (the folded
-/// Duo's cover screen reports its status column as a trailing inset; the simulator never did).
+/// Tests only: `-GatefoldSystemInsets "top,leading,bottom,trailing"` (points) makes the screen report at
+/// least these insets, the way a device's own do, through `additionalSafeAreaInsets` on every
+/// controller on screen, so the simulator can stand in for a device whose status column or camera
+/// sits at a side edge. It stands in for the screen's own insets, never adds to them: the Duo
+/// simulator's cover screen already reports its 84 pt status column, and build 14's injector stacked
+/// 81 on top, so the shelf reserved 165 pt that no device has.
 @MainActor
 enum SystemInsetInjector {
     static var asked: UIEdgeInsets? {
@@ -428,10 +430,14 @@ enum SystemInsetInjector {
         while !Task.isCancelled {
             for scene in UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }) {
                 for window in scene.windows {
+                    // The screen's own insets: the window's, which no controller's additions reach.
+                    let own = window.safeAreaInsets
+                    let add = UIEdgeInsets(top: max(0, insets.top - own.top), left: max(0, insets.left - own.left),
+                                           bottom: max(0, insets.bottom - own.bottom), right: max(0, insets.right - own.right))
                     var vc = window.rootViewController
                     while let c = vc {
-                        if c.additionalSafeAreaInsets != insets {
-                            c.additionalSafeAreaInsets = insets
+                        if c.additionalSafeAreaInsets != add {
+                            c.additionalSafeAreaInsets = add
                         }
                         vc = c.presentedViewController
                     }

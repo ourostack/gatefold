@@ -85,15 +85,23 @@ final class AppModel {
 
         var prefs = UserDefaults.standard.data(forKey: Keys.preferences)
             .flatMap { try? JSONDecoder().decode(PreferencesStore.self, from: $0) }
+        let pad = UIDevice.current.userInterfaceIdiom == .pad
         if prefs == nil {
             // First launch: the book's type size follows Dynamic Type, then it's the reader's own.
             var first = ReaderPreferences()
             // A regular-width screen (iPad) starts a step larger, as a printed page would be read there.
-            first.fontScale = ReaderPreferences.initialFontScale(
-                forContentSizeRank: Self.contentSizeRank,
-                regularWidth: UIDevice.current.userInterfaceIdiom == .pad
-            )
+            first.fontScale = ReaderPreferences.initialFontScale(forContentSizeRank: Self.contentSizeRank, regularWidth: pad)
+            #if DEBUG
+            if let scale = LaunchOptions.fontScale { first.fontScale = scale }
+            #endif
             prefs = PreferencesStore(defaults: first)
+        } else if prefs?.densityVersion != PreferencesStore.currentDensity {
+            // Saved before build 15: a size never changed moves to the new, larger first size.
+            prefs?.adoptCurrentDensity(
+                untouched: ReaderPreferences.legacyInitialFontScale(forContentSizeRank: Self.contentSizeRank, regularWidth: pad),
+                now: ReaderPreferences.initialFontScale(forContentSizeRank: Self.contentSizeRank, regularWidth: pad)
+            )
+            if let moved = prefs, let data = try? JSONEncoder().encode(moved) { UserDefaults.standard.set(data, forKey: Keys.preferences) }
         }
         self.preferences = prefs!
         self.hasOnboarded = LaunchOptions.skipWelcome || UserDefaults.standard.bool(forKey: Keys.onboarded)

@@ -117,7 +117,11 @@ struct ReaderScreen: View {
                     // Low over the page (or the spread), inside the safe area, the top of the page in view.
                     SettingsPanel(model: model, width: proxy.size.width) { showAppearance = false }
                         .frame(maxWidth: 560)
-                        .frame(maxHeight: max(200, proxy.size.height - max(proxy.safeAreaInsets.top, 16) - max(proxy.safeAreaInsets.bottom, 16) - 16))
+                        // A height cap takes all the room it's offered, so its own alignment decides
+                        // where the panel sits in it: the foot (build 14 centred it, mid-screen on the
+                        // folded Duo, 120 pt above the screen's foot).
+                        .frame(maxHeight: max(200, proxy.size.height - max(proxy.safeAreaInsets.top, 16) - max(proxy.safeAreaInsets.bottom, 16) - 16),
+                               alignment: .bottom)
                         .padding(.leading, 16 + max(proxy.safeAreaInsets.leading, clearance.leading))
                         .padding(.trailing, 16 + max(proxy.safeAreaInsets.trailing, clearance.trailing))
                         .padding(.bottom, max(proxy.safeAreaInsets.bottom, 16))
@@ -197,7 +201,10 @@ struct ReaderScreen: View {
             if model.layout.posture != .spread, old != new { model.host?.holdPageForUnfold() }
         }
         .preferredColorScheme(model.theme.colorScheme)
-        .statusBarHidden(!model.chromeVisible || coverScreen)
+        // The catch-up tab hangs in the page's top margin, where the status bar prints: while it's up
+        // the status bar stays hidden, chrome or not, the way Apple Books keeps its page top clear
+        // (build 14 printed the time over "InkPad +56" on the iPad).
+        .statusBarHidden(statusBarHidden)
         .persistentSystemOverlays(model.chromeVisible ? .automatic : .hidden)
         .animation(reduceMotion ? .easeOut(duration: 0.2) : Motion.open, value: showAppearance)
         .sheet(isPresented: $showSearch) {
@@ -343,6 +350,18 @@ struct ReaderScreen: View {
                 .accessibilityIdentifier("reader.turnPlacement")
                 .accessibilityLabel(model.turnPlacement)
                 .allowsHitTesting(false)
+            Text("status bar")
+                .font(.system(size: 1))
+                .opacity(0.01)
+                .accessibilityIdentifier("reader.statusBar")
+                .accessibilityLabel(statusBarHidden ? "hidden" : "shown")
+                .allowsHitTesting(false)
+            Text("turn settle")
+                .font(.system(size: 1))
+                .opacity(0.01)
+                .accessibilityIdentifier("reader.turnSettle")
+                .accessibilityLabel(model.turnSettle)
+                .allowsHitTesting(false)
             Text(layout.posture.rawValue)
                 .font(.system(size: 1))
                 .opacity(0.01)
@@ -481,6 +500,9 @@ struct ReaderScreen: View {
         .animation(.easeOut(duration: 0.18), value: chapter)
         .allowsHitTesting(false)
     }
+
+    private var catchUpTabShowing: Bool { model.aheadTab != nil && model.slipFolded && model.slip != nil }
+    private var statusBarHidden: Bool { !model.chromeVisible || coverScreen || catchUpTabShowing }
 
     func pageTopClearance(_ layout: ReaderLayout, clearance: ChromeClearance) -> CGFloat {
         PageSafeArea.textTopInset

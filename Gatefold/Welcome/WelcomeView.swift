@@ -189,6 +189,43 @@ struct SignInFlow: View {
     #endif
 
     var body: some View {
+        // The step scrolls only when it can't fit (a short screen, the keyboard up, an error line
+        // added), anchored at its top so Back never rides off the screen. Build 14 let the column
+        // overflow, and SwiftUI centred it: after a wrong password, Back sat half above the screen.
+        GeometryReader { proxy in
+            ScrollView(.vertical) {
+                form.frame(minHeight: proxy.size.height, alignment: .top)
+            }
+            .scrollBounceBehavior(.basedOnSize)
+            .scrollDismissesKeyboard(.interactively)
+        }
+        .background(Color.paper)
+        // A gentle word, not a scolding: it waits until he pauses typing, and leaves the moment the address is fine.
+        .task(id: email) {
+            guard step == .email else { return }
+            let problem = email.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : EmailCheck.problem(email)
+            if problem == nil { emailHint = nil; return }
+            if emailHint != nil { emailHint = problem; return }
+            try? await Task.sleep(for: .milliseconds(1200))
+            guard !Task.isCancelled else { return }
+            emailHint = problem
+        }
+        // What went wrong belongs to what he sent: once he changes it, it's gone.
+        .onChange(of: password) { _, _ in if error != nil { error = nil } }
+        .onChange(of: email) { _, _ in if error != nil { error = nil } }
+        .sensoryFeedback(.error, trigger: failures)
+        .onAppear {
+            if let prefilledEmail, !prefilledEmail.isEmpty, email.isEmpty { email = prefilledEmail }
+            focusSoon()
+        }
+        // The keyboard comes up once the new step has landed, not mid-transition.
+        .onChange(of: step) { _, _ in focusSoon() }
+        .task { await app.prepareSignIn() }
+        .toolbar(.hidden, for: .navigationBar)
+        .navigationBarBackButtonHidden(true)
+    }
+
+    private var form: some View {
         VStack(alignment: .leading, spacing: 22) {
             // Back lives in the page, above the title, where the eye already is.
             Button(action: back) {
@@ -301,31 +338,10 @@ struct SignInFlow: View {
         .padding(.horizontal, 28)
         .padding(.top, 12)
         .padding(.bottom, 24)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color.paper)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .animation(Motion.open, value: step)
         .animation(.default, value: error)
         .animation(.easeOut(duration: 0.25), value: emailHint)
-        // A gentle word, not a scolding: it waits until he pauses typing, and leaves the moment the address is fine.
-        .task(id: email) {
-            guard step == .email else { return }
-            let problem = email.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : EmailCheck.problem(email)
-            if problem == nil { emailHint = nil; return }
-            if emailHint != nil { emailHint = problem; return }
-            try? await Task.sleep(for: .milliseconds(1200))
-            guard !Task.isCancelled else { return }
-            emailHint = problem
-        }
-        .sensoryFeedback(.error, trigger: failures)
-        .onAppear {
-            if let prefilledEmail, !prefilledEmail.isEmpty, email.isEmpty { email = prefilledEmail }
-            focusSoon()
-        }
-        // The keyboard comes up once the new step has landed, not mid-transition.
-        .onChange(of: step) { _, _ in focusSoon() }
-        .task { await app.prepareSignIn() }
-        .toolbar(.hidden, for: .navigationBar)
-        .navigationBarBackButtonHidden(true)
     }
 
     private func focusSoon() {

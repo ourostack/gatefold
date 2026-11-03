@@ -92,8 +92,9 @@ static bool inside(float2 p, float4 r) {
         if (d >= r) {
             // Lifted away: show the page beneath, darkened by the leaf's cast shadow, which falls
             // off over 24 pt the way a sheet's shadow does on paper.
+            // A leaf flattening as it lands (a spread's, whose roll shrinks) casts less and less.
             float t = clamp((d - r) / 24.0, 0.0, 1.0);
-            half a = half(0.35 * (1.0 - t) * (1.0 - t));
+            half a = half(0.35 * (1.0 - t) * (1.0 - t) * clamp(radius / 18.0, 0.0, 1.0));
             return half4(0, 0, 0, a);
         }
         if (d >= 0.0) {

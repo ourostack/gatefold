@@ -53,6 +53,17 @@ final class HighlightUITests: XCTestCase {
         return nil
     }
 
+    /// The contents sheet rises as the book opens, and a tap on its tab while it is still rising can be
+    /// lost: on a loaded Duo run the highlights were placed, the tab was tapped a moment later, and
+    /// the Contents list stayed for 60 s. Tap until the tab is selected.
+    private func select(_ tab: XCUIElement) {
+        for _ in 0..<3 {
+            tab.tap()
+            if tab.wait(for: \.isSelected, toEqual: true, timeout: 3) { return }
+        }
+        XCTFail("the \(tab.label) tab never took a tap")
+    }
+
     private func tap(at offset: CGVector) {
         app.coordinate(withNormalizedOffset: .zero).withOffset(offset).tap()
     }
@@ -70,9 +81,10 @@ final class HighlightUITests: XCTestCase {
         // The contents sheet's Highlights tab lists the InkPad's two, in reading order.
         let tab = app.buttons["Highlights"]
         XCTAssertTrue(tab.waitForExistence(timeout: 30))
-        tab.tap()
+        select(tab)
         let row = app.buttons.matching(identifier: "highlights.row").firstMatch
-        XCTAssertTrue(row.waitForExistence(timeout: 60), "the InkPad's highlights are listed")
+        if !row.waitForExistence(timeout: 60) { shot("highlights-01-list-missing") }
+        XCTAssertTrue(row.exists, "the InkPad's highlights are listed")
         XCTAssertEqual(app.buttons.matching(identifier: "highlights.row").count, 2)
         XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label BEGINSWITH 'Highlighted on your InkPad'")).firstMatch.exists)
         shot("highlights-01-list")
@@ -110,8 +122,9 @@ final class HighlightUITests: XCTestCase {
         shot("highlights-05-added")
 
         // Its card says it was made here; Remove takes it away again. Tap the box itself: the press
-        // picks the nearest word, which can start a little right of the press point.
-        let added = try XCTUnwrap(point("lowest"), "the new highlight is on screen: \(probe.value as? String ?? "")")
+        // picks the nearest word, which can start a little right of the press point. (The lowest box
+        // isn't always the new one: at build 15's larger type an InkPad highlight sits lower.)
+        let added = try XCTUnwrap(point("here"), "the new highlight is on screen: \(probe.value as? String ?? "")")
         tap(at: added)
         let provenance = element("highlight.provenance")
         XCTAssertTrue(provenance.waitForExistence(timeout: 10), "tapping the new highlight opens its card")

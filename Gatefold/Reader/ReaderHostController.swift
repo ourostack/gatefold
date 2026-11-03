@@ -950,6 +950,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
 
     private func finish(complete: Bool, velocity: CGFloat) async {
         let duration = complete ? 0.48 : 0.3
+        let settle = complete && curl.isSpread && curl.style == .curl && Self.probesLanding ? watchSettle(forward: !curl.mirrored) : nil
         if curl.style == .fade {
             withAnimation(.easeInOut(duration: 0.22)) { curl.fade = complete ? 1 : 0 }
             try? await Task.sleep(for: .milliseconds(240))
@@ -982,6 +983,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         curl.reset()
         isTurning = false
         if complete, Self.probesLanding { let drawn = beneathFrames; Task { await reportLanding(drawn: drawn, image: uncovered) } }
+        if let settle { Task { try? await Task.sleep(for: .milliseconds(500)); settle.stop = true } }
         // Record the place once the turn has landed, not while the overlay hid it. A turn that sprang
         // back is no move: just take the anchor again from the page that's showing.
         if complete {
@@ -1492,6 +1494,78 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         ProcessInfo.processInfo.arguments.contains("-GatefoldUITest")
         #endif
     }()
+
+    /// One spread turn's settle watch: the outer page's text edge in each frame drawn.
+    private final class SettleWatch { var stop = false }
+    private var settledTurns = 0
+
+    /// Debug builds and UI tests: watches the outer page of a spread (the left one turning forward,
+    /// the right one turning back) in every frame it can draw, from the turn's last leg until 0.5 s
+    /// after the leaf has landed, and reports how far its words ever started from where they rest.
+    /// The landing report measures only once the overlay has lifted, so it can't see a leaf that
+    /// lands beside the page and is then replaced by the live one (build 14 on the iPad spread).
+    private func watchSettle(forward: Bool) -> SettleWatch {
+        let watch = SettleWatch()
+        let paper = PageSignature.rgb(weakModel?.theme.uiBackground ?? .white)
+        let dump = UserDefaults.standard.bool(forKey: "GatefoldDumpSettle")
+        let turn = settledTurns + 1
+        settledTurns = turn
+        Task { [weak self] in
+            var edges: [CGFloat] = []
+            var frame = 0
+            while !watch.stop, let self {
+                if let (image, edge) = self.settleSample(forward: forward, paper: paper) {
+                    if let edge { edges.append(edge) }
+                    if dump {
+                        let url = URL.temporaryDirectory.appending(path: "settle-\(turn)-\(String(format: "%03d", frame)).png")
+                        try? image.pngData()?.write(to: url)
+                    }
+                    frame += 1
+                }
+                try? await Task.sleep(for: .milliseconds(10))
+            }
+            guard let self, let rest = edges.last else { return }
+            // Positive: the words started further out than where they rest (toward the outer edge).
+            let worst = edges.map { forward ? rest - $0 : $0 - rest }.max() ?? 0
+            let line = "settle \(turn) frames \(frame) worst \(Int(worst.rounded())) pt"
+            readerLog.notice("turn: \(line, privacy: .public) edges \(edges.map { Int($0) }, privacy: .public)")
+            self.weakModel?.turnSettle = line
+        }
+        return watch
+    }
+
+    /// The page as on screen now (overlay included), and where the outer page's words begin: the
+    /// leftmost ink on the left page, or the rightmost on the right page, in window points.
+    private func settleSample(forward: Bool, paper: UInt8) -> (UIImage, CGFloat?)? {
+        guard let window = view.window else { return nil }
+        let page = navigator.view.convert(navigator.view.bounds, to: window)
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        format.opaque = true
+        let image = UIGraphicsImageRenderer(size: page.size, format: format).image { _ in
+            window.drawHierarchy(in: CGRect(origin: CGPoint(x: -page.minX, y: -page.minY), size: window.bounds.size), afterScreenUpdates: false)
+        }
+        guard let cg = image.cgImage else { return (image, nil) }
+        let w = cg.width, h = cg.height
+        var px = [UInt8](repeating: 0, count: w * h * 4)
+        guard let ctx = CGContext(data: &px, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4,
+                                  space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else { return (image, nil) }
+        ctx.draw(cg, in: CGRect(x: 0, y: 0, width: w, height: h))
+        let paperLuma = Double(paper) / 255
+        // The body of the outer page only: past the running head and page number.
+        let columns = forward ? Array(0..<(w / 2)) : Array((w / 2..<w).reversed())
+        let rows = stride(from: h / 5, to: h * 4 / 5, by: 2)
+        for x in columns {
+            var ink = 0
+            for y in rows {
+                let i = (y * w + x) * 4
+                let luma = (0.299 * Double(px[i]) + 0.587 * Double(px[i + 1]) + 0.114 * Double(px[i + 2])) / 255
+                if abs(luma - paperLuma) > 0.3 { ink += 1 }
+            }
+            if ink >= 3 { return (image, page.minX + CGFloat(x)) }
+        }
+        return (image, nil)
+    }
 
     private func reportLanding(drawn: [CGRect], image: UIImage? = nil) async {
         let overlay = curlHost.view.convert(curlHost.view.bounds, to: nil)

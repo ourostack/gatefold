@@ -214,7 +214,8 @@ final class HighlightStore {
         let theme = model.theme
         let decorations = items.map { item in
             Decoration(id: item.id, locator: item.locator,
-                       style: .init(id: .gatefoldHighlight, config: HighlightLook(color: item.annotation.color?.value ?? .yellow, theme: theme, hasNote: item.note != nil)))
+                       style: .init(id: .gatefoldHighlight, config: HighlightLook(color: item.annotation.color?.value ?? .yellow, theme: theme, hasNote: item.note != nil,
+                                                                                   here: ours.contains(item.id))))
         }
         host.navigator.apply(decorations: decorations, in: Self.group)
         measureSoon()
@@ -234,7 +235,7 @@ final class HighlightStore {
                 guard let json = await Self.evaluate(Self.probeScript, in: web),
                       let probe = try? JSONDecoder().decode(Probe.self, from: Data(json.utf8)) else { continue }
                 drawn += probe.count
-                for (name, xy) in [("first", probe.first), ("note", probe.note), ("lowest", probe.lowest)] {
+                for (name, xy) in [("first", probe.first), ("note", probe.note), ("lowest", probe.lowest), ("here", probe.here)] {
                     guard let xy, xy.count == 2 else { continue }
                     let p = web.convert(CGPoint(x: xy[0], y: xy[1]), to: nil)
                     points.append("\(name)=\(Int(p.x)),\(Int(p.y))")
@@ -247,7 +248,8 @@ final class HighlightStore {
         }
     }
 
-    /// For UI tests: `first=x,y;note=x,y;lowest=x,y` in window points.
+    /// For UI tests: `first=x,y;note=x,y;lowest=x,y;here=x,y` in window points (`here`: one made on
+    /// this device).
     private(set) var drawnPoints = ""
 
     private struct Probe: Decodable {
@@ -255,6 +257,7 @@ final class HighlightStore {
         var first: [Double]?
         var note: [Double]?
         var lowest: [Double]?
+        var here: [Double]?
     }
 
     private static let probeScript = """
@@ -265,7 +268,7 @@ final class HighlightStore {
       const mid = (r) => (r ? [r.left + r.width / 2, r.top + r.height / 2] : null);
       const all = rects('.gf-hl');
       const lowest = all.reduce((a, r) => (!a || r.top > a.top ? r : a), null);
-      return JSON.stringify({ count: all.length, first: mid(all[0]), note: mid(rects('.gf-note')[0]), lowest: mid(lowest) });
+      return JSON.stringify({ count: all.length, first: mid(all[0]), note: mid(rects('.gf-note')[0]), lowest: mid(lowest), here: mid(rects('.gf-here')[0]) });
     })()
     """
 
@@ -401,8 +404,10 @@ struct HighlightLook: Hashable {
     var blend: String
     var mark: String
     var hasNote: Bool
+    /// Made on this device (UI tests find it by this; it looks the same as any other).
+    var here = false
 
-    init(color: AnnotationColor, theme: ReaderTheme, hasNote: Bool) {
+    init(color: AnnotationColor, theme: ReaderTheme, hasNote: Bool, here: Bool = false) {
         let dark = theme.palette.isDark
         let family: Int = switch color {
         case .cyan, .blue: 1
@@ -422,6 +427,7 @@ struct HighlightLook: Hashable {
         blend = dark ? "screen" : "multiply"
         mark = ThemePalette.hexString(theme.palette.accent)
         self.hasNote = hasNote
+        self.here = here
     }
 }
 
@@ -435,7 +441,7 @@ extension HTMLDecorationTemplate {
         layout: .boxes,
         element: { decoration in
             let look = (decoration.style.config as? HighlightLook) ?? HighlightLook(color: .yellow, theme: .vellum, hasNote: false)
-            return "<div class=\"gf-hl\(look.hasNote ? " gf-note" : "")\" style=\"--gf-fill: \(look.fill); --gf-blend: \(look.blend); --gf-mark: \(look.mark);\"/>"
+            return "<div class=\"gf-hl\(look.hasNote ? " gf-note" : "")\(look.here ? " gf-here" : "")\" style=\"--gf-fill: \(look.fill); --gf-blend: \(look.blend); --gf-mark: \(look.mark);\"/>"
         },
         stylesheet: """
         .gf-hl {

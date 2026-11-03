@@ -325,8 +325,10 @@ struct MeasureTests {
     }
 
     @Test func regularWidthStartsAStepLarger() {
-        #expect(ReaderPreferences.initialFontScale(forContentSizeRank: 3, regularWidth: true) == 1.15)
-        #expect(ReaderPreferences.initialFontScale(forContentSizeRank: 3, regularWidth: false) == 1.0)
+        #expect(ReaderPreferences.legacyInitialFontScale(forContentSizeRank: 3, regularWidth: true) == 1.15)
+        #expect(ReaderPreferences.legacyInitialFontScale(forContentSizeRank: 3, regularWidth: false) == 1.0)
+        // Build 15: Apple Books' default density, type set larger again.
+        #expect(ReaderPreferences.initialFontScale(forContentSizeRank: 3, regularWidth: true) > ReaderPreferences.initialFontScale(forContentSizeRank: 3, regularWidth: false))
     }
 }
 

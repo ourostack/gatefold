@@ -115,6 +115,35 @@ public enum PageMargins: String, CaseIterable, Codable, Sendable {
         case .wide: 1.6
         }
     }
+
+    /// The share of the page's width kept as margin on each side. Classic, the default, keeps Apple
+    /// Books' default measure on a wide page (an iPad's, or each page of its spread): text 80.7% of
+    /// the page, measured on aris-device/4, so about 9.6% each side (Readium's two sides are even;
+    /// Apple's are about 12.5% outside and 6.8% at the spine). A phone-width page (an iPhone, the
+    /// Duo's cover screen) keeps about 6%, so its short line keeps its words. Build 14 gave an iPad
+    /// spread about 2%, and its lines ran to the edges.
+    public func share(pageWidth: Double) -> Double {
+        let wide = pageWidth >= Self.widePage
+        switch self {
+        case .narrow: return wide ? 0.065 : 0.035
+        case .normal: return wide ? 0.0965 : 0.06
+        case .wide: return wide ? 0.13 : 0.09
+        }
+    }
+
+    /// The narrowest page that keeps Apple Books' iPad measure (an 11" iPad's spread page is 597 pt).
+    public static let widePage: Double = 560
+
+    /// ReadiumCSS's own page gutter at a web view this wide (its breakpoints at 35, 45 and 75 em).
+    public static func readiumGutter(viewWidth: Double) -> Double {
+        viewWidth >= 1200 ? 50 : viewWidth >= 720 ? 40 : viewWidth >= 560 ? 30 : 20
+    }
+
+    /// Readium's margin multiplier that keeps `share` of a page `pageWidth` wide, in a web view
+    /// `viewWidth` wide (a spread's two pages share one).
+    public func readiumFactor(pageWidth: Double, viewWidth: Double) -> Double {
+        min(4, max(0.2, share(pageWidth: pageWidth) * pageWidth / Self.readiumGutter(viewWidth: viewWidth)))
+    }
 }
 
 public enum PageTurnStyle: String, CaseIterable, Codable, Sendable {
@@ -170,10 +199,16 @@ public struct ReaderPreferences: Codable, Equatable, Sendable {
 
     /// The first book's font size follows Dynamic Type; after that it's the reader's own.
     /// `rank` counts content sizes from extra small (0) through Large (3) to AX5 (11).
+    /// Build 14's sizes; build 15 sets type larger (`densityRaise`).
     public static func initialFontScale(forContentSizeRank rank: Int) -> Double {
         let scales: [Double] = [0.8, 0.9, 0.95, 1.0, 1.1, 1.2, 1.3, 1.5, 1.7, 1.9, 2.1, 2.3]
         return scales[min(max(rank, 0), scales.count - 1)]
     }
+
+    /// How much larger build 15 sets the first size than build 14 did. On the iPad it matches Apple
+    /// Books' default line pitch (a line every 5.7% of the page's width on aris-device/4; Gatefold at
+    /// 1.5 measured 4.87%, so 1.15 × 1.52 ≈ 1.75). A phone has no Apple Books reference yet and takes 1.3.
+    public static func densityRaise(regularWidth: Bool) -> Double { regularWidth ? 1.52 : 1.3 }
 }
 
 /// Settings for every book, with optional per-book overrides. "Use as default" turns one book's
@@ -181,9 +216,30 @@ public struct ReaderPreferences: Codable, Equatable, Sendable {
 public struct PreferencesStore: Codable, Equatable, Sendable {
     public private(set) var defaults: ReaderPreferences
     private var perBook: [String: ReaderPreferences] = [:]
+    /// The page density these settings were saved under: nil before build 15, `currentDensity` after.
+    public private(set) var densityVersion: Int?
+
+    /// Build 15's denser-to-calmer page: larger first type size.
+    public static let currentDensity = 2
+
+    /// Once, for settings saved before build 15: a type size still at the old first size moves to
+    /// the new one, so a reader who never changed it gets the new page; a size he chose stays.
+    /// (Margins need no move: Classic stays the default and now means about 6% of the page.)
+    public mutating func adoptCurrentDensity(untouched old: Double, now new: Double) {
+        guard (densityVersion ?? 1) < Self.currentDensity else { return }
+        func lift(_ p: inout ReaderPreferences) { if abs(p.fontScale - old) < 0.001 { p.fontScale = new } }
+        lift(&defaults)
+        for id in Array(perBook.keys) {
+            var p = perBook[id]!
+            lift(&p)
+            perBook[id] = p == defaults ? nil : p
+        }
+        densityVersion = Self.currentDensity
+    }
 
     public init(defaults: ReaderPreferences = ReaderPreferences()) {
         self.defaults = defaults
+        self.densityVersion = Self.currentDensity
     }
 
     public func effective(for bookID: String) -> ReaderPreferences {

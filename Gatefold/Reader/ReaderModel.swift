@@ -142,6 +142,9 @@ final class ReaderModel {
     var textBand: (top: CGFloat, bottom: CGFloat) = (28, 28)
     /// For UI tests: how the last turn landed: "landed <n> leaf <frames> page <frames> in place|moved".
     var turnPlacement = "none"
+    /// For UI tests: how far a spread's outer page ever strayed from its rest, frame by frame, from the
+    /// turn's last leg until 0.5 s after it landed: "settle <n> frames <k> worst <pt> pt".
+    var turnSettle = "none"
 
     var keeper = AnchorKeeper()
     private var anchorLocator: Locator?
@@ -213,7 +216,7 @@ final class ReaderModel {
                 model: self,
                 publication: publication,
                 initialLocation: initial,
-                preferences: Self.epubPreferences(prefs, theme: prefs.resolvedTheme(systemIsDark: false), columns: .one, language: Self.hyphenationLanguage(publication))
+                preferences: Self.epubPreferences(prefs, theme: prefs.resolvedTheme(systemIsDark: false), columns: .one, viewWidth: layout.pageFrame.width > 0 ? layout.pageFrame.width : 402, language: Self.hyphenationLanguage(publication))
             )
         } catch {
             errorMessage = FriendlyError.unreadable.message
@@ -1219,7 +1222,7 @@ final class ReaderModel {
     func applyPreferences(reflow: Bool) {
         let prefs = preferences
         host?.apply(
-            Self.epubPreferences(prefs, theme: theme, columns: layout.columns, tabletop: layout.posture == .tabletop, language: Self.hyphenationLanguage(publication)),
+            Self.epubPreferences(prefs, theme: theme, columns: layout.columns, viewWidth: layout.pageFrame.width, tabletop: layout.posture == .tabletop, language: Self.hyphenationLanguage(publication)),
             columns: layout.columns == .two ? 2 : 1,
             reflow: reflow
         )
@@ -1233,8 +1236,14 @@ final class ReaderModel {
         publication.metadata.language ?? Language(code: .bcp47("en"))
     }
 
-    static func epubPreferences(_ prefs: ReaderPreferences, theme: ReaderTheme, columns: GatefoldCore.ColumnCount, tabletop: Bool = false, language: Language? = nil) -> EPUBPreferences {
+    static func epubPreferences(_ prefs: ReaderPreferences, theme: ReaderTheme, columns: GatefoldCore.ColumnCount, viewWidth: CGFloat, tabletop: Bool = false, language: Language? = nil) -> EPUBPreferences {
         let custom = prefs.font != .original || prefs.lineSpacing != .normal || prefs.justify
+        // Each choice keeps a share of the page's width (Classic Apple Books' measure on an iPad page),
+        // a spread's pages included; tabletop's half-height page keeps no more than Classic.
+        let choice: PageMargins = tabletop && prefs.margins == .wide ? .normal : prefs.margins
+        let view = Double(viewWidth)
+        let page: Double = columns == .two ? view / 2 : view
+        let margins: Double = choice.readiumFactor(pageWidth: page, viewWidth: view)
         return EPUBPreferences(
             backgroundColor: ReadiumNavigator.Color(hex: ThemePalette.hexString(theme.palette.background)),
             columnCount: columns == .two ? .two : .one,
@@ -1248,8 +1257,7 @@ final class ReaderModel {
             lineHeight: custom ? prefs.lineSpacing.lineHeight : nil,
             // Facing pages give their width to the line, not the margins (the spine is margin enough),
             // so each page keeps a book's measure.
-            pageMargins: tabletop ? min(prefs.margins.factor, PageMargins.normal.factor)
-                : columns == .two ? min(prefs.margins.factor, PageMargins.narrow.factor) : prefs.margins.factor,
+            pageMargins: margins,
             publisherStyles: false,
             scroll: prefs.pageTurn == .scroll,
             textAlign: prefs.justify ? .justify : nil,
