@@ -239,7 +239,7 @@ public enum SyncHealth: Equatable, Sendable {
         case .checking:
             return "Checking your InkPad…"
         case let .upToDate(date):
-            return "Up to date with your InkPad · \(RelativeAge.text(from: date, to: now))"
+            return "In step with your InkPad · \(RelativeAge.text(from: date, to: now))"
         case let .offline(last):
             guard let last else { return "Offline for now. Read on; your place will catch up later." }
             return "Offline for now · last synced \(RelativeAge.text(from: last, to: now)). Read on; your place will catch up."

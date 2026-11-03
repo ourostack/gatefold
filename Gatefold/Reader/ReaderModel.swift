@@ -77,6 +77,10 @@ final class ReaderModel {
     private(set) var reopened = false
     /// The page frame the reopen picture was laid out with, if known.
     var reopenPageFrame: CGRect?
+    /// The reading view's frame in the picture, and whether it was a spread: the leaf a tap lifts.
+    var reopenLeaf: CGRect?
+    var reopenSpread = false
+    var reopenCurl: CurlModel { app.reopenCurl }
     /// The live page laid out differently from the picture (the first launch after an install can
     /// place the page a little lower): the picture then fades out instead of being swapped away.
     private(set) var reopenFades = false
@@ -369,7 +373,13 @@ final class ReaderModel {
         Task {
             // The cover stays until Readium has finished loading the page it reports (its spinner).
             let held = Date()
-            for _ in 0..<80 where host?.isLoadingPage == true { try? await Task.sleep(for: .milliseconds(100)) }
+            // Checked often, and a page Readium would hold back after it has scrolled into place is
+            // shown as soon as it has painted (`unveilPlacedPages`).
+            for _ in 0..<320 where host?.isLoadingPage == true {
+                await host?.unveilPlacedPages()
+                guard host?.isLoadingPage == true else { break }
+                try? await Task.sleep(for: .milliseconds(25))
+            }
             readerLog.notice("open: Readium's loading held \(Date().timeIntervalSince(held), privacy: .public) s (asked \(Date().timeIntervalSince(self.askedAt), privacy: .public) s ago)")
             revealing = false
             guard !pageReady else { return }
@@ -383,15 +393,12 @@ final class ReaderModel {
     /// The cover gives way to the page. A reopen's picture of the page stays over it a moment longer,
     /// while the running head and footer come up beneath, then goes at once: the two are the same
     /// page, so nothing moves.
-    func queueReopenTurn(forward: Bool) { app.queueReopenTurn(forward: forward) }
+    @discardableResult
+    func queueReopenTurn(forward: Bool) -> Bool { app.queueReopenTurn(forward: forward) }
 
-    /// Plays the turn asked of the reopen picture, now the live page is up.
-    private func playQueuedTurn() {
-        guard let forward = app.reopenQueuedTurn else { return }
-        app.reopenQueuedTurn = nil
-        readerLog.notice("reopen: played the kept \(forward ? "forward" : "back", privacy: .public) turn at \(LaunchClock.sinceLaunch, privacy: .public) s after launch")
-        host?.turn(forward: forward)
-    }
+    /// The picture was made for this launch from one in another paper or window: never pixel for
+    /// pixel the live page, so it fades.
+    var reopenAdapted = false
 
     private func showPage() {
         withAnimation(.easeOut(duration: 0.3)) { pageReady = true }
@@ -401,14 +408,28 @@ final class ReaderModel {
             // it in a row); 400 ms here only made the picture stand longer.
             try? await Task.sleep(for: .milliseconds(100))
             await host?.waitForSettledPage()
-            let same = reopenPageFrame.map { abs($0.minY - layout.pageFrame.minY) < 1 && abs($0.height - layout.pageFrame.height) < 1 && abs($0.width - layout.pageFrame.width) < 1 } ?? true
-            if same {
+            let same = !reopenAdapted && (reopenPageFrame.map { abs($0.minY - layout.pageFrame.minY) < 1 && abs($0.height - layout.pageFrame.height) < 1 && abs($0.width - layout.pageFrame.width) < 1 } ?? true)
+            // A turn asked of the picture: its lifted leaf lands on the live page beneath, then the
+            // picture goes. Without a lifted leaf (no leaf to lift), the turn plays on the live page.
+            let queued = app.reopenQueuedTurn
+            app.reopenQueuedTurn = nil
+            var landed: Bool?
+            if let forward = queued, app.reopenCurl.isActive, let host {
+                landed = await host.landLiftedTurn(forward: forward, curl: app.reopenCurl)
+                readerLog.notice("reopen: landed the lifted \(forward ? "forward" : "back", privacy: .public) turn at \(LaunchClock.sinceLaunch, privacy: .public) s after launch (moved \(landed ?? false, privacy: .public))")
+            }
+            if same || landed == true {
                 reopenPicture = nil
             } else {
                 reopenFades = true
                 withAnimation(.easeInOut(duration: 0.3)) { reopenPicture = nil }
             }
-            playQueuedTurn()
+            app.reopenCurl.reset()
+            if landed == true { userTurnedPage() }
+            if let forward = queued, landed == nil {
+                readerLog.notice("reopen: played the kept \(forward ? "forward" : "back", privacy: .public) turn at \(LaunchClock.sinceLaunch, privacy: .public) s after launch")
+                host?.turn(forward: forward)
+            }
             readerLog.notice("reopen: the live page took the picture's place at \(LaunchClock.sinceLaunch, privacy: .public) s after launch (\(same ? "same layout, swapped" : "laid out differently, faded", privacy: .public))")
         }
     }
