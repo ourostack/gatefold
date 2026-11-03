@@ -32,8 +32,9 @@ final class BookOpener {
 
         var errorDescription: String? {
             switch self {
-            case let .unreadable(detail): "This book couldn't be opened. \(detail)"
-            case .notAnEPUB: "Gatefold reads EPUB books for now."
+            // The detail is for the log; the reader gets words (`FriendlyError`).
+            case .unreadable: FriendlyError.unreadable.message
+            case .notAnEPUB: "Gatefold only reads EPUB books for now, and this one's something else."
             }
         }
     }

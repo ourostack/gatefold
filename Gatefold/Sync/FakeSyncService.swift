@@ -31,7 +31,9 @@ public actor FakeSyncService: SyncService {
     ]
 
     /// Screenshot and test states: a healthy Cloud, an empty shelf, no network, or a sign-in that expired.
-    public enum Scenario: String, Sendable { case normal, empty, offline, expired }
+    /// The `…OnRefresh` ones answer the first fetch and then misbehave, as pull-to-refresh met them on
+    /// a phone (build 13): the refresh is called off, the Cloud has server trouble, or it lists nothing.
+    public enum Scenario: String, Sendable { case normal, empty, offline, expired, cancelledOnRefresh, serverTroubleOnRefresh, emptyOnRefresh }
 
     private var signedIn: CloudAccount?
     private let scenario: Scenario
@@ -121,6 +123,10 @@ public actor FakeSyncService: SyncService {
         case .empty: broadcast(.library([])); return []
         case .offline: throw CloudError.offline
         case .expired: throw CloudError.authenticationRequired
+        case .cancelledOnRefresh where libraryFetches > 1: throw CancellationError()
+        case .serverTroubleOnRefresh where libraryFetches > 1: throw CloudError.server(status: 503)
+        case .emptyOnRefresh where libraryFetches == 2: return [] // once, and nothing announced: a listing that came back blank
+        case .cancelledOnRefresh, .serverTroubleOnRefresh, .emptyOnRefresh: break
         }
         let all = books()
         // Like PocketBookCloud: every fetch announces the library it found.

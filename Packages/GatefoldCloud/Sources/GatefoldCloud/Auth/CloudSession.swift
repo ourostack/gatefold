@@ -93,19 +93,31 @@ public actor CloudSession {
         await tokenStore.clear()
     }
 
-    /// An authorized call: refreshes an expiring token first, and once more after a 401.
-    /// Throws `CloudError` for every non-2xx status.
+    /// An authorized call: refreshes an expiring token first, and once more after the Cloud turns the
+    /// token away (401, or a 403 about the token). Only a call that is still turned away with a freshly
+    /// renewed token is a confirmed `authenticationRequired`. Throws `CloudError` for every non-2xx status.
+    /// Never signs out: the saved session stays until the reader signs out or in again.
     @discardableResult
     public func send(_ endpoint: Endpoint) async throws -> (Data, HTTPURLResponse) {
         let token = try await validToken()
         var (data, response) = try await perform(endpoint, bearer: token.accessToken)
-        if response.statusCode == 401 {
+        if Self.rejectsToken(response, data) {
             let fresh = try await refresh(from: token)
             (data, response) = try await perform(endpoint, bearer: fresh.accessToken)
-            if response.statusCode == 401 { throw CloudError.authenticationRequired }
+            if Self.rejectsToken(response, data) { throw CloudError.authenticationRequired }
         }
         try Self.check(response, data)
         return (data, response)
+    }
+
+    /// The Cloud's ways of saying "not with that token": 401, and 403 with a token error
+    /// (seen live 2026-11-03: `error_code` 222, "Wrong token format" / "Invalid refresh token").
+    static func rejectsToken(_ response: HTTPURLResponse, _ data: Data) -> Bool {
+        if response.statusCode == 401 { return true }
+        guard response.statusCode == 403, let body = try? WireDecoder.loose(data) else { return false }
+        let code = body["error_code"]?.int
+        let message = body["error_msg"]?.string?.lowercased() ?? ""
+        return code == 222 || message == "wrong token format" || message == "invalid refresh token"
     }
 
     /// The current access token, refreshed if it is about to expire. For URLs that need it in a query.
@@ -157,19 +169,27 @@ public actor CloudSession {
         return try await task.value
     }
 
+    /// Renews the token. A renewal the Cloud turns away is asked once more before it counts: only two
+    /// refusals in a row are a confirmed `authenticationRequired`. Even then the saved session (account and
+    /// tokens) is kept, so the app keeps his name, his shelf and his place, and asks him to sign in again;
+    /// only `signOut()` forgets it. A failure that isn't a refusal (offline, a 5xx, a cancelled call)
+    /// changes nothing.
     private func performRefresh(_ old: CloudToken) async throws -> CloudToken {
         let startedIn = generation
         guard let refreshToken = old.refreshToken, var session = stored else {
-            await signOut()
             throw CloudError.authenticationRequired
         }
         let endpoint = Endpoint(method: "POST", path: "/auth/renew-token",
                                 body: .form(["grant_type": "refresh_token", "refresh_token": refreshToken]))
-        let (data, response) = try await perform(endpoint, bearer: old.accessToken)
-        guard generation == startedIn, !Task.isCancelled else { throw CloudError.notSignedIn }
-        if [400, 401, 403].contains(response.statusCode) { // the grant is dead
-            await signOut()
-            throw CloudError.authenticationRequired
+        var (data, response) = try await perform(endpoint, bearer: old.accessToken)
+        guard generation == startedIn else { throw CloudError.notSignedIn }
+        if Task.isCancelled { throw CancellationError() }
+        if [400, 401, 403].contains(response.statusCode) {
+            // Once more before believing it: a refusal can be a hiccup (two renewals racing, a proxy).
+            (data, response) = try await perform(endpoint, bearer: old.accessToken)
+            guard generation == startedIn else { throw CloudError.notSignedIn }
+            if Task.isCancelled { throw CancellationError() }
+            if [400, 401, 403].contains(response.statusCode) { throw CloudError.authenticationRequired }
         }
         try Self.check(response, data)
         var token = try WireDecoder.token(data, now: now())

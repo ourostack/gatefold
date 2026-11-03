@@ -344,7 +344,7 @@ struct RootView: View {
                 app.activeReader = model
                 app.openBookID = book.id
             } catch {
-                openError = error.localizedDescription
+                openError = FriendlyError.message(for: error)
             }
         }
     }

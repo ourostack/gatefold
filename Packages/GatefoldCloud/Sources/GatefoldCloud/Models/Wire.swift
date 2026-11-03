@@ -106,10 +106,11 @@ enum WireDecoder {
                             quotaBytes: j["files_size_limit"]?.int, usedBytes: j["files_size"]?.int)
     }
 
-    static func booksPage(_ data: Data) throws -> (total: Int, items: [CloudBook]) {
+    /// One page of `/books`: `listed` counts every entry, `items` only the ones we could read.
+    static func booksPage(_ data: Data) throws -> (total: Int, items: [CloudBook], listed: Int) {
         let j = try loose(data)
         guard let items = j["items"]?.array else { throw WireError.unexpectedShape("books.items") }
-        return (Int(j["total"]?.int ?? Int64(items.count)), items.compactMap(book))
+        return (Int(j["total"]?.int ?? Int64(items.count)), items.compactMap(book), items.count)
     }
 
     static func uploadResponse(_ data: Data) throws -> CloudBook {

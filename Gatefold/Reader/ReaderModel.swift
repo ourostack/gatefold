@@ -211,7 +211,7 @@ final class ReaderModel {
                 preferences: Self.epubPreferences(prefs, theme: prefs.resolvedTheme(systemIsDark: false), columns: .one, language: Self.hyphenationLanguage(publication))
             )
         } catch {
-            errorMessage = "This book couldn't be opened: \(error.localizedDescription)"
+            errorMessage = FriendlyError.unreadable.message
         }
         if LaunchOptions.showChrome { chromeVisible = true }
     }

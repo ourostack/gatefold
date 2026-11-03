@@ -60,6 +60,8 @@ final class AppModel {
         return true
     }
 
+    static var keychainRetryDelay: Duration = .seconds(1)
+
     private enum Keys {
         static let onboarded = "onboarded"
         static let preferences = "readerPreferences"
@@ -124,11 +126,26 @@ final class AppModel {
         return PocketBookCloud(configuration: .init(storageDirectory: storage))
     }
 
+    /// Every window runs `start()` (the Duo can show more than one scene); only the first one starts.
+    @ObservationIgnored private var startCalled = false
+
     func start() async {
+        guard !startCalled else { return }
+        startCalled = true
         // A clean start forgets the Cloud sign-in too (its tokens live in the Keychain, which survives reinstalls).
         // The fake Cloud's sign-in comes from its own launch argument, so a reset leaves it alone.
         if LaunchOptions.resetState, !LaunchOptions.fakeCloud, await sync.account != nil { await sync.signOut() }
-        let saved = await sync.account
+        var saved = await sync.account
+        if saved == nil, accountInitial != nil {
+            // Signed in last time, yet nothing reads back: the Keychain can read empty for a moment (a
+            // prewarmed launch, data protection). Look again before calling it signed out.
+            for _ in 0..<3 where saved == nil {
+                try? await Task.sleep(for: Self.keychainRetryDelay)
+                saved = await sync.account
+            }
+            // The window that started us closed mid-wait: leave the account alone for the next one to read.
+            if saved == nil, Task.isCancelled { startCalled = false; return }
+        }
         hasStarted = true
         account = saved
         if saved == nil { accountInitial = nil }
