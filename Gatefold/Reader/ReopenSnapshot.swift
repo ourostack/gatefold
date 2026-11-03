@@ -142,6 +142,9 @@ enum ReopenSnapshot {
 /// The saved page, full-window, while the live one lays out beneath it.
 struct ReopenPictureView: View {
     let image: UIImage
+    /// A turn asked for on the picture (forward or back), played once the live page is up.
+    var onTurn: (Bool) -> Void = { _ in }
+    @State private var width: CGFloat = 0
 
     var body: some View {
         Image(uiImage: image)
@@ -150,7 +153,33 @@ struct ReopenPictureView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .ignoresSafeArea()
             .accessibilityIdentifier("reader.reopenPicture")
-            // A touch waits for the live page: a turn under the picture would move the page it shows.
+            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
+            // The picture can't turn, but a turn asked of it isn't lost: the same edges and swipes as
+            // the live page, kept until it is up beneath (`ReaderModel.playQueuedTurn`).
             .contentShape(.rect)
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onEnded { value in
+                        readerLog.notice("reopen: touch on the picture at x \(Int(value.startLocation.x), privacy: .public) moved \(Int(value.translation.width), privacy: .public),\(Int(value.translation.height), privacy: .public) of width \(Int(width), privacy: .public)")
+                        if let forward = ReopenTurn.forward(start: value.startLocation, translation: value.translation, width: width) {
+                            onTurn(forward)
+                        }
+                    }
+            )
+    }
+}
+
+/// Which way a touch on the reopen picture turns, by the live page's rules: a horizontal swipe turns
+/// against its direction; a tap in the outer quarter turns that way; anything else turns nothing.
+enum ReopenTurn {
+    static func forward(start: CGPoint, translation: CGSize, width: CGFloat) -> Bool? {
+        if abs(translation.width) > 30, abs(translation.width) > abs(translation.height) {
+            return translation.width < 0
+        }
+        guard abs(translation.width) < 12, abs(translation.height) < 12, width > 0 else { return nil }
+        let edge = width * 0.25
+        if start.x < edge { return false }
+        if start.x > width - edge { return true }
+        return nil
     }
 }

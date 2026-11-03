@@ -383,11 +383,23 @@ final class ReaderModel {
     /// The cover gives way to the page. A reopen's picture of the page stays over it a moment longer,
     /// while the running head and footer come up beneath, then goes at once: the two are the same
     /// page, so nothing moves.
+    func queueReopenTurn(forward: Bool) { app.queueReopenTurn(forward: forward) }
+
+    /// Plays the turn asked of the reopen picture, now the live page is up.
+    private func playQueuedTurn() {
+        guard let forward = app.reopenQueuedTurn else { return }
+        app.reopenQueuedTurn = nil
+        readerLog.notice("reopen: played the kept \(forward ? "forward" : "back", privacy: .public) turn at \(LaunchClock.sinceLaunch, privacy: .public) s after launch")
+        host?.turn(forward: forward)
+    }
+
     private func showPage() {
         withAnimation(.easeOut(duration: 0.3)) { pageReady = true }
         guard reopenPicture != nil else { return }
         Task {
-            try? await Task.sleep(for: .milliseconds(400))
+            // Long enough for the page's first paint to be the one that stays (two equal pictures of
+            // it in a row); 400 ms here only made the picture stand longer.
+            try? await Task.sleep(for: .milliseconds(100))
             await host?.waitForSettledPage()
             let same = reopenPageFrame.map { abs($0.minY - layout.pageFrame.minY) < 1 && abs($0.height - layout.pageFrame.height) < 1 && abs($0.width - layout.pageFrame.width) < 1 } ?? true
             if same {
@@ -396,6 +408,7 @@ final class ReaderModel {
                 reopenFades = true
                 withAnimation(.easeInOut(duration: 0.3)) { reopenPicture = nil }
             }
+            playQueuedTurn()
             readerLog.notice("reopen: the live page took the picture's place at \(LaunchClock.sinceLaunch, privacy: .public) s after launch (\(same ? "same layout, swapped" : "laid out differently, faded", privacy: .public))")
         }
     }

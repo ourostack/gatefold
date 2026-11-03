@@ -38,7 +38,27 @@ final class BookOpener {
         }
     }
 
+    /// A book opened ahead of its reader (the one being reopened at launch), handed to the first `open`.
+    private var early: (url: URL, task: Task<Opened, Error>)?
+
+    /// Readium's publication crossing from the opening task to the reader that asked: it is only ever
+    /// used by one of them at a time.
+    private struct Opened: @unchecked Sendable { let publication: Publication }
+
+    /// Starts opening `url` now, before anything asks for it.
+    func openEarly(_ url: URL) {
+        early = (url, Task { Opened(publication: try await self.parse(url)) })
+    }
+
     func open(_ url: URL) async throws -> Publication {
+        if let early, early.url == url {
+            self.early = nil
+            return try await early.task.value.publication
+        }
+        return try await parse(url)
+    }
+
+    private func parse(_ url: URL) async throws -> Publication {
         guard let fileURL = FileURL(url: url) else { throw OpenError.unreadable("The file is missing.") }
         // Readium 3 predates strict concurrency; its retriever and opener are only used from here.
         nonisolated(unsafe) let retriever = assetRetriever

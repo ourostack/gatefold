@@ -25,7 +25,11 @@ struct GatefoldApp: App {
                 Task { await app.didBecomeActive() }
             case .inactive:
                 // He may be leaving: picture the page while it can still be drawn, for a reopen.
-                if let reader = app.activeReader, !reader.isWarming { ReopenSnapshot.keep(model: reader) }
+                if let reader = app.activeReader, !reader.isWarming {
+                    ReopenSnapshot.keep(model: reader)
+                } else {
+                    readerLog.notice("reopen: leaving with no reader open (\(app.activeReader == nil ? "none" : "a warm one", privacy: .public))")
+                }
                 app.library.flushPushes()
             case .background:
                 // Finish sending the place even if the app is suspended mid-request.
@@ -131,7 +135,7 @@ struct RootView: View {
         }
         .overlay {
             if let picture = reopenPicture, reader?.reopenPicture != nil || reader == nil {
-                ReopenPictureView(image: picture.image)
+                ReopenPictureView(image: picture.image) { app.queueReopenTurn(forward: $0) }
                     .onAppear {
                         readerLog.notice("reopen: his page on screen at \(LaunchClock.sinceLaunch, privacy: .public) s after launch (saved \(picture.meta.savedAt.formatted(.iso8601), privacy: .public))")
                     }

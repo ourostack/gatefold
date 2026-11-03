@@ -46,6 +46,14 @@ final class AppModel {
     }
     /// The book being reopened at launch, until its reader is up.
     var reopenBookID: String?
+    /// The first turn asked for on the reopen picture (true is forward), played when the live page lands.
+    var reopenQueuedTurn: Bool?
+
+    func queueReopenTurn(forward: Bool) {
+        guard reopenQueuedTurn == nil else { return }
+        reopenQueuedTurn = forward
+        readerLog.notice("reopen: a \(forward ? "forward" : "back", privacy: .public) turn asked of the picture at \(LaunchClock.sinceLaunch, privacy: .public) s after launch; kept for the live page")
+    }
 
     private enum Keys {
         static let onboarded = "onboarded"
@@ -92,6 +100,8 @@ final class AppModel {
         if LaunchOptions.openBook == nil, LaunchOptions.allowsReopen, hasOnboarded,
            let id = UserDefaults.standard.string(forKey: Keys.reopenBook) {
             reopenBookID = id
+            // His book is what the first frames are for: start reading it in before the shelf.
+            if let book = library.book(id), let url = library.fileURL(of: book) { BookOpener.shared.openEarly(url) }
         }
         self.openBookID = LaunchOptions.openBook ?? reopenBookID
     }
