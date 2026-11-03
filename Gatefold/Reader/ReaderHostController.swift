@@ -414,8 +414,23 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             try? await Task.sleep(for: .milliseconds(550))
             guard !Task.isCancelled, let self, self.weakModel != nil else { return }
             await self.restoreAnchor(generation: generation)
+            if generation == self.reflowGeneration { self.settledGeneration = generation; self.reflowRetries = 0 }
+        }
+        // A reflow that begins before the book's web view has loaded (a spread opened straight onto a
+        // place, cold) can wait forever on its first script; the page then stays covered. If this one
+        // hasn't settled well past its own budgets (3 s to lay out, 4 s to jump), start it again: the stalled one is no longer current and
+        // gives way as soon as it wakes.
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(12))
+            guard let self, generation == self.reflowGeneration, self.settledGeneration != generation,
+                  self.weakModel != nil, self.reflowRetries < 3 else { return }
+            self.reflowRetries += 1
+            readerLog.notice("reflow: no settle after 12 s; starting it again (\(self.reflowRetries, privacy: .public))")
+            self.settleReflowSoon()
         }
     }
+    private var settledGeneration = -1
+    private var reflowRetries = 0
 
     private func restoreAnchor(generation: Int) async {
         // A newer reflow may begin during any await below; it owns the restore from then on.
@@ -783,6 +798,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         let found = json.flatMap { $0.data(using: .utf8) }.flatMap { try? JSONDecoder().decode(Found.self, from: $0) }
         weakModel?.heading = found?.heading.map(ReaderJS.tidyHeading)
         weakModel?.contentsFragment = found?.contents
+        readerLog.notice("anchor: heading \(found?.heading ?? "none", privacy: .public) contents \(found?.contents ?? "none", privacy: .public) in \(location.href.string, privacy: .public)")
         let anchor = ReadingAnchor(
             href: location.href.string,
             progression: location.locations.progression ?? 0,
@@ -808,6 +824,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         guard let model = weakModel else { return }
         if model.location == nil { readerLog.notice("open: navigator reports a place after \(Date().timeIntervalSince(model.openedAt), privacy: .public) s") }
         disablePanningIfNeeded()
+        publishTextBand()
         Task { await model.locationDidChange(locator, duringTurn: isTurning) }
     }
 
@@ -856,6 +873,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
                 let moved = forward ? await navigator.goForward(options: .init(animated: true)) : await navigator.goBackward(options: .init(animated: true))
                 isTurning = false
                 if moved { weakModel?.userTurnedPage() } else if forward { weakModel?.reachedEnd() }
+                if moved, Self.probesLanding { let drawn = liveWebFrames(); Task { await reportLanding(drawn: drawn) } }
             }
         case .curl, .fade:
             Task { await animatedTurn(forward: forward, from: nil) }
@@ -918,6 +936,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         // Wait until the destination has painted and stopped changing (a spread lays out two
         // columns; caught halfway it ghosts).
         curl.beneath = await renderedSnapshot(afterChange: true)
+        beneathFrames = lastSnapshotFrames
         #if DEBUG
         if ProcessInfo.processInfo.environment["GATEFOLD_DUMP_SNAPSHOTS"] != nil || UserDefaults.standard.bool(forKey: "GatefoldDumpSnapshots") {
             let dir = URL.temporaryDirectory
@@ -936,8 +955,21 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             try? await Task.sleep(for: .milliseconds(240))
         } else {
             let target = complete ? turnedTarget() : curl.corner
-            withAnimation(.timingCurve(0.3, 0.1, 0.25, 1, duration: duration)) { curl.finger = target }
-            try? await Task.sleep(for: .seconds(duration + 0.02))
+            // The overlay lifts when the leaf has landed, not on a timer: on a busy device a timer
+            // can end the turn with the leaf still beside the page, and the page then snaps in.
+            // A timer a little past the curve's end backs it up, in case the completion never comes
+            // (the book closed or the view left the window mid-turn); whichever is first resumes.
+            await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+                var resumed = false
+                let resume = { if !resumed { resumed = true; c.resume() } }
+                withAnimation(.timingCurve(0.3, 0.1, 0.25, 1, duration: duration), completionCriteria: .removed) {
+                    curl.finger = target
+                } completion: { resume() }
+                Task { @MainActor in
+                    try? await Task.sleep(for: .seconds(duration + 0.25))
+                    resume()
+                }
+            }
         }
         if !complete {
             // Put the navigator back where it was before lifting the overlay.
@@ -946,8 +978,10 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
                 : await navigator.goBackward(options: .init(animated: false))
             try? await Task.sleep(for: .milliseconds(120))
         }
+        let uncovered = curl.beneath
         curl.reset()
         isTurning = false
+        if complete, Self.probesLanding { let drawn = beneathFrames; Task { await reportLanding(drawn: drawn, image: uncovered) } }
         // Record the place once the turn has landed, not while the overlay hid it. A turn that sprang
         // back is no move: just take the anchor again from the page that's showing.
         if complete {
@@ -981,6 +1015,8 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         try? await Task.sleep(for: .seconds(0.44))
         return true
     }
+
+    private var beneathFrames: [CGRect] = []
 
     private func turnedTarget() -> CGPoint {
         let t = curl.turnedFinger
@@ -1388,6 +1424,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             v.subviews.forEach(walk)
         }
         walk(host)
+        lastSnapshotFrames = webs.map(\.1)
         var parts: [(UIImage, CGRect)] = []
         for (web, frame) in webs {
             let config = WKSnapshotConfiguration()
@@ -1413,6 +1450,72 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     /// Returns once the page on screen has painted and stopped changing.
     func waitForSettledPage() async {
         _ = await renderedSnapshot(afterChange: true)
+    }
+
+    /// Where the web views sat in the host for the last snapshot: the turn's leaf and the page beneath
+    /// are drawn from them, so the live page must be at the same place when the overlay lifts.
+    private(set) var lastSnapshotFrames: [CGRect] = []
+    private var landedTurns = 0
+
+    /// The visible web views' frames in the host now.
+    private func liveWebFrames() -> [CGRect] {
+        let host = navigator.view!
+        var out: [CGRect] = []
+        func walk(_ v: UIView) {
+            if let w = v as? WKWebView {
+                let frame = w.convert(w.bounds, to: host)
+                if !w.isHidden, w.alpha > 0.01, frame.intersects(host.bounds) { out.append(frame) }
+                return
+            }
+            v.subviews.forEach(walk)
+        }
+        walk(host)
+        return out
+    }
+
+    /// After a turn: did the page beneath the overlay (as drawn) and the live page agree, and did the
+    /// live page stay put once the overlay lifted? Logged always; published for UI tests.
+    /// Where the words begin and end on the page, from the web views themselves.
+    private func publishTextBand() {
+        let frames = liveWebFrames()
+        guard let first = frames.first else { return }
+        let text = frames.dropFirst().reduce(first) { $0.union($1) }
+        let band = (top: max(0, text.minY), bottom: max(0, navigator.view.bounds.height - text.maxY))
+        if let model = weakModel, model.textBand != band { model.textBand = band }
+    }
+
+    /// The landing probe only runs in debug builds and UI tests: it costs a snapshot per turn.
+    private static let probesLanding: Bool = {
+        #if DEBUG
+        true
+        #else
+        ProcessInfo.processInfo.arguments.contains("-GatefoldUITest")
+        #endif
+    }()
+
+    private func reportLanding(drawn: [CGRect], image: UIImage? = nil) async {
+        let overlay = curlHost.view.convert(curlHost.view.bounds, to: nil)
+        let page = navigator.view.convert(navigator.view.bounds, to: nil)
+        let atLift = liveWebFrames()
+        try? await Task.sleep(for: .milliseconds(500))
+        let rest = liveWebFrames()
+        func close(_ a: [CGRect], _ b: [CGRect]) -> Bool {
+            a.count == b.count && zip(a.sorted { $0.minX < $1.minX }, b.sorted { $0.minX < $1.minX }).allSatisfy {
+                abs($0.minX - $1.minX) < 0.5 && abs($0.minY - $1.minY) < 0.5 && abs($0.width - $1.width) < 0.5
+            }
+        }
+        let overlayOK = abs(overlay.minX - page.minX) < 0.5 && abs(overlay.width - page.width) < 0.5
+        // The words too: the picture the leaf uncovered and the live page, a moment later, are one page.
+        var sameWords = true
+        if let image, let before = PageSignature(image), let after = PageSignature(await snapshot()) {
+            sameWords = before.matches(after)
+        }
+        let inPlace = overlayOK && close(drawn, atLift) && close(atLift, rest) && sameWords
+        landedTurns += 1
+        func list(_ r: [CGRect]) -> String { r.map { "\(Int($0.minX)),\(Int($0.minY)) \(Int($0.width))x\(Int($0.height))" }.joined(separator: "; ") }
+        let line = "landed \(landedTurns) overlay \(Int(overlay.minX)) page \(Int(page.minX)) drawn [\(list(drawn))] lift [\(list(atLift))] rest [\(list(rest))] words \(sameWords ? "same" : "differ") " + (inPlace ? "in place" : "moved")
+        readerLog.notice("turn: \(line, privacy: .public)")
+        weakModel?.turnPlacement = line
     }
 
     func renderedSnapshot(afterChange: Bool) async -> UIImage {

@@ -9,8 +9,9 @@ struct ReaderScreen: View {
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var hinge: HingeState = .none
-    @State private var showAppearance = LaunchOptions.sheet == "appearance"
+    @State private var showAppearance = LaunchOptions.sheet == "appearance" || LaunchOptions.sheet == "customize"
     @State private var showContents = LaunchOptions.sheet == "contents"
+    @State private var showSearch = LaunchOptions.sheet == "search"
     /// A posture forced for screenshots and UI tests; nil follows the device.
     @State private var forced: Posture? = LaunchOptions.forcedPosture
     /// The unfold leaf: its angle about the spine, and how much of it shows.
@@ -107,9 +108,24 @@ struct ReaderScreen: View {
                     clearance: clearance,
                     onClose: onClose,
                     showAppearance: $showAppearance,
-                    showContents: $showContents
+                    showContents: $showContents,
+                    showSearch: $showSearch
                 )
                 .frame(width: proxy.size.width, height: layout.deck == nil ? proxy.size.height : layout.pageFrame.height)
+
+                if showAppearance {
+                    // Low over the page (or the spread), inside the safe area, the top of the page in view.
+                    SettingsPanel(model: model, width: proxy.size.width) { showAppearance = false }
+                        .frame(maxWidth: 560)
+                        .frame(maxHeight: max(200, proxy.size.height - max(proxy.safeAreaInsets.top, 16) - max(proxy.safeAreaInsets.bottom, 16) - 16))
+                        .padding(.leading, 16 + max(proxy.safeAreaInsets.leading, clearance.leading))
+                        .padding(.trailing, 16 + max(proxy.safeAreaInsets.trailing, clearance.trailing))
+                        .padding(.bottom, max(proxy.safeAreaInsets.bottom, 16))
+                        .frame(width: proxy.size.width, height: proxy.size.height, alignment: .bottom)
+                        // It grows out of the pill's corner, where Your Page was tapped.
+                        .transition(reduceMotion ? .opacity : .scale(scale: 0.3, anchor: .bottomTrailing).combined(with: .opacity))
+                        .zIndex(5)
+                }
 
                 if let tab = model.aheadTab, model.slipFolded, model.slip != nil {
                     // Hangs from the page's top edge in its margin, beside the binding: never on a line.
@@ -183,8 +199,9 @@ struct ReaderScreen: View {
         .preferredColorScheme(model.theme.colorScheme)
         .statusBarHidden(!model.chromeVisible || coverScreen)
         .persistentSystemOverlays(model.chromeVisible ? .automatic : .hidden)
-        .sheet(isPresented: $showAppearance) {
-            AppearanceSheet(model: model)
+        .animation(reduceMotion ? .easeOut(duration: 0.2) : Motion.open, value: showAppearance)
+        .sheet(isPresented: $showSearch) {
+            SearchSheet(model: model)
         }
         .sheet(isPresented: $showContents) {
             ContentsSheet(model: model)
@@ -223,12 +240,8 @@ struct ReaderScreen: View {
                     .accessibilityIdentifier("reader.page")
             }
 
-            if let gutter = layout.gutter {
-                SpineShade(theme: model.theme, depth: min(1, layout.spineShadow))
-                    .frame(width: gutter.width * 2, height: gutter.height)
-                    .offset(x: gutter.midX - gutter.width, y: gutter.minY)
-                    .allowsHitTesting(false)
-            } else if leafFolding, leafOpacity > 0 {
+            // The spread is plain paper: the two pages meet with nothing between them but their margins.
+            if layout.gutter == nil, leafFolding, leafOpacity > 0 {
                 UnfoldLeaf(theme: model.theme, angle: leafAngle, opacity: leafOpacity)
                     .frame(width: layout.pageFrame.width / 2, height: layout.pageFrame.height)
                     .offset(x: layout.pageFrame.midX, y: layout.pageFrame.minY)
@@ -324,6 +337,12 @@ struct ReaderScreen: View {
                 .accessibilityLabel(model.anchorCheck)
                 .accessibilityValue(model.anchorDetail)
                 .allowsHitTesting(false)
+            Text("turn placement")
+                .font(.system(size: 1))
+                .opacity(0.01)
+                .accessibilityIdentifier("reader.turnPlacement")
+                .accessibilityLabel(model.turnPlacement)
+                .allowsHitTesting(false)
             Text(layout.posture.rawValue)
                 .font(.system(size: 1))
                 .opacity(0.01)
@@ -387,9 +406,8 @@ struct ReaderScreen: View {
             let right = (max(layout.pageFrame.minX + side, camera.maxX + 14), layout.pageFrame.maxX - side)
             let (start, end) = left.1 - left.0 >= right.1 - right.0 ? left : right
             Text(words)
-                .font(.system(.caption, design: .serif).smallCaps())
-                .tracking(0.8)
-                .foregroundStyle(model.theme.text.opacity(0.42))
+                .font(.caption)
+                .foregroundStyle(model.theme.head)
                 .lineLimit(1)
                 .truncationMode(.tail)
                 .frame(width: max(0, end - start), height: camera.height, alignment: .leading)
@@ -401,7 +419,67 @@ struct ReaderScreen: View {
                 .allowsHitTesting(false)
                 .accessibilityIdentifier("reader.runningHead")
                 .accessibilityLabel(words)
+            pageNumbers(pages: [layout.pageFrame], hidden: hidden)
+        } else if layout.deck == nil {
+            pageFurniture(layout: layout, hidden: hidden)
         }
+    }
+
+    /// A page number centred in the band under each page's words.
+    @ViewBuilder
+    private func pageNumbers(pages: [CGRect], hidden: Bool) -> some View {
+        let first = model.chapterMap.page(at: model.totalProgression)
+        let count = model.chapterMap.positionCount
+        let band = model.textBand.bottom
+        if count > 1 {
+            ZStack(alignment: .topLeading) {
+                ForEach(Array(pages.enumerated()), id: \.offset) { i, r in
+                    Text("\(min(count, first + i))")
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(model.theme.head)
+                        .frame(width: r.width, height: band)
+                        .offset(x: r.minX, y: r.maxY - band)
+                        .accessibilityIdentifier("reader.pageNumber")
+                }
+            }
+            .opacity(hidden || !model.pageReady ? 0 : 1)
+            .animation(.easeOut(duration: 0.25), value: hidden)
+            .allowsHitTesting(false)
+        }
+    }
+
+    /// Running heads and page numbers, the way a printed page carries them: quiet grey SF centred in
+    /// the bands above and below the words. On a spread the left page is headed with the book, the
+    /// right with the chapter; a single page with the chapter. Numbers are Gatefold's pages (Readium
+    /// positions, about a printed page each), so a spread shows two in a row.
+    @ViewBuilder
+    private func pageFurniture(layout: ReaderLayout, hidden: Bool) -> some View {
+        let band = model.textBand
+        let frame = layout.pageFrame
+        let pages: [CGRect] = layout.gutter.map { g in
+            [CGRect(x: frame.minX, y: frame.minY, width: g.midX - frame.minX, height: frame.height),
+             CGRect(x: g.midX, y: frame.minY, width: frame.maxX - g.midX, height: frame.height)]
+        } ?? [frame]
+        let chapter = model.runningHead ?? model.title
+        let heads = pages.count == 2 ? [model.title, chapter] : [chapter]
+        ZStack(alignment: .topLeading) {
+            ForEach(Array(pages.enumerated()), id: \.offset) { i, r in
+                Text(heads[i])
+                    .font(.caption)
+                    .foregroundStyle(model.theme.head)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .frame(width: max(0, r.width - 96), height: band.top)
+                    .offset(x: r.minX + 48, y: r.minY)
+                    .accessibilityIdentifier(i == pages.count - 1 ? "reader.runningHead" : "reader.runningHead.book")
+                    .accessibilityLabel(heads[i])
+            }
+            pageNumbers(pages: pages, hidden: false)
+        }
+        .opacity(hidden || !model.pageReady ? 0 : 1)
+        .animation(.easeOut(duration: 0.25), value: hidden)
+        .animation(.easeOut(duration: 0.18), value: chapter)
+        .allowsHitTesting(false)
     }
 
     func pageTopClearance(_ layout: ReaderLayout, clearance: ChromeClearance) -> CGFloat {
@@ -489,28 +567,6 @@ struct ReaderScreen: View {
         guard let back = LaunchOptions.flipBackAfter else { return }
         try? await Task.sleep(for: .seconds(back))
         forced = before ?? .single
-    }
-}
-
-/// The shadow where facing pages meet, deeper as the device bends.
-private struct SpineShade: View {
-    let theme: ReaderTheme
-    let depth: Double
-
-    var body: some View {
-        let strength = (theme.palette.isDark ? 0.45 : 0.10) + depth * 0.18
-        LinearGradient(
-            stops: [
-                .init(color: .clear, location: 0),
-                .init(color: .black.opacity(strength * 0.35), location: 0.38),
-                .init(color: .black.opacity(strength), location: 0.5),
-                .init(color: .black.opacity(strength * 0.35), location: 0.62),
-                .init(color: .clear, location: 1),
-            ],
-            startPoint: .leading,
-            endPoint: .trailing
-        )
-        .blendMode(theme.palette.isDark ? .normal : .multiply)
     }
 }
 

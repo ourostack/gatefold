@@ -25,6 +25,7 @@ struct GatefoldApp: App {
                 .task { LaunchClock.firstFrame(); await WebWarmup.startUnlessABookOpens() }
                 #if DEBUG
                 .task { LaunchMarkRenderer.renderIfAsked() }
+                .task { await SystemInsetInjector.runIfAsked() }
                 #endif
         }
         .onChange(of: scenePhase) { _, phase in
@@ -405,3 +406,39 @@ private struct ZoomFromCover: ViewModifier {
         }
     }
 }
+
+#if DEBUG
+/// Tests only: `-GatefoldSystemInsets "top,leading,bottom,trailing"` (points) adds to the safe area the
+/// way the system's own does, through `additionalSafeAreaInsets` on every controller on screen, so the
+/// simulator can stand in for a device whose status column or camera sits at a side edge (the folded
+/// Duo's cover screen reports its status column as a trailing inset; the simulator never did).
+@MainActor
+enum SystemInsetInjector {
+    static var asked: UIEdgeInsets? {
+        guard let raw = UserDefaults.standard.string(forKey: "GatefoldSystemInsets") else { return nil }
+        let v = raw.split(separator: ",").compactMap { Double($0.trimmingCharacters(in: .whitespaces)) }
+        guard v.count == 4 else { return nil }
+        return UIEdgeInsets(top: v[0], left: v[1], bottom: v[2], right: v[3])
+    }
+
+    static func runIfAsked() async {
+        guard let insets = asked else { return }
+        readerLog.notice("insets: injecting system insets \(String(describing: insets), privacy: .public)")
+        // Presented screens (the reader, sheets) arrive later: keep every controller on screen covered.
+        while !Task.isCancelled {
+            for scene in UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }) {
+                for window in scene.windows {
+                    var vc = window.rootViewController
+                    while let c = vc {
+                        if c.additionalSafeAreaInsets != insets {
+                            c.additionalSafeAreaInsets = insets
+                        }
+                        vc = c.presentedViewController
+                    }
+                }
+            }
+            try? await Task.sleep(for: .milliseconds(250))
+        }
+    }
+}
+#endif

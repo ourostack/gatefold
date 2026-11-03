@@ -55,7 +55,7 @@ struct ReopenAdaptedTests {
         let paper = pixel(picture.image, CGPoint(x: 5, y: 5))
         #expect(paper.0 < 8 && paper.1 < 8 && paper.2 < 8)
         let ink = pixel(picture.image, CGPoint(x: 100, y: 150))
-        #expect(abs(Int(ink.0) - 0xC9) < 6 && abs(Int(ink.1) - 0xC4) < 6, "ink \(ink) paper \(paper)")
+        #expect(abs(Int(ink.0) - 0xB4) < 8 && abs(Int(ink.1) - 0xB4) < 8 && abs(Int(ink.2) - 0xB9) < 8, "ink \(ink) paper \(paper)")
     }
 
     @Test func anotherWindowSetsHisPageIntoIt() throws {

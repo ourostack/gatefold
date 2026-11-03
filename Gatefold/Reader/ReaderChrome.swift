@@ -1,7 +1,10 @@
 import GatefoldCore
 import SwiftUI
 
-/// Floating glass controls. Hidden until the middle of the page is tapped; every target is 44 pt.
+/// Floating glass controls, each its own piece of glass at the page's corners and edge, with no bar
+/// across the top or bottom: Bookmark top-leading, Close top-trailing, and down the trailing edge one
+/// vertical pill (Contents, Share, Your Page) with Search beneath it. Hidden until the middle
+/// of the page is tapped; every target is 44 pt.
 struct ReaderChrome: View {
     let model: ReaderModel
     let layout: ReaderLayout
@@ -11,26 +14,48 @@ struct ReaderChrome: View {
     var onClose: () -> Void
     @Binding var showAppearance: Bool
     @Binding var showContents: Bool
+    @Binding var showSearch: Bool
 
     var body: some View {
-        VStack(spacing: 0) {
-            if model.chromeVisible {
-                topBar
-                    .padding(.leading, 16 + clearance.leading)
-                    .padding(.trailing, 16 + clearance.trailing)
+        // Inside the safe area on both sides, and clear of the camera's column where there is one.
+        let lead = 16 + max(insets.leading, clearance.leading)
+        let trail = 16 + max(insets.trailing, clearance.trailing)
+        let up = model.chromeVisible && layout.deck == nil
+        ZStack {
+            // A breath of ink over the page while the controls are up, so they read as a layer above it.
+            // None while Your Page is open: every change shows on the page as it is.
+            if up && !showAppearance {
+                model.theme.text.opacity(0.06)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+                    .transition(.opacity)
+            }
+            VStack(spacing: 0) {
+                if model.chromeVisible {
+                    HStack(spacing: 12) {
+                        bookmarkButton
+                        Spacer(minLength: 0)
+                        GlassIconButton(systemName: "xmark", label: "Close Book", id: "reader.close", action: onClose)
+                    }
+                    .padding(.leading, lead)
+                    .padding(.trailing, trail)
                     .padding(.top, 8)
                     .transition(.move(edge: .top).combined(with: .opacity))
+                }
+                Spacer(minLength: 0)
+                if layout.deck == nil {
+                    bottomRow(trail: trail)
+                        .padding(.leading, lead)
+                        .padding(.trailing, trail)
+                        .padding(.bottom, 8)
+                }
             }
-            Spacer(minLength: 0)
-            if layout.deck == nil {
-                bottomBar
-                    .padding(.horizontal, 16)
-                    .padding(.bottom, 8)
-            }
+            .safeAreaPadding(.vertical, 4)
+            .padding(.top, Self.safeTop(insets))
+            .padding(.bottom, max(insets.bottom, 12))
         }
-        .safeAreaPadding(.vertical, 4)
-        .padding(.top, Self.safeTop(insets))
-        .padding(.bottom, max(insets.bottom, 12))
+        .animation(Motion.chrome, value: up)
+        .animation(Motion.chrome, value: showAppearance)
         .tint(model.theme.text)
         .environment(\.glassTint, model.theme.background.opacity(0.7))
     }
@@ -69,77 +94,98 @@ struct ReaderChrome: View {
         .accessibilityValue(model.isBookmarked ? "Bookmarked" : "")
     }
 
-    private var topBar: some View {
-        HStack(spacing: 12) {
-            GlassIconButton(systemName: "xmark", label: "Close Book", id: "reader.close", action: onClose)
-            // On the cover screen the camera takes the trailing corner: Bookmark moves beside Close.
-            if clearance.bookmarkLeading { bookmarkButton }
-            Spacer(minLength: 0)
-            VStack(spacing: 1) {
-                Text(model.title)
-                    .font(.display(.subheadline))
-                    .lineLimit(1)
-                if let chapter = model.runningHead, chapter != model.title {
-                    Text(chapter)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
+    private func bottomRow(trail: CGFloat) -> some View {
+        HStack(alignment: .bottom, spacing: 12) {
+            VStack(spacing: 8) {
+                // After a Jump the way back stays up for a while, with or without the controls.
+                if let back = model.backLocator, model.backPage != nil, model.chromeVisible || model.showJumpBack {
+                    Button {
+                        Task { await model.goBack() }
+                    } label: {
+                        Label("Back to page \(model.backPage ?? 0)", systemImage: "arrow.uturn.backward")
+                            .font(.subheadline.weight(.medium))
+                            .padding(.horizontal, 14)
+                            .frame(minHeight: 36)
+                    }
+                    .frame(minHeight: 44)
+                    .buttonStyle(.glass(.regular.tint(model.theme.background.opacity(0.7))))
+                    .accessibilityIdentifier("reader.back")
+                    .id(back.locations.totalProgression)
+                    .transition(.scale.combined(with: .opacity))
+                }
+                if model.chromeVisible && !showAppearance {
+                    // Where you are in the book, and a scrubber to go anywhere: a slim floating capsule.
+                    VStack(spacing: 2) {
+                        Scrubber(model: model)
+                        HStack {
+                            Text(model.pageLabel)
+                            Spacer()
+                            if let left = model.pagesLeftLabel { Text(left) }
+                        }
+                        // Caption size, at 4.5:1 or better on the tinted glass in every theme.
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(model.theme.text.opacity(0.8))
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 6)
+                    .frame(maxWidth: 420)
+                    .readerGlass(model.theme.background.opacity(0.7), in: .capsule)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 7)
-            .readerGlass(model.theme.background.opacity(0.7), in: .capsule)
-            .accessibilityElement(children: .combine)
-            Spacer(minLength: 0)
-            if !clearance.bookmarkLeading { bookmarkButton }
+            .frame(maxWidth: .infinity)
+            if model.chromeVisible {
+                GlassEffectContainer(spacing: 10) {
+                    VStack(spacing: 10) {
+                        VStack(spacing: 0) {
+                            PillButton(systemName: "list.bullet", label: "Contents and Bookmarks", id: "reader.contents") { showContents = true }
+                            ShareLink(item: shareLine) {
+                                Image(systemName: "square.and.arrow.up")
+                                    .font(.system(size: 17, weight: .semibold))
+                                    .frame(width: 44, height: 44)
+                                    .contentShape(.rect)
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("Share")
+                            .accessibilityIdentifier("reader.share")
+                            PillButton(systemName: "textformat.size", label: "Your Page", id: "reader.appearance") { showAppearance = true }
+                        }
+                        .padding(.vertical, 4)
+                        .readerGlass(model.theme.background.opacity(0.7), interactive: true, in: .capsule)
+                        GlassIconButton(systemName: "magnifyingglass", label: "Search in Book", id: "reader.search") { showSearch = true }
+                    }
+                }
+                .foregroundStyle(model.theme.text)
+                .transition(.move(edge: .trailing).combined(with: .opacity))
+            }
         }
     }
 
-    private var bottomBar: some View {
-        VStack(spacing: 8) {
-            // After a Jump the way back stays up for a while, with or without the controls.
-            if let back = model.backLocator, model.backPage != nil, model.chromeVisible || model.showJumpBack {
-                Button {
-                    Task { await model.goBack() }
-                } label: {
-                    Label("Back to page \(model.backPage ?? 0)", systemImage: "arrow.uturn.backward")
-                        .font(.subheadline.weight(.medium))
-                        .padding(.horizontal, 14)
-                        .frame(minHeight: 36)
-                }
-                .frame(minHeight: 44)
-                .buttonStyle(.glass(.regular.tint(model.theme.background.opacity(0.7))))
-                .accessibilityIdentifier("reader.back")
-                .id(back.locations.totalProgression)
-                .transition(.scale.combined(with: .opacity))
-            }
-            if model.chromeVisible {
-            HStack(spacing: 10) {
-                GlassIconButton(systemName: "list.bullet", label: "Contents and Bookmarks", id: "reader.contents") {
-                    showContents = true
-                }
-                VStack(spacing: 2) {
-                    Scrubber(model: model)
-                    HStack {
-                        Text(model.pageLabel)
-                        Spacer()
-                        if let left = model.pagesLeftLabel { Text(left) }
-                    }
-                    // Caption size, at 4.5:1 or better on the tinted glass in every theme.
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(model.theme.text.opacity(0.8))
-                }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 6)
-                .readerGlass(model.theme.background.opacity(0.7), in: .capsule)
-                GlassIconButton(systemName: "textformat.size", label: "Appearance", id: "reader.appearance") {
-                    showAppearance = true
-                }
-            }
-            .transition(.move(edge: .bottom).combined(with: .opacity))
-            }
+    /// What Share hands on: the book, its chapter, and how far along.
+    private var shareLine: String {
+        var line = "Reading \(model.fullTitle)"
+        if let chapter = model.chapterTitle, chapter != model.title { line += ", \(chapter)" }
+        return line + " (\(ReadingPercent.whole(model.totalProgression))% in), with Gatefold."
+    }
+}
+
+/// One of the pill's buttons: a symbol in a 44 pt target, no glass of its own (the pill is the glass).
+private struct PillButton: View {
+    let systemName: String
+    let label: String
+    let id: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: 17, weight: .semibold))
+                .frame(width: 44, height: 44)
+                .contentShape(.rect)
         }
-        .frame(maxWidth: 720)
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
+        .accessibilityIdentifier(id)
     }
 }
 
