@@ -751,7 +751,8 @@ struct OutboxRaceTests {
 /// Waits until the fake has received a matching request, which it records before its delay, so the
 /// request is known to be in flight. Avoids fixed sleeps that flake on slow CI runners.
 func waitForRequest(_ transport: ScriptedTransport, _ method: String, _ path: String) async throws {
-    let deadline = ContinuousClock.now + .seconds(20)
+    // Generous: on the CI simulator every test can sit ~22 s before its first request goes out.
+    let deadline = ContinuousClock.now + .seconds(90)
     while await transport.requests(method, path).isEmpty, ContinuousClock.now < deadline {
         try await Task.sleep(for: .milliseconds(10))
     }
