@@ -3,9 +3,9 @@ import ReadiumShared
 import SwiftUI
 import UIKit
 
-/// Themes & Settings: a compact glass panel anchored low over the page, never a full-height sheet.
+/// Your Page: a compact glass panel anchored low over the page, never a full-height sheet.
 /// The top of the page stays in view above it and is never dimmed, so every theme, size and
-/// brightness change shows on the page as it happens. Customize goes on, inside the same panel,
+/// brightness change shows on the page as it happens. Fine-Tune goes on, inside the same panel,
 /// to the font and layout.
 struct SettingsPanel: View {
     let model: ReaderModel
@@ -58,7 +58,7 @@ struct SettingsPanel: View {
             } else {
                 RoundIcon(systemName: "xmark", label: "Close", id: "appearance.close", action: onClose)
             }
-            Text(customizing ? "Customize" : "Themes & Settings")
+            Text(customizing ? "Fine-Tune" : "Your Page")
                 .font(.headline)
                 .accessibilityAddTraits(.isHeader)
             Spacer(minLength: 0)
@@ -146,7 +146,7 @@ struct SettingsPanel: View {
             Button {
                 customizing = true
             } label: {
-                Label("Customize", systemImage: "gearshape")
+                Label("Fine-Tune", systemImage: "slider.horizontal.3")
                     .font(.subheadline.weight(.semibold))
                     .frame(maxWidth: 360, minHeight: 44)
                     .background(Color.primary.opacity(0.06), in: .capsule)
@@ -158,7 +158,7 @@ struct SettingsPanel: View {
         }
     }
 
-    // MARK: Customize
+    // MARK: Fine-Tune
 
     private var customize: some View {
         let prefs = model.preferences
@@ -225,7 +225,7 @@ struct SettingsPanel: View {
     }
 }
 
-/// A row in Customize: a symbol that shows the setting's own axis, its name, and its control.
+/// A row in Fine-Tune: a symbol that shows the setting's own axis, its name, and its control.
 private struct SettingRow<Control: View>: View {
     let symbol: String
     let title: String

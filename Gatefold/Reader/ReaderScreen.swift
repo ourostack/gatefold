@@ -121,7 +121,7 @@ struct ReaderScreen: View {
                         .padding(.trailing, 16 + max(proxy.safeAreaInsets.trailing, clearance.trailing))
                         .padding(.bottom, max(proxy.safeAreaInsets.bottom, 16))
                         .frame(width: proxy.size.width, height: proxy.size.height, alignment: .bottom)
-                        // It grows out of the pill's corner, where Themes & Settings was tapped.
+                        // It grows out of the pill's corner, where Your Page was tapped.
                         .transition(reduceMotion ? .opacity : .scale(scale: 0.3, anchor: .bottomTrailing).combined(with: .opacity))
                         .zIndex(5)
                 }

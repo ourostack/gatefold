@@ -125,10 +125,11 @@ struct ContentsSheet: View {
                         Text("Highlights").tag(2)
                     }
                     .pickerStyle(.segmented)
-                    .frame(width: 320)
+                    .frame(maxWidth: 320)
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { dismiss() }
+                    Button("Done", systemImage: "xmark") { dismiss() }
+                        .labelStyle(.iconOnly)
                 }
             }
         }

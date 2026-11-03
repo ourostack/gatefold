@@ -414,8 +414,23 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             try? await Task.sleep(for: .milliseconds(550))
             guard !Task.isCancelled, let self, self.weakModel != nil else { return }
             await self.restoreAnchor(generation: generation)
+            if generation == self.reflowGeneration { self.settledGeneration = generation }
+        }
+        // A reflow that begins before the book's web view has loaded (a spread opened straight onto a
+        // place, cold) can wait forever on its first script; the page then stays covered. If this one
+        // hasn't settled well past its own budgets (3 s to lay out, 4 s to jump), start it again: the stalled one is no longer current and
+        // gives way as soon as it wakes.
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(12))
+            guard let self, generation == self.reflowGeneration, self.settledGeneration != generation,
+                  self.weakModel != nil, self.reflowRetries < 3 else { return }
+            self.reflowRetries += 1
+            readerLog.notice("reflow: no settle after 12 s; starting it again (\(self.reflowRetries, privacy: .public))")
+            self.settleReflowSoon()
         }
     }
+    private var settledGeneration = -1
+    private var reflowRetries = 0
 
     private func restoreAnchor(generation: Int) async {
         // A newer reflow may begin during any await below; it owns the restore from then on.
@@ -783,6 +798,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         let found = json.flatMap { $0.data(using: .utf8) }.flatMap { try? JSONDecoder().decode(Found.self, from: $0) }
         weakModel?.heading = found?.heading.map(ReaderJS.tidyHeading)
         weakModel?.contentsFragment = found?.contents
+        readerLog.notice("anchor: heading \(found?.heading ?? "none", privacy: .public) contents \(found?.contents ?? "none", privacy: .public) in \(location.href.string, privacy: .public)")
         let anchor = ReadingAnchor(
             href: location.href.string,
             progression: location.locations.progression ?? 0,
@@ -939,8 +955,13 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             try? await Task.sleep(for: .milliseconds(240))
         } else {
             let target = complete ? turnedTarget() : curl.corner
-            withAnimation(.timingCurve(0.3, 0.1, 0.25, 1, duration: duration)) { curl.finger = target }
-            try? await Task.sleep(for: .seconds(duration + 0.02))
+            // The overlay lifts when the leaf has landed, not on a timer: on a busy device a timer
+            // can end the turn with the leaf still beside the page, and the page then snaps in.
+            await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+                withAnimation(.timingCurve(0.3, 0.1, 0.25, 1, duration: duration), completionCriteria: .removed) {
+                    curl.finger = target
+                } completion: { c.resume() }
+            }
         }
         if !complete {
             // Put the navigator back where it was before lifting the overlay.
@@ -982,8 +1003,11 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         lifted.beneath = await renderedSnapshot(afterChange: true)
         let t = lifted.turnedFinger
         let target = lifted.mirrored ? CGPoint(x: lifted.size.width - t.x, y: t.y) : t
-        withAnimation(.timingCurve(0.3, 0.1, 0.25, 1, duration: 0.42)) { lifted.finger = target }
-        try? await Task.sleep(for: .seconds(0.44))
+        await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+            withAnimation(.timingCurve(0.3, 0.1, 0.25, 1, duration: 0.42), completionCriteria: .removed) {
+                lifted.finger = target
+            } completion: { c.resume() }
+        }
         return true
     }
 

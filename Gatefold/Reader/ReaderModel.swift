@@ -932,6 +932,9 @@ final class ReaderModel {
             anchorCheck = "no-anchor \(reflowCount)"
         }
         refreshBookmarkState(visible)
+        // The page now showing names its own chapter in the running head (a spread opened onto a
+        // place is laid out by the reflow, after the first look at the words).
+        Task { _ = await page?.currentAnchor() }
     }
 
     func locator(for anchor: ReadingAnchor) -> Locator? {

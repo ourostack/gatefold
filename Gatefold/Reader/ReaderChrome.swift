@@ -3,7 +3,7 @@ import SwiftUI
 
 /// Floating glass controls, each its own piece of glass at the page's corners and edge, with no bar
 /// across the top or bottom: Bookmark top-leading, Close top-trailing, and down the trailing edge one
-/// vertical pill (Contents, Share, Themes & Settings) with Search beneath it. Hidden until the middle
+/// vertical pill (Contents, Share, Your Page) with Search beneath it. Hidden until the middle
 /// of the page is tapped; every target is 44 pt.
 struct ReaderChrome: View {
     let model: ReaderModel
@@ -23,7 +23,7 @@ struct ReaderChrome: View {
         let up = model.chromeVisible && layout.deck == nil
         ZStack {
             // A breath of ink over the page while the controls are up, so they read as a layer above it.
-            // None while Themes & Settings is open: every change shows on the page as it is.
+            // None while Your Page is open: every change shows on the page as it is.
             if up && !showAppearance {
                 model.theme.text.opacity(0.06)
                     .allowsHitTesting(false)
@@ -148,7 +148,7 @@ struct ReaderChrome: View {
                             .buttonStyle(.plain)
                             .accessibilityLabel("Share")
                             .accessibilityIdentifier("reader.share")
-                            PillButton(systemName: "textformat.size", label: "Themes and Settings", id: "reader.appearance") { showAppearance = true }
+                            PillButton(systemName: "textformat.size", label: "Your Page", id: "reader.appearance") { showAppearance = true }
                         }
                         .padding(.vertical, 4)
                         .readerGlass(model.theme.background.opacity(0.7), interactive: true, in: .capsule)

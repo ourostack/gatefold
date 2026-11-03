@@ -92,7 +92,11 @@ final class SafeAreaUITests: XCTestCase {
         let email = app.textFields.firstMatch
         XCTAssertTrue(email.waitForExistence(timeout: 15))
         sleep(1)
-        for element in app.textFields.allElementsBoundByIndex + app.secureTextFields.allElementsBoundByIndex + app.buttons.allElementsBoundByIndex where element.isHittable {
+        // The system keyboard (its "continue" key) is iOS's, laid out across the whole screen; only
+        // Gatefold's own fields and buttons are checked.
+        let keyboard = app.keyboards.firstMatch.exists ? app.keyboards.firstMatch.frame : .null
+        for element in app.textFields.allElementsBoundByIndex + app.secureTextFields.allElementsBoundByIndex + app.buttons.allElementsBoundByIndex
+            where element.isHittable && !keyboard.intersects(element.frame) {
             XCTAssertLessThanOrEqual(element.frame.maxX, right + 0.5, "\(element.label) clears the trailing inset (\(element.frame))")
             XCTAssertGreaterThanOrEqual(element.frame.minX, window.minX - 0.5, "\(element.label) starts on screen (\(element.frame))")
         }
