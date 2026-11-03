@@ -164,6 +164,11 @@ struct RootView: View {
             }
         }
         .onGeometryChange(for: CGSize.self) { $0.size } action: { size in lookForReopenPicture(size: size) }
+        // The status bar's room while the shelf or welcome shows it: slips in the reader keep below it
+        // once the reader hides the bar and a Dynamic Island leaves the safe area.
+        .onGeometryChange(for: [CGFloat].self) { [$0.safeAreaInsets.top, $0.size.width, $0.size.height] } action: { v in
+            ReaderChrome.StatusRoom.note(EdgeInsets(top: v[0], leading: 0, bottom: 0, trailing: 0), size: CGSize(width: v[1], height: v[2]))
+        }
         .animation(Motion.open, value: app.hasOnboarded)
         // Under the shelf's own paper: never seen, but laid out and painted like the real page. A
         // background, so its arrival can't resize the shelf's stack (it ignores the safe area).
