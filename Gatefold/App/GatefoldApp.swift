@@ -5,8 +5,17 @@ import WebKit
 
 @main
 struct GatefoldApp: App {
-    @State private var app = AppModel()
+    @State private var app: AppModel
     @Environment(\.scenePhase) private var scenePhase
+
+    init() {
+        // Until the first frame, iOS shows the launch screen in the system's appearance, not the book's
+        // paper: a Midnight reopen in light mode flashes light paper. The app can't theme that screen;
+        // it can only reach its own first (already Midnight) frame sooner, so the time is logged.
+        let entered = LaunchClock.sinceLaunch
+        _app = State(initialValue: AppModel())
+        readerLog.notice("launch: app entered \(entered, privacy: .public) s after the process started; model ready at \(LaunchClock.sinceLaunch, privacy: .public) s")
+    }
 
     var body: some Scene {
         WindowGroup {
@@ -122,10 +131,22 @@ struct RootView: View {
     /// Reopening at launch: the page as he left it, up from the first frame until the reader is.
     @State private var reopenPicture: ReopenSnapshot.Picture?
     @State private var reopenLooked = false
+    /// Reopening, the first frame is his page's picture, not the shelf beneath it: the shelf is built
+    /// just after, so the app's own first frame (in the book's paper) replaces iOS's launch screen sooner.
+    @State private var shelfShown = false
 
     var body: some View {
         ZStack {
-            if app.hasOnboarded {
+            if app.hasOnboarded, let id = app.reopenBookID, !shelfShown {
+                // The book's paper until the shelf is built (under the picture, or alone if it has none).
+                app.preferences.effective(for: id).resolvedTheme(systemIsDark: colorScheme == .dark).background
+                    .ignoresSafeArea()
+                    .task {
+                        await Task.yield()
+                        shelfShown = true
+                        readerLog.notice("launch: shelf built behind the reopen picture at \(LaunchClock.sinceLaunch, privacy: .public) s")
+                    }
+            } else if app.hasOnboarded {
                 LibraryView(namespace: covers) { book in open(book) }
                     .transition(.opacity)
             } else {

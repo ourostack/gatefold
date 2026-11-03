@@ -964,6 +964,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         guard !isTurning else { return false }
         isTurning = true
         defer { isTurning = false }
+        lifted.holding = false
         let moved = forward
             ? await navigator.goForward(options: .init(animated: false))
             : await navigator.goBackward(options: .init(animated: false))

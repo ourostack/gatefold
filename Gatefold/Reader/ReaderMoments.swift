@@ -43,7 +43,7 @@ struct SyncSlipView: View {
                 }
             }
             if let passage = slip.passage {
-                Text("“\(passage)”")
+                Text(PassageQuote.quoted(passage))
                     .font(.system(.footnote, design: .serif).italic())
                     .foregroundStyle(theme.text.opacity(0.85))
                     .fixedSize(horizontal: false, vertical: true)

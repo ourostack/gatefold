@@ -48,3 +48,24 @@ public enum WordEdge {
         return (highlight + tail, String(after.dropFirst(tail.count)))
     }
 }
+
+/// A passage shown in quote marks on a slip or in a list. A passage that already opens with a quote mark
+/// (dialogue, mostly) is shown as it is: wrapping it again would read ““Like this.”
+public enum PassageQuote {
+    /// Marks that open a quotation in the languages books come in: straight and curly quotes, low-9
+    /// quotes, and guillemets either way round (French «…», German and Danish »…«).
+    static let openers: Set<Character> = ["\"", "'", "“", "‘", "”", "’", "„", "‚", "«", "»", "‹", "›", "「", "『"]
+
+    public static func startsQuoted(_ text: String) -> Bool {
+        guard let first = text.trimmingCharacters(in: .whitespaces).first else { return false }
+        return openers.contains(first)
+    }
+
+    /// `text` in curly quotes, with `…` before the closing mark when `cut` (the passage stops mid-sentence);
+    /// or as it is (with `…` after it) when it already opens with a quote mark.
+    public static func quoted(_ text: String, cut: Bool = false) -> String {
+        let body = text.trimmingCharacters(in: .whitespaces)
+        let tail = cut && !body.hasSuffix("…") ? "…" : ""
+        return startsQuoted(body) ? body + tail : "“" + body + tail + "”"
+    }
+}
