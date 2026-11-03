@@ -69,7 +69,17 @@ final class ReaderModel {
     /// The first page is on screen and legible.
     private(set) var pageReady = false
     /// Reopened at launch: the page as he left it, shown until the live page has laid out beneath it.
-    var reopenPicture: UIImage?
+    var reopenPicture: UIImage? {
+        didSet { if reopenPicture != nil { reopened = true } }
+    }
+    /// Opened at launch over his page's picture (stays true after the picture goes): the reader then
+    /// came up without the zoom from its cover, and must keep that one presentation throughout.
+    private(set) var reopened = false
+    /// The page frame the reopen picture was laid out with, if known.
+    var reopenPageFrame: CGRect?
+    /// The live page laid out differently from the picture (the first launch after an install can
+    /// place the page a little lower): the picture then fades out instead of being swapped away.
+    private(set) var reopenFades = false
     let openedAt = Date()
     /// When the reader asked for the book: the tap, for a book opened ahead of it behind the shelf.
     var askedAt = Date()
@@ -379,8 +389,14 @@ final class ReaderModel {
         Task {
             try? await Task.sleep(for: .milliseconds(400))
             await host?.waitForSettledPage()
-            reopenPicture = nil
-            readerLog.notice("reopen: the live page took the picture's place at \(LaunchClock.sinceLaunch, privacy: .public) s after launch")
+            let same = reopenPageFrame.map { abs($0.minY - layout.pageFrame.minY) < 1 && abs($0.height - layout.pageFrame.height) < 1 && abs($0.width - layout.pageFrame.width) < 1 } ?? true
+            if same {
+                reopenPicture = nil
+            } else {
+                reopenFades = true
+                withAnimation(.easeInOut(duration: 0.3)) { reopenPicture = nil }
+            }
+            readerLog.notice("reopen: the live page took the picture's place at \(LaunchClock.sinceLaunch, privacy: .public) s after launch (\(same ? "same layout, swapped" : "laid out differently, faded", privacy: .public))")
         }
     }
 

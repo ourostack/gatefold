@@ -17,6 +17,9 @@ enum ReopenSnapshot {
         var height: Double
         var theme: String
         var savedAt: Date
+        /// The page's frame when pictured (x, y, width, height): the live page matches it only if it
+        /// lays out the same way.
+        var page: [Double]?
     }
 
     /// A picture that fits this launch.
@@ -79,7 +82,9 @@ enum ReopenSnapshot {
         let began = Date()
         let image = await picture(of: window, page: host)
         guard !Task.isCancelled else { return }
-        let meta = Meta(book: model.bookID, width: size.width, height: size.height, theme: model.theme.rawValue, savedAt: Date())
+        let frame = model.layout.pageFrame
+        let meta = Meta(book: model.bookID, width: size.width, height: size.height, theme: model.theme.rawValue, savedAt: Date(),
+                        page: [frame.minX, frame.minY, frame.width, frame.height])
         let pictured = Date().timeIntervalSince(began)
         keptFor = base
         // Encoding and writing off the main thread; the picture itself had to be drawn on it.

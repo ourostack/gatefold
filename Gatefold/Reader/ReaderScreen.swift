@@ -137,7 +137,7 @@ struct ReaderScreen: View {
                 if let picture = model.reopenPicture {
                     // Reopened at launch: his page as he left it, until the live one is laid out beneath.
                     ReopenPictureView(image: picture)
-                        .transition(.identity)
+                        .transition(model.reopenFades ? .opacity : .identity)
                         .zIndex(3)
                 } else if !model.pageReady {
                     OpeningPlaceholder(model: model)

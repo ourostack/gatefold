@@ -153,8 +153,9 @@ struct RootView: View {
         .fullScreenCover(item: $reader) { model in
             ReaderScreen(model: model) { closeReader(model) }
             // Zooms from its cover, except when reopening onto his page's picture: a zoom there drew a
-            // shrunken second copy of the page over the picture for a few frames.
-            .modifier(ZoomFromCover(enabled: model.reopenPicture == nil, id: model.bookID, namespace: covers))
+            // shrunken second copy of the page over the picture for a few frames. Decided once per
+            // reader: switching it when the picture went rebuilt the reader and blanked its page.
+            .modifier(ZoomFromCover(enabled: !model.reopened, id: model.bookID, namespace: covers))
             // The zoom opens onto the page's own colour, never white or black.
             .presentationBackground(model.preferences.resolvedTheme(systemIsDark: colorScheme == .dark).background)
             // The zoom's swipe-to-dismiss would take edge drags meant for turning back a page.
@@ -292,6 +293,7 @@ struct RootView: View {
                     // Reopening: no zoom from the shelf; the reader comes up over his page's picture.
                     app.reopenBookID = nil
                     model.reopenPicture = reopenPicture?.image
+                    model.reopenPageFrame = reopenPicture?.meta.page.flatMap { $0.count == 4 ? CGRect(x: $0[0], y: $0[1], width: $0[2], height: $0[3]) : nil }
                     // A transaction without animation still slid the cover up over the picture: UIKit
                     // presents it, so UIKit's animations are held off until it is up.
                     var still = Transaction()
