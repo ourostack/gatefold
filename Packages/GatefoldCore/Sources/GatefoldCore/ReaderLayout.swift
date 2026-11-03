@@ -1,5 +1,7 @@
 import Foundation
+#if canImport(CoreGraphics)
 import CoreGraphics
+#endif
 
 /// The fold of a foldable display, as `GeometryProxy.reservedRegions(kind: .division, options: .includeInactive)`
 /// reports it, in the reader container's coordinates. When the device is flat the region is inactive and may

@@ -2,8 +2,12 @@ name: App
 
 on:
   pull_request:
+    paths-ignore:
+      - "**/*.md"
   push:
     branches: [main]
+    paths-ignore:
+      - "**/*.md"
   workflow_dispatch:
 
 concurrency:
@@ -13,18 +17,22 @@ concurrency:
 jobs:
   core:
     name: GatefoldCore tests
-    # xcode-27 is the newest macOS image (macOS 27, Xcode 27.1): the first SDK with the iPhone Duo
-    # fold APIs and the iOS 27 deployment target. macos-26 has only Xcode 26.
-    runs-on: xcode-27
+    # GatefoldCore is pure Swift (Foundation only, no UIKit or Readium), so it tests on Linux and
+    # spends no macOS minutes. The app's build still compiles it against the iOS 27 SDK below.
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-      - uses: ./.github/actions/select-xcode
+      - name: Toolchain
+        run: swift --version
       - name: swift test
         run: swift test --package-path Packages/GatefoldCore
 
   app:
     name: Build and unit-test the app
+    # xcode-27 is the only hosted image with Xcode 27.1: the first SDK with the iPhone Duo fold
+    # APIs, the iOS 27 deployment target and the iPhone Duo simulator. macos-latest (macOS 26) has
+    # only Xcode 26, so this job cannot move there.
     runs-on: xcode-27
     timeout-minutes: 75
     steps:
