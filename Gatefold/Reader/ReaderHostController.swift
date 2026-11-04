@@ -35,7 +35,16 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     /// Set while a reflow from one page to a spread is the unfold.
     private var unfolding = false
     /// True from the moment a turn begins until it lands or springs back.
-    private(set) var isTurning = false
+    private(set) var isTurning = false {
+        didSet {
+            guard oldValue != isTurning, LaunchOptions.isUITest else { return }
+            if isTurning { frames.start() } else { frames.stop(counting: counter != nil) }
+        }
+        willSet { if isTurning, !newValue { lastTurnEnded = .now } }
+    }
+    private var lastTurnEnded: ContinuousClock.Instant?
+    /// Under test, each turn's frames: whether a count behind the page costs the turn any.
+    private let frames = FrameWatch()
     private var panStart: CGPoint = .zero
     private var panForward = true
     /// Set when the pan ends before the turn is ready; the preparing task finishes with it.
@@ -184,6 +193,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             if let web = view as? WKWebView { web.stopLoading() }
             view.subviews.forEach(stop)
         }
+        stopCounting()
         stop(navigator.view)
         readerLog.notice("warm: stopped loading \(self.weakModel?.bookID ?? "?", privacy: .public)")
     }
@@ -237,6 +247,92 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         return true
     }
 
+    // MARK: Screen pages
+
+    /// The page laying chapters out out of sight to count their pages (`countPages`).
+    private var counter: (navigator: EPUBNavigatorViewController, task: Task<Void, Never>)?
+
+    func screenGeometry() async -> (href: String, geometry: ScreenPageGeometry)? {
+        await Self.geometry(of: navigator, columns: columns)
+    }
+
+    private static func geometry(of navigator: EPUBNavigatorViewController, columns: Int) async -> (href: String, geometry: ScreenPageGeometry)? {
+        guard let location = navigator.currentLocation else { return nil }
+        _ = await navigator.evaluateJavaScript(ReaderJS.install)
+        guard let json = (try? await navigator.evaluateJavaScript(ReaderJS.geometry).get()) as? String,
+              let data = json.data(using: .utf8) else { return nil }
+        struct Found: Decodable { var w: Double; var l: Double; var v: Double; var verso: Bool; var pinned: Bool }
+        guard let found = try? JSONDecoder().decode(Found.self, from: data) else { return nil }
+        let href = location.href.string.split(separator: "#", maxSplits: 1).first.map(String.init) ?? location.href.string
+        return (href, ScreenPageGeometry(scrollWidth: found.w, scrollLeft: found.l, viewportWidth: found.v,
+                                         columnsPerScreen: columns, verso: found.verso, pinned: found.pinned))
+    }
+
+    /// Counts each chapter in a second navigator behind this one, laid out as this one is (no verso,
+    /// no pin), so the numbers are a clean layout's. It waits out turns, so a turn never shares the CPU.
+    func countPages(_ hrefs: [String], record: @escaping @MainActor (String, Int) -> Void) {
+        stopCounting()
+        guard isViewLoaded, preferences.scroll != true, !hrefs.isEmpty,
+              let counting = try? Self.makeNavigator(publication: publication, at: nil, preferences: preferences) else { return }
+        let links = hrefs.compactMap { href in publication.readingOrder.first { $0.url().removingFragment().string == href } }
+        addChild(counting)
+        // The same size as the page, laid out beside it, past the clipped edge. Behind the page, its
+        // chapter came out in the reopen picture drawn from this view, laid over his page. A reflow
+        // stops the count, so it never needs to follow the page's size.
+        counting.view.frame = navigator.view.frame.offsetBy(dx: view.bounds.width + 64, dy: 0)
+        counting.view.isUserInteractionEnabled = false
+        counting.view.accessibilityElementsHidden = true
+        view.insertSubview(counting.view, at: 0)
+        counting.didMove(toParent: self)
+        let columns = columns
+        let started = ContinuousClock.now
+        let task = Task { @MainActor [weak self] in
+            var counted = 0
+            for link in links {
+                // A chapter laid out mid-burst costs the next turn frames: wait for 1.5 s without a turn.
+                while let host = self, host.isTurning || host.lastTurnEnded.map({ ContinuousClock.now - $0 < .milliseconds(1500) }) == true, !Task.isCancelled {
+                    try? await Task.sleep(for: .milliseconds(250))
+                }
+                guard !Task.isCancelled else { return }
+                let went = await counting.go(to: link, options: .init(animated: false))
+                let href = link.url().removingFragment().string
+                readerLog.debug("pages: \(href, privacy: .public) go \(went, privacy: .public), at \(counting.currentLocation?.href.string ?? "nil", privacy: .public)")
+                // A chapter is counted once two looks 150 ms apart agree: a web view still laying out
+                // (or still loading a font) reads short.
+                var last: Int?
+                for _ in 0..<40 where !Task.isCancelled {
+                    try? await Task.sleep(for: .milliseconds(150))
+                    guard let (here, geometry) = await Self.geometry(of: counting, columns: columns), here == href, geometry.columns > 0 else {
+                        readerLog.debug("pages: \(href, privacy: .public) not measured yet (at \(counting.currentLocation?.href.string ?? "nil", privacy: .public))")
+                        continue
+                    }
+                    if geometry.columns == last { record(href, geometry.columns); counted += 1; break }
+                    last = geometry.columns
+                }
+            }
+            readerLog.notice("pages: counted \(counted, privacy: .public) of \(links.count, privacy: .public) chapters in \(ReaderModel.ms(since: started), privacy: .public) ms")
+            if self?.counter?.navigator === counting { self?.stopCounting() }
+        }
+        counter = (counting, task)
+        readerLog.notice("pages: counting \(links.count, privacy: .public) chapters behind the page")
+    }
+
+    func stopCounting() {
+        guard let old = counter else { return }
+        counter = nil
+        old.task.cancel()
+        // Its web view shares the page's web process: a chapter still loading there would hold up a
+        // reflow's looks at the page past their budgets.
+        func stop(_ view: UIView) {
+            if let web = view as? WKWebView { web.stopLoading() }
+            view.subviews.forEach(stop)
+        }
+        stop(old.navigator.view)
+        old.navigator.willMove(toParent: nil)
+        old.navigator.view.removeFromSuperview()
+        old.navigator.removeFromParent()
+    }
+
     /// For measuring opens: when the first web view appears, starts loading and finishes, after the host loads.
     private func traceWebViews() {
         let start = Date()
@@ -278,8 +374,9 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         unfolding = reflow && self.columns == 1 && columns == 2
         self.columns = columns
         self.preferences = preferences
-        // A page laid out in the old type would be the wrong page.
+        // A page laid out in the old type would be the wrong page, and its counts the wrong counts.
         dropStandby()
+        stopCounting()
         if reflow { beginReflow(model.consumeReflowReason() ?? .typography) }
         navigator.submitPreferences(preferences)
         if reflow { settleReflowSoon() }
@@ -298,6 +395,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     private func beginReflow(_ reason: ReflowReason) {
         readerLog.notice("reflow begins: \(String(describing: reason), privacy: .public)")
         dropStandby()
+        stopCounting()
         model.keeper.reflowWillBegin(reason)
         model.reflowDidBegin()
         if !curl.isActive {
@@ -1735,4 +1833,38 @@ extension HTMLDecorationTemplate {
         @keyframes gatefold-fade { from { opacity: 1; } to { opacity: 0; } }
         """
     ) }
+}
+
+/// Counts a turn's frames and the ones that came late (more than half a frame past due), for the log.
+@MainActor
+final class FrameWatch: NSObject {
+    private var link: CADisplayLink?
+    private var last: CFTimeInterval = 0
+    private var frames = 0, late = 0
+    private var worst: CFTimeInterval = 0
+
+    func start() {
+        link?.invalidate()
+        frames = 0; late = 0; worst = 0; last = 0
+        let link = CADisplayLink(target: self, selector: #selector(tick(_:)))
+        link.add(to: .main, forMode: .common)
+        self.link = link
+    }
+
+    @objc private func tick(_ link: CADisplayLink) {
+        defer { last = link.timestamp }
+        guard last > 0 else { return }
+        frames += 1
+        let gap = link.timestamp - last
+        let due = link.targetTimestamp - link.timestamp
+        worst = max(worst, gap)
+        if due > 0, gap > due * 1.5 { late += 1 }
+    }
+
+    func stop(counting: Bool) {
+        guard let link else { return }
+        link.invalidate()
+        self.link = nil
+        readerLog.notice("turn frames: \(self.frames, privacy: .public) frames, \(self.late, privacy: .public) late, worst \(Int(self.worst * 1000), privacy: .public) ms, counting \(counting, privacy: .public)")
+    }
 }

@@ -176,8 +176,38 @@ public struct ReaderPreferences: Codable, Equatable, Sendable {
     public var margins: PageMargins = .normal
     public var justify = false
     public var pageTurn: PageTurnStyle = .curl
+    /// Page furniture, his choice and off unless he turns it on: the number under each page, the
+    /// position in the book ("12 of 340") and pages left in the chapter. None of them changes the
+    /// layout, so turning one on or off never moves the words.
+    public var showsPageNumbers = false
+    public var showsPositionLabel = false
+    public var showsPagesLeft = false
 
     public init() {}
+
+    private enum CodingKeys: String, CodingKey {
+        case theme, darkTheme, matchSystemAppearance, font, fontScale, lineSpacing, margins, justify, pageTurn
+        case showsPageNumbers, showsPositionLabel, showsPagesLeft
+    }
+
+    /// Settings saved by an older build lack newer keys; each missing one takes its default rather
+    /// than throwing the whole look away.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = ReaderPreferences()
+        theme = try c.decodeIfPresent(ReaderTheme.self, forKey: .theme) ?? d.theme
+        darkTheme = try c.decodeIfPresent(ReaderTheme.self, forKey: .darkTheme) ?? d.darkTheme
+        matchSystemAppearance = try c.decodeIfPresent(Bool.self, forKey: .matchSystemAppearance) ?? d.matchSystemAppearance
+        font = try c.decodeIfPresent(ReaderFont.self, forKey: .font) ?? d.font
+        fontScale = try c.decodeIfPresent(Double.self, forKey: .fontScale) ?? d.fontScale
+        lineSpacing = try c.decodeIfPresent(LineSpacing.self, forKey: .lineSpacing) ?? d.lineSpacing
+        margins = try c.decodeIfPresent(PageMargins.self, forKey: .margins) ?? d.margins
+        justify = try c.decodeIfPresent(Bool.self, forKey: .justify) ?? d.justify
+        pageTurn = try c.decodeIfPresent(PageTurnStyle.self, forKey: .pageTurn) ?? d.pageTurn
+        showsPageNumbers = try c.decodeIfPresent(Bool.self, forKey: .showsPageNumbers) ?? false
+        showsPositionLabel = try c.decodeIfPresent(Bool.self, forKey: .showsPositionLabel) ?? false
+        showsPagesLeft = try c.decodeIfPresent(Bool.self, forKey: .showsPagesLeft) ?? false
+    }
 
     /// Steps the font size; returns false at either end so the caller can skip the haptic.
     @discardableResult

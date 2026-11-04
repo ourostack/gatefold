@@ -122,6 +122,12 @@ enum ReaderJS {
           if (se.scrollHeight > window.innerHeight + 1) { return Math.min(1, (se.scrollTop + window.innerHeight) / se.scrollHeight); }
           return 1;
         },
+        // The chapter's columns and the screen's place in them, for page numbers (`ScreenPageGeometry`).
+        geometry: function () {
+          const se = document.scrollingElement;
+          return JSON.stringify({ w: se.scrollWidth, l: se.scrollLeft, v: window.innerWidth,
+            verso: !!document.getElementById("gatefold-verso"), pinned: !!document.getElementById("gatefold-pin") });
+        },
         // Where words are in this resource, as the progression that puts their page on screen
         // (paginated). Whitespace may differ from the book file's, so words match across any run of it.
         progressionOf: function (quote) {
@@ -255,6 +261,7 @@ enum ReaderJS {
     }
 
     static let pageEnd = "window.gatefold ? window.gatefold.pageEnd() : null"
+    static let geometry = "window.gatefold ? window.gatefold.geometry() : null"
 
     static func sideOf(_ quote: String) -> String {
         let q = (try? JSONEncoder().encode(quote)).map { String(decoding: $0, as: UTF8.self) } ?? "\"\""

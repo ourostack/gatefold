@@ -117,14 +117,19 @@ struct ReaderChrome: View {
                     // Where you are in the book, and a scrubber to go anywhere: a slim floating capsule.
                     VStack(spacing: 2) {
                         Scrubber(model: model)
-                        HStack {
-                            Text(model.pageLabel)
-                            Spacer()
-                            if let left = model.pagesLeftLabel { Text(left) }
+                        // Position and pages left are page furniture, his to show (both off by
+                        // default); the scrubber still tells VoiceOver where he is.
+                        if model.preferences.showsPositionLabel || model.preferences.showsPagesLeft {
+                            HStack {
+                                if model.preferences.showsPositionLabel { Text(model.pageLabel) }
+                                Spacer()
+                                if model.preferences.showsPagesLeft, let left = model.pagesLeftLabel { Text(left) }
+                            }
+                            // Caption size, at 4.5:1 or better on the tinted glass in every theme.
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(model.theme.text.opacity(0.8))
+                            .accessibilityIdentifier("reader.positionLine")
                         }
-                        // Caption size, at 4.5:1 or better on the tinted glass in every theme.
-                        .font(.caption.monospacedDigit())
-                        .foregroundStyle(model.theme.text.opacity(0.8))
                     }
                     .padding(.horizontal, 14)
                     .padding(.vertical, 6)
@@ -276,7 +281,7 @@ struct Scrubber: View {
         .frame(height: 24)
         .accessibilityElement()
         .accessibilityLabel("Progress")
-        .accessibilityValue("Page \(model.pageLabel)")
+        .accessibilityValue(model.pageLabel.isEmpty ? "\(Int((model.totalProgression * 100).rounded())) percent" : "Page \(model.pageLabel)")
         .accessibilityAdjustableAction { direction in
             let step = 0.01
             let target = model.totalProgression + (direction == .increment ? step : -step)
@@ -290,9 +295,11 @@ struct Scrubber: View {
             Text(model.chapterMap.chapter(at: progression)?.title ?? model.title)
                 .font(.footnote.weight(.semibold))
                 .lineLimit(1)
-            Text("Page \(model.chapterMap.page(at: progression))")
-                .font(.caption2.monospacedDigit())
-                .foregroundStyle(.secondary)
+            if let n = model.screenPage(atTotal: progression) {
+                Text("Page \(n)")
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
         }
         .frame(maxWidth: 180)
         .padding(.horizontal, 12)
@@ -315,7 +322,8 @@ struct TabletopDeck: View {
                     Text(model.chapterTitle ?? model.title)
                         .font(.display(.headline))
                         .lineLimit(1)
-                    Text(model.pagesLeftLabel ?? model.pageLabel)
+                    Text((model.preferences.showsPagesLeft ? model.pagesLeftLabel : nil)
+                         ?? (model.preferences.showsPositionLabel ? model.pageLabel : ""))
                         .font(.footnote.monospacedDigit())
                         .foregroundStyle(.secondary)
                 }

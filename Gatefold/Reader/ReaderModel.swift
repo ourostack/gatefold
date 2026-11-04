@@ -273,16 +273,102 @@ final class ReaderModel {
         return level0[i].id
     }
 
+    /// "12 of 340", in the pages he sees; empty until the book is counted at this layout, as Apple Books.
     var pageLabel: String {
-        let page = chapterMap.page(at: totalProgression)
-        return "\(page) of \(chapterMap.positionCount)"
+        guard let page = screenNumbers?.compactMap({ $0 }).first, let total = screenPages?.total else { return "" }
+        return "\(page) of \(total)"
     }
     var pagesLeftLabel: String? {
-        guard chapterMap.positionCount > 1 else { return nil }
-        let left = chapterMap.pagesLeftInChapter(at: totalProgression)
+        guard let (href, geometry) = lastGeometry, let left = screenPages?.pagesLeft(href: href, column: geometry.column - (geometry.verso ? 1 : 0)) else { return nil }
         switch left {
         case 0, 1: return "Last page in chapter"
         default: return "\(left) pages left in chapter"
+        }
+    }
+
+    // MARK: Screen pages
+
+    /// The numbers on the pages in view, one a page (nil for a blank page); nil until they're known.
+    /// They're the pages he sees, as Apple Books numbers them (`ScreenPageMap`), not Readium's positions.
+    private(set) var screenNumbers: [Int?]?
+    private(set) var screenPages: ScreenPageMap?
+    private var lastGeometry: (href: String, geometry: ScreenPageGeometry)?
+    private static let pageStore: ScreenPageStore = {
+        let directory = URL.cachesDirectory.appending(path: "ScreenPages", directoryHint: .isDirectory)
+        // A clean start (`-GatefoldReset`) counts every book again.
+        if LaunchOptions.resetState { try? FileManager.default.removeItem(at: directory) }
+        return ScreenPageStore(directory: directory)
+    }()
+
+    /// What the book's pages are cut by now; nil in scroll, which has no pages.
+    var screenLayout: ScreenPageLayout? {
+        let prefs = preferences
+        guard prefs.pageTurn != .scroll, !readingOrderHrefs.isEmpty else { return nil }
+        let epub = Self.epubPreferences(prefs, theme: theme, columns: layout.columns, viewWidth: layout.pageFrame.width, tabletop: layout.posture == .tabletop)
+        return ScreenPageLayout(width: layout.pageFrame.width, height: layout.pageFrame.height,
+                                columnsPerScreen: layout.columns == .two ? 2 : 1, fontScale: prefs.fontScale,
+                                lineHeight: epub.lineHeight ?? 0, margins: epub.pageMargins ?? 1,
+                                font: prefs.font.rawValue, justify: prefs.justify)
+    }
+
+    /// The page a place in the book falls on, once its chapter and those before it are counted.
+    func screenPage(atTotal total: Double) -> Int? {
+        guard let map = screenPages, let index = resourceStarts.lastIndex(where: { $0 <= total }), index < readingOrderHrefs.count else { return nil }
+        let start = resourceStarts[index]
+        let end = index + 1 < resourceStarts.count ? resourceStarts[index + 1] : 1
+        return map.number(href: readingOrderHrefs[index], progression: end > start ? (total - start) / (end - start) : 0)
+    }
+
+    /// Pages from one place to another: screen pages once counted, Readium's positions until then.
+    func pagesBetween(_ from: Double, _ to: Double) -> Int? {
+        if let a = (from == totalProgression ? screenNumbers?.compactMap({ $0 }).first : nil) ?? screenPage(atTotal: from), let b = screenPage(atTotal: to) { return b - a }
+        guard chapterMap.positionCount > 1 else { return nil }
+        return chapterMap.page(at: to) - chapterMap.page(at: from)
+    }
+
+    /// Numbers the screen in view. A new layout (size, spread, type) starts from its own kept counts,
+    /// or none, and counts the rest behind the page; `recount` restarts that after a reflow stopped it.
+    func refreshScreenNumbers(recount: Bool = false) async {
+        guard !isClosed, let key = screenLayout else {
+            if screenPages != nil { page?.stopCounting() }
+            screenPages = nil; screenNumbers = nil; lastGeometry = nil
+            return
+        }
+        if screenPages?.layout != key {
+            screenPages = Self.pageStore.load(book: bookID, layout: key, readingOrder: readingOrderHrefs)
+            screenNumbers = nil
+            lastGeometry = nil
+            startCounting()
+        } else if recount {
+            startCounting()
+        }
+        // Mid-reflow the web view is between layouts; the reflow's end numbers the page.
+        guard keeper.reflowing == nil, let (href, geometry) = await page?.screenGeometry(), screenLayout == key, screenPages?.layout == key else { return }
+        // The chapter in view counts too, once two looks agree (a web view still laying out reads short).
+        if screenPages?.pages(of: href) == nil, geometry.isClean {
+            try? await Task.sleep(for: .milliseconds(200))
+            if let (again, second) = await page?.screenGeometry(), again == href, second.columns == geometry.columns,
+               keeper.reflowing == nil, screenPages?.layout == key {
+                screenPages?.record(href: href, geometry: second)
+                if let map = screenPages { Self.pageStore.save(map) }
+            }
+        }
+        guard screenPages?.layout == key else { return }
+        lastGeometry = (href, geometry)
+        screenNumbers = screenPages?.screen(href: href, geometry: geometry)
+    }
+
+    private func startCounting() {
+        // Never during a reflow: a second web view loading then holds up the reflow's own look at the
+        // page and loses his place (a posture change on the Duo). The reflow's end starts it.
+        guard pageReady, reopenPicture == nil, keeper.reflowing == nil,
+              let map = screenPages, !map.uncounted.isEmpty else { return }
+        let key = map.layout
+        page?.countPages(map.uncounted) { [weak self] href, columns in
+            guard let self, self.screenPages?.layout == key else { return }
+            self.screenPages?.record(href: href, columns: columns)
+            if let map = self.screenPages { Self.pageStore.save(map) }
+            if let (here, geometry) = self.lastGeometry { self.screenNumbers = self.screenPages?.screen(href: here, geometry: geometry) }
         }
     }
 
@@ -321,6 +407,7 @@ final class ReaderModel {
         storyEnd = BookEnd.backMatter(in: raw)
         readingOrderHrefs = publication.readingOrder.map { $0.url().removingFragment().string }
         resourceStarts = readingOrderHrefs.map { starts[$0] ?? 0 }
+        Task { await refreshScreenNumbers() }
         contents = ContentsIndex(
             entries: toc.map { .init(title: $0.title, href: $0.link.url().removingFragment().string, fragment: $0.link.url().fragment, level: $0.level) },
             readingOrder: readingOrderHrefs
@@ -420,6 +507,13 @@ final class ReaderModel {
 
     private func showPage() {
         withAnimation(.easeOut(duration: 0.3)) { pageReady = true }
+        // Counting the book's pages waits until the open has settled (the reopen picture gone too), so
+        // it never slows the first page.
+        Task {
+            for _ in 0..<120 where reopenPicture != nil { try? await Task.sleep(for: .milliseconds(250)) }
+            try? await Task.sleep(for: .seconds(2))
+            await refreshScreenNumbers(recount: true)
+        }
         guard reopenPicture != nil else { return }
         Task {
             // Long enough for the page's first paint to be the one that stays (two equal pictures of
@@ -563,8 +657,7 @@ final class ReaderModel {
         suggestionRemote = aim
         suggestionCloud = remote.totalProgression
         withAnimation(Motion.banner) { suggestion = made }
-        let pages = chapterMap.positionCount > 1
-            ? chapterMap.page(at: target.totalProgression) - chapterMap.page(at: totalProgression) : nil
+        let pages = pagesBetween(totalProgression, target.totalProgression)
         let percent = ReadingPercent.whole(target.totalProgression) - ReadingPercent.whole(totalProgression)
         // A place the Cloud only has as a percent still gets its words: the sentence starting there.
         var passage = target.locator?.text.highlight
@@ -630,8 +723,7 @@ final class ReaderModel {
 
     /// The folded tab counts down as the reader catches up, and goes once they're there.
     private func refreshAheadTab() {
-        guard let aim = aheadTarget, slipKind == .ahead, slip != nil, chapterMap.positionCount > 1 else { return }
-        let pages = chapterMap.page(at: aim.progression) - chapterMap.page(at: totalProgression)
+        guard let aim = aheadTarget, slipKind == .ahead, slip != nil, let pages = pagesBetween(totalProgression, aim.progression) else { return }
         if pages <= 0 {
             aheadTarget = nil
             dismissSuggestion()
@@ -901,6 +993,7 @@ final class ReaderModel {
         slip = nil
         suggestion = nil
         page?.dropStandby()
+        page?.stopCounting()
         suggestionLocator = nil
         suggestionRemote = nil
         suggestionCloud = nil
@@ -953,6 +1046,7 @@ final class ReaderModel {
             anchorCheck = "no-anchor \(reflowCount)"
         }
         refreshBookmarkState(visible)
+        Task { await refreshScreenNumbers(recount: true) }
         // The page now showing names its own chapter in the running head (a spread opened onto a
         // place is laid out by the reflow, after the first look at the words).
         Task { _ = await page?.currentAnchor() }
@@ -979,6 +1073,7 @@ final class ReaderModel {
         // The navigator opens on the saved place, so its first report is a page worth showing: don't
         // keep the cover up while the rest of the book is indexed.
         if !pageReady, LaunchOptions.goTo == nil { markReady() }
+        Task { await refreshScreenNumbers() }
         if !duringTurn, hasMoved, isPastStory(locator) { reachedEnd() }
         // A landing records its place once it has settled; the steps on the way are not places.
         guard !landing else { return }
@@ -1236,6 +1331,12 @@ final class ReaderModel {
             || before.lineSpacing != after.lineSpacing || before.margins != after.margins
             || before.justify != after.justify || (before.pageTurn == .scroll) != (after.pageTurn == .scroll)
         if reflows { pendingReflowReason = .typography }
+        // Page furniture is drawn over the page, not in it: the web view never hears of it.
+        var bare = after
+        bare.showsPageNumbers = before.showsPageNumbers
+        bare.showsPositionLabel = before.showsPositionLabel
+        bare.showsPagesLeft = before.showsPagesLeft
+        guard bare != before else { return }
         applyPreferences(reflow: reflows)
     }
 
