@@ -303,7 +303,13 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
                             try? await Task.sleep(for: .milliseconds(250))
                         }
                         guard !Task.isCancelled else { return }
-                        if await Self.count(link, in: counting, columns: columns, record: record) { queue.counted += 1 }
+                        if await Self.count(link, in: counting, columns: columns, record: record) {
+                            queue.counted += 1
+                        } else if !Task.isCancelled {
+                            // A chapter that never settled (its web view still loading under the others)
+                            // goes to the back of the queue: a book with one uncounted chapter has no numbers.
+                            queue.retry(link)
+                        }
                     }
                 }
             }
@@ -326,7 +332,13 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         private var links: ArraySlice<ReadiumShared.Link>
         var counted = 0
         init(_ links: [ReadiumShared.Link]) { self.links = links[...] }
+        private var tries: [String: Int] = [:]
         func next() -> ReadiumShared.Link? { links.popFirst() }
+        func retry(_ link: ReadiumShared.Link) {
+            let href = link.url().removingFragment().string
+            tries[href, default: 0] += 1
+            if tries[href]! <= 2 { links.append(link) } else { readerLog.notice("pages: \(href, privacy: .public) never settled") }
+        }
     }
 
     /// How many chapters are counted at once.

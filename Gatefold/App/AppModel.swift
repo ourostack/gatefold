@@ -104,6 +104,11 @@ final class AppModel {
             )
             if let moved = prefs, let data = try? JSONEncoder().encode(moved) { UserDefaults.standard.set(data, forKey: Keys.preferences) }
         }
+        if prefs?.furnitureVersion != PreferencesStore.currentFurniture {
+            // Saved by build 17, when page furniture was kept per book: it's his, for every book now.
+            prefs?.adoptGlobalFurniture()
+            if let moved = prefs, let data = try? JSONEncoder().encode(moved) { UserDefaults.standard.set(data, forKey: Keys.preferences) }
+        }
         self.preferences = prefs!
         self.hasOnboarded = LaunchOptions.skipWelcome || UserDefaults.standard.bool(forKey: Keys.onboarded)
         if LaunchOptions.pageFurniture {
