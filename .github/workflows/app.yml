@@ -28,6 +28,50 @@ jobs:
       - name: swift test
         run: swift test --package-path Packages/GatefoldCore
 
+  ipad:
+    name: The iPad keeps his place (UI tests)
+    # The spread on rotation and the iPad's slow launch reflow are iPad paths: a rotation that
+    # reopened a page early (build 17) and a jump lost in the launch reflow. No retry: a red here is
+    # a real miss.
+    runs-on: xcode-27
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/select-xcode
+      - name: Install the Metal toolchain
+        run: xcodebuild -downloadComponent MetalToolchain
+      - name: Generate the Xcode project from project.yml
+        run: |
+          brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
+          xcodegen generate
+      - name: Create and boot an iPad Pro 13-inch
+        id: sim
+        run: |
+          set -euo pipefail
+          type="$(xcrun simctl list devicetypes --json | python3 -c 'import json,sys; t=[d["identifier"] for d in json.load(sys.stdin)["devicetypes"] if d["name"].startswith("iPad Pro 13-inch")]; print(sorted(t)[-1])')"
+          runtime="$(xcrun simctl list runtimes --json | python3 -c 'import json,sys; r=[x for x in json.load(sys.stdin)["runtimes"] if x["platform"]=="iOS" and x["isAvailable"]]; print(max(r, key=lambda x: [int(p) for p in x["version"].split(".")])["identifier"])')"
+          udid="$(xcrun simctl create gatefold-ipad "$type" "$runtime")"
+          xcrun simctl boot "$udid"
+          xcrun simctl bootstatus "$udid" -b
+          echo "destination=platform=iOS Simulator,arch=$(uname -m),id=$udid" >> "$GITHUB_OUTPUT"
+      - name: Rotation, jumps and reopens keep his place
+        run: |
+          set -o pipefail
+          xcodebuild test -project Gatefold.xcodeproj -scheme Gatefold \
+            -destination "${{ steps.sim.outputs.destination }}" \
+            -only-testing:GatefoldUITests/RotationRepro \
+            -only-testing:GatefoldUITests/NavigationPlaceUITests \
+            -only-testing:GatefoldUITests/PageFurnitureUITests \
+            -resultBundlePath "$RUNNER_TEMP/ipad.xcresult" > "$RUNNER_TEMP/ipad.log" 2>&1 || status=$?
+          grep -E "Test Case .*(passed|failed|skipped)|TEST (SUCCEEDED|FAILED)|REPRO (round|SUMMARY)|\.swift:[0-9]+: error" "$RUNNER_TEMP/ipad.log" \
+            | sed -E 's/(XCTAssert[A-Za-z]* failed).*/\1 (text withheld)/' | tail -60 || true
+          exit ${status:-0}
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: ipad-xcresult
+          path: ${{ runner.temp }}/ipad.log
+
   app:
     name: Build and unit-test the app
     # xcode-27 is the only hosted image with Xcode 27.1: the first SDK with the iPhone Duo fold
