@@ -321,6 +321,13 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         guard let old = counter else { return }
         counter = nil
         old.task.cancel()
+        // Its web view shares the page's web process: a chapter still loading there would hold up a
+        // reflow's looks at the page past their budgets.
+        func stop(_ view: UIView) {
+            if let web = view as? WKWebView { web.stopLoading() }
+            view.subviews.forEach(stop)
+        }
+        stop(old.navigator.view)
         old.navigator.willMove(toParent: nil)
         old.navigator.view.removeFromSuperview()
         old.navigator.removeFromParent()

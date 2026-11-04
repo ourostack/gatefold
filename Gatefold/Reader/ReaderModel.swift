@@ -359,7 +359,10 @@ final class ReaderModel {
     }
 
     private func startCounting() {
-        guard pageReady, reopenPicture == nil, let map = screenPages, !map.uncounted.isEmpty else { return }
+        // Never during a reflow: a second web view loading then holds up the reflow's own look at the
+        // page and loses his place (a posture change on the Duo). The reflow's end starts it.
+        guard pageReady, reopenPicture == nil, keeper.reflowing == nil,
+              let map = screenPages, !map.uncounted.isEmpty else { return }
         let key = map.layout
         page?.countPages(map.uncounted) { [weak self] href, columns in
             guard let self, self.screenPages?.layout == key else { return }
