@@ -276,7 +276,7 @@ struct Scrubber: View {
         .frame(height: 24)
         .accessibilityElement()
         .accessibilityLabel("Progress")
-        .accessibilityValue("Page \(model.pageLabel)")
+        .accessibilityValue(model.pageLabel.isEmpty ? "\(Int((model.totalProgression * 100).rounded())) percent" : "Page \(model.pageLabel)")
         .accessibilityAdjustableAction { direction in
             let step = 0.01
             let target = model.totalProgression + (direction == .increment ? step : -step)
@@ -290,9 +290,11 @@ struct Scrubber: View {
             Text(model.chapterMap.chapter(at: progression)?.title ?? model.title)
                 .font(.footnote.weight(.semibold))
                 .lineLimit(1)
-            Text("Page \(model.chapterMap.page(at: progression))")
-                .font(.caption2.monospacedDigit())
-                .foregroundStyle(.secondary)
+            if let n = model.screenPage(atTotal: progression) {
+                Text("Page \(n)")
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
         }
         .frame(maxWidth: 180)
         .padding(.horizontal, 12)

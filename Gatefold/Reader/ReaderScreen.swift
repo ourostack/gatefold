@@ -444,21 +444,23 @@ struct ReaderScreen: View {
         }
     }
 
-    /// A page number centred in the band under each page's words.
+    /// A page number centred in the band under each page's words: the pages he sees, numbered through
+    /// the book at this layout (`ScreenPageMap`). None shows until they're counted, as in Apple Books,
+    /// and a blank page (the unfold's verso, a chapter's last right page) has none.
     @ViewBuilder
     private func pageNumbers(pages: [CGRect], hidden: Bool) -> some View {
-        let first = model.chapterMap.page(at: model.totalProgression)
-        let count = model.chapterMap.positionCount
         let band = model.textBand.bottom
-        if count > 1 {
+        if let numbers = model.screenNumbers, numbers.count == pages.count {
             ZStack(alignment: .topLeading) {
                 ForEach(Array(pages.enumerated()), id: \.offset) { i, r in
-                    Text("\(min(count, first + i))")
-                        .font(model.tabletBands.map { .system(size: $0.folioSize).monospacedDigit() } ?? .caption.monospacedDigit())
-                        .foregroundStyle(model.theme.head)
-                        .frame(width: r.width, height: band)
-                        .offset(x: r.minX, y: r.maxY - band)
-                        .accessibilityIdentifier("reader.pageNumber")
+                    if let n = numbers[i] {
+                        Text("\(n)")
+                            .font(model.tabletBands.map { .system(size: $0.folioSize).monospacedDigit() } ?? .caption.monospacedDigit())
+                            .foregroundStyle(model.theme.head)
+                            .frame(width: r.width, height: band)
+                            .offset(x: r.minX, y: r.maxY - band)
+                            .accessibilityIdentifier("reader.pageNumber")
+                    }
                 }
             }
             .opacity(hidden || !model.pageReady ? 0 : 1)
@@ -469,8 +471,7 @@ struct ReaderScreen: View {
 
     /// Running heads and page numbers, the way a printed page carries them: quiet grey SF centred in
     /// the bands above and below the words. On a spread the left page is headed with the book, the
-    /// right with the chapter; a single page with the chapter. Numbers are Gatefold's pages (Readium
-    /// positions, about a printed page each), so a spread shows two in a row.
+    /// right with the chapter; a single page with the chapter. A spread's numbers are two in a row.
     @ViewBuilder
     private func pageFurniture(layout: ReaderLayout, hidden: Bool) -> some View {
         let band = model.textBand

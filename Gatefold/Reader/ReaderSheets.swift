@@ -59,9 +59,11 @@ struct ContentsSheet: View {
                                     .padding(.leading, CGFloat(entry.level) * 16)
                                     .fixedSize(horizontal: false, vertical: true)
                                 Spacer()
-                                Text("\(model.chapterMap.page(at: entry.progression))")
-                                    .font(.footnote.monospacedDigit())
-                                    .foregroundStyle(.secondary)
+                                if let n = model.screenPage(atTotal: entry.progression) {
+                                    Text("\(n)")
+                                        .font(.footnote.monospacedDigit())
+                                        .foregroundStyle(.secondary)
+                                }
                             }
                         }
                         // The ribbon marks where you are, the way a bookmark sits in a printed contents page.
@@ -98,7 +100,7 @@ struct ContentsSheet: View {
                                 if let text = mark.anchor.text {
                                     Text(PassageQuote.quoted(text, cut: true)).font(.footnote).foregroundStyle(.secondary).lineLimit(2)
                                 }
-                                Text("Page \(model.chapterMap.page(at: mark.totalProgression)) · \(mark.created.formatted(.relative(presentation: .named)))")
+                                Text((model.screenPage(atTotal: mark.totalProgression).map { "Page \($0) · " } ?? "") + mark.created.formatted(.relative(presentation: .named)))
                                     .font(.caption).foregroundStyle(.secondary)
                             }
                         }

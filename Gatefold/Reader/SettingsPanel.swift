@@ -366,9 +366,11 @@ struct SearchSheet: View {
                              + Text(locator.text.after ?? "").foregroundStyle(.secondary))
                                 .font(.subheadline)
                                 .lineLimit(3)
-                            Text("Page \(model.chapterMap.page(at: locator.locations.totalProgression ?? 0))")
-                                .font(.caption.monospacedDigit())
-                                .foregroundStyle(.secondary)
+                            if let n = model.screenPage(atTotal: locator.locations.totalProgression ?? 0) {
+                                Text("Page \(n)")
+                                    .font(.caption.monospacedDigit())
+                                    .foregroundStyle(.secondary)
+                            }
                         }
                     }
                     .foregroundStyle(Color.primary)

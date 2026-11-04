@@ -20,10 +20,18 @@ protocol ReaderPage: AnyObject {
     func dropStandby()
     /// Shows the page `prepareStandby` loaded for `locator`; false when there is none.
     func promoteStandby(for locator: Locator) async -> Bool
+    /// The chapter on screen and where the screen is in its columns, for page numbers.
+    func screenGeometry() async -> (href: String, geometry: ScreenPageGeometry)?
+    /// Lays `hrefs` out out of sight, one by one, at the page's layout, and hands back each one's columns.
+    func countPages(_ hrefs: [String], record: @escaping @MainActor (String, Int) -> Void)
+    func stopCounting()
 }
 
 extension ReaderPage {
     func prepareStandby(at locator: Locator) {}
     func dropStandby() {}
     func promoteStandby(for locator: Locator) async -> Bool { false }
+    func screenGeometry() async -> (href: String, geometry: ScreenPageGeometry)? { nil }
+    func countPages(_ hrefs: [String], record: @escaping @MainActor (String, Int) -> Void) {}
+    func stopCounting() {}
 }
