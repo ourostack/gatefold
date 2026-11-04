@@ -276,8 +276,10 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
               let counting = try? Self.makeNavigator(publication: publication, at: nil, preferences: preferences) else { return }
         let links = hrefs.compactMap { href in publication.readingOrder.first { $0.url().removingFragment().string == href } }
         addChild(counting)
-        counting.view.frame = navigator.view.frame
-        counting.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        // The same size as the page, laid out beside it, past the clipped edge. Behind the page, its
+        // chapter came out in the reopen picture drawn from this view, laid over his page. A reflow
+        // stops the count, so it never needs to follow the page's size.
+        counting.view.frame = navigator.view.frame.offsetBy(dx: view.bounds.width + 64, dy: 0)
         counting.view.isUserInteractionEnabled = false
         counting.view.accessibilityElementsHidden = true
         view.insertSubview(counting.view, at: 0)

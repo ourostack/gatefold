@@ -61,8 +61,26 @@ final class PageNumberUITests: XCTestCase {
                                         "-GatefoldOpenBook", "gutenberg-pride-and-prejudice",
                                         "-GatefoldGoTo", ProcessInfo.processInfo.environment["GATEFOLD_NUMBERS_AT"] ?? "0.31"]
         app.launch()
+        // While the book is counted out of sight, the page shows only its own words. (Build 17's first
+        // counter sat behind the live page; its chapter never showed on screen here, but it did in
+        // the reopen picture kept then, which `ReopenLandingUITests` caught.)
+        let up = Date().addingTimeInterval(90)
+        while visibleText.isEmpty, Date() < up { RunLoop.current.run(until: Date().addingTimeInterval(0.2)) }
+        RunLoop.current.run(until: Date().addingTimeInterval(8))
+        let counting = XCUIScreen.main.screenshot()
         var shown = settledNumbers(timeout: 300)
         XCTAssertFalse(shown.isEmpty, "no page number once the book was counted")
+        let counted = XCUIScreen.main.screenshot()
+        let differs = Self.textDifference(counting.image, counted.image)
+        if differs > 0.01 {
+            for (shot, name) in [(counting, "while-counting"), (counted, "counted")] {
+                let a = XCTAttachment(screenshot: shot)
+                a.name = name
+                a.lifetime = .keepAlways
+                add(a)
+            }
+        }
+        XCTAssertLessThanOrEqual(differs, 0.01, "the page while counting is the page once counted (\(differs) of its text differs)")
         let page = app.descendants(matching: .any)["reader.page"].firstMatch.frame
         let perScreen = page.width > page.height ? 2 : 1
         var sequence = [shown]
@@ -94,5 +112,29 @@ final class PageNumberUITests: XCTestCase {
         app.launch()
         // Kept counts number the reopened page without counting again.
         XCTAssertEqual(settledNumbers(timeout: 40, quiet: 2.5), shown, "the reopen's numbers")
+    }
+
+    /// The share of the text area's pixels (the middle 80% of the screen's height, clear of the
+    /// running head and the page number) whose darkness differs between two screenshots.
+    private static func textDifference(_ a: UIImage, _ b: UIImage) -> Double {
+        func gray(_ image: UIImage) -> (data: [UInt8], w: Int, h: Int)? {
+            guard let cg = image.cgImage else { return nil }
+            let w = cg.width / 4, h = cg.height / 4
+            var data = [UInt8](repeating: 0, count: w * h)
+            guard let ctx = CGContext(data: &data, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w,
+                                      space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGImageAlphaInfo.none.rawValue) else { return nil }
+            ctx.draw(cg, in: CGRect(x: 0, y: 0, width: w, height: h))
+            return (data, w, h)
+        }
+        guard let x = gray(a), let y = gray(b), x.w == y.w, x.h == y.h else { return 1 }
+        var differ = 0, total = 0
+        for row in (x.h / 10)..<(x.h * 9 / 10) {
+            for col in 0..<x.w {
+                let i = row * x.w + col
+                total += 1
+                if abs(Int(x.data[i]) - Int(y.data[i])) > 60 { differ += 1 }
+            }
+        }
+        return total > 0 ? Double(differ) / Double(total) : 1
     }
 }
