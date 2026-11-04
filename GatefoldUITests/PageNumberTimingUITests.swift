@@ -29,15 +29,20 @@ final class PageNumberTimingUITests: XCTestCase {
             .contains { Int($0.label) != nil }
     }
 
-    /// Seconds from the page showing its words to a number on it; nil if none came within a minute.
+    /// Seconds from the page (or the reopen picture) showing to a number on it, by the app's own clock
+    /// (`reader.numberDelay`): a test's clock waits on accessibility reads that take seconds while the
+    /// counters load. Nil if none came within a minute. The number must be on screen too.
     private func secondsToNumber() -> TimeInterval? {
+        let delay = app.descendants(matching: .any)["reader.numberDelay"]
         let up = Date().addingTimeInterval(90)
-        while visibleText.isEmpty, Date() < up { RunLoop.current.run(until: Date().addingTimeInterval(0.1)) }
-        XCTAssertFalse(visibleText.isEmpty, "the page never showed")
-        let shown = Date()
-        while Date().timeIntervalSince(shown) < 60 {
-            if hasNumber { return Date().timeIntervalSince(shown) }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        while Date() < up {
+            if let v = delay.value as? String, let seconds = Double(v) {
+                let shown = Date().addingTimeInterval(10)
+                while !hasNumber, Date() < shown { RunLoop.current.run(until: Date().addingTimeInterval(0.2)) }
+                XCTAssertTrue(hasNumber, "the number the app reports is on the page")
+                return seconds
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
         }
         return nil
     }

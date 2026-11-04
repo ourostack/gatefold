@@ -185,4 +185,14 @@ struct ScreenPagesTests {
         #expect(store.load(book: "alice", layout: single, readingOrder: ["ch1.xhtml"]).columns.isEmpty, "another edition")
     }
 
+    /// Counts kept before build 18 could hold a chapter measured in the previous chapter's web view:
+    /// they are counted again, not trusted.
+    @Test func countsKeptBeforeBuild18AreCountedAgain() throws {
+        let dir = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        let single = layout(columns: 1)
+        let old = dir.appending(path: "alice", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: old, withIntermediateDirectories: true)
+        try JSONEncoder().encode(counted(single)).write(to: old.appending(path: "\(single.key).json"))
+        #expect(ScreenPageStore(directory: dir).load(book: "alice", layout: single, readingOrder: order).columns.isEmpty)
+    }
 }

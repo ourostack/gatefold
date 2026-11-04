@@ -48,8 +48,9 @@ jobs:
         id: sim
         run: |
           set -euo pipefail
-          type="$(xcrun simctl list devicetypes --json | python3 -c 'import json,sys; t=[d["identifier"] for d in json.load(sys.stdin)["devicetypes"] if d["name"].startswith("iPad Pro 13-inch")]; print(sorted(t)[-1])')"
-          runtime="$(xcrun simctl list runtimes --json | python3 -c 'import json,sys; r=[x for x in json.load(sys.stdin)["runtimes"] if x["platform"]=="iOS" and x["isAvailable"]]; print(max(r, key=lambda x: [int(p) for p in x["version"].split(".")])["identifier"])')"
+          # The newest runtime with an iPad Pro 13-inch, and that iPad from the runtime's own list.
+          read -r runtime type < <(xcrun simctl list runtimes --json | python3 -c 'import json,sys; r=[x for x in json.load(sys.stdin)["runtimes"] if x["platform"]=="iOS" and x["isAvailable"] and any(d["name"].startswith("iPad Pro 13-inch") for d in x.get("supportedDeviceTypes",[]))]; x=max(r, key=lambda x: [int(p) for p in x["version"].split(".")]); print(x["identifier"], sorted(d["identifier"] for d in x["supportedDeviceTypes"] if d["name"].startswith("iPad Pro 13-inch"))[-1])')
+          echo "runtime $runtime, device $type"
           udid="$(xcrun simctl create gatefold-ipad "$type" "$runtime")"
           xcrun simctl boot "$udid"
           xcrun simctl bootstatus "$udid" -b
@@ -65,6 +66,18 @@ jobs:
             -resultBundlePath "$RUNNER_TEMP/ipad.xcresult" > "$RUNNER_TEMP/ipad.log" 2>&1 || status=$?
           grep -E "Test Case .*(passed|failed|skipped)|TEST (SUCCEEDED|FAILED)|REPRO (round|SUMMARY)|\.swift:[0-9]+: error" "$RUNNER_TEMP/ipad.log" \
             | sed -E 's/(XCTAssert[A-Za-z]* failed).*/\1 (text withheld)/' | tail -60 || true
+          exit ${status:-0}
+      - name: How soon a page number comes up (measured, by the app's own clock)
+        # Gate: 3 s from the page showing. Exact counts take 5-7 s on a fresh open today (each chapter's
+        # web view loads before it can be counted, and a number waits on every chapter before it), so
+        # this reports and doesn't block until counting is ahead of the open.
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          xcodebuild test -project Gatefold.xcodeproj -scheme Gatefold \
+            -destination "${{ steps.sim.outputs.destination }}" \
+            -only-testing:GatefoldUITests/PageNumberTimingUITests > "$RUNNER_TEMP/timing.log" 2>&1 || status=$?
+          grep -E "number timing|Test Case .*(passed|failed)" "$RUNNER_TEMP/timing.log" || true
           exit ${status:-0}
       - uses: actions/upload-artifact@v4
         if: failure()

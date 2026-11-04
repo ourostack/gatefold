@@ -251,6 +251,8 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
 
     /// The page laying chapters out out of sight to count their pages (`countPages`).
     private var counter: (navigators: [EPUBNavigatorViewController], task: Task<Void, Never>)?
+    /// The counters' delegate, held here (a navigator holds its delegate weakly).
+    private var countingInsets: CountingInsets?
 
     func screenGeometry() async -> (href: String, geometry: ScreenPageGeometry)? {
         await Self.geometry(of: navigator, columns: columns)
@@ -261,9 +263,16 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         _ = await navigator.evaluateJavaScript(ReaderJS.install)
         guard let json = (try? await navigator.evaluateJavaScript(ReaderJS.geometry).get()) as? String,
               let data = json.data(using: .utf8) else { return nil }
-        struct Found: Decodable { var w: Double; var l: Double; var v: Double; var verso: Bool; var pinned: Bool }
+        struct Found: Decodable { var w: Double; var l: Double; var v: Double; var verso: Bool; var pinned: Bool; var doc: String? }
         guard let found = try? JSONDecoder().decode(Found.self, from: data) else { return nil }
         let href = location.href.string.split(separator: "#", maxSplits: 1).first.map(String.init) ?? location.href.string
+        // Measured in the chapter it names, or not at all: a counter's location moves to the next chapter
+        // while the previous one's web view is still current, and its columns would be counted as the next's.
+        if let doc = found.doc?.removingPercentEncoding, !doc.hasSuffix("/" + (href.removingPercentEncoding ?? href)),
+           doc != (href.removingPercentEncoding ?? href) {
+            readerLog.debug("pages: a look named \(href, privacy: .public) measured \(doc, privacy: .public)")
+            return nil
+        }
         return (href, ScreenPageGeometry(scrollWidth: found.w, scrollLeft: found.l, viewportWidth: found.v,
                                          columnsPerScreen: columns, verso: found.verso, pinned: found.pinned))
     }
@@ -280,7 +289,15 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             try? Self.makeNavigator(publication: publication, at: nil, preferences: preferences)
         }
         guard !workers.isEmpty else { return }
+        // The page's own bands (`navigatorContentInset`): without them a tablet counter laid its words out
+        // 276 pt taller than the page and counted about a fifth too few columns.
+        let insets = CountingInsets { [weak self] in
+            guard let self else { return nil }
+            return self.navigatorContentInset(self.navigator)
+        }
+        countingInsets = insets
         for counting in workers {
+            counting.delegate = insets
             addChild(counting)
             // The same size as the page, laid out beside it, past the clipped edge. Behind the page, its
             // chapter came out in the reopen picture drawn from this view, laid over his page. A reflow
@@ -337,7 +354,8 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         func retry(_ link: ReadiumShared.Link) {
             let href = link.url().removingFragment().string
             tries[href, default: 0] += 1
-            if tries[href]! <= 2 { links.append(link) } else { readerLog.notice("pages: \(href, privacy: .public) never settled") }
+            // At the front: the chapters are counted in reading order, and each number waits on those before it.
+            if tries[href]! <= 2 { links.insert(link, at: links.startIndex) } else { readerLog.notice("pages: \(href, privacy: .public) never settled") }
         }
     }
 
@@ -348,7 +366,13 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     /// view still laying out, or still loading a font, reads short). False if it never settled.
     private static func count(_ link: ReadiumShared.Link, in counting: EPUBNavigatorViewController, columns: Int,
                               record: @MainActor (String, Int) -> Void) async -> Bool {
-        let went = await counting.go(to: link, options: .init(animated: false))
+        // A counter made a moment ago can refuse a go while its first chapter is still loading: ask again
+        // in place, since every number after this chapter waits for it.
+        var went = await counting.go(to: link, options: .init(animated: false))
+        for _ in 0..<20 where !went && !Task.isCancelled {
+            try? await Task.sleep(for: .milliseconds(150))
+            went = await counting.go(to: link, options: .init(animated: false))
+        }
         let href = link.url().removingFragment().string
         readerLog.debug("pages: \(href, privacy: .public) go \(went, privacy: .public)")
         var last: Int?
@@ -1916,4 +1940,15 @@ final class FrameWatch: NSObject {
         self.link = nil
         readerLog.notice("turn frames: \(self.frames, privacy: .public) frames, \(self.late, privacy: .public) late, worst \(Int(self.worst * 1000), privacy: .public) ms, counting \(counting, privacy: .public)")
     }
+}
+
+/// A counter's only delegate: it lays the chapter out in the page's bands and answers nothing else, so
+/// its moves never reach the reader (`ReaderHostController.countPages`).
+@MainActor
+private final class CountingInsets: NSObject, EPUBNavigatorDelegate {
+    private let inset: () -> UIEdgeInsets?
+    init(_ inset: @escaping () -> UIEdgeInsets?) { self.inset = inset }
+    func navigatorContentInset(_ navigator: VisualNavigator) -> UIEdgeInsets? { inset() }
+    func navigator(_ navigator: Navigator, locationDidChange locator: Locator) {}
+    func navigator(_ navigator: Navigator, presentError error: NavigatorError) {}
 }

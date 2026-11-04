@@ -292,12 +292,20 @@ final class ReaderModel {
     /// They're the pages he sees, as Apple Books numbers them (`ScreenPageMap`), not Readium's positions.
     private(set) var screenNumbers: [Int?]? {
         didSet {
+            if screenNumbers != oldValue {
+                readerLog.debug("pages: numbers now \(String(describing: self.screenNumbers), privacy: .public)")
+            }
             guard !numberShown, screenNumbers?.contains(where: { $0 != nil }) == true else { return }
             numberShown = true
+            // A reopen's picture carries the kept number, so a number already up counts as at once.
+            firstNumberDelay = pageShownAt.map { Date().timeIntervalSince($0) } ?? 0
             readerLog.notice("pages: first number after \(Date().timeIntervalSince(self.openedAt), privacy: .public) s from open, \(self.pageShownAt.map { Date().timeIntervalSince($0) } ?? -1, privacy: .public) s from the page showing")
         }
     }
     @ObservationIgnored private var numberShown = false
+    /// Seconds from the page (or the reopen picture) showing to its first number, for the timing test:
+    /// the app's own clock, which a slow accessibility read can't stretch.
+    private(set) var firstNumberDelay: TimeInterval?
     /// When the live page took over from the cover or the reopen picture.
     @ObservationIgnored private var pageShownAt: Date?
     private(set) var screenPages: ScreenPageMap?
@@ -378,6 +386,11 @@ final class ReaderModel {
         let key = map.layout
         page?.countPages(map.uncounted) { [weak self] href, columns in
             guard let self, self.screenPages?.layout == key else { return }
+            if let (here, geometry) = self.lastGeometry, here == href, geometry.isClean, geometry.columns != columns {
+                // The page is the truth: a counter that lays the chapter out differently has a bug to find.
+                readerLog.error("pages: counter disagrees with the page on \(href, privacy: .public): \(columns, privacy: .public) against \(geometry.columns, privacy: .public); the page's kept")
+                return
+            }
             self.screenPages?.record(href: href, columns: columns)
             if let map = self.screenPages { Self.pageStore.save(map) }
             if let (here, geometry) = self.lastGeometry {

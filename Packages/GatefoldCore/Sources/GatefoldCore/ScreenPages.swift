@@ -174,9 +174,13 @@ public struct ScreenPageStore: Sendable {
 
     public init(directory: URL) { self.directory = directory }
 
+    /// v2 (build 18): a count is taken only in the chapter it names. Earlier counts could hold the
+    /// previous chapter's columns, so they are counted again rather than trusted.
+    static let version = "v2"
+
     private func url(book: String, layout: ScreenPageLayout) -> URL {
         let safe = book.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? book
-        return directory.appending(path: safe, directoryHint: .isDirectory).appending(path: "\(layout.key).json")
+        return directory.appending(path: safe, directoryHint: .isDirectory).appending(path: "\(layout.key)-\(Self.version).json")
     }
 
     /// The counts kept for this book at this layout, or none yet.
