@@ -1114,7 +1114,8 @@ final class ReaderModel {
     /// `moves` when the place was last recorded: a reflow only owes a move not yet kept, so an
     /// ordinary rotation never swaps his exact words for Readium's page boundary.
     @ObservationIgnored private var recordedMoves = -1
-    /// Set when a reflow ends (or an owed place is kept) and cleared by any move or touch of his: while
+    /// Set when a reflow ends (or an owed place is kept) and cleared by a move of his, or a report his
+    /// touch brought: while
     /// it's up, a location report is the layout (a rotation, an unfold, a late report from the new
     /// spread), never a reason to rewrite the place. It stays down until the next reflow, not just the
     /// next report, so a long scroll's later reports still count.
@@ -1163,6 +1164,10 @@ final class ReaderModel {
         // re-anchors or rewrites the saved place: a spread that slips a verso before his page starts a
         // page early, and saving its start reopened him a page early (build 17's rotation miss).
         let readerMoved = !layoutOnly || touchedSinceLocation
+        // A touch that brought a report is his gesture (a slide or a scroll, which Readium owns and
+        // `moves` never sees): the rest of its reports are his too. A tap that only shows the controls
+        // brings none, so it never opens the place to a late report from the layout.
+        if touchedSinceLocation { layoutOnly = false }
         // A location that arrives as a reflow lands is the restore, not the reader moving: keep the
         // anchor, or repeated reflows would walk it backward a page at a time.
         if recordingOwed {
@@ -1214,7 +1219,7 @@ final class ReaderModel {
     /// A touch on the page. If the next location (outside a reflow) differs from where the book
     /// opened, it was a swipe in slide or scroll mode and the place is the reader's own. A tap that
     /// only shows the controls changes no location, so it moves nothing.
-    func noteInteraction() { touchedSinceLocation = true; layoutOnly = false }
+    func noteInteraction() { touchedSinceLocation = true }
     private var touchedSinceLocation = false
     private var openedLocation: Locator?
 

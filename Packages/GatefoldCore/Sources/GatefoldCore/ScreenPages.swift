@@ -139,6 +139,8 @@ public struct ScreenPageGeometry: Equatable, Sendable {
 
     /// Whether a web view's document (`location.pathname`, under the publication's root) is the chapter
     /// `href` (relative to that root): the whole path, so `sub/ch1.xhtml` never passes for `ch1.xhtml`.
+    /// Local books are served at `readium://<uuid>/<href>`; a book served from its own web address would
+    /// carry that address's path and match nothing (Gatefold opens only local files).
     public static func document(_ pathname: String, isChapter href: String) -> Bool {
         let path = pathname.removingPercentEncoding ?? pathname
         let chapter = (href.removingPercentEncoding ?? href).split(separator: "#", maxSplits: 1).first.map(String.init) ?? href
