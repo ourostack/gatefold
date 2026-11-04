@@ -365,6 +365,9 @@ final class ReaderModel {
         guard screenPages?.layout == key else { return }
         lastGeometry = (href, geometry)
         screenNumbers = screenPages?.screen(href: href, geometry: geometry)
+        if screenNumbers == nil {
+            readerLog.debug("pages: no number yet for \(href, privacy: .public): \(self.screenPages?.uncounted.count ?? -1, privacy: .public) uncounted, clean \(geometry.isClean, privacy: .public), this chapter \(self.screenPages?.pages(of: href).map(String.init) ?? "nil", privacy: .public)")
+        }
     }
 
     private func startCounting() {
@@ -377,7 +380,13 @@ final class ReaderModel {
             guard let self, self.screenPages?.layout == key else { return }
             self.screenPages?.record(href: href, columns: columns)
             if let map = self.screenPages { Self.pageStore.save(map) }
-            if let (here, geometry) = self.lastGeometry { self.screenNumbers = self.screenPages?.screen(href: here, geometry: geometry) }
+            if let (here, geometry) = self.lastGeometry {
+                self.screenNumbers = self.screenPages?.screen(href: here, geometry: geometry)
+            } else {
+                // No look at the page has landed yet (a reopen's picture swapping out, a reflow ending as
+                // the count began): take one, or a finished count never shows its number.
+                Task { await self.refreshScreenNumbers() }
+            }
         }
     }
 
@@ -521,7 +530,7 @@ final class ReaderModel {
         // it never slows the first page.
         Task {
             for _ in 0..<120 where reopenPicture != nil { try? await Task.sleep(for: .milliseconds(250)) }
-            try? await Task.sleep(for: .seconds(2))
+            try? await Task.sleep(for: .milliseconds(400))
             await refreshScreenNumbers(recount: true)
         }
         guard reopenPicture != nil else { return }
@@ -1067,11 +1076,11 @@ final class ReaderModel {
         if !placeOwed { movesAtLayout = moves }
         if placeOwed {
             Task { [weak self] in
-                guard let self, self.placeOwed, !self.isClosed, self.keeper.reflowing == nil,
+                guard let self, self.placeOwed, !self.isClosed, !self.isWarming, self.keeper.reflowing == nil,
                       let here = self.page?.currentLocation else { return }
                 // No words were taken during the reflow: take them now, from the page he is on.
                 if self.keeper.anchor == nil { await self.captureAnchor() }
-                readerLog.notice("place: recorded the move a reflow held")
+                readerLog.notice("place: recorded the move a reflow held, at \(here.locations.totalProgression ?? -1, privacy: .public) moves \(self.moves, privacy: .public) recorded \(self.recordedMoves, privacy: .public)")
                 await self.locationDidChange(here)
             }
         }
@@ -1114,7 +1123,11 @@ final class ReaderModel {
         // A move reported mid-reflow (a turn or a jump while an iPad's first layout is still settling)
         // is owed: the reflow's end records it, or the place he went to is never kept (build 17 reopened
         // a book jumped to during that reflow at its start, then landed on the Cloud's older place).
-        if keeper.reflowing != nil, hasMoved, moves != recordedMoves, !duringTurn { placeOwed = true }
+        // A reader warmed behind the shelf has no place of his to owe.
+        if keeper.reflowing != nil, hasMoved, moves != recordedMoves, !duringTurn, !isWarming {
+            if !placeOwed { readerLog.notice("place: owed by a reflow, at \(locator.locations.totalProgression ?? -1, privacy: .public) moves \(self.moves, privacy: .public) recorded \(self.recordedMoves, privacy: .public)") }
+            placeOwed = true
+        }
         guard keeper.reflowing == nil, !duringTurn else { return }
         placeOwed = false
         // Only he moves the place: a turn, a jump or a touch since the last report. A report after a
