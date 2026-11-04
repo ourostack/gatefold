@@ -950,6 +950,7 @@ final class ReaderModel {
                 readerLog.notice("landed: the Cloud says \(cloud, privacy: .public), Readium \(landedAt, privacy: .public)")
             }
             if let json {
+                self.recordedMoves = self.moves
                 self.app.library.recordPlace(
                     bookID: self.bookID,
                     locatorJSON: json,
@@ -1063,7 +1064,22 @@ final class ReaderModel {
         // The page now showing names its own chapter in the running head (a spread opened onto a
         // place is laid out by the reflow, after the first look at the words).
         Task { _ = await page?.currentAnchor() }
+        if placeOwed {
+            Task { [weak self] in
+                guard let self, self.placeOwed, !self.isClosed, self.keeper.reflowing == nil,
+                      let here = self.page?.currentLocation else { return }
+                // No words were taken during the reflow: take them now, from the page he is on.
+                if self.keeper.anchor == nil { await self.captureAnchor() }
+                readerLog.notice("place: recorded the move a reflow held")
+                await self.locationDidChange(here)
+            }
+        }
     }
+    /// A move arrived while a reflow was under way; the reflow's end records it.
+    @ObservationIgnored private var placeOwed = false
+    /// `moves` when the place was last recorded: a reflow only owes a move not yet kept, so an
+    /// ordinary rotation never swaps his exact words for Readium's page boundary.
+    @ObservationIgnored private var recordedMoves = -1
 
     /// The saved place as an anchor, when it carries the words that opened his page.
     static func openingAnchor(from locator: Locator?) -> ReadingAnchor? {
@@ -1091,7 +1107,12 @@ final class ReaderModel {
         // A landing records its place once it has settled; the steps on the way are not places.
         guard !landing else { return }
         // Mid-turn the navigator has moved under the overlay; the turn records the place when it lands.
+        // A move reported mid-reflow (a turn or a jump while an iPad's first layout is still settling)
+        // is owed: the reflow's end records it, or the place he went to is never kept (build 17 reopened
+        // a book jumped to during that reflow at its start, then landed on the Cloud's older place).
+        if keeper.reflowing != nil, hasMoved, moves != recordedMoves, !duringTurn { placeOwed = true }
         guard keeper.reflowing == nil, !duringTurn else { return }
+        placeOwed = false
         // A location that arrives as a reflow lands is the restore, not the reader moving: keep the
         // anchor, or repeated reflows would walk it backward a page at a time.
         if let settled = reflowSettledAt, Date().timeIntervalSince(settled) < 1.2 {
@@ -1120,6 +1141,7 @@ final class ReaderModel {
         if let json = try? here.jsonString() {
             let now = Date()
             let exact = await mapper?.position(for: BookLocation(here), at: now)
+            recordedMoves = moves
             app.library.recordPlace(
                 bookID: bookID,
                 locatorJSON: json,
