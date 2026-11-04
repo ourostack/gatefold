@@ -93,7 +93,15 @@ enum ReaderJS {
               start = next < text.length ? next : r.startOffset;
             }
           }
-          const highlight = text.substr(start, 64);
+          let highlight = text.substr(start, 64);
+          // The page's words run on past this text node (a quotation mark before "<i>Plover</i>"): a
+          // mark alone matches the chapter's first quotation, pages back. Take the words that follow.
+          if (highlight.length < 64) {
+            const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+            walker.currentNode = node;
+            while (highlight.length < 64 && walker.nextNode()) { highlight += walker.currentNode.data; }
+            highlight = highlight.substr(0, 64);
+          }
           if (!norm(highlight)) { return null; }
           return { highlight: highlight, before: text.substr(Math.max(0, start - 32), Math.min(32, start)), heading: headingBefore(node), contents: contentsBefore(node, ids) };
         },

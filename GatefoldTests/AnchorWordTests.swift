@@ -208,4 +208,48 @@ struct AnchorWordTests {
         let onScreen = (await eval(web, at: scroll, ReaderJS.visibleText) as? String).map(ReaderJS.normalize) ?? ""
         #expect(onScreen.contains(String(ReaderJS.normalize(anchor.highlight).prefix(24))), "the place's first words are not on his page")
     }
+
+    /// A page that opens on a quotation mark standing alone in its text node (`“<i>Plover</i> …`): build
+    /// 16's iPad reopen kept the place as that mark only. A lone mark matches the first quotation in the
+    /// chapter, so the reopen jumped to the chapter's opening page, pages before his. The place carries
+    /// the words that follow the mark, across the tags between them.
+    @Test func aPageOpeningOnALoneQuotationMarkKeepsItsWords() async throws {
+        let scene = try #require(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 200, width: 300, height: 200)
+        let web = WKWebView(frame: window.bounds)
+        web.scrollView.contentInsetAdjustmentBehavior = .never
+        window.addSubview(web)
+        window.isHidden = false
+        defer { window.isHidden = true }
+        let loaded = Loaded()
+        web.navigationDelegate = loaded
+        let html = """
+        <!doctype html><html><head><meta name="viewport" content="width=300, height=200, initial-scale=1, maximum-scale=1, user-scalable=no">
+        <style>
+        :root { height: 100vh; column-width: 100vw; column-gap: 0; column-fill: auto; overflow: hidden; }
+        body { margin: 0; padding: 0 12px; font: 18px/24px Menlo, monospace; }
+        p { margin: 0; }
+        .fill { height: 100vh; break-after: column; -webkit-column-break-after: always; }
+        </style></head><body><p class="fill">“Quince,” said the heron.</p><p>“<i>Plover</i> lantern thistle cobble marrow, and the heron went on along the bank.”</p></body></html>
+        """
+        await withCheckedContinuation { continuation in
+            loaded.done = continuation
+            web.loadHTMLString(html, baseURL: nil)
+        }
+        for _ in 0..<50 {
+            if await eval(web, "[window.innerWidth, window.innerHeight].join('x')") as? String == "300x200" { break }
+            try? await Task.sleep(for: .milliseconds(100))
+        }
+        _ = await eval(web, ReaderJS.install)
+        let scroll = "document.scrollingElement.scrollLeft = window.innerWidth"
+        let json = await eval(web, at: scroll, ReaderJS.anchor(column: 0)) as? String
+        struct Found: Decodable { var highlight: String }
+        let anchor = try #require(json.flatMap { $0.data(using: .utf8) }.flatMap { try? JSONDecoder().decode(Found.self, from: $0) })
+        let words = ReaderJS.normalize(anchor.highlight)
+        #expect(words.hasPrefix("“Plover lantern thistle"), "the place is [\(words)], not his page's opening words")
+        // The settle's check and the spread's side finder both find those words where they are.
+        let side = await eval(web, at: scroll, ReaderJS.sideOf(anchor.highlight)) as? Int
+        #expect(side == 0, "the place's words are on side \(side.map(String.init) ?? "nil") of this page")
+    }
 }

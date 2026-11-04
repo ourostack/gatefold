@@ -1,4 +1,5 @@
 import GatefoldCore
+import ReadiumShared
 import SwiftUI
 import UIKit
 import WebKit
@@ -24,6 +25,8 @@ enum ReopenSnapshot {
         var navigator: [Double]?
         /// 2 for a spread.
         var columns: Int?
+        /// The place the library held for the book when pictured (its Readium locator JSON).
+        var place: String?
 
         var navigatorFrame: CGRect? { navigator.flatMap { $0.count == 4 ? CGRect(x: $0[0], y: $0[1], width: $0[2], height: $0[3]) : nil } }
         var pageFrame: CGRect? { page.flatMap { $0.count == 4 ? CGRect(x: $0[0], y: $0[1], width: $0[2], height: $0[3]) : nil } }
@@ -58,13 +61,20 @@ enum ReopenSnapshot {
     /// The saved picture of `book` for a window of `size` in `theme`. Taken in another paper (the
     /// system turned dark) it is recoloured; taken in a window of another size (the iPad turned, the
     /// Duo opened or closed) its page is set into this one. Only the cover is left when there is none.
-    static func load(book: String, size: CGSize, theme: ReaderTheme) -> Picture? {
+    ///
+    /// `place` is the place the library holds for the book now: a picture kept at another place is of
+    /// an earlier page (the last leave ended before its picture was kept) and is not shown.
+    static func load(book: String, size: CGSize, theme: ReaderTheme, place: String? = nil) -> Picture? {
         let began = Date()
-        let exact = read(directory.appending(path: name(book: book, size: size)), book: book)
+        var exact = read(directory.appending(path: name(book: book, size: size)), book: book)
+        if let kept = exact, !samePlace(kept.meta.place, place) { exact = nil }
         if let exact, exact.meta.theme == theme.rawValue { return exact }
         // Leaving keeps one picture per book (`take` empties the others), so any other is his page.
-        let found = exact ?? otherSize(book: book, size: size)
-        guard let found, let from = ReaderTheme(rawValue: found.meta.theme) else { return nil }
+        let found = exact ?? otherSize(book: book, size: size).flatMap { samePlace($0.meta.place, place) ? $0 : nil }
+        guard let found, let from = ReaderTheme(rawValue: found.meta.theme) else {
+            if place != nil { readerLog.notice("reopen: no picture of the page he left (none kept, or one of an earlier page)") }
+            return nil
+        }
         let sameSize = abs(found.meta.width - size.width) < 1 && abs(found.meta.height - size.height) < 1
         guard let image = adapt(found, to: size, sameSize: sameSize, from: from, to: theme) else { return nil }
         readerLog.notice("reopen: picture adapted from \(Int(found.meta.width), privacy: .public)x\(Int(found.meta.height), privacy: .public) \(from.rawValue, privacy: .public) to \(Int(size.width), privacy: .public)x\(Int(size.height), privacy: .public) \(theme.rawValue, privacy: .public) in \(Date().timeIntervalSince(began), privacy: .public) s")
@@ -72,6 +82,15 @@ enum ReopenSnapshot {
         meta.theme = theme.rawValue
         if !sameSize { meta.width = size.width; meta.height = size.height; meta.page = nil; meta.navigator = nil; meta.columns = nil }
         return Picture(image: image, meta: meta, adapted: true)
+    }
+
+    /// The same place: the same file, the same words opening the page, the same progression. A picture
+    /// kept before places were recorded with it (`kept` nil) is taken as it is.
+    static func samePlace(_ kept: String?, _ now: String?) -> Bool {
+        guard let kept, let now else { return true }
+        guard let a = try? Locator(jsonString: kept), let b = try? Locator(jsonString: now) else { return kept == now }
+        return a.href.string == b.href.string && a.text.highlight == b.text.highlight
+            && abs((a.locations.progression ?? 0) - (b.locations.progression ?? 0)) < 0.0005
     }
 
     private static func otherSize(book: String, size: CGSize) -> Picture? {
@@ -131,9 +150,20 @@ enum ReopenSnapshot {
 
     /// He may be leaving (the app has stopped being active, and can still draw): picture the page now
     /// and keep it. iOS may end Gatefold any time once it is in the background.
-    static func keep(model: ReaderModel) {
+    static func keep(model: ReaderModel, place: String?) {
         taking?.cancel()
-        taking = Task { await take(model: model) }
+        // Asks iOS for the moments the picture takes (about 2 s for an iPad spread in the simulator),
+        // so it is kept before Gatefold is suspended.
+        let app = UIApplication.shared
+        var background = UIBackgroundTaskIdentifier.invalid
+        background = app.beginBackgroundTask(withName: "Keep the reopen picture") {
+            app.endBackgroundTask(background)
+            background = .invalid
+        }
+        taking = Task {
+            await take(model: model, place: place)
+            if background != .invalid { app.endBackgroundTask(background); background = .invalid }
+        }
     }
 
     /// Back in the app: the page will move on, so the kept picture no longer shows where he is.
@@ -148,7 +178,7 @@ enum ReopenSnapshot {
     /// Takes the picture of the whole window as it is now: the page, its running head and footer.
     /// Nothing is kept over a moment the page will not reopen to (an end leaf, a slip, the controls
     /// up); a stale picture for this size is set aside instead.
-    private static func take(model: ReaderModel) async {
+    private static func take(model: ReaderModel, place: String?) async {
         guard let host = model.hostController, let window = host.navigator.view.window else { return }
         let size = window.bounds.size
         let base = directory.appending(path: name(book: model.bookID, size: size))
@@ -165,7 +195,7 @@ enum ReopenSnapshot {
         let meta = Meta(book: model.bookID, width: size.width, height: size.height, theme: model.theme.rawValue, savedAt: Date(),
                         page: [frame.minX, frame.minY, frame.width, frame.height],
                         navigator: [nav.minX, nav.minY, nav.width, nav.height],
-                        columns: model.layout.columns == .two ? 2 : 1)
+                        columns: model.layout.columns == .two ? 2 : 1, place: place)
         let pictured = Date().timeIntervalSince(began)
         keptFor = base
         // Encoding and writing off the main thread; the picture itself had to be drawn on it.
