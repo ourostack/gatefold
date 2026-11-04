@@ -35,7 +35,16 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     /// Set while a reflow from one page to a spread is the unfold.
     private var unfolding = false
     /// True from the moment a turn begins until it lands or springs back.
-    private(set) var isTurning = false
+    private(set) var isTurning = false {
+        didSet {
+            guard oldValue != isTurning, LaunchOptions.isUITest else { return }
+            if isTurning { frames.start() } else { frames.stop(counting: counter != nil) }
+        }
+        willSet { if isTurning, !newValue { lastTurnEnded = .now } }
+    }
+    private var lastTurnEnded: ContinuousClock.Instant?
+    /// Under test, each turn's frames: whether a count behind the page costs the turn any.
+    private let frames = FrameWatch()
     private var panStart: CGPoint = .zero
     private var panForward = true
     /// Set when the pan ends before the turn is ready; the preparing task finishes with it.
@@ -278,16 +287,23 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         let task = Task { @MainActor [weak self] in
             var counted = 0
             for link in links {
-                while self?.isTurning == true, !Task.isCancelled { try? await Task.sleep(for: .milliseconds(250)) }
+                // A chapter laid out mid-burst costs the next turn frames: wait for 1.5 s without a turn.
+                while let host = self, host.isTurning || host.lastTurnEnded.map({ ContinuousClock.now - $0 < .milliseconds(1500) }) == true, !Task.isCancelled {
+                    try? await Task.sleep(for: .milliseconds(250))
+                }
                 guard !Task.isCancelled else { return }
-                _ = await counting.go(to: link, options: .init(animated: false))
+                let went = await counting.go(to: link, options: .init(animated: false))
                 let href = link.url().removingFragment().string
+                readerLog.debug("pages: \(href, privacy: .public) go \(went, privacy: .public), at \(counting.currentLocation?.href.string ?? "nil", privacy: .public)")
                 // A chapter is counted once two looks 150 ms apart agree: a web view still laying out
                 // (or still loading a font) reads short.
                 var last: Int?
                 for _ in 0..<40 where !Task.isCancelled {
                     try? await Task.sleep(for: .milliseconds(150))
-                    guard let (here, geometry) = await Self.geometry(of: counting, columns: columns), here == href, geometry.columns > 0 else { continue }
+                    guard let (here, geometry) = await Self.geometry(of: counting, columns: columns), here == href, geometry.columns > 0 else {
+                        readerLog.debug("pages: \(href, privacy: .public) not measured yet (at \(counting.currentLocation?.href.string ?? "nil", privacy: .public))")
+                        continue
+                    }
                     if geometry.columns == last { record(href, geometry.columns); counted += 1; break }
                     last = geometry.columns
                 }
@@ -1808,4 +1824,38 @@ extension HTMLDecorationTemplate {
         @keyframes gatefold-fade { from { opacity: 1; } to { opacity: 0; } }
         """
     ) }
+}
+
+/// Counts a turn's frames and the ones that came late (more than half a frame past due), for the log.
+@MainActor
+final class FrameWatch: NSObject {
+    private var link: CADisplayLink?
+    private var last: CFTimeInterval = 0
+    private var frames = 0, late = 0
+    private var worst: CFTimeInterval = 0
+
+    func start() {
+        link?.invalidate()
+        frames = 0; late = 0; worst = 0; last = 0
+        let link = CADisplayLink(target: self, selector: #selector(tick(_:)))
+        link.add(to: .main, forMode: .common)
+        self.link = link
+    }
+
+    @objc private func tick(_ link: CADisplayLink) {
+        defer { last = link.timestamp }
+        guard last > 0 else { return }
+        frames += 1
+        let gap = link.timestamp - last
+        let due = link.targetTimestamp - link.timestamp
+        worst = max(worst, gap)
+        if due > 0, gap > due * 1.5 { late += 1 }
+    }
+
+    func stop(counting: Bool) {
+        guard let link else { return }
+        link.invalidate()
+        self.link = nil
+        readerLog.notice("turn frames: \(self.frames, privacy: .public) frames, \(self.late, privacy: .public) late, worst \(Int(self.worst * 1000), privacy: .public) ms, counting \(counting, privacy: .public)")
+    }
 }

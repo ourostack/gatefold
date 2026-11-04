@@ -293,7 +293,12 @@ final class ReaderModel {
     private(set) var screenNumbers: [Int?]?
     private(set) var screenPages: ScreenPageMap?
     private var lastGeometry: (href: String, geometry: ScreenPageGeometry)?
-    private static let pageStore = ScreenPageStore(directory: URL.cachesDirectory.appending(path: "ScreenPages", directoryHint: .isDirectory))
+    private static let pageStore: ScreenPageStore = {
+        let directory = URL.cachesDirectory.appending(path: "ScreenPages", directoryHint: .isDirectory)
+        // A clean start (`-GatefoldReset`) counts every book again.
+        if LaunchOptions.resetState { try? FileManager.default.removeItem(at: directory) }
+        return ScreenPageStore(directory: directory)
+    }()
 
     /// What the book's pages are cut by now; nil in scroll, which has no pages.
     var screenLayout: ScreenPageLayout? {

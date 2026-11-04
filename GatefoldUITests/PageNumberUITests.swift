@@ -46,6 +46,17 @@ final class PageNumberUITests: XCTestCase {
     }
 
     func testEveryTurnMovesOnAPageAndAReopenKeepsTheNumbers() {
+        turnsAndReopen()
+    }
+
+    /// The iPad on its side: a spread, two numbers in a row, each turn two on. (Run on the iPad only.)
+    func testOnASpreadEveryTurnMovesOnTwoPages() {
+        XCUIDevice.shared.orientation = .landscapeLeft
+        defer { XCUIDevice.shared.orientation = .portrait }
+        turnsAndReopen()
+    }
+
+    private func turnsAndReopen() {
         app.launchArguments = common + ["-GatefoldReset", "YES", "-GatefoldDownloadAll", "YES",
                                         "-GatefoldOpenBook", "gutenberg-pride-and-prejudice",
                                         "-GatefoldGoTo", ProcessInfo.processInfo.environment["GATEFOLD_NUMBERS_AT"] ?? "0.31"]
