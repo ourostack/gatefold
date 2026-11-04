@@ -36,7 +36,7 @@ struct GatefoldApp: App {
             case .inactive:
                 // He may be leaving: picture the page while it can still be drawn, for a reopen.
                 if let reader = app.activeReader, !reader.isWarming {
-                    ReopenSnapshot.keep(model: reader)
+                    ReopenSnapshot.keep(model: reader, place: app.library.book(reader.bookID)?.locatorJSON)
                 } else {
                     readerLog.notice("reopen: leaving with no reader open (\(app.activeReader == nil ? "none" : "a warm one", privacy: .public))")
                 }
@@ -214,7 +214,7 @@ struct RootView: View {
         let window = UIApplication.shared.connectedScenes.compactMap { ($0 as? UIWindowScene)?.keyWindow ?? ($0 as? UIWindowScene)?.windows.first }.first
         let full = window?.bounds.size ?? size
         let theme = app.preferences.effective(for: id).resolvedTheme(systemIsDark: colorScheme == .dark)
-        reopenPicture = ReopenSnapshot.load(book: id, size: full, theme: theme)
+        reopenPicture = ReopenSnapshot.load(book: id, size: full, theme: theme, place: app.library.book(id)?.locatorJSON)
         readerLog.notice("reopen: \(id, privacy: .public) at \(Int(full.width), privacy: .public)x\(Int(full.height), privacy: .public), picture \(reopenPicture != nil, privacy: .public), at \(LaunchClock.sinceLaunch, privacy: .public) s after launch")
     }
 

@@ -140,6 +140,8 @@ final class ReaderModel {
     /// The bands above and below the text on the page (the host's own measure of where the words
     /// start and end), for the running heads and page numbers that sit in them.
     var textBand: (top: CGFloat, bottom: CGFloat) = (28, 28)
+    /// A tablet page's Apple Books bands and furniture sizes; nil on a phone.
+    var tabletBands: TabletPage.Bands?
     /// For UI tests: how the last turn landed: "landed <n> leaf <frames> page <frames> in place|moved".
     var turnPlacement = "none"
     /// For UI tests: how far a spread's outer page ever strayed from its rest, frame by frame, from the
@@ -206,6 +208,14 @@ final class ReaderModel {
         self.highlights = HighlightStore(bookID: book.id, cloudBook: book.cloud, sync: app.sync)
         let initial = book.locatorJSON.flatMap { try? Locator(jsonString: $0) }
         self.initialLocator = initial
+        // His saved words are the place from the first frame. A reflow can start before the page has
+        // shown any words (an iPad relaunched in landscape lays out in portrait first, then rotates);
+        // with nothing held, the spread stayed where Readium's re-layout guessed: two spreads early,
+        // on the chapter opening before his (the build 15 review's page 98).
+        if let anchor = Self.openingAnchor(from: initial) {
+            keeper = AnchorKeeper(anchor: anchor)
+            anchorLocator = initial
+        }
         let prefs = app.preferences.effective(for: book.id)
         if let page {
             injectedPage = page
@@ -416,6 +426,14 @@ final class ReaderModel {
             // it in a row); 400 ms here only made the picture stand longer.
             try? await Task.sleep(for: .milliseconds(100))
             await host?.waitForSettledPage()
+            // A reflow under way still moves the page (an iPad relaunched in landscape lays out in
+            // portrait first, then rotates): the picture stays until it has placed his words. Build 15
+            // lifted it seconds before, onto an empty spread with grey where the right page would be.
+            let reflowBudget = Date().addingTimeInterval(12)
+            if keeper.reflowing != nil {
+                while keeper.reflowing != nil, Date() < reflowBudget, !isClosed { try? await Task.sleep(for: .milliseconds(100)) }
+                await host?.waitForSettledPage()
+            }
             let same = !reopenAdapted && (reopenPageFrame.map { abs($0.minY - layout.pageFrame.minY) < 1 && abs($0.height - layout.pageFrame.height) < 1 && abs($0.width - layout.pageFrame.width) < 1 } ?? true)
             // A turn asked of the picture: its lifted leaf lands on the live page beneath, then the
             // picture goes. Without a lifted leaf (no leaf to lift), the turn plays on the live page.
@@ -938,6 +956,12 @@ final class ReaderModel {
         // The page now showing names its own chapter in the running head (a spread opened onto a
         // place is laid out by the reflow, after the first look at the words).
         Task { _ = await page?.currentAnchor() }
+    }
+
+    /// The saved place as an anchor, when it carries the words that opened his page.
+    static func openingAnchor(from locator: Locator?) -> ReadingAnchor? {
+        guard let locator, let words = locator.text.highlight.map(ReaderJS.normalize), !words.isEmpty else { return nil }
+        return ReadingAnchor(href: locator.href.string, progression: locator.locations.progression ?? 0, text: words)
     }
 
     func locator(for anchor: ReadingAnchor) -> Locator? {

@@ -67,11 +67,27 @@ final class SignInErrorUITests: XCTestCase {
         failOnce(app)
         let field = app.secureTextFields.firstMatch
         field.tap()
+        sleep(1)
+        // Sign In stays where his finger is: the error leaving moves nothing (build 15 lifted it 56 pt,
+        // and a quick tap after retyping missed it).
+        let button = app.buttons["signIn.continue"]
+        let before = button.frame
         field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 5))
         XCTAssertTrue(app.descendants(matching: .any)["signIn.error"].waitForNonExistence(timeout: 5), "cleared, the error goes")
+        sleep(1)
+        XCTAssertEqual(button.frame.minY, before.minY, accuracy: 1, "Sign In moved when the error cleared (\(before) → \(button.frame))")
         let shot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
-        shot.name = "error-cleared"
+        shot.name = "error-cleared-sign-in-in-place"
         shot.lifetime = .keepAlways
         add(shot)
+        // Typing again and tapping Sign In at once (a retry) reaches it: the review's quick tap missed
+        // and nothing happened. The fake cloud turns "wrong" down again, so the error comes back.
+        field.typeText("wrong")
+        let keyboard = app.keyboards.firstMatch
+        if keyboard.exists {
+            XCTAssertLessThanOrEqual(button.frame.maxY, keyboard.frame.minY + 1, "Sign In is above the keyboard, not under it (\(button.frame), keyboard \(keyboard.frame))")
+        }
+        button.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["signIn.error"].waitForExistence(timeout: 10), "the quick retry tap reached Sign In")
     }
 }

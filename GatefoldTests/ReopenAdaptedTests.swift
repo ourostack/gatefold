@@ -11,7 +11,7 @@ struct ReopenAdaptedTests {
     private let directory = URL.cachesDirectory.appending(path: "Reopen", directoryHint: .isDirectory)
 
     /// A vellum page 200×300 with a band of ink across its middle, kept for `book`.
-    private func keep(book: String, size: CGSize, theme: ReaderTheme, navigator: CGRect) throws {
+    private func keep(book: String, size: CGSize, theme: ReaderTheme, navigator: CGRect, place: String? = nil) throws {
         let format = UIGraphicsImageRendererFormat.preferred()
         format.scale = 2
         format.opaque = true
@@ -26,7 +26,8 @@ struct ReopenAdaptedTests {
         try image.pngData()!.write(to: base.appendingPathExtension("png"))
         let meta = ReopenSnapshot.Meta(book: book, width: size.width, height: size.height, theme: theme.rawValue, savedAt: Date(),
                                        page: [navigator.minX, navigator.minY, navigator.width, navigator.height],
-                                       navigator: [navigator.minX, navigator.minY, navigator.width, navigator.height], columns: 1)
+                                       navigator: [navigator.minX, navigator.minY, navigator.width, navigator.height], columns: 1,
+                                       place: place)
         try JSONEncoder().encode(meta).write(to: base.appendingPathExtension("json"))
     }
 
@@ -67,5 +68,39 @@ struct ReopenAdaptedTests {
         // His band of ink is still across the middle of the page, now centred in the wider window.
         let ink = pixel(picture.image, CGPoint(x: 150, y: 40 + (200 - 40 - 40) / 2.0))
         #expect(ink.0 < 0x80, "ink \(ink) at 150,100 of \(picture.image.size) scale \(picture.image.scale); 150,40 \(pixel(picture.image, CGPoint(x: 150, y: 45))) 150,150 \(pixel(picture.image, CGPoint(x: 150, y: 150)))")
+    }
+
+    /// A place as the library keeps it: invented words, never a book's.
+    private func place(_ words: String, at progression: Double) -> String {
+        #"{"href":"OEBPS/ch7.xhtml","type":"application/xhtml+xml","locations":{"progression":\#(progression)},"text":{"highlight":"\#(words)"}}"#
+    }
+
+    /// The picture is of the page he left only if it was kept as he left it. When the last leave kept
+    /// none in time (iOS ended Gatefold first, as the iPad's 2 s picture often lost to the test's quit),
+    /// the picture on disk is of an earlier page: showing it put him pages back until the live page
+    /// came, which reads as a reopen landing early.
+    @Test func aPictureOfAnEarlierPageIsNotShown() throws {
+        let book = "adapt-\(UUID().uuidString)"
+        let size = CGSize(width: 200, height: 300)
+        try keep(book: book, size: size, theme: .vellum, navigator: CGRect(x: 20, y: 40, width: 160, height: 220),
+                 place: place("plover quince marrow", at: 0.40))
+        #expect(ReopenSnapshot.load(book: book, size: size, theme: .vellum, place: place("plover quince marrow", at: 0.40)) != nil,
+                "his page: the picture shows")
+        #expect(ReopenSnapshot.load(book: book, size: size, theme: .vellum, place: place("lantern thistle cobble", at: 0.46)) == nil,
+                "he read on after it was kept: no picture")
+        #expect(ReopenSnapshot.load(book: book, size: CGSize(width: 300, height: 200), theme: .midnight,
+                                    place: place("lantern thistle cobble", at: 0.46)) == nil, "nor redrawn for another window")
+    }
+
+    /// A picture kept without a place (by build 15, or before the place was known) can't be shown to
+    /// be of his page, so it isn't shown: on the Duo a build 15 picture of chapter VII came up over a
+    /// reopen in chapter II.
+    @Test func aPictureKeptWithoutAPlaceIsNotShownForAKnownPlace() throws {
+        let book = "adapt-\(UUID().uuidString)"
+        let size = CGSize(width: 200, height: 300)
+        try keep(book: book, size: size, theme: .vellum, navigator: CGRect(x: 20, y: 40, width: 160, height: 220))
+        #expect(ReopenSnapshot.load(book: book, size: size, theme: .vellum, place: place("plover quince marrow", at: 0.40)) == nil)
+        #expect(ReopenSnapshot.load(book: book, size: CGSize(width: 300, height: 200), theme: .vellum,
+                                    place: place("plover quince marrow", at: 0.40)) == nil, "nor redrawn for another window")
     }
 }

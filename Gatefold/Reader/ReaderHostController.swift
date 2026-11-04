@@ -812,6 +812,19 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
 
     // MARK: EPUBNavigatorDelegate
 
+    /// A tablet page takes Apple Books' bands above and below the words (`TabletPage`); a phone keeps
+    /// Readium's own (the configured insets, or the notch's).
+    func navigatorContentInset(_ navigator: VisualNavigator) -> UIEdgeInsets? {
+        let traits = self.navigator.view.traitCollection
+        guard traits.horizontalSizeClass == .regular, traits.verticalSizeClass == .regular,
+              let bands = TabletPage.bands(pageHeight: self.navigator.view.bounds.height) else {
+            if weakModel?.tabletBands != nil { weakModel?.tabletBands = nil }
+            return nil
+        }
+        if weakModel?.tabletBands != bands { weakModel?.tabletBands = bands }
+        return UIEdgeInsets(top: bands.top, left: 0, bottom: bands.bottom, right: 0)
+    }
+
     /// A link in the book (a contents page, a cross-reference) jumps like the contents sheet does:
     /// the old page stays, dimmed, until the new one has loaded, and Back returns.
     func navigator(_ navigator: VisualNavigator, shouldNavigateToLink link: ReadiumShared.Link) -> Bool {
@@ -949,7 +962,8 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     }
 
     private func finish(complete: Bool, velocity: CGFloat) async {
-        let duration = complete ? 0.48 : 0.3
+        let landing = CurlTiming.landing(isSpread: curl.isSpread)
+        let duration = complete ? landing.duration : 0.3
         let settle = complete && curl.isSpread && curl.style == .curl && Self.probesLanding ? watchSettle(forward: !curl.mirrored) : nil
         if curl.style == .fade {
             withAnimation(.easeInOut(duration: 0.22)) { curl.fade = complete ? 1 : 0 }
@@ -963,7 +977,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
                 var resumed = false
                 let resume = { if !resumed { resumed = true; c.resume() } }
-                withAnimation(.timingCurve(0.3, 0.1, 0.25, 1, duration: duration), completionCriteria: .removed) {
+                withAnimation(complete ? landing.animation : .timingCurve(0.3, 0.1, 0.25, 1, duration: duration), completionCriteria: .removed) {
                     curl.finger = target
                 } completion: { resume() }
                 Task { @MainActor in
@@ -1013,8 +1027,10 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         lifted.beneath = await renderedSnapshot(afterChange: true)
         let t = lifted.turnedFinger
         let target = lifted.mirrored ? CGPoint(x: lifted.size.width - t.x, y: t.y) : t
-        withAnimation(.timingCurve(0.3, 0.1, 0.25, 1, duration: 0.42)) { lifted.finger = target }
-        try? await Task.sleep(for: .seconds(0.44))
+        let landing = CurlTiming.landing(isSpread: lifted.isSpread)
+        let flight = lifted.isSpread ? landing.duration : 0.42
+        withAnimation(lifted.isSpread ? landing.animation : .timingCurve(0.3, 0.1, 0.25, 1, duration: 0.42)) { lifted.finger = target }
+        try? await Task.sleep(for: .seconds(flight + 0.02))
         return true
     }
 
@@ -1483,7 +1499,9 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         guard let first = frames.first else { return }
         let text = frames.dropFirst().reduce(first) { $0.union($1) }
         let band = (top: max(0, text.minY), bottom: max(0, navigator.view.bounds.height - text.maxY))
-        if let model = weakModel, model.textBand != band { model.textBand = band }
+        if let model = weakModel, model.textBand != band {
+            model.textBand = band
+        }
     }
 
     /// The landing probe only runs in debug builds and UI tests: it costs a snapshot per turn.

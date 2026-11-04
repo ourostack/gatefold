@@ -246,3 +246,24 @@ public enum UnfoldCover: Equatable, Sendable {
         return CGRect(x: page.minX, y: page.minY, width: width, height: page.height)
     }
 }
+
+/// A tablet page laid out like Apple Books' default, measured on Ari's iPad (834 pt tall): a wide band
+/// above the words, a wider one below, the running head and folio centred in them and larger than a
+/// caption. Fractions of the page height, so a 13-inch page keeps the same look. Phones keep their own.
+public enum TabletPage {
+    public struct Bands: Equatable, Sendable {
+        /// Readium's insets: the first line's box starts `top` below the page's top edge.
+        public var top: CGFloat
+        public var bottom: CGFloat
+        public var headSize: CGFloat
+        public var folioSize: CGFloat
+    }
+
+    public static let topShare: CGFloat = 0.115
+    public static let bottomShare: CGFloat = 0.15
+
+    public static func bands(pageHeight: CGFloat) -> Bands? {
+        guard pageHeight > 0 else { return nil }
+        return Bands(top: (pageHeight * topShare).rounded(), bottom: (pageHeight * bottomShare).rounded(), headSize: 15, folioSize: 17)
+    }
+}

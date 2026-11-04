@@ -75,6 +75,7 @@ final class AppModel {
             UserDefaults.standard.removeObject(forKey: Keys.preferences)
             UserDefaults.standard.removeObject(forKey: Keys.accountInitial)
             UserDefaults.standard.removeObject(forKey: Keys.reopenBook)
+            PageTop.forgetEverything()
         }
         self.accountInitial = UserDefaults.standard.string(forKey: Keys.accountInitial)
         let service = sync ?? Self.makeSyncService()
