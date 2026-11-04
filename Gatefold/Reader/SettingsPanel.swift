@@ -170,6 +170,20 @@ struct SettingsPanel: View {
 
     // MARK: Fine-Tune
 
+    private func furnitureRow(_ symbol: String, _ title: String, _ id: String,
+                              _ key: WritableKeyPath<ReaderPreferences, Bool>) -> some View {
+        SettingRow(symbol: symbol, title: title) {
+            Toggle(title, isOn: Binding(
+                get: { model.preferences[keyPath: key] },
+                set: { v in model.setPreferences { $0[keyPath: key] = v } }
+            ))
+            .labelsHidden()
+            .tint(Color.ribbon)
+            .frame(maxWidth: .infinity, alignment: .trailing)
+            .accessibilityIdentifier(id)
+        }
+    }
+
     private var customize: some View {
         let prefs = model.preferences
         return VStack(alignment: .leading, spacing: 14) {
@@ -216,6 +230,10 @@ struct SettingsPanel: View {
                 .frame(maxWidth: .infinity, alignment: .trailing)
                 .accessibilityIdentifier("appearance.justify")
             }
+            // Page furniture: none of it moves the words, so each applies live.
+            furnitureRow("number.square", "Page Numbers", "appearance.pageNumbers", \.showsPageNumbers)
+            furnitureRow("location", "Position in Book", "appearance.positionLabel", \.showsPositionLabel)
+            furnitureRow("hourglass", "Pages Left in Chapter", "appearance.pagesLeft", \.showsPagesLeft)
             Button {
                 model.useAsDefault()
                 confirmedDefault.toggle()

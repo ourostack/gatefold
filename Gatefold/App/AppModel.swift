@@ -106,6 +106,13 @@ final class AppModel {
         }
         self.preferences = prefs!
         self.hasOnboarded = LaunchOptions.skipWelcome || UserDefaults.standard.bool(forKey: Keys.onboarded)
+        if LaunchOptions.pageFurniture {
+            var shown = preferences.defaults
+            shown.showsPageNumbers = true
+            shown.showsPositionLabel = true
+            shown.showsPagesLeft = true
+            preferences = PreferencesStore(defaults: shown)
+        }
         if let theme = LaunchOptions.theme {
             // A screenshot switch: every book wears this theme, whatever a book was given before.
             var forced = preferences.defaults

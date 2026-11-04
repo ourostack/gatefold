@@ -1331,6 +1331,12 @@ final class ReaderModel {
             || before.lineSpacing != after.lineSpacing || before.margins != after.margins
             || before.justify != after.justify || (before.pageTurn == .scroll) != (after.pageTurn == .scroll)
         if reflows { pendingReflowReason = .typography }
+        // Page furniture is drawn over the page, not in it: the web view never hears of it.
+        var bare = after
+        bare.showsPageNumbers = before.showsPageNumbers
+        bare.showsPositionLabel = before.showsPositionLabel
+        bare.showsPagesLeft = before.showsPagesLeft
+        guard bare != before else { return }
         applyPreferences(reflow: reflows)
     }
 

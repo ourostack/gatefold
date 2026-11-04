@@ -456,7 +456,7 @@ struct ReaderScreen: View {
     @ViewBuilder
     private func pageNumbers(pages: [CGRect], hidden: Bool) -> some View {
         let band = model.textBand.bottom
-        if let numbers = model.screenNumbers, numbers.count == pages.count {
+        if model.preferences.showsPageNumbers, let numbers = model.screenNumbers, numbers.count == pages.count {
             ZStack(alignment: .topLeading) {
                 ForEach(Array(pages.enumerated()), id: \.offset) { i, r in
                     if let n = numbers[i] {

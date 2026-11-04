@@ -16,6 +16,8 @@ final class PageNumberUITests: XCTestCase {
     private let common = [
         "-GatefoldUITest", "YES", "-GatefoldFakeCloud", "YES", "-GatefoldSkipWelcome", "YES",
         "-GatefoldSignedIn", "YES", "-GatefoldAllowReopen", "YES",
+        // Page numbers are off by default (`PageFurnitureUITests`); these tests judge them shown.
+        "-GatefoldPageFurniture", "YES",
     ]
 
     private var visibleText: String { (app.descendants(matching: .any)["reader.visibleText"].value as? String) ?? "" }

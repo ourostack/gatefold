@@ -112,6 +112,8 @@ enum LaunchOptions {
     static var fontScale: Double? { defaults.object(forKey: "GatefoldFontScale") == nil ? nil : defaults.double(forKey: "GatefoldFontScale") }
     static var goTo: Double? { defaults.object(forKey: "GatefoldGoTo") == nil ? nil : defaults.double(forKey: "GatefoldGoTo") }
     static var forcedPosture: Posture? { defaults.string(forKey: "GatefoldForcePosture").flatMap(Posture.init(rawValue:)) }
+    /// Tests: every book shows its page numbers, position and pages left (all off by default).
+    static var pageFurniture: Bool { defaults.bool(forKey: "GatefoldPageFurniture") }
     static var theme: ReaderTheme? { defaults.string(forKey: "GatefoldTheme").flatMap(ReaderTheme.init(rawValue:)) }
     /// Tests: every book turns its pages this way.
     static var pageTurn: PageTurnStyle? { defaults.string(forKey: "GatefoldPageTurn").flatMap(PageTurnStyle.init(rawValue:)) }
