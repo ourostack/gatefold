@@ -202,4 +202,31 @@ final class NavigationPlaceUITests: XCTestCase {
             XCTAssertEqual(opening(visibleText), spread, "reopen \(round) is the spread he left, not one a page early")
         }
     }
+
+    /// Scroll mode: a scroll is his move even after the launch reflow, through all of a long scroll's
+    /// reports, so a reopen shows where he scrolled to, not where the scroll began.
+    func testScrolledAfterTheLaunchReflowThenLeftKeepsWhereHeScrolled() {
+        let first = openFresh()
+        showChrome()
+        app.buttons["reader.appearance"].tap()
+        let turnStyle = app.descendants(matching: .any)["appearance.pageTurn"].firstMatch
+        XCTAssertTrue(turnStyle.waitForExistence(timeout: 5))
+        turnStyle.tap()
+        let scroll = app.buttons["Scroll"].firstMatch
+        XCTAssertTrue(scroll.waitForExistence(timeout: 5), "the page turn menu offers Scroll")
+        scroll.tap()
+        let close = app.buttons["appearance.close"].exists ? app.buttons["appearance.close"] : app.buttons["appearance.back"]
+        if close.exists { close.tap() } else { app.descendants(matching: .any)["reader.page"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.2)).tap() }
+        sleep(4)
+        for _ in 0..<6 { app.descendants(matching: .any)["reader.page"].swipeUp(velocity: .fast) }
+        sleep(4)
+        let scrolled = waitForWords()
+        XCTAssertNotEqual(opening(scrolled), opening(first), "the scroll moved the words")
+        leaveAndRelaunch()
+        XCTAssertTrue(app.descendants(matching: .any)["reader.page"].waitForExistence(timeout: 60))
+        sleep(4)
+        let back = waitForWords()
+        let words = opening(scrolled).split(separator: " ").prefix(6).joined(separator: " ")
+        XCTAssertTrue(flat(back).contains(words), "reopened where he scrolled to")
+    }
 }

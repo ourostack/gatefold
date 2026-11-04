@@ -37,12 +37,30 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     /// True from the moment a turn begins until it lands or springs back.
     private(set) var isTurning = false {
         didSet {
-            guard oldValue != isTurning, LaunchOptions.isUITest else { return }
-            if isTurning { frames.start() } else { frames.stop(counting: counter != nil) }
+            guard oldValue != isTurning else { return }
+            if LaunchOptions.isUITest {
+                if isTurning { frames.start() } else { frames.stop(counting: counter != nil) }
+            }
+            // A chapter still loading behind the page shares its web process with the turn: stop the count
+            // for the turn (what's counted is kept) and take it up again once turns go quiet.
+            if isTurning, counter != nil {
+                stopCounting()
+                countPausedForTurns = true
+            } else if !isTurning, countPausedForTurns {
+                Task { [weak self] in
+                    try? await Task.sleep(for: .milliseconds(1500))
+                    guard let self, !self.isTurning, self.countPausedForTurns,
+                          self.lastTurnEnded.map({ ContinuousClock.now - $0 >= .milliseconds(1400) }) ?? true else { return }
+                    self.countPausedForTurns = false
+                    await self.weakModel?.refreshScreenNumbers(recount: true)
+                }
+            }
         }
         willSet { if isTurning, !newValue { lastTurnEnded = .now } }
     }
     private var lastTurnEnded: ContinuousClock.Instant?
+    /// A count stopped for a turn, to take up again once turns go quiet.
+    private var countPausedForTurns = false
     /// Under test, each turn's frames: whether a count behind the page costs the turn any.
     private let frames = FrameWatch()
     private var panStart: CGPoint = .zero
@@ -268,8 +286,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         let href = location.href.string.split(separator: "#", maxSplits: 1).first.map(String.init) ?? location.href.string
         // Measured in the chapter it names, or not at all: a counter's location moves to the next chapter
         // while the previous one's web view is still current, and its columns would be counted as the next's.
-        if let doc = found.doc?.removingPercentEncoding, !doc.hasSuffix("/" + (href.removingPercentEncoding ?? href)),
-           doc != (href.removingPercentEncoding ?? href) {
+        if let doc = found.doc, !ScreenPageGeometry.document(doc, isChapter: href) {
             readerLog.debug("pages: a look named \(href, privacy: .public) measured \(doc, privacy: .public)")
             return nil
         }

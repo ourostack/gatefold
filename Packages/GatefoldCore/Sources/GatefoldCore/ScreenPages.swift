@@ -137,6 +137,15 @@ public struct ScreenPageGeometry: Equatable, Sendable {
         column = max(0, Int((scrollLeft / width).rounded()))
     }
 
+    /// Whether a web view's document (`location.pathname`, under the publication's root) is the chapter
+    /// `href` (relative to that root): the whole path, so `sub/ch1.xhtml` never passes for `ch1.xhtml`.
+    public static func document(_ pathname: String, isChapter href: String) -> Bool {
+        let path = pathname.removingPercentEncoding ?? pathname
+        let chapter = (href.removingPercentEncoding ?? href).split(separator: "#", maxSplits: 1).first.map(String.init) ?? href
+        let trimmed = path.hasPrefix("/") ? String(path.dropFirst()) : path
+        return trimmed == chapter
+    }
+
     /// Laid out as any reader would see the chapter, so its columns are the chapter's count.
     public var isClean: Bool { !verso && !pinned }
 }

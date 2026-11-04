@@ -1,3 +1,4 @@
+import UIKit
 import XCTest
 
 /// Page numbers, the position in the book and pages left are his to show; he usually prefers them
@@ -89,7 +90,13 @@ final class PageFurnitureUITests: XCTestCase {
     /// The iPad on its side (a spread), as the build 17 review found it: in chapter XIX he turns two
     /// furniture toggles on in Fine-Tune, turns no page, leaves and comes back. The reopen came back in
     /// chapter X. (Run on the iPad only.)
-    func testOnTheIPadSpreadTwoTogglesThenAReopenKeepHisPage() {
+    /// A spread's first words: its right page can still be drawing when the whole text is read.
+    private func opening(_ text: String) -> String {
+        text.split(whereSeparator: \.isWhitespace).prefix(12).joined(separator: " ")
+    }
+
+    func testOnTheIPadSpreadTwoTogglesThenAReopenKeepHisPage() throws {
+        try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .pad, "a spread in landscape is an iPad path")
         XCUIDevice.shared.orientation = .landscapeLeft
         defer { XCUIDevice.shared.orientation = .portrait }
         app.launchArguments = common + ["-GatefoldReset", "YES", "-GatefoldDownloadAll", "YES",
@@ -117,12 +124,12 @@ final class PageFurnitureUITests: XCTestCase {
             XCTAssertEqual(toggle.value as? String, "1", "\(id) turned on")
         }
         sleep(2)
-        XCTAssertEqual(visibleText, before, "the toggles don't move the words")
+        XCTAssertEqual(opening(visibleText), opening(before), "the toggles don't move the words")
         let close = app.buttons["appearance.close"].exists ? app.buttons["appearance.close"] : app.buttons["appearance.back"]
         close.tap()
         if app.buttons["appearance.close"].waitForExistence(timeout: 3) { app.buttons["appearance.close"].tap() }
         sleep(2)
-        XCTAssertEqual(visibleText, before, "closing the panel doesn't move the words")
+        XCTAssertEqual(opening(visibleText), opening(before), "closing the panel doesn't move the words")
 
         XCUIDevice.shared.press(.home)
         if !app.wait(for: .runningBackground, timeout: 3) {
@@ -135,6 +142,6 @@ final class PageFurnitureUITests: XCTestCase {
         let back = Date().addingTimeInterval(60)
         while visibleText.isEmpty, Date() < back { RunLoop.current.run(until: Date().addingTimeInterval(0.2)) }
         sleep(4)
-        XCTAssertEqual(visibleText, before, "the reopen is on the page he left")
+        XCTAssertEqual(opening(visibleText), opening(before), "the reopen is on the page he left")
     }
 }

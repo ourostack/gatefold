@@ -91,6 +91,7 @@ final class RotationRepro: XCTestCase {
                                       "-GatefoldOpenBook", "gutenberg-pride-and-prejudice", "-GatefoldGoTo", "0.31"]
         app.launch()
         let counted = waitCounted()
+        XCTAssertTrue(counted, "the book was counted before the rotation")
         _ = settle(60)
         sleep(3)
 

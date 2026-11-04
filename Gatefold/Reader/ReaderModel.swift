@@ -178,7 +178,7 @@ final class ReaderModel {
     private let initialLocator: Locator?
     /// Counts every move of the page (a turn, a jump, a landing, the close). A settle or a landing
     /// that started before the latest move has been overtaken and must not move or record anything.
-    private var moves = 0
+    private var moves = 0 { didSet { layoutOnly = false } }
     /// Set from the moment the reader closes; nothing moves the page or records a place after it.
     private(set) var isClosed = false
     /// While a landing settles, the navigator's in-between locations are not places: the landing
@@ -386,9 +386,12 @@ final class ReaderModel {
         let key = map.layout
         page?.countPages(map.uncounted) { [weak self] href, columns in
             guard let self, self.screenPages?.layout == key else { return }
-            if let (here, geometry) = self.lastGeometry, here == href, geometry.isClean, geometry.columns != columns {
-                // The page is the truth: a counter that lays the chapter out differently has a bug to find.
-                readerLog.error("pages: counter disagrees with the page on \(href, privacy: .public): \(columns, privacy: .public) against \(geometry.columns, privacy: .public); the page's kept")
+            // The page is the truth: a chapter it already counted itself (his own, as it showed) keeps its
+            // count, whichever chapter he's in by the time the counter's figure arrives.
+            if let kept = self.screenPages?.columns[href] {
+                if kept != columns {
+                    readerLog.error("pages: counter disagrees with the page on \(href, privacy: .public): \(columns, privacy: .public) against \(kept, privacy: .public); the page's kept")
+                }
                 return
             }
             self.screenPages?.record(href: href, columns: columns)
@@ -1086,15 +1089,23 @@ final class ReaderModel {
         // The page now showing names its own chapter in the running head (a spread opened onto a
         // place is laid out by the reflow, after the first look at the words).
         Task { _ = await page?.currentAnchor() }
-        if !placeOwed { movesAtLayout = moves }
+        if !placeOwed { layoutOnly = true }
         if placeOwed {
             Task { [weak self] in
-                guard let self, self.placeOwed, !self.isClosed, !self.isWarming, self.keeper.reflowing == nil,
+                guard let self, self.placeOwed, !self.isClosed, !self.isWarming, self.keeper.reflowing == nil else { return }
+                // The keeper ignored the move while the reflow ran, so its words are the page before it:
+                // take them from the page he is on now.
+                await self.captureAnchor()
+                // A turn that landed meanwhile recorded its own page and paid the debt.
+                guard self.placeOwed, !self.isClosed, self.keeper.reflowing == nil,
                       let here = self.page?.currentLocation else { return }
-                // No words were taken during the reflow: take them now, from the page he is on.
-                if self.keeper.anchor == nil { await self.captureAnchor() }
+                let movesNow = self.moves
                 readerLog.notice("place: recorded the move a reflow held, at \(here.locations.totalProgression ?? -1, privacy: .public) moves \(self.moves, privacy: .public) recorded \(self.recordedMoves, privacy: .public)")
+                self.recordingOwed = true
                 await self.locationDidChange(here)
+                self.recordingOwed = false
+                // Kept: later reports with no move of his are the layout again.
+                if self.moves == movesNow, !self.touchedSinceLocation { self.layoutOnly = true }
             }
         }
     }
@@ -1103,9 +1114,13 @@ final class ReaderModel {
     /// `moves` when the place was last recorded: a reflow only owes a move not yet kept, so an
     /// ordinary rotation never swaps his exact words for Readium's page boundary.
     @ObservationIgnored private var recordedMoves = -1
-    /// `moves` when the last reflow finished with nothing owed: reports after it, until he moves again,
-    /// are the layout's and never rewrite the place.
-    @ObservationIgnored private var movesAtLayout = -1
+    /// Set when a reflow ends (or an owed place is kept) and cleared by any move or touch of his: while
+    /// it's up, a location report is the layout (a rotation, an unfold, a late report from the new
+    /// spread), never a reason to rewrite the place. It stays down until the next reflow, not just the
+    /// next report, so a long scroll's later reports still count.
+    @ObservationIgnored private var layoutOnly = false
+    /// The owed place is being recorded: its words were just taken.
+    @ObservationIgnored private var recordingOwed = false
 
     /// The saved place as an anchor, when it carries the words that opened his page.
     static func openingAnchor(from locator: Locator?) -> ReadingAnchor? {
@@ -1147,10 +1162,12 @@ final class ReaderModel {
         // reflow, with none of them since, is the layout (a rotation, an unfold, a late report from the new spread), and it never
         // re-anchors or rewrites the saved place: a spread that slips a verso before his page starts a
         // page early, and saving its start reopened him a page early (build 17's rotation miss).
-        let readerMoved = moves != movesAtLayout || touchedSinceLocation
+        let readerMoved = !layoutOnly || touchedSinceLocation
         // A location that arrives as a reflow lands is the restore, not the reader moving: keep the
         // anchor, or repeated reflows would walk it backward a page at a time.
-        if let settled = reflowSettledAt, Date().timeIntervalSince(settled) < 1.2 {
+        if recordingOwed {
+            readerLog.notice("location of a move a reflow held; anchor just taken")
+        } else if let settled = reflowSettledAt, Date().timeIntervalSince(settled) < 1.2 {
             readerLog.notice("location after reflow; anchor kept")
         } else if !readerMoved, keeper.anchor != nil {
             readerLog.notice("location without a move; anchor and place kept")
@@ -1197,7 +1214,7 @@ final class ReaderModel {
     /// A touch on the page. If the next location (outside a reflow) differs from where the book
     /// opened, it was a swipe in slide or scroll mode and the place is the reader's own. A tap that
     /// only shows the controls changes no location, so it moves nothing.
-    func noteInteraction() { touchedSinceLocation = true }
+    func noteInteraction() { touchedSinceLocation = true; layoutOnly = false }
     private var touchedSinceLocation = false
     private var openedLocation: Locator?
 

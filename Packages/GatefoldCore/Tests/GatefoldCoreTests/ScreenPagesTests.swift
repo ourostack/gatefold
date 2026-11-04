@@ -195,4 +195,14 @@ struct ScreenPagesTests {
         try JSONEncoder().encode(counted(single)).write(to: old.appending(path: "\(single.key).json"))
         #expect(ScreenPageStore(directory: dir).load(book: "alice", layout: single, readingOrder: order).columns.isEmpty)
     }
+
+    /// A look counts only in the chapter it names: the whole path, encoded or not.
+    @Test func aLookMatchesOnlyItsOwnChapter() {
+        #expect(ScreenPageGeometry.document("/OEBPS/ch1.xhtml", isChapter: "OEBPS/ch1.xhtml"))
+        #expect(ScreenPageGeometry.document("/OEBPS/Chapter%201.xhtml", isChapter: "OEBPS/Chapter 1.xhtml"))
+        #expect(ScreenPageGeometry.document("/OEBPS/Chapter%201.xhtml", isChapter: "OEBPS/Chapter%201.xhtml"))
+        #expect(!ScreenPageGeometry.document("/OEBPS/sub/ch1.xhtml", isChapter: "OEBPS/ch1.xhtml"))
+        #expect(!ScreenPageGeometry.document("/OEBPS/ch1.xhtml", isChapter: "OEBPS/sub/ch1.xhtml"))
+        #expect(!ScreenPageGeometry.document("/OEBPS/ch2.xhtml", isChapter: "OEBPS/ch1.xhtml"))
+    }
 }
