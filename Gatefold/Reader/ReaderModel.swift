@@ -140,6 +140,8 @@ final class ReaderModel {
     /// The bands above and below the text on the page (the host's own measure of where the words
     /// start and end), for the running heads and page numbers that sit in them.
     var textBand: (top: CGFloat, bottom: CGFloat) = (28, 28)
+    /// A tablet page's Apple Books bands and furniture sizes; nil on a phone.
+    var tabletBands: TabletPage.Bands?
     /// For UI tests: how the last turn landed: "landed <n> leaf <frames> page <frames> in place|moved".
     var turnPlacement = "none"
     /// For UI tests: how far a spread's outer page ever strayed from its rest, frame by frame, from the

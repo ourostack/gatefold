@@ -164,6 +164,9 @@ struct SignInFlow: View {
     @State private var store: CloudStore?
     @State private var working = false
     @State private var error: String?
+    /// The last error's room on this step: once shown it stays (faded) until he changes step, so the
+    /// message leaving never moves Sign In under his finger (build 15 lifted it 56 pt mid-retype).
+    @State private var errorRoom: String?
     @State private var failures = 0
     /// The gentle word under the email field, once he has paused on (or tried to send) an address that can't be one.
     @State private var emailHint: EmailCheck.Problem?
@@ -213,6 +216,8 @@ struct SignInFlow: View {
         // What went wrong belongs to what he sent: once he changes it, it's gone.
         .onChange(of: password) { _, _ in if error != nil { error = nil } }
         .onChange(of: email) { _, _ in if error != nil { error = nil } }
+        .onChange(of: error) { _, new in if let new { errorRoom = new } }
+        .onChange(of: step) { _, _ in errorRoom = nil }
         .sensoryFeedback(.error, trigger: failures)
         .onAppear {
             if let prefilledEmail, !prefilledEmail.isEmpty, email.isEmpty { email = prefilledEmail }
@@ -308,16 +313,22 @@ struct SignInFlow: View {
                 }
                 #endif
             }
-            if let error {
-                Label(error, systemImage: "exclamationmark.circle")
-                    .font(.footnote)
-                    .foregroundStyle(.red)
-                    .lineLimit(nil)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .transition(.opacity)
-                    .accessibilityIdentifier("signIn.error")
+            if let room = error ?? errorRoom {
+                // The room keeps its height once an error has shown; the message itself comes and goes in it.
+                errorLabel(room)
+                    .opacity(0)
+                    .accessibilityHidden(true)
+                    .overlay(alignment: .topLeading) {
+                        if let error {
+                            errorLabel(error)
+                                .transition(.opacity)
+                                .accessibilityIdentifier("signIn.error")
+                        }
+                    }
             }
-            Spacer()
+            // Sign In sits right under what he typed, not at the foot of the screen: there the keyboard
+            // covered it (build 15's quick tap after retyping landed on a key) and it rode up and down
+            // with the keyboard and the error. Here nothing below it can move it.
             if step != .store {
                 Button(action: next) {
                     ZStack {
@@ -342,6 +353,14 @@ struct SignInFlow: View {
         .animation(Motion.open, value: step)
         .animation(.default, value: error)
         .animation(.easeOut(duration: 0.25), value: emailHint)
+    }
+
+    private func errorLabel(_ message: String) -> some View {
+        Label(message, systemImage: "exclamationmark.circle")
+            .font(.footnote)
+            .foregroundStyle(.red)
+            .lineLimit(nil)
+            .fixedSize(horizontal: false, vertical: true)
     }
 
     private func focusSoon() {

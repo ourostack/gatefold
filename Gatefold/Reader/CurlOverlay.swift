@@ -129,3 +129,19 @@ struct CurlOverlay: View {
             .scaleEffect(x: mirror, y: 1)
     }
 }
+
+/// How a completed turn's leaf travels to rest. A spread's leaf falls onto the other page like a sheet
+/// settling and stops at the outer corner: the last 42 pt take about 50 ms. Build 15's curve spent
+/// 144 ms on them, which read as the page drifting in from the spine. A single page's leaf leaves the
+/// screen, so it keeps the turn it had.
+enum CurlTiming {
+    struct Curve: Equatable {
+        var c1x, c1y, c2x, c2y, duration: Double
+        var animation: Animation { .timingCurve(c1x, c1y, c2x, c2y, duration: duration) }
+    }
+
+    static func landing(isSpread: Bool) -> Curve {
+        isSpread ? Curve(c1x: 0.45, c1y: 0, c2x: 0.7, c2y: 1, duration: 0.4)
+                 : Curve(c1x: 0.3, c1y: 0.1, c2x: 0.25, c2y: 1, duration: 0.48)
+    }
+}

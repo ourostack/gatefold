@@ -454,7 +454,7 @@ struct ReaderScreen: View {
             ZStack(alignment: .topLeading) {
                 ForEach(Array(pages.enumerated()), id: \.offset) { i, r in
                     Text("\(min(count, first + i))")
-                        .font(.caption.monospacedDigit())
+                        .font(model.tabletBands.map { .system(size: $0.folioSize).monospacedDigit() } ?? .caption.monospacedDigit())
                         .foregroundStyle(model.theme.head)
                         .frame(width: r.width, height: band)
                         .offset(x: r.minX, y: r.maxY - band)
@@ -484,7 +484,7 @@ struct ReaderScreen: View {
         ZStack(alignment: .topLeading) {
             ForEach(Array(pages.enumerated()), id: \.offset) { i, r in
                 Text(heads[i])
-                    .font(.caption)
+                    .font(model.tabletBands.map { .system(size: $0.headSize) } ?? .caption)
                     .foregroundStyle(model.theme.head)
                     .lineLimit(1)
                     .truncationMode(.tail)
@@ -718,11 +718,15 @@ enum PageTop {
     private static let defaultsKey = "GatefoldPageTopShift"
 
     /// The clearance a bare page last reported at this size, settled once per launch.
-    static func settled(_ fresh: CGFloat, known: Bool, size: CGSize, posture: Posture) -> CGFloat {
+    static func settled(_ fresh: CGFloat, known: Bool, size: CGSize, posture: Posture,
+                        active: Bool = UIApplication.shared.applicationState == .active) -> CGFloat {
         let key = "\(Int(size.width))x\(Int(size.height))-\(posture.rawValue)"
         var stored = UserDefaults.standard.dictionary(forKey: defaultsKey) as? [String: Double] ?? [:]
         let remembered = stored[key]
-        if known, remembered != Double(fresh) {
+        // Only a reading he could be looking at is remembered: once Gatefold leaves, iOS lays it out
+        // again for the app switcher (status bar up, transient sizes), and remembering that cut the next
+        // launch's pages a line shorter than the ones he read, so a reopen landed before his page.
+        if known, active, remembered != Double(fresh) {
             stored[key] = Double(fresh)
             UserDefaults.standard.set(stored, forKey: defaultsKey)
         }
@@ -733,5 +737,14 @@ enum PageTop {
         }
         if known { settledShift[key] = fresh }
         return fresh
+    }
+
+    /// A new launch: what this one settled on is forgotten, what it remembered is kept.
+    static func forgetLaunch() { settledShift = [:] }
+
+    /// A clean start (`-GatefoldReset`): nothing settled and nothing remembered.
+    static func forgetEverything() {
+        settledShift = [:]
+        UserDefaults.standard.removeObject(forKey: defaultsKey)
     }
 }
