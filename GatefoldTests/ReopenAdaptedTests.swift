@@ -91,4 +91,16 @@ struct ReopenAdaptedTests {
         #expect(ReopenSnapshot.load(book: book, size: CGSize(width: 300, height: 200), theme: .midnight,
                                     place: place("lantern thistle cobble", at: 0.46)) == nil, "nor redrawn for another window")
     }
+
+    /// A picture kept without a place (by build 15, or before the place was known) can't be shown to
+    /// be of his page, so it isn't shown: on the Duo a build 15 picture of chapter VII came up over a
+    /// reopen in chapter II.
+    @Test func aPictureKeptWithoutAPlaceIsNotShownForAKnownPlace() throws {
+        let book = "adapt-\(UUID().uuidString)"
+        let size = CGSize(width: 200, height: 300)
+        try keep(book: book, size: size, theme: .vellum, navigator: CGRect(x: 20, y: 40, width: 160, height: 220))
+        #expect(ReopenSnapshot.load(book: book, size: size, theme: .vellum, place: place("plover quince marrow", at: 0.40)) == nil)
+        #expect(ReopenSnapshot.load(book: book, size: CGSize(width: 300, height: 200), theme: .vellum,
+                                    place: place("plover quince marrow", at: 0.40)) == nil, "nor redrawn for another window")
+    }
 }

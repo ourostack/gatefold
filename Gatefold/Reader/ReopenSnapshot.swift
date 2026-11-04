@@ -85,9 +85,11 @@ enum ReopenSnapshot {
     }
 
     /// The same place: the same file, the same words opening the page, the same progression. A picture
-    /// kept before places were recorded with it (`kept` nil) is taken as it is.
+    /// kept without a place (by build 15) can't be shown to be of his page, so it is shown only when
+    /// the library holds no place either.
     static func samePlace(_ kept: String?, _ now: String?) -> Bool {
-        guard let kept, let now else { return true }
+        guard let now else { return true }
+        guard let kept else { return false }
         guard let a = try? Locator(jsonString: kept), let b = try? Locator(jsonString: now) else { return kept == now }
         return a.href.string == b.href.string && a.text.highlight == b.text.highlight
             && abs((a.locations.progression ?? 0) - (b.locations.progression ?? 0)) < 0.0005

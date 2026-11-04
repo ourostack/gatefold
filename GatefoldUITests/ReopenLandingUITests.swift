@@ -93,6 +93,13 @@ final class ReopenLandingUITests: XCTestCase {
             // He leaves, and iOS ends Gatefold.
             // (Home, not another app: launching Settings on a loaded simulator sometimes timed out.)
             XCUIDevice.shared.press(.home)
+            // A Duo simulator up for a day stopped taking the Home press: Gatefold stayed in front and was
+            // ended while active (no change of scene phase in its log), which no reader does. Bringing
+            // the Home Screen forward as well is harmless when Home worked. (XCUITest reports the Duo's
+            // app as in front either way, so its state can't tell.)
+            if !app.wait(for: .runningBackground, timeout: 3) {
+                XCUIApplication(bundleIdentifier: "com.apple.springboard").activate()
+            }
             // iOS gives a leaving app a few seconds; the iPad spread's picture takes about two to keep.
             sleep(4)
             app.terminate()

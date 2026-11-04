@@ -95,11 +95,21 @@ enum ReaderJS {
           }
           let highlight = text.substr(start, 64);
           // The page's words run on past this text node (a quotation mark before "<i>Plover</i>"): a
-          // mark alone matches the chapter's first quotation, pages back. Take the words that follow.
+          // mark alone matches the chapter's first quotation, pages back. Take the words that follow,
+          // within his paragraph: the next one's words would be glued on ("bank.Marrow").
           if (highlight.length < 64) {
+            const blockOf = (n) => {
+              let e = n.parentElement;
+              while (e && e !== document.body && getComputedStyle(e).display.startsWith('inline')) { e = e.parentElement; }
+              return e;
+            };
+            const block = blockOf(node);
             const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
             walker.currentNode = node;
-            while (highlight.length < 64 && walker.nextNode()) { highlight += walker.currentNode.data; }
+            while (highlight.length < 64 && walker.nextNode()) {
+              if (blockOf(walker.currentNode) !== block) { break; }
+              highlight += walker.currentNode.data;
+            }
             highlight = highlight.substr(0, 64);
           }
           if (!norm(highlight)) { return null; }
