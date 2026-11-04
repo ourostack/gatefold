@@ -66,10 +66,9 @@ jobs:
           xcodebuild test -project Gatefold.xcodeproj -scheme Gatefold \
             -destination "${{ steps.sim.outputs.destination }}" \
             -only-testing:GatefoldUITests/PositionUITests \
-            -retry-tests-on-failure -test-iterations 2 \
             -resultBundlePath "$RUNNER_TEMP/ui.xcresult" > "$RUNNER_TEMP/ui.log" 2>&1 || status=$?
-          # A cold CI simulator sometimes kills the test runner itself; one retry absorbs that, and a real failure fails twice.
-          grep -E "error:|Test Case .*(passed|failed|skipped)|TEST (SUCCEEDED|FAILED)|probe says" "$RUNNER_TEMP/ui.log" | tail -60 || true
+          # No retry: a wait that runs out prints how many probe reads it made and the slowest one.
+          grep -E "error:|Test Case .*(passed|failed|skipped)|TEST (SUCCEEDED|FAILED)|probe says|probe timing" "$RUNNER_TEMP/ui.log" | tail -60 || true
           exit ${status:-0}
       - name: Release build for devices (the same binary runs on the Mac as Designed for iPad)
         run: |
