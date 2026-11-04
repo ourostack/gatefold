@@ -290,7 +290,16 @@ final class ReaderModel {
 
     /// The numbers on the pages in view, one a page (nil for a blank page); nil until they're known.
     /// They're the pages he sees, as Apple Books numbers them (`ScreenPageMap`), not Readium's positions.
-    private(set) var screenNumbers: [Int?]?
+    private(set) var screenNumbers: [Int?]? {
+        didSet {
+            guard !numberShown, screenNumbers?.contains(where: { $0 != nil }) == true else { return }
+            numberShown = true
+            readerLog.notice("pages: first number after \(Date().timeIntervalSince(self.openedAt), privacy: .public) s from open, \(self.pageShownAt.map { Date().timeIntervalSince($0) } ?? -1, privacy: .public) s from the page showing")
+        }
+    }
+    @ObservationIgnored private var numberShown = false
+    /// When the live page took over from the cover or the reopen picture.
+    @ObservationIgnored private var pageShownAt: Date?
     private(set) var screenPages: ScreenPageMap?
     private var lastGeometry: (href: String, geometry: ScreenPageGeometry)?
     private static let pageStore: ScreenPageStore = {
@@ -507,6 +516,7 @@ final class ReaderModel {
 
     private func showPage() {
         withAnimation(.easeOut(duration: 0.3)) { pageReady = true }
+        if reopenPicture == nil { pageShownAt = Date() }
         // Counting the book's pages waits until the open has settled (the reopen picture gone too), so
         // it never slows the first page.
         Task {
@@ -550,6 +560,7 @@ final class ReaderModel {
                 readerLog.notice("reopen: played the kept \(forward ? "forward" : "back", privacy: .public) turn at \(LaunchClock.sinceLaunch, privacy: .public) s after launch")
                 host?.turn(forward: forward)
             }
+            pageShownAt = Date()
             readerLog.notice("reopen: the live page took the picture's place at \(LaunchClock.sinceLaunch, privacy: .public) s after launch (\(same ? "same layout, swapped" : "laid out differently, faded", privacy: .public))")
         }
     }

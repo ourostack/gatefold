@@ -96,6 +96,24 @@ jobs:
               "$hub" press "Closed"; sleep 12
             done
           done
+          # Early unfolds: opened folded, then unfolded 2 s after the page shows, as the posture test
+          # switches (the reviewer's failures came on the first switch after launch).
+          for place in 0.12 0.31 0.47 0.66 0.83 0.12 0.31 0.47; do
+            "$hub" press "Closed"; sleep 6
+            shown="$(grep -c "open: page shown" "$out/reader.log" || true)"
+            xcrun simctl launch --terminate-running-process "$udid" "$APP" -GatefoldUITest YES -GatefoldFakeCloud YES \
+              -GatefoldReset YES -GatefoldSkipWelcome YES -GatefoldSignedIn YES -GatefoldDownloadAll YES \
+              -GatefoldOpenBook gutenberg-pride-and-prejudice -GatefoldGoTo "$place" >/dev/null
+            for wait in $(seq 1 120); do
+              [ "$(grep -c "open: page shown" "$out/reader.log" || true)" -gt "$shown" ] && break
+              sleep 0.5
+            done
+            sleep 2
+            echo "EARLY UNFOLD place $place" | tee -a "$out/marks.log"
+            echo "EARLY UNFOLD place $place" >> "$out/reader.log"
+            "$hub" press "Open"; sleep 16
+            xcrun simctl io "$udid" screenshot --display=3 "$out/shots/early-$place-$wait.png" >/dev/null 2>&1 || true
+          done
           kill "$stream" || true
           grep -E "reflow check|reflow begins|host size|layout (single|spread|tabletop)|spread: " "$out/reader.log" | sed -E 's/^[0-9-]+ //' | tail -200
           echo "--- verdicts after an unfold (two columns) ---"

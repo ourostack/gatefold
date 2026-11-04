@@ -302,7 +302,10 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
                 var last: Int?
                 for _ in 0..<40 where !Task.isCancelled {
                     try? await Task.sleep(for: .milliseconds(150))
-                    guard let (here, geometry) = await Self.geometry(of: counting, columns: columns), here == href, geometry.columns > 0 else {
+                    let lookStart = ContinuousClock.now
+                    let look = await Self.geometry(of: counting, columns: columns)
+                    readerLog.debug("pages: look \(href, privacy: .public) took \(ReaderModel.ms(since: lookStart), privacy: .public) ms: \(look.map { "\($0.href) \($0.geometry.columns)" } ?? "nil", privacy: .public)")
+                    guard let (here, geometry) = look, here == href, geometry.columns > 0 else {
                         readerLog.debug("pages: \(href, privacy: .public) not measured yet (at \(counting.currentLocation?.href.string ?? "nil", privacy: .public))")
                         continue
                     }
