@@ -1064,6 +1064,7 @@ final class ReaderModel {
         // The page now showing names its own chapter in the running head (a spread opened onto a
         // place is laid out by the reflow, after the first look at the words).
         Task { _ = await page?.currentAnchor() }
+        if !placeOwed { movesAtLayout = moves }
         if placeOwed {
             Task { [weak self] in
                 guard let self, self.placeOwed, !self.isClosed, self.keeper.reflowing == nil,
@@ -1080,6 +1081,9 @@ final class ReaderModel {
     /// `moves` when the place was last recorded: a reflow only owes a move not yet kept, so an
     /// ordinary rotation never swaps his exact words for Readium's page boundary.
     @ObservationIgnored private var recordedMoves = -1
+    /// `moves` when the last reflow finished with nothing owed: reports after it, until he moves again,
+    /// are the layout's and never rewrite the place.
+    @ObservationIgnored private var movesAtLayout = -1
 
     /// The saved place as an anchor, when it carries the words that opened his page.
     static func openingAnchor(from locator: Locator?) -> ReadingAnchor? {
@@ -1113,10 +1117,17 @@ final class ReaderModel {
         if keeper.reflowing != nil, hasMoved, moves != recordedMoves, !duringTurn { placeOwed = true }
         guard keeper.reflowing == nil, !duringTurn else { return }
         placeOwed = false
+        // Only he moves the place: a turn, a jump or a touch since the last report. A report after a
+        // reflow, with none of them since, is the layout (a rotation, an unfold, a late report from the new spread), and it never
+        // re-anchors or rewrites the saved place: a spread that slips a verso before his page starts a
+        // page early, and saving its start reopened him a page early (build 17's rotation miss).
+        let readerMoved = moves != movesAtLayout || touchedSinceLocation
         // A location that arrives as a reflow lands is the restore, not the reader moving: keep the
         // anchor, or repeated reflows would walk it backward a page at a time.
         if let settled = reflowSettledAt, Date().timeIntervalSince(settled) < 1.2 {
             readerLog.notice("location after reflow; anchor kept")
+        } else if !readerMoved, keeper.anchor != nil {
+            readerLog.notice("location without a move; anchor and place kept")
         } else {
             await captureAnchor()
             if touchedSinceLocation, !hasMoved {
@@ -1131,7 +1142,7 @@ final class ReaderModel {
         touchedSinceLocation = false
         // Only the reader moves the place. Readium reopening a page boundary off from the saved one is
         // not a move, so opening a book never overwrites a further-ahead place on the InkPad.
-        guard hasMoved else { return refreshBookmarkState(await page?.visibleRange()) }
+        guard hasMoved, readerMoved else { return refreshBookmarkState(await page?.visibleRange()) }
         // The first words on screen make the place exact; Readium's progression is a page boundary.
         // Only words captured on this very page count; a capture a reflow cut short leaves the last page's.
         let fresh = anchorLocator.flatMap { a in

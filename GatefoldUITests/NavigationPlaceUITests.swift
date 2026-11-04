@@ -41,8 +41,8 @@ final class NavigationPlaceUITests: XCTestCase {
         text.split(whereSeparator: \.isWhitespace).prefix(12).joined(separator: " ")
     }
 
-    private func openFresh() -> String {
-        app.launchArguments = common + ["-GatefoldReset", "YES", "-GatefoldDownloadAll", "YES",
+    private func openFresh(_ extra: [String] = []) -> String {
+        app.launchArguments = common + extra + ["-GatefoldReset", "YES", "-GatefoldDownloadAll", "YES",
                                         "-GatefoldOpenBook", "gutenberg-pride-and-prejudice"]
         app.launch()
         XCTAssertTrue(app.descendants(matching: .any)["reader.page"].waitForExistence(timeout: 60))
@@ -108,9 +108,11 @@ final class NavigationPlaceUITests: XCTestCase {
         }
         sleep(3)
         app.terminate()
-        app.launchArguments = common
+        app.launchArguments = common + relaunchExtra
         app.launch()
     }
+
+    private var relaunchExtra: [String] = []
 
     /// The review's path on the iPad spread: his place is saved (a turn there and back), he closes the
     /// book, opens it from the shelf, and leaves twice without turning. Build 17 reopened chapter X,
@@ -148,6 +150,56 @@ final class NavigationPlaceUITests: XCTestCase {
             _ = waitForWords()
             sleep(5)
             XCTAssertEqual(opening(visibleText), saved, "reopen \(round) after leaving without a turn is on his page")
+        }
+    }
+
+    private func flat(_ text: String) -> String { text.split(whereSeparator: \.isWhitespace).joined(separator: " ") }
+
+    /// The review's rotation path: a Contents jump, two pages read in portrait, a turn to landscape and
+    /// out without a turn. Build 17 reopened a page early each time (his first line on the right-hand
+    /// page, the saved place rewritten to the spread's left edge). A layout change never moves the place:
+    /// every reopen shows his first words, however many times he leaves.
+    func testReadInPortraitRotatedThenLeftKeepsHisFirstWords() throws {
+        try rotateThenLeave(furniture: false)
+    }
+
+    /// The same with page numbers on, as he reads: the count runs while he reads and rotates.
+    func testWithPageNumbersOnReadInPortraitRotatedThenLeftKeepsHisFirstWords() throws {
+        try rotateThenLeave(furniture: true)
+    }
+
+    private func rotateThenLeave(furniture: Bool) throws {
+        try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .pad, "a spread on rotation is an iPad path")
+        XCUIDevice.shared.orientation = .portrait
+        relaunchExtra = furniture ? ["-GatefoldPageFurniture", "YES"] : []
+        let first = openFresh(relaunchExtra)
+        showChrome()
+        app.buttons["reader.contents"].tap()
+        let row = app.buttons.matching(NSPredicate(format: "label CONTAINS[c] %@", "Chapter XXX")).firstMatch
+        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label CONTAINS[c] %@", "Chapter I")).firstMatch.waitForExistence(timeout: 10))
+        for _ in 0..<20 where !(row.exists && row.isHittable) { app.swipeUp(velocity: .slow) }
+        row.tap()
+        var words = waitForWords(changingFrom: first, timeout: 20)
+        sleep(3)
+        for _ in 0..<2 {
+            turn(forward: true)
+            words = waitForWords(changingFrom: words, timeout: 10)
+            sleep(2)
+        }
+        let his = opening(visibleText)
+        XCTAssertFalse(his.isEmpty)
+
+        XCUIDevice.shared.orientation = .landscapeLeft
+        // He stays a while on the new spread: long enough for the page count to finish behind it.
+        sleep(45)
+        XCTAssertTrue(flat(visibleText).contains(his), "the spread shows his first words")
+        let spread = opening(visibleText)
+        for round in 1...3 {
+            leaveAndRelaunch()
+            _ = waitForWords()
+            sleep(6)
+            XCTAssertTrue(flat(visibleText).contains(his), "reopen \(round) after a rotation and no turn shows his first words")
+            XCTAssertEqual(opening(visibleText), spread, "reopen \(round) is the spread he left, not one a page early")
         }
     }
 }
