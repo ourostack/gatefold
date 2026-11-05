@@ -208,6 +208,7 @@ final class ReaderModel {
         self.highlights = HighlightStore(bookID: book.id, cloudBook: book.cloud, sync: app.sync)
         let initial = book.locatorJSON.flatMap { try? Locator(jsonString: $0) }
         self.initialLocator = initial
+        readerLog.notice("place read: \(book.id, privacy: .public) opening on \(initial.map(Self.placeTag) ?? "none", privacy: .public)")
         // His saved words are the place from the first frame. A reflow can start before the page has
         // shown any words (an iPad relaunched in landscape lays out in portrait first, then rotates);
         // with nothing held, the spread stayed where Readium's re-layout guessed: two spreads early,
@@ -964,7 +965,23 @@ final class ReaderModel {
     private func land(on locator: Locator?, progression: Double, target: ReadingPosition?, cloud: Double? = nil, rememberBack: Bool) async {
         guard !isClosed else { return }
         guard let locator else {
+            // A place the Cloud holds only as a percent. The page this lands on is his place from now:
+            // kept nothing, every reopen landed on the percent afresh and the spread could fall on the
+            // page beside the one he left (build 20's reopen loop, 3 in 19).
+            // The landing's own steps are not places (as below): `go` counts this move first thing.
+            let move = moves + 1
+            landingMove = move
+            defer { if landingMove == move { landingMove = nil } }
             await go(toProgression: progression, rememberBack: rememberBack)
+            // A reflow under way (a warm open laid out upright, then turned) moves the page; keep the
+            // words it settles on, not the boundary before it.
+            for _ in 0..<80 where keeper.reflowing != nil && moves == move && !isClosed {
+                try? await Task.sleep(for: .milliseconds(250))
+            }
+            guard moves == move, !isClosed else { return }
+            await captureAnchor()
+            guard moves == move, !isClosed, let here = page?.currentLocation else { return }
+            await recordLanding(here, target: target, cloud: cloud)
             return
         }
         hasMoved = true
@@ -992,6 +1009,12 @@ final class ReaderModel {
         readerLog.notice("landing timing (standby \(ready, privacy: .public)): go \(went, privacy: .public) ms, settled \(settled, privacy: .public) ms, anchored \(anchored, privacy: .public) ms, recorded \(Self.ms(since: started), privacy: .public) ms")
     }
 
+    /// A place in the log without its words: the file, the progression in it and in the book.
+    nonisolated static func placeTag(_ l: Locator) -> String {
+        let file = l.href.string.split(separator: "/").last.map(String.init) ?? l.href.string
+        return String(format: "%@ @%.5f total %.5f", file, l.locations.progression ?? -1, l.locations.totalProgression ?? -1)
+    }
+
     /// Records a settled landing. The first words on screen are the place, unless they come before the
     /// place we landed on (the page starts a few lines above it): then the target itself is, so the
     /// other device's place comes back unchanged instead of a few lines behind.
@@ -1008,6 +1031,9 @@ final class ReaderModel {
         let chosen = LandingPlace.choose(settled: settled, target: target, at: now)
         let landedAt = target?.totalProgression ?? here.locations.totalProgression
         let json = try? settledLocator.jsonString()
+        // The landed page is the place now: until he turns, jumps or touches, a later report is the
+        // layout settling (build 20's loop rewrote it to the chapter's first page and reopened beside him).
+        layoutOnly = true
         let record: @MainActor (Date) -> Void = { [weak self] at in
             guard let self else { return }
             // The Cloud's percent for this place stands; reading on adds to it (`CloudScale`).
@@ -1017,6 +1043,7 @@ final class ReaderModel {
             }
             if let json {
                 self.recordedMoves = self.moves
+                readerLog.notice("place write: landing (\(fresh != nil ? "his first words" : "Readium's boundary", privacy: .public)) \(Self.placeTag(settledLocator), privacy: .public); kept total \(chosen?.totalProgression ?? here.locations.totalProgression ?? 0, privacy: .public); move \(self.moves, privacy: .public)")
                 self.app.library.recordPlace(
                     bookID: self.bookID,
                     locatorJSON: json,
@@ -1213,11 +1240,11 @@ final class ReaderModel {
         // A location that arrives as a reflow lands is the restore, not the reader moving: keep the
         // anchor, or repeated reflows would walk it backward a page at a time.
         if recordingOwed {
-            readerLog.notice("location of a move a reflow held; anchor just taken")
+            readerLog.notice("location of a move a reflow held; anchor just taken (reported \(Self.placeTag(locator), privacy: .public))")
         } else if let settled = reflowSettledAt, Date().timeIntervalSince(settled) < 1.2 {
-            readerLog.notice("location after reflow; anchor kept")
+            readerLog.notice("location after reflow; anchor kept (reported \(Self.placeTag(locator), privacy: .public))")
         } else if !readerMoved, keeper.anchor != nil {
-            readerLog.notice("location without a move; anchor and place kept")
+            readerLog.notice("location without a move; anchor and place kept (reported \(Self.placeTag(locator), privacy: .public))")
         } else {
             let held = keeper.anchor, heldLocator = anchorLocator
             await captureAnchor()
@@ -1252,7 +1279,8 @@ final class ReaderModel {
         layoutReport = false
         // Only the reader moves the place. Readium reopening a page boundary off from the saved one is
         // not a move, so opening a book never overwrites a further-ahead place on the InkPad.
-        guard hasMoved, readerMoved, !fromLayout else { return refreshBookmarkState(await page?.visibleRange()) }
+        // A book warmed behind the shelf has had no move of his yet: nothing it reports is his place.
+        guard hasMoved, readerMoved, !fromLayout, !isWarming else { return refreshBookmarkState(await page?.visibleRange()) }
         // The first words on screen make the place exact; Readium's progression is a page boundary.
         // Only words captured on this very page count; a capture a reflow cut short leaves the last page's.
         let fresh = anchorLocator.flatMap { a in
@@ -1263,6 +1291,7 @@ final class ReaderModel {
             let now = Date()
             let exact = await mapper?.position(for: BookLocation(here), at: now)
             recordedMoves = moves
+            readerLog.notice("place write: his move (\(fresh != nil ? "his first words" : "Readium's boundary", privacy: .public)) \(Self.placeTag(here), privacy: .public); reported \(Self.placeTag(locator), privacy: .public); move \(self.moves, privacy: .public), touched \(self.touchedSinceLocation, privacy: .public), layoutOnly \(self.layoutOnly, privacy: .public)")
             app.library.recordPlace(
                 bookID: bookID,
                 locatorJSON: json,

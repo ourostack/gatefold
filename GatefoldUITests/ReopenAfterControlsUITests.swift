@@ -79,7 +79,9 @@ final class ReopenAfterControlsUITests: XCTestCase {
     func testAReturnAfterTheControlsAndNumbersShowsTheSameWords() {
         if pad { XCUIDevice.shared.orientation = .landscapeLeft; sleep(1) }
         var same = 0
+        let clock = DateFormatter(); clock.dateFormat = "HH:mm:ss.SSS"
         for round in 1...rounds {
+            print("REOPEN round \(round) starts \(clock.string(from: Date()))")
             app.launchArguments = ["-GatefoldUITest", "YES", "-GatefoldFakeCloud", "YES", "-GatefoldSkipWelcome", "YES",
                                    "-GatefoldSignedIn", "YES", "-GatefoldAllowReopen", "YES", "-GatefoldNoLatency", "YES",
                                    "-GatefoldReset", "YES", "-GatefoldDownloadAll", "YES"]
@@ -90,7 +92,9 @@ final class ReopenAfterControlsUITests: XCTestCase {
             // The number takes the "Counting pages…" slot: the layout report this guards against.
             _ = el("reader.pageNumber").waitForExistence(timeout: 180)
             let left = settle()
+            print("REOPEN round \(round) leaves \(clock.string(from: Date()))")
             toShelf()
+            print("REOPEN round \(round) reopens \(clock.string(from: Date()))")
             open()
             let back = settle()
             let ok = !left.isEmpty && back == left
