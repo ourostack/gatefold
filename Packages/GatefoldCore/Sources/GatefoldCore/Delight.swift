@@ -329,6 +329,9 @@ public struct ChromeClearance: Equatable, Sendable {
     /// Extra inset for the top bar's leading and trailing edges.
     public var leading: CGFloat = 0
     public var trailing: CGFloat = 0
+    /// How far down the top bar must start: a region across the middle of the top can't be cleared
+    /// sideways, so the bar steps below it.
+    public var top: CGFloat = 0
     /// The trailing corner is taken: Bookmark sits beside Close instead.
     public var bookmarkLeading: Bool { trailing > 0 }
     var containerWidth: CGFloat = 0
@@ -343,7 +346,11 @@ public struct ChromeClearance: Equatable, Sendable {
         var c = ChromeClearance()
         c.containerWidth = container.width
         for region in occlusions where region.minY < topBand && region.width > 0 && region.height > 0 {
-            if region.midX > container.width / 2 {
+            // Across the middle (a fresh iPad Pro 13-inch upright reports a band the window's whole width):
+            // no side clears it. Taken as a corner it cost 1040 pt of a 1032-pt window (build 19).
+            if region.minX < container.width / 2, region.maxX > container.width / 2 {
+                c.top = max(c.top, region.maxY + spare)
+            } else if region.midX > container.width / 2 {
                 c.trailing = max(c.trailing, container.width - region.minX + spare)
             } else {
                 c.leading = max(c.leading, region.maxX + spare)
@@ -356,9 +363,13 @@ public struct ChromeClearance: Equatable, Sendable {
     /// reaches into its band (`band` points from the top). Books moves the whole header down rather than
     /// squeezing buttons away from the trailing edge. Regions outside the row (the folded Duo's status
     /// column sits in the trailing safe area, beside the content) don't move it.
+    /// A strip down the side (reaching well below the band: an iPad Pro on its side reports one the
+    /// window's whole height) is beside the header, not above it; dropping below it put the header off
+    /// screen (build 19).
     public static func headerDrop(occlusions: [CGRect], band: CGFloat, width: CGFloat) -> CGFloat {
         occlusions
             .filter { $0.width > 0 && $0.height > 0 && $0.maxY > 0 && $0.minY < band && $0.minX < width && $0.maxX > 0 }
+            .filter { $0.maxY <= band * 2 }
             .map { $0.maxY + spare }
             .max() ?? 0
     }
