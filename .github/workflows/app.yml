@@ -79,18 +79,22 @@ jobs:
             | sed -E 's/(XCTAssert[A-Za-z]* failed).*/\1 (text withheld)/' | tail -40 || true
           exit ${status:-0}
       - name: Jumps and reopens keep his place; the reader fits its window; every Fine-Tune tap lands; the number's slot is never blank
+        env:
+          # Five rounds of the controls-then-numbers reopen (about 90 s each); 20 locally.
+          TEST_RUNNER_GATEFOLD_REOPEN_ROUNDS: "5"
         run: |
           set -o pipefail
           xcodebuild test -project Gatefold.xcodeproj -scheme Gatefold \
             -destination "${{ steps.sim.outputs.destination }}" \
             -only-testing:GatefoldUITests/WindowFitUITests \
+            -only-testing:GatefoldUITests/ReopenAfterControlsUITests \
             -only-testing:GatefoldUITests/NavigationPlaceUITests \
             -only-testing:GatefoldUITests/PageFurnitureUITests \
             -only-testing:GatefoldUITests/FineTuneTapUITests \
             -only-testing:GatefoldUITests/CountingPlaceholderUITests \
             -only-testing:GatefoldUITests/PositionUITests/testEveryPostureKeepsThePlace \
             -resultBundlePath "$RUNNER_TEMP/ipad.xcresult" > "$RUNNER_TEMP/ipad.log" 2>&1 || status=$?
-          grep -E "Test Case .*(passed|failed|skipped)|TEST (SUCCEEDED|FAILED)|WINDOWFIT|TAPRATE|PLACEHOLDER|\.swift:[0-9]+: error" "$RUNNER_TEMP/ipad.log" \
+          grep -E "Test Case .*(passed|failed|skipped)|TEST (SUCCEEDED|FAILED)|WINDOWFIT|REOPEN|TAPRATE|PLACEHOLDER|\.swift:[0-9]+: error" "$RUNNER_TEMP/ipad.log" \
             | sed -E 's/(XCTAssert[A-Za-z]* failed).*/\1 (text withheld)/' | tail -60 || true
           exit ${status:-0}
       - name: How soon a page number comes up (measured, by the app's own clock)
