@@ -72,23 +72,43 @@ final class FineTuneTapUITests: XCTestCase {
         quickTouches()
     }
 
-    /// On its side the panel scrolls (the short screen's branch): a quick touch still lands.
+    /// On its side (a shorter panel, which may take the scrolling branch): a quick touch still lands.
     func testAQuickTouchChangesEverySwitchOnceInLandscape() {
         XCUIDevice.shared.orientation = .landscapeLeft
         openFineTune()
         quickTouches()
     }
 
-    /// Toggle, then tap again straight away, as the review did: 30 in a row, each one counted.
-    func testThirtyBackToBackTaps() {
-        openFineTune()
-        let toggle = app.switches["appearance.pageNumbers"].firstMatch
-        XCTAssertTrue(toggle.waitForExistence(timeout: 10))
-        for i in 0..<30 {
-            let before = value(toggle)
-            toggle.tap()
-            assertChangedOnce(toggle, from: before, "tap \(i) changes Page Numbers")
+    /// The review's bar: one ordinary tap at the switch's centre, then the switch must have flipped.
+    /// 25 on each of the four switches, no retry, every tap counted.
+    private func tapRate() {
+        let panel = app.descendants(matching: .any)["appearance.panel"].firstMatch
+        var trials = 0, misses = 0
+        for id in switches {
+            let toggle = app.switches[id].firstMatch
+            XCTAssertTrue(toggle.waitForExistence(timeout: 10), id)
+            for _ in 0..<4 where !toggle.isHittable { panel.swipeUp() }
+            for _ in 0..<25 {
+                let before = value(toggle)
+                toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+                RunLoop.current.run(until: Date().addingTimeInterval(1.0))
+                trials += 1
+                if value(toggle) == before { misses += 1; print("TAPRATE miss on \(id) at trial \(trials)") }
+            }
         }
+        print("TAPRATE \(UIDevice.current.orientation.isLandscape ? "landscape" : "portrait") trials=\(trials) misses=\(misses)")
+        XCTAssertEqual(misses, 0, "every one of \(trials) taps flipped its switch")
+    }
+
+    func testEveryTapFlipsItsSwitchPortrait() {
+        openFineTune()
+        tapRate()
+    }
+
+    func testEveryTapFlipsItsSwitchLandscape() {
+        XCUIDevice.shared.orientation = .landscapeLeft
+        openFineTune()
+        tapRate()
     }
 
     /// The whole row is the control: a tap on its name changes the switch too.

@@ -604,6 +604,31 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             await self.restoreAnchor(generation: generation)
             if generation == self.reflowGeneration { self.settledGeneration = generation; self.reflowRetries = 0 }
         }
+        // Begun before the book's web view had loaded (a spread opened cold): its first script can wait
+        // forever, and counting waits on the reflow. Once the web view has loaded, give it a second to
+        // settle by itself, then start it again (build 18 waited out the 12 s below: a fresh open on
+        // the iPad's side counted from 11 s after the page showed).
+        if Self.firstWebView(in: navigator.view).map({ $0.isLoading }) ?? true {
+            Task { @MainActor [weak self] in
+                @MainActor func stalled() -> Bool {
+                    guard let self else { return false }
+                    // Counting waits on the keeper's reflow: once that's over, nothing is stalled.
+                    return generation == self.reflowGeneration && self.settledGeneration != generation
+                        && self.weakModel?.keeper.reflowing != nil
+                }
+                let deadline = ContinuousClock.now + .seconds(10)
+                while ContinuousClock.now < deadline {
+                    try? await Task.sleep(for: .milliseconds(200))
+                    guard stalled(), let self else { return }
+                    if let web = Self.firstWebView(in: self.navigator.view), !web.isLoading { break }
+                }
+                try? await Task.sleep(for: .seconds(1))
+                guard stalled(), let self, self.reflowRetries < 3 else { return }
+                self.reflowRetries += 1
+                readerLog.notice("reflow: begun before the page loaded and still unsettled a second after it did; starting it again (\(self.reflowRetries, privacy: .public))")
+                self.settleReflowSoon()
+            }
+        }
         // A reflow that begins before the book's web view has loaded (a spread opened straight onto a
         // place, cold) can wait forever on its first script; the page then stays covered. If this one
         // hasn't settled well past its own budgets (3 s to lay out, 4 s to jump), start it again: the stalled one is no longer current and

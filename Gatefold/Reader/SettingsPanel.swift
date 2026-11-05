@@ -283,11 +283,14 @@ private struct SwitchRow: View {
                     .labelsHidden()
                     .tint(Color.ribbon)
                     .allowsHitTesting(false)
+                    // The knob glides as it did under his finger; only the switch, not what it turns on.
+                    .animation(.snappy, value: isOn.wrappedValue)
                     .frame(maxWidth: .infinity, alignment: .trailing)
             }
             .contentShape(.rect)
         }
         .buttonStyle(StillRow())
+        .hoverEffectDisabled()
         .accessibilityRepresentation { Toggle(label ?? title, isOn: isOn) }
         .accessibilityIdentifier(id)
     }

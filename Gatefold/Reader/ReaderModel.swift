@@ -309,6 +309,12 @@ final class ReaderModel {
     /// When the live page took over from the cover or the reopen picture.
     @ObservationIgnored private var pageShownAt: Date?
     private(set) var screenPages: ScreenPageMap?
+    /// The page is up in a paged layout and its number isn't known yet (its count not loaded, or
+    /// chapters before it still being counted): the number's slot says so quietly instead of staying
+    /// blank, which took half a minute on a Duo.
+    var countingPages: Bool {
+        pageReady && screenNumbers == nil && screenLayout != nil
+    }
     private var lastGeometry: (href: String, geometry: ScreenPageGeometry)?
     private static let pageStore: ScreenPageStore = {
         let directory = URL.cachesDirectory.appending(path: "ScreenPages", directoryHint: .isDirectory)

@@ -74,6 +74,16 @@ final class PageNumberTimingUITests: XCTestCase {
         }
     }
 
+    /// The same on its side (a spread on the iPad), where the review measured 11–33 s.
+    func testANumberComesUpWithinMomentsOfAFreshOpenOnItsSide() {
+        XCUIDevice.shared.orientation = .landscapeLeft
+        defer { XCUIDevice.shared.orientation = .portrait }
+        for spot in ["0.12", "0.31", "0.47"] {
+            open("gutenberg-pride-and-prejudice", at: spot, reset: true)
+            check("gutenberg-pride-and-prejudice", spot, "fresh open on its side")
+        }
+    }
+
     /// Opened from a reset and closed at once, before the book could be counted, then reopened: the
     /// reopen's number comes up within moments of its picture lifting.
     func testANumberComesUpWithinMomentsOfAReopenAfterAnUnfinishedCount() {
