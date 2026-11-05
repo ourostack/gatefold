@@ -967,21 +967,29 @@ final class ReaderModel {
         guard let locator else {
             // A place the Cloud holds only as a percent. The page this lands on is his place from now:
             // kept nothing, every reopen landed on the percent afresh and the spread could fall on the
-            // page beside the one he left (build 20's reopen loop, 3 in 19).
-            // The landing's own steps are not places (as below): `go` counts this move first thing.
+            // page beside the one he left (build 20's reopen loop, 3 in 19). The landing's own steps are
+            // not places (as below): `go` counts this move first thing.
             let move = moves + 1
             landingMove = move
-            defer { if landingMove == move { landingMove = nil } }
             await go(toProgression: progression, rememberBack: rememberBack)
-            // A reflow under way (a warm open laid out upright, then turned) moves the page; keep the
-            // words it settles on, not the boundary before it.
-            for _ in 0..<80 where keeper.reflowing != nil && moves == move && !isClosed {
-                try? await Task.sleep(for: .milliseconds(250))
+            guard moves == move, !isClosed else {
+                if landingMove == move { landingMove = nil }
+                return
             }
-            guard moves == move, !isClosed else { return }
-            await captureAnchor()
-            guard moves == move, !isClosed, let here = page?.currentLocation else { return }
-            await recordLanding(here, target: target, cloud: cloud)
+            guard keeper.reflowing != nil else {
+                await keepPercentLanding(move: move, target: target, cloud: cloud)
+                return
+            }
+            // A reflow under way (a warm open laid out upright, then turned) moves the page: keep the
+            // words it settles on, not the boundary before it. Waited for apart from the landing, so the
+            // cover never stays up for the reflow (on a slow runner that held a blank page past 20 s).
+            Task { [weak self] in
+                for _ in 0..<80 {
+                    guard let self, self.keeper.reflowing != nil, self.moves == move, !self.isClosed else { break }
+                    try? await Task.sleep(for: .milliseconds(250))
+                }
+                await self?.keepPercentLanding(move: move, target: target, cloud: cloud)
+            }
             return
         }
         hasMoved = true
@@ -1007,6 +1015,15 @@ final class ReaderModel {
         // Landed on the other device's page: that's the reader's place now.
         await recordLanding(here, target: target, cloud: cloud)
         readerLog.notice("landing timing (standby \(ready, privacy: .public)): go \(went, privacy: .public) ms, settled \(settled, privacy: .public) ms, anchored \(anchored, privacy: .public) ms, recorded \(Self.ms(since: started), privacy: .public) ms")
+    }
+
+    /// Keeps the page a percent landing settled on, unless he has moved since.
+    private func keepPercentLanding(move: Int, target: ReadingPosition?, cloud: Double?) async {
+        defer { if landingMove == move { landingMove = nil } }
+        guard moves == move, !isClosed else { return }
+        await captureAnchor()
+        guard moves == move, !isClosed, let here = page?.currentLocation else { return }
+        await recordLanding(here, target: target, cloud: cloud)
     }
 
     /// A place in the log without its words: the file, the progression in it and in the book.
