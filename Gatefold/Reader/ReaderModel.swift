@@ -1282,8 +1282,8 @@ final class ReaderModel {
     /// opened, it was a swipe in slide or scroll mode and the place is the reader's own. A tap that
     /// only shows the controls changes no location, so it moves nothing.
     func noteInteraction() { touchesSinceLocation += 1 }
-    /// Touches on the page since the last location report, less the taps that only showed or hid the
-    /// controls: a swipe followed by a tap before Readium reports it is still his move.
+    /// Touches on the page since the last location report; a tap that only shows or hides the controls
+    /// clears them.
     @ObservationIgnored private var touchesSinceLocation = 0
     private var touchedSinceLocation: Bool { touchesSinceLocation > 0 }
     /// `moves` at the last location report: a report with none since is no turn or jump of his.
@@ -1377,7 +1377,11 @@ final class ReaderModel {
     /// The touch that began it is not a swipe, so the next location report (the layout settling under
     /// the controls, page numbers coming on) is not his move.
     func controlsTapped(visible: Bool) {
-        touchesSinceLocation = max(0, touchesSinceLocation - 1)
+        // Every touch since the last report, not only this tap's: a counter that took off one touch per
+        // tap kept a tap Readium never passed on (one whose touch began but whose tap went nowhere) as
+        // a move of his, and the next layout report moved his place (2 in 20 reopens). A swipe that a
+        // tap follows before Readium reports it is the rarer case and is left to that report.
+        touchesSinceLocation = 0
         setChrome(visible)
     }
 

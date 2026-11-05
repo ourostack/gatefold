@@ -71,9 +71,10 @@ final class RotationMidTransitionUITests: XCTestCase {
 
     private func turn() { el("reader.page").coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.5)).tap() }
 
-    private func expectWholeSpread(_ what: String) {
-        // Whatever was moving, a spread with words on both pages within 20 s.
-        let up = Date().addingTimeInterval(20)
+    private func expectWholeSpread(_ what: String, within limit: TimeInterval = 20) {
+        // Whatever was moving, a spread with words on both pages within the limit.
+        let start = Date()
+        let up = start.addingTimeInterval(limit)
         var last: (Double, Double)?
         while Date() < up {
             if let i = Self.ink(XCUIScreen.main.screenshot().image) {
@@ -84,8 +85,8 @@ final class RotationMidTransitionUITests: XCTestCase {
         }
         let shot = XCTAttachment(screenshot: XCUIScreen.main.screenshot()); shot.name = "after-\(what)"; shot.lifetime = .keepAlways; add(shot)
         let ok = (last?.0 ?? 0) > 0.01 && (last?.1 ?? 0) > 0.01
-        print("MIDTURN \(what): ink \(last.map { String(format: "%.3f / %.3f", $0.0, $0.1) } ?? "none") \(ok ? "WHOLE" : "STUCK")")
-        XCTAssertTrue(ok, "\(what): the spread wasn't whole within 20 s of the turn")
+        print("MIDTURN \(what): ink \(last.map { String(format: "%.3f / %.3f", $0.0, $0.1) } ?? "none") \(ok ? "WHOLE" : "STUCK") after \(String(format: "%.1f", Date().timeIntervalSince(start))) s")
+        XCTAssertTrue(ok, "\(what): the spread wasn't whole within \(Int(limit)) s of the turn")
         XCTAssertFalse(settle(30).isEmpty, "\(what): the page's words are readable")
     }
 
@@ -94,7 +95,9 @@ final class RotationMidTransitionUITests: XCTestCase {
         launch()
         tapContentsRow()
         XCUIDevice.shared.orientation = .landscapeLeft
-        expectWholeSpread("a turn of the iPad during a Contents jump")
+        // A cold Contents jump alone takes up to 8.8 s; on CI's erased iPad, with the turn on top, the
+        // page loaded past 20 s (blank paper and a spinner, then the whole spread). Measured, bounded at 45.
+        expectWholeSpread("a turn of the iPad during a Contents jump", within: 45)
     }
 
     /// The last resort: a restore that never comes back (held on purpose) still uncovers the spread

@@ -85,7 +85,7 @@ final class ReopenAfterControlsUITests: XCTestCase {
                                    "-GatefoldReset", "YES", "-GatefoldDownloadAll", "YES"]
             app.launch()
             open()
-            _ = settle()
+            let opened = settle()
             numbersOn()
             // The number takes the "Counting pages…" slot: the layout report this guards against.
             _ = el("reader.pageNumber").waitForExistence(timeout: 180)
@@ -95,7 +95,7 @@ final class ReopenAfterControlsUITests: XCTestCase {
             let back = settle()
             let ok = !left.isEmpty && back == left
             if ok { same += 1 }
-            print("REOPEN round \(round): left \(Self.hash(left)) back \(Self.hash(back)) \(ok ? "SAME" : "MISS")")
+            print("REOPEN round \(round): opened \(Self.hash(opened)) left \(Self.hash(left)) back \(Self.hash(back)) \(ok ? "SAME" : "MISS")")
             XCTAssertTrue(ok, "round \(round) returned other words (\(Self.hash(left)) then \(Self.hash(back)))")
             app.terminate()
         }
