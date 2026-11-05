@@ -55,7 +55,7 @@ jobs:
           xcrun simctl boot "$udid"
           xcrun simctl bootstatus "$udid" -b
           echo "destination=platform=iOS Simulator,arch=$(uname -m),id=$udid" >> "$GITHUB_OUTPUT"
-      - name: Rotation, jumps and reopens keep his place
+      - name: Rotation, jumps and reopens keep his place; every Fine-Tune tap lands
         run: |
           set -o pipefail
           xcodebuild test -project Gatefold.xcodeproj -scheme Gatefold \
@@ -63,6 +63,7 @@ jobs:
             -only-testing:GatefoldUITests/RotationRepro \
             -only-testing:GatefoldUITests/NavigationPlaceUITests \
             -only-testing:GatefoldUITests/PageFurnitureUITests \
+            -only-testing:GatefoldUITests/FineTuneTapUITests \
             -only-testing:GatefoldUITests/PositionUITests/testEveryPostureKeepsThePlace \
             -resultBundlePath "$RUNNER_TEMP/ipad.xcresult" > "$RUNNER_TEMP/ipad.log" 2>&1 || status=$?
           grep -E "Test Case .*(passed|failed|skipped)|TEST (SUCCEEDED|FAILED)|REPRO (round|SUMMARY)|\.swift:[0-9]+: error" "$RUNNER_TEMP/ipad.log" \
