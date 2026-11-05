@@ -1077,11 +1077,11 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         let width = navigator.view.bounds.width
         let edge = width * 0.25
         if model.chromeVisible {
-            model.setChrome(false)
+            model.controlsTapped(visible: false)
             return true
         }
         if model.pageTurn == .scroll {
-            model.setChrome(true)
+            model.controlsTapped(visible: true)
             return true
         }
         if point.x < edge {
@@ -1089,7 +1089,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         } else if point.x > width - edge {
             turn(forward: true)
         } else {
-            model.setChrome(true)
+            model.controlsTapped(visible: true)
         }
         return true
     }

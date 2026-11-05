@@ -1218,7 +1218,18 @@ final class ReaderModel {
         } else if !readerMoved, keeper.anchor != nil {
             readerLog.notice("location without a move; anchor and place kept")
         } else {
+            let held = keeper.anchor, heldLocator = anchorLocator
             await captureAnchor()
+            // No turn, no jump and no swipe since the last report, and his words are still the first on
+            // screen: the layout moved Readium's page boundary (page numbers coming on, a number taking
+            // the "Counting pages…" slot), not the reader. His page, its words and its place stay.
+            if !touchedSinceLocation, moves == movesAtLastReport, let held, held.text != nil,
+               keeper.anchor?.text == held.text {
+                keeper.userSettled(on: held)
+                anchorLocator = heldLocator
+                layoutReport = true
+                readerLog.notice("location from the layout; his words still on screen, anchor and place kept")
+            }
             if touchedSinceLocation, !hasMoved {
                 if let opened = openedLocation {
                     if opened.href != locator.href || opened.locations.progression != locator.locations.progression { hasMoved = true }
@@ -1229,9 +1240,18 @@ final class ReaderModel {
             if openedLocation == nil { openedLocation = locator }
         }
         touchedSinceLocation = false
+        movesAtLastReport = moves
+        // A report that isn't his move leaves "where he is" on his words: the running head, the
+        // Cloud's "here" and the scrubber read `location`, so it names the page on screen, not
+        // Readium's boundary (build 19: the head said the next chapter while his words stayed put).
+        let justReflowed = !recordingOwed && reflowSettledAt.map { Date().timeIntervalSince($0) < 1.2 } == true
+        let notHisMove = layoutReport || !readerMoved || justReflowed
+        if notHisMove, let words = anchorLocator, keeper.anchor?.text != nil { location = words }
+        let fromLayout = layoutReport
+        layoutReport = false
         // Only the reader moves the place. Readium reopening a page boundary off from the saved one is
         // not a move, so opening a book never overwrites a further-ahead place on the InkPad.
-        guard hasMoved, readerMoved else { return refreshBookmarkState(await page?.visibleRange()) }
+        guard hasMoved, readerMoved, !fromLayout else { return refreshBookmarkState(await page?.visibleRange()) }
         // The first words on screen make the place exact; Readium's progression is a page boundary.
         // Only words captured on this very page count; a capture a reflow cut short leaves the last page's.
         let fresh = anchorLocator.flatMap { a in
@@ -1262,6 +1282,10 @@ final class ReaderModel {
     /// only shows the controls changes no location, so it moves nothing.
     func noteInteraction() { touchedSinceLocation = true }
     private var touchedSinceLocation = false
+    /// `moves` at the last location report: a report with none since is no turn or jump of his.
+    @ObservationIgnored private var movesAtLastReport = 0
+    /// This report came from the layout (see `locationDidChange`).
+    @ObservationIgnored private var layoutReport = false
     private var openedLocation: Locator?
 
     /// A turn landed or sprang back: take the place from where the navigator is now.
@@ -1342,6 +1366,14 @@ final class ReaderModel {
 
     func setChrome(_ visible: Bool) {
         withAnimation(Motion.chrome) { chromeVisible = visible }
+    }
+
+    /// A tap on the page that showed or hid the controls, and did nothing else.
+    /// The touch that began it is not a swipe, so the next location report (the layout settling under
+    /// the controls, page numbers coming on) is not his move.
+    func controlsTapped(visible: Bool) {
+        touchedSinceLocation = false
+        setChrome(visible)
     }
 
     /// Without the animation: the controls go down before the page is pictured for a reopen.
