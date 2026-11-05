@@ -52,9 +52,11 @@ final class CountingPlaceholderUITests: XCTestCase {
         }
         XCTAssertTrue(number.exists, "the number comes")
         XCTAssertTrue(counting.waitForNonExistence(timeout: 2), "and the placeholder goes")
-        print("PLACEHOLDER saw counting=\(sawCounting) samples=\(samples)")
-        // A reset leaves nothing counted, so a fresh open always has a moment before its number.
-        XCTAssertTrue(sawCounting, "the placeholder showed while the count ran")
+        print("PLACEHOLDER saw counting=\(sawCounting) samples=\(samples) app drew it=\((app.descendants(matching: .any)["reader.countingShown"].firstMatch.value as? String) ?? "?")")
+        // A reset leaves nothing counted, so a fresh open always has a moment before its number. On a
+        // slow runner one accessibility read can outlast that moment, so the app's own record counts too.
+        let shown = app.descendants(matching: .any)["reader.countingShown"].firstMatch
+        XCTAssertTrue(sawCounting || (shown.value as? String) == "1", "the placeholder showed while the count ran")
         if sawCounting, !words.isEmpty {
             sleep(1)
             XCTAssertEqual(visibleText, words, "the number taking the placeholder's place doesn't move the words")

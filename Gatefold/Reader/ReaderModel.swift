@@ -317,6 +317,8 @@ final class ReaderModel {
     var countingPages: Bool {
         pageReady && screenNumbers == nil && screenLayout != nil && !countGaveUp
     }
+    /// UI tests: "Counting pages…" was drawn at least once (CI's slow reads can miss it on screen).
+    var countingShownProbe = false
     /// The last count ended by itself with chapters it couldn't count; cleared when a count starts.
     private(set) var countGaveUp = false
     private var lastGeometry: (href: String, geometry: ScreenPageGeometry)?

@@ -343,6 +343,12 @@ struct ReaderScreen: View {
                 .accessibilityIdentifier("reader.numberDelay")
                 .accessibilityValue(model.firstNumberDelay.map { String(format: "%.2f", $0) } ?? "")
                 .allowsHitTesting(false)
+            Text("counting shown")
+                .font(.system(size: 1))
+                .opacity(0.01)
+                .accessibilityIdentifier("reader.countingShown")
+                .accessibilityValue(model.countingShownProbe ? "1" : "0")
+                .allowsHitTesting(false)
             Text("ready")
                 .font(.system(size: 1))
                 .opacity(0.01)
@@ -500,6 +506,7 @@ struct ReaderScreen: View {
                 .allowsHitTesting(false)
                 .accessibilityLabel("Counting pages")
                 .accessibilityIdentifier("reader.pageCounting")
+                .onAppear { if LaunchOptions.isUITest { model.countingShownProbe = true } }
         }
     }
 

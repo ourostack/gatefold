@@ -33,8 +33,9 @@ jobs:
     # The spread on rotation and the iPad's slow launch reflow are iPad paths: a rotation that
     # reopened a page early (build 17) and a jump lost in the launch reflow. No retry: a red here is
     # a real miss. The Duo job's posture test skips on the folded cover; this one runs it on a spread.
+    # About 74 min on build 19's first run (200 Fine-Tune taps alone take about 13 min): room to spare.
     runs-on: xcode-27
-    timeout-minutes: 75
+    timeout-minutes: 100
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/select-xcode
