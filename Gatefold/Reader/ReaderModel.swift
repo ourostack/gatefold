@@ -969,6 +969,7 @@ final class ReaderModel {
         }
         hasMoved = true
         if rememberBack { rememberPlace() }
+        defer { publishBack() }
         moves += 1
         let move = moves
         landingMove = move
@@ -1387,6 +1388,7 @@ final class ReaderModel {
         hasMoved = true
         moves += 1
         if rememberBack { rememberPlace() }
+        defer { publishBack() }
         if let locator = await publication.locate(progression: progression) {
             await veiled { _ = await self.page?.go(to: locator) }
             await captureAnchor()
@@ -1403,6 +1405,7 @@ final class ReaderModel {
         hasMoved = true
         moves += 1
         rememberPlace()
+        defer { publishBack() }
         await veiled { await self.page?.go(to: entry.link) }
         await captureAnchor()
     }
@@ -1411,6 +1414,7 @@ final class ReaderModel {
         hasMoved = true
         moves += 1
         rememberPlace()
+        defer { publishBack() }
         await veiled { await self.page?.go(to: link) }
         await captureAnchor()
     }
@@ -1420,12 +1424,14 @@ final class ReaderModel {
         hasMoved = true
         moves += 1
         if rememberBack { rememberPlace() }
+        defer { publishBack() }
         await veiled { _ = await self.page?.go(to: locator) }
         await captureAnchor()
     }
 
     func go(to bookmark: Bookmark) async {
         rememberPlace()
+        defer { publishBack() }
         await go(toProgression: bookmark.totalProgression, rememberBack: false)
     }
 
@@ -1440,9 +1446,20 @@ final class ReaderModel {
         await captureAnchor()
     }
 
+    /// The place a jump leaves, held until the jump has moved the page: "Back to page" offered while
+    /// the old page was still up (3.6 to 8.8 s on a cold Contents jump in build 19) read as a jump that
+    /// had already happened.
     private func rememberPlace() {
-        backLocator = location
-        backPage = chapterMap.page(at: totalProgression)
+        pendingBack = (location, chapterMap.page(at: totalProgression))
+    }
+    @ObservationIgnored private var pendingBack: (Locator?, Int?)?
+
+    /// Offers the way back once the jump has landed (a veiled jump returns once the new page has painted).
+    private func publishBack() {
+        guard let (back, page) = pendingBack else { return }
+        pendingBack = nil
+        backLocator = back
+        backPage = page
     }
 
     // MARK: Bookmarks
