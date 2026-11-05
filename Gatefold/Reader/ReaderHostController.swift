@@ -298,14 +298,15 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     /// no pin), so the numbers are a clean layout's. It waits out turns, so a turn never shares the CPU.
     func countPages(_ hrefs: [String], record: @escaping @MainActor (String, Int) -> Void, finished: @escaping @MainActor () -> Void) {
         stopCounting()
-        guard isViewLoaded, preferences.scroll != true, !hrefs.isEmpty else { return }
+        // Every way out says so, or the slot keeps promising a number.
+        guard isViewLoaded, preferences.scroll != true, !hrefs.isEmpty else { finished(); return }
         let links = hrefs.compactMap { href in publication.readingOrder.first { $0.url().removingFragment().string == href } }
         // A chapter's cost is its web view loading (about 3 s each, one after another, in build 17), not
         // its measuring: several counters behind the page take chapters from one queue at once.
         let workers = (0..<min(Self.counters, links.count)).compactMap { _ in
             try? Self.makeNavigator(publication: publication, at: nil, preferences: preferences)
         }
-        guard !workers.isEmpty else { return }
+        guard !workers.isEmpty else { finished(); return }
         // The page's own bands (`navigatorContentInset`): without them a tablet counter laid its words out
         // 276 pt taller than the page and counted about a fifth too few columns.
         let insets = CountingInsets { [weak self] in
