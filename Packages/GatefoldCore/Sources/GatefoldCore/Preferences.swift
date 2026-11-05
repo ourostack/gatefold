@@ -270,10 +270,21 @@ public struct PreferencesStore: Codable, Equatable, Sendable {
     public init(defaults: ReaderPreferences = ReaderPreferences()) {
         self.defaults = defaults
         self.densityVersion = Self.currentDensity
+        self.furnitureVersion = Self.currentFurniture
+    }
+
+    /// Page numbers, the position label and pages left are his, not a book's look: they always come
+    /// from the defaults, so on or off applies to every book (the build 17 review's ruling).
+    private static func furniture(of from: ReaderPreferences, onto prefs: inout ReaderPreferences) {
+        prefs.showsPageNumbers = from.showsPageNumbers
+        prefs.showsPositionLabel = from.showsPositionLabel
+        prefs.showsPagesLeft = from.showsPagesLeft
     }
 
     public func effective(for bookID: String) -> ReaderPreferences {
-        perBook[bookID] ?? defaults
+        guard var own = perBook[bookID] else { return defaults }
+        Self.furniture(of: defaults, onto: &own)
+        return own
     }
 
     public func followsDefault(_ bookID: String) -> Bool {
@@ -283,7 +294,29 @@ public struct PreferencesStore: Codable, Equatable, Sendable {
     public mutating func update(_ bookID: String, _ change: (inout ReaderPreferences) -> Void) {
         var prefs = effective(for: bookID)
         change(&prefs)
+        Self.furniture(of: prefs, onto: &defaults)
         perBook[bookID] = prefs == defaults ? nil : prefs
+    }
+
+    /// Furniture as saved: nil before build 18 (kept per book), `currentFurniture` after (global).
+    public private(set) var furnitureVersion: Int?
+    public static let currentFurniture = 1
+
+    /// Once, for settings saved by build 17: a toggle he turned on in any book is on for every book,
+    /// and a book that differed from his defaults only in furniture follows them again.
+    public mutating func adoptGlobalFurniture() {
+        guard (furnitureVersion ?? 0) < Self.currentFurniture else { return }
+        for prefs in perBook.values {
+            defaults.showsPageNumbers = defaults.showsPageNumbers || prefs.showsPageNumbers
+            defaults.showsPositionLabel = defaults.showsPositionLabel || prefs.showsPositionLabel
+            defaults.showsPagesLeft = defaults.showsPagesLeft || prefs.showsPagesLeft
+        }
+        for id in Array(perBook.keys) {
+            var p = perBook[id]!
+            Self.furniture(of: defaults, onto: &p)
+            perBook[id] = p == defaults ? nil : p
+        }
+        furnitureVersion = Self.currentFurniture
     }
 
     public mutating func useAsDefault(from bookID: String) {

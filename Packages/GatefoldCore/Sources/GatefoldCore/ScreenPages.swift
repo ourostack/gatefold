@@ -137,6 +137,17 @@ public struct ScreenPageGeometry: Equatable, Sendable {
         column = max(0, Int((scrollLeft / width).rounded()))
     }
 
+    /// Whether a web view's document (`location.pathname`, under the publication's root) is the chapter
+    /// `href` (relative to that root): the whole path, so `sub/ch1.xhtml` never passes for `ch1.xhtml`.
+    /// Local books are served at `readium://<uuid>/<href>`; a book served from its own web address would
+    /// carry that address's path and match nothing (Gatefold opens only local files).
+    public static func document(_ pathname: String, isChapter href: String) -> Bool {
+        let path = pathname.removingPercentEncoding ?? pathname
+        let chapter = (href.removingPercentEncoding ?? href).split(separator: "#", maxSplits: 1).first.map(String.init) ?? href
+        let trimmed = path.hasPrefix("/") ? String(path.dropFirst()) : path
+        return trimmed == chapter
+    }
+
     /// Laid out as any reader would see the chapter, so its columns are the chapter's count.
     public var isClean: Bool { !verso && !pinned }
 }
@@ -174,9 +185,13 @@ public struct ScreenPageStore: Sendable {
 
     public init(directory: URL) { self.directory = directory }
 
+    /// v2 (build 18): a count is taken only in the chapter it names. Earlier counts could hold the
+    /// previous chapter's columns, so they are counted again rather than trusted.
+    static let version = "v2"
+
     private func url(book: String, layout: ScreenPageLayout) -> URL {
         let safe = book.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? book
-        return directory.appending(path: safe, directoryHint: .isDirectory).appending(path: "\(layout.key).json")
+        return directory.appending(path: safe, directoryHint: .isDirectory).appending(path: "\(layout.key)-\(Self.version).json")
     }
 
     /// The counts kept for this book at this layout, or none yet.

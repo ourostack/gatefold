@@ -126,7 +126,9 @@ enum ReaderJS {
         geometry: function () {
           const se = document.scrollingElement;
           return JSON.stringify({ w: se.scrollWidth, l: se.scrollLeft, v: window.innerWidth,
-            verso: !!document.getElementById("gatefold-verso"), pinned: !!document.getElementById("gatefold-pin") });
+            verso: !!document.getElementById("gatefold-verso"), pinned: !!document.getElementById("gatefold-pin"),
+            // Which chapter these columns are: the navigator's location can move on before its web view does.
+            doc: location.pathname });
         },
         // Where words are in this resource, as the progression that puts their page on screen
         // (paginated). Whitespace may differ from the book file's, so words match across any run of it.

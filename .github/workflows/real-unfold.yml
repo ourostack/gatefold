@@ -1,0 +1,145 @@
+name: Real unfold
+
+# Opens and shuts an iPhone Duo simulator's hinge through DeviceHub (the Duo tour's helper) with a book
+# open, and judges each unfold from the app's own "reflow check" log line: did the spread keep his words?
+# It drives a window, so it runs on demand and on every pull request that changes the reader; it is the
+# posture gate (the UI test can't move a hinge, and a spread forced on the folded cover is no reader's layout).
+
+on:
+  workflow_dispatch:
+    inputs:
+      rounds:
+        description: Unfolds at each place in the book
+        default: "3"
+  pull_request:
+    paths:
+      - .github/workflows/real-unfold.yml
+      - Gatefold/Reader/**
+      - Packages/GatefoldCore/Sources/GatefoldCore/ReadingAnchor.swift
+      - Packages/GatefoldCore/Sources/GatefoldCore/ScreenPages.swift
+
+permissions:
+  contents: read
+
+concurrency:
+  group: real-unfold-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  real-unfold:
+    name: Real unfold
+    runs-on: xcode-27
+    timeout-minutes: 75
+    env:
+      APP: bot.ouro.gatefold
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/select-xcode
+      - name: Install the Metal toolchain
+        run: xcodebuild -downloadComponent MetalToolchain
+      - name: Generate the project
+        run: |
+          brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
+          xcodegen generate
+      - name: Create and boot an iPhone Duo
+        id: sim
+        run: |
+          set -euo pipefail
+          runtime="$(xcrun simctl list runtimes --json | python3 -c 'import json,sys; r=[x for x in json.load(sys.stdin)["runtimes"] if x["platform"]=="iOS" and x["isAvailable"] and any(d["name"].startswith("iPhone Duo") for d in x.get("supportedDeviceTypes",[]))]; print(max(r, key=lambda x: [int(p) for p in x["version"].split(".")])["identifier"])')"
+          udid="$(xcrun simctl create gatefold-duo com.apple.CoreSimulator.SimDeviceType.iPhone-Duo "$runtime")"
+          echo "udid=$udid" >> "$GITHUB_OUTPUT"
+          xcrun simctl boot "$udid"
+          xcrun simctl bootstatus "$udid" -b
+      - name: Build and install the app
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/unfold/shots"
+          xcodebuild build -project Gatefold.xcodeproj -scheme Gatefold \
+            -destination "platform=iOS Simulator,arch=$(uname -m),id=${{ steps.sim.outputs.udid }}" \
+            -derivedDataPath "$RUNNER_TEMP/unfold/DerivedData" CODE_SIGNING_ALLOWED=NO 2>&1 | tail -20
+          for attempt in 1 2 3; do
+            xcrun simctl bootstatus "${{ steps.sim.outputs.udid }}" -b >/dev/null 2>&1 || true
+            if xcrun simctl install "${{ steps.sim.outputs.udid }}" "$RUNNER_TEMP/unfold/DerivedData/Build/Products/Debug-iphonesimulator/Gatefold.app"; then break; fi
+            [ "$attempt" = 3 ] && exit 1
+            sleep 15
+          done
+      - name: Open DeviceHub
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            swiftc -Onone .github/scripts/duo/devicehub.swift -o "$RUNNER_TEMP/unfold/devicehub" && break
+            [ "$attempt" = 3 ] && exit 1
+            sleep 10
+          done
+          sleep 30
+          open -a "$(xcode-select -p)/../Applications/DeviceHub.app"
+          sleep 20
+          "$RUNNER_TEMP/unfold/devicehub" dump
+      - name: Unfold with a book open, at five places
+        run: |
+          set -uo pipefail
+          udid="${{ steps.sim.outputs.udid }}"
+          hub="$RUNNER_TEMP/unfold/devicehub"
+          out="$RUNNER_TEMP/unfold"
+          xcrun simctl spawn "$udid" log stream --style compact \
+            --predicate 'subsystem == "bot.ouro.gatefold" AND category == "reader"' > "$out/reader.log" 2>&1 &
+          stream=$!
+          for place in 0.12 0.31 0.47 0.66 0.83; do
+            "$hub" press "Closed"; sleep 6
+            xcrun simctl launch --terminate-running-process "$udid" "$APP" -GatefoldUITest YES -GatefoldFakeCloud YES \
+              -GatefoldReset YES -GatefoldSkipWelcome YES -GatefoldSignedIn YES -GatefoldDownloadAll YES \
+              -GatefoldOpenBook gutenberg-pride-and-prejudice -GatefoldGoTo "$place" >/dev/null
+            sleep 30
+            for round in $(seq 1 "${{ inputs.rounds || '3' }}"); do
+              echo "UNFOLD place $place round $round" | tee -a "$out/marks.log"
+              "$hub" press "Open"; sleep 14
+              xcrun simctl io "$udid" screenshot --display=3 "$out/shots/$place-$round-open.png" >/dev/null 2>&1 || true
+              "$hub" press "Closed"; sleep 12
+            done
+            # Half open: tabletop on the inner screen, then flat again and folded.
+            echo "HALF OPEN place $place" | tee -a "$out/marks.log"
+            "$hub" press "Open"; sleep 12
+            "$hub" press "Partially Open"; sleep 14
+            xcrun simctl io "$udid" screenshot --display=3 "$out/shots/$place-half.png" >/dev/null 2>&1 || true
+            "$hub" press "Open"; sleep 12
+            "$hub" press "Closed"; sleep 12
+          done
+          # Early unfolds: opened folded, then unfolded 2 s after the page shows, as the posture test
+          # switches (the reviewer's failures came on the first switch after launch).
+          for place in 0.12 0.31 0.47 0.66 0.83 0.12 0.31 0.47; do
+            "$hub" press "Closed"; sleep 6
+            shown="$(grep -c "open: page shown" "$out/reader.log" || true)"
+            xcrun simctl launch --terminate-running-process "$udid" "$APP" -GatefoldUITest YES -GatefoldFakeCloud YES \
+              -GatefoldReset YES -GatefoldSkipWelcome YES -GatefoldSignedIn YES -GatefoldDownloadAll YES \
+              -GatefoldOpenBook gutenberg-pride-and-prejudice -GatefoldGoTo "$place" >/dev/null
+            for wait in $(seq 1 120); do
+              [ "$(grep -c "open: page shown" "$out/reader.log" || true)" -gt "$shown" ] && break
+              sleep 0.5
+            done
+            sleep 2
+            echo "EARLY UNFOLD place $place" | tee -a "$out/marks.log"
+            echo "EARLY UNFOLD place $place" >> "$out/reader.log"
+            "$hub" press "Open"; sleep 16
+            xcrun simctl io "$udid" screenshot --display=3 "$out/shots/early-$place-$wait.png" >/dev/null 2>&1 || true
+          done
+          kill "$stream" || true
+          grep -E "reflow check|reflow begins|host size|layout (single|spread|tabletop)|spread: " "$out/reader.log" | sed -E 's/^[0-9-]+ //' | tail -200
+          echo "--- verdicts after an unfold (two columns) ---"
+          spreads="$(grep "reflow check" "$out/reader.log" | grep "columns 2" || true)"
+          echo "$spreads" | grep -o "anchor-[a-z]*" | sort | uniq -c
+          echo "--- every verdict (unfold, half open, fold) ---"
+          verdicts="$(grep "reflow check" "$out/reader.log" || true)"
+          echo "$verdicts" | grep -o "anchor-[a-z]*" | sort | uniq -c
+          echo "--- half-open posture changes ---"
+          grep -c "reflow begins: posture" "$out/reader.log" || true
+          # Every unfold must have been judged, and no posture change may have lost his words.
+          [ -n "$spreads" ] || { echo "::error::no unfold reached a spread"; exit 1; }
+          if echo "$verdicts" | grep -q "anchor-lost"; then echo "::error::a posture change lost the reader's words"; exit 1; fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: real-unfold
+          path: |
+            ${{ runner.temp }}/unfold/reader.log
+            ${{ runner.temp }}/unfold/marks.log
+            ${{ runner.temp }}/unfold/shots
