@@ -55,20 +55,39 @@ jobs:
           udid="$(xcrun simctl create gatefold-ipad "$type" "$runtime")"
           xcrun simctl boot "$udid"
           xcrun simctl bootstatus "$udid" -b
+          echo "udid=$udid" >> "$GITHUB_OUTPUT"
           echo "destination=platform=iOS Simulator,arch=$(uname -m),id=$udid" >> "$GITHUB_OUTPUT"
-      - name: Rotation, jumps and reopens keep his place; every Fine-Tune tap lands; the number's slot is never blank
+      - name: Turned on its side cold (an erased iPad), the spread always comes whole and keeps his place
+        # An erased simulator, not a new one: build 19 left the old page under a frozen leaf in 3 of 9
+        # rounds after an erase and 0 of 3 on a new simulator. Once a run, before anything warms it.
+        run: |
+          set -o pipefail
+          udid="${{ steps.sim.outputs.udid }}"
+          xcrun simctl shutdown "$udid"
+          xcrun simctl erase "$udid"
+          xcrun simctl boot "$udid"
+          xcrun simctl bootstatus "$udid" -b
+          xcodebuild test -project Gatefold.xcodeproj -scheme Gatefold \
+            -destination "${{ steps.sim.outputs.destination }}" \
+            -only-testing:GatefoldUITests/RotationRepro \
+            -only-testing:GatefoldUITests/RotationMidTransitionUITests \
+            -resultBundlePath "$RUNNER_TEMP/cold.xcresult" > "$RUNNER_TEMP/cold.log" 2>&1 || status=$?
+          grep -E "Test Case .*(passed|failed|skipped)|TEST (SUCCEEDED|FAILED)|REPRO (setup|round|SUMMARY)|MIDTURN|\.swift:[0-9]+: error" "$RUNNER_TEMP/cold.log" \
+            | sed -E 's/(XCTAssert[A-Za-z]* failed).*/\1 (text withheld)/' | tail -40 || true
+          exit ${status:-0}
+      - name: Jumps and reopens keep his place; the reader fits its window; every Fine-Tune tap lands; the number's slot is never blank
         run: |
           set -o pipefail
           xcodebuild test -project Gatefold.xcodeproj -scheme Gatefold \
             -destination "${{ steps.sim.outputs.destination }}" \
-            -only-testing:GatefoldUITests/RotationRepro \
+            -only-testing:GatefoldUITests/WindowFitUITests \
             -only-testing:GatefoldUITests/NavigationPlaceUITests \
             -only-testing:GatefoldUITests/PageFurnitureUITests \
             -only-testing:GatefoldUITests/FineTuneTapUITests \
             -only-testing:GatefoldUITests/CountingPlaceholderUITests \
             -only-testing:GatefoldUITests/PositionUITests/testEveryPostureKeepsThePlace \
             -resultBundlePath "$RUNNER_TEMP/ipad.xcresult" > "$RUNNER_TEMP/ipad.log" 2>&1 || status=$?
-          grep -E "Test Case .*(passed|failed|skipped)|TEST (SUCCEEDED|FAILED)|REPRO (round|SUMMARY)|TAPRATE|PLACEHOLDER|\.swift:[0-9]+: error" "$RUNNER_TEMP/ipad.log" \
+          grep -E "Test Case .*(passed|failed|skipped)|TEST (SUCCEEDED|FAILED)|WINDOWFIT|TAPRATE|PLACEHOLDER|\.swift:[0-9]+: error" "$RUNNER_TEMP/ipad.log" \
             | sed -E 's/(XCTAssert[A-Za-z]* failed).*/\1 (text withheld)/' | tail -60 || true
           exit ${status:-0}
       - name: How soon a page number comes up (measured, by the app's own clock)
@@ -89,6 +108,8 @@ jobs:
         with:
           name: ipad-results
           path: |
+            ${{ runner.temp }}/cold.log
+            ${{ runner.temp }}/cold.xcresult
             ${{ runner.temp }}/ipad.log
             ${{ runner.temp }}/ipad.xcresult
 
