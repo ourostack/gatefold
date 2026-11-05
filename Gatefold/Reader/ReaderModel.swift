@@ -309,6 +309,34 @@ final class ReaderModel {
     /// When the live page took over from the cover or the reopen picture.
     @ObservationIgnored private var pageShownAt: Date?
     private(set) var screenPages: ScreenPageMap?
+    /// The page is up in a paged layout and its number isn't known yet (its count not loaded, or
+    /// chapters before it still being counted): the number's slot says so quietly instead of staying
+    /// blank, which took half a minute on a Duo.
+    /// Not after a count that ended with chapters still uncounted, nor after a minute in which nothing
+    /// was counted (a count stopped and not restarted, or one that never began): the slot goes quiet
+    /// again rather than promising a number that isn't coming. Counting moving again brings it back.
+    var countingPages: Bool {
+        pageReady && screenNumbers == nil && screenLayout != nil && !countGaveUp && !countStalled
+    }
+    /// No chapter counted, and no count begun, for a minute.
+    private(set) var countStalled = false
+    @ObservationIgnored private var stallTimer: Task<Void, Never>?
+    private func countMoved() {
+        countStalled = false
+        stallTimer?.cancel()
+        stallTimer = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(60))
+            guard !Task.isCancelled, let self else { return }
+            self.countStalled = true
+            if self.screenNumbers == nil, self.screenLayout != nil {
+                readerLog.error("pages: nothing counted for a minute and no number yet; the slot goes quiet")
+            }
+        }
+    }
+    /// UI tests: "Counting pages…" was drawn at least once (CI's slow reads can miss it on screen).
+    var countingShownProbe = false
+    /// The last count ended by itself with chapters it couldn't count; cleared when a count starts.
+    private(set) var countGaveUp = false
     private var lastGeometry: (href: String, geometry: ScreenPageGeometry)?
     private static let pageStore: ScreenPageStore = {
         let directory = URL.cachesDirectory.appending(path: "ScreenPages", directoryHint: .isDirectory)
@@ -355,6 +383,9 @@ final class ReaderModel {
             screenPages = Self.pageStore.load(book: bookID, layout: key, readingOrder: readingOrderHrefs)
             screenNumbers = nil
             lastGeometry = nil
+            // A new layout's count owes nothing to the last one's.
+            countGaveUp = false
+            countMoved()
             startCounting()
         } else if recount {
             startCounting()
@@ -384,8 +415,11 @@ final class ReaderModel {
         guard pageReady, reopenPicture == nil, keeper.reflowing == nil,
               let map = screenPages, !map.uncounted.isEmpty else { return }
         let key = map.layout
-        page?.countPages(map.uncounted) { [weak self] href, columns in
+        countGaveUp = false
+        countMoved()
+        page?.countPages(map.uncounted, record: { [weak self] href, columns in
             guard let self, self.screenPages?.layout == key else { return }
+            self.countMoved()
             // The page is the truth: a chapter it already counted itself (his own, as it showed) keeps its
             // count, whichever chapter he's in by the time the counter's figure arrives.
             if let kept = self.screenPages?.columns[href] {
@@ -403,7 +437,13 @@ final class ReaderModel {
                 // the count began): take one, or a finished count never shows its number.
                 Task { await self.refreshScreenNumbers() }
             }
-        }
+        }, finished: { [weak self] in
+            guard let self, self.screenPages?.layout == key else { return }
+            self.countGaveUp = self.screenPages?.uncounted.isEmpty == false
+            if self.countGaveUp {
+                readerLog.error("pages: count ended with \(self.screenPages?.uncounted.count ?? 0, privacy: .public) chapters uncounted; no number this time")
+            }
+        })
     }
 
     // MARK: Loading
@@ -1022,6 +1062,7 @@ final class ReaderModel {
     func close() {
         if isWarming, !pageReady { hostController?.halt() }
         isClosed = true
+        stallTimer?.cancel()
         activation?.resume()
         activation = nil
         moves += 1

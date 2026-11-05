@@ -343,6 +343,18 @@ struct ReaderScreen: View {
                 .accessibilityIdentifier("reader.numberDelay")
                 .accessibilityValue(model.firstNumberDelay.map { String(format: "%.2f", $0) } ?? "")
                 .allowsHitTesting(false)
+            Text("counting shown")
+                .font(.system(size: 1))
+                .opacity(0.01)
+                .accessibilityIdentifier("reader.countingShown")
+                .accessibilityValue(model.countingShownProbe ? "1" : "0")
+                .allowsHitTesting(false)
+            Text("ready")
+                .font(.system(size: 1))
+                .opacity(0.01)
+                .accessibilityIdentifier("reader.pageReady")
+                .accessibilityValue(model.pageReady ? "1" : "0")
+                .allowsHitTesting(false)
             Text("underline")
                 .font(.system(size: 1))
                 .opacity(0.01)
@@ -450,17 +462,17 @@ struct ReaderScreen: View {
                 .allowsHitTesting(false)
                 .accessibilityIdentifier("reader.runningHead")
                 .accessibilityLabel(words)
-            pageNumbers(pages: [layout.pageFrame], hidden: hidden)
+            pageNumbers(pages: [layout.pageFrame], hidden: hidden, shown: !hidden && model.pageReady)
         } else if layout.deck == nil {
             pageFurniture(layout: layout, hidden: hidden)
         }
     }
 
     /// A page number centred in the band under each page's words: the pages he sees, numbered through
-    /// the book at this layout (`ScreenPageMap`). None shows until they're counted, as in Apple Books,
+    /// the book at this layout (`ScreenPageMap`). Until they're counted the slot says "Counting pages…",
     /// and a blank page (the unfold's verso, a chapter's last right page) has none.
     @ViewBuilder
-    private func pageNumbers(pages: [CGRect], hidden: Bool) -> some View {
+    private func pageNumbers(pages: [CGRect], hidden: Bool, shown: Bool) -> some View {
         let band = model.textBand.bottom
         if model.preferences.showsPageNumbers, let numbers = model.screenNumbers, numbers.count == pages.count {
             ZStack(alignment: .topLeading) {
@@ -478,6 +490,26 @@ struct ReaderScreen: View {
             .opacity(hidden || !model.pageReady ? 0 : 1)
             .animation(.easeOut(duration: 0.25), value: hidden)
             .allowsHitTesting(false)
+        } else if model.preferences.showsPageNumbers, model.countingPages, let first = pages.first, let last = pages.last {
+            // Where the number will be, in its face and grey, a little fainter: one line under the
+            // page (or centred under the spread). Drawn over the band, so the words never move.
+            let r = first.union(last)
+            Text("Counting pages…")
+                .font(model.tabletBands.map { .system(size: $0.folioSize) } ?? .caption)
+                .foregroundStyle(model.theme.head.opacity(0.7))
+                .lineLimit(1)
+                .frame(width: r.width, height: band)
+                .offset(x: r.minX, y: r.maxY - band)
+                .opacity(hidden ? 0 : 1)
+                .animation(.easeOut(duration: 0.25), value: hidden)
+                .transition(.opacity)
+                .allowsHitTesting(false)
+                .accessibilityLabel("Counting pages")
+                .accessibilityIdentifier("reader.pageCounting")
+                // `shown`: whether he can see it, whichever layer does the hiding (the spread's is outside).
+                .onChange(of: shown, initial: true) { _, shown in
+                    if LaunchOptions.isUITest, shown { model.countingShownProbe = true }
+                }
         }
     }
 
@@ -506,7 +538,7 @@ struct ReaderScreen: View {
                     .accessibilityIdentifier(i == pages.count - 1 ? "reader.runningHead" : "reader.runningHead.book")
                     .accessibilityLabel(heads[i])
             }
-            pageNumbers(pages: pages, hidden: false)
+            pageNumbers(pages: pages, hidden: false, shown: !hidden && model.pageReady)
         }
         .opacity(hidden || !model.pageReady ? 0 : 1)
         .animation(.easeOut(duration: 0.25), value: hidden)

@@ -172,16 +172,10 @@ struct SettingsPanel: View {
 
     private func furnitureRow(_ symbol: String, _ title: String, _ id: String,
                               _ key: WritableKeyPath<ReaderPreferences, Bool>) -> some View {
-        SettingRow(symbol: symbol, title: title) {
-            Toggle(title, isOn: Binding(
-                get: { model.preferences[keyPath: key] },
-                set: { v in model.setPreferences { $0[keyPath: key] = v } }
-            ))
-            .labelsHidden()
-            .tint(Color.ribbon)
-            .frame(maxWidth: .infinity, alignment: .trailing)
-            .accessibilityIdentifier(id)
-        }
+        SwitchRow(symbol: symbol, title: title, id: id, isOn: Binding(
+            get: { model.preferences[keyPath: key] },
+            set: { v in model.setPreferences { $0[keyPath: key] = v } }
+        ))
     }
 
     private var customize: some View {
@@ -220,16 +214,10 @@ struct SettingsPanel: View {
                 .pickerStyle(.segmented)
                 .accessibilityIdentifier("appearance.margins")
             }
-            SettingRow(symbol: "text.justify", title: "Justify") {
-                Toggle("Justify Text", isOn: Binding(
-                    get: { prefs.justify },
-                    set: { v in model.setPreferences { $0.justify = v } }
-                ))
-                .labelsHidden()
-                .tint(Color.ribbon)
-                .frame(maxWidth: .infinity, alignment: .trailing)
-                .accessibilityIdentifier("appearance.justify")
-            }
+            SwitchRow(symbol: "text.justify", title: "Justify", label: "Justify Text", id: "appearance.justify", isOn: Binding(
+                get: { prefs.justify },
+                set: { v in model.setPreferences { $0.justify = v } }
+            ))
             // Page furniture: none of it moves the words, so each applies live.
             furnitureRow("number.square", "Page Numbers", "appearance.pageNumbers", \.showsPageNumbers)
             furnitureRow("location", "Position in Book", "appearance.positionLabel", \.showsPositionLabel)
@@ -273,6 +261,44 @@ private struct SettingRow<Control: View>: View {
         }
         .frame(minHeight: 44)
     }
+}
+
+/// A Fine-Tune row with a switch: the whole row is the control. Every tap anywhere on it changes the
+/// switch exactly once. The system switch acts only on a touch held long enough for its own press
+/// recognizer to begin, so a quick tap (a few milliseconds) did nothing; a SwiftUI button acts on
+/// every lift. The switch is drawn, not touched; VoiceOver hears one switch with the row's name.
+private struct SwitchRow: View {
+    let symbol: String
+    let title: String
+    var label: String? = nil
+    let id: String
+    let isOn: Binding<Bool>
+
+    var body: some View {
+        Button {
+            isOn.wrappedValue.toggle()
+        } label: {
+            SettingRow(symbol: symbol, title: title) {
+                Toggle(label ?? title, isOn: isOn)
+                    .labelsHidden()
+                    .tint(Color.ribbon)
+                    .allowsHitTesting(false)
+                    // The knob glides as it did under his finger; only the switch, not what it turns on.
+                    .animation(.snappy, value: isOn.wrappedValue)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+            }
+            .contentShape(.rect)
+        }
+        .buttonStyle(StillRow())
+        .hoverEffectDisabled()
+        .accessibilityRepresentation { Toggle(label ?? title, isOn: isOn) }
+        .accessibilityIdentifier(id)
+    }
+}
+
+/// The row doesn't dim under his finger: the switch moving is the answer to the tap, as it was before.
+private struct StillRow: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View { configuration.label }
 }
 
 /// Smaller and larger text: a small A and a large A in one wide capsule, a hairline between them.

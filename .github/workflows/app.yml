@@ -33,8 +33,9 @@ jobs:
     # The spread on rotation and the iPad's slow launch reflow are iPad paths: a rotation that
     # reopened a page early (build 17) and a jump lost in the launch reflow. No retry: a red here is
     # a real miss. The Duo job's posture test skips on the folded cover; this one runs it on a spread.
+    # About 74 min on build 19's first run (200 Fine-Tune taps alone take about 13 min): room to spare.
     runs-on: xcode-27
-    timeout-minutes: 75
+    timeout-minutes: 100
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/select-xcode
@@ -55,7 +56,7 @@ jobs:
           xcrun simctl boot "$udid"
           xcrun simctl bootstatus "$udid" -b
           echo "destination=platform=iOS Simulator,arch=$(uname -m),id=$udid" >> "$GITHUB_OUTPUT"
-      - name: Rotation, jumps and reopens keep his place
+      - name: Rotation, jumps and reopens keep his place; every Fine-Tune tap lands; the number's slot is never blank
         run: |
           set -o pipefail
           xcodebuild test -project Gatefold.xcodeproj -scheme Gatefold \
@@ -63,15 +64,18 @@ jobs:
             -only-testing:GatefoldUITests/RotationRepro \
             -only-testing:GatefoldUITests/NavigationPlaceUITests \
             -only-testing:GatefoldUITests/PageFurnitureUITests \
+            -only-testing:GatefoldUITests/FineTuneTapUITests \
+            -only-testing:GatefoldUITests/CountingPlaceholderUITests \
             -only-testing:GatefoldUITests/PositionUITests/testEveryPostureKeepsThePlace \
             -resultBundlePath "$RUNNER_TEMP/ipad.xcresult" > "$RUNNER_TEMP/ipad.log" 2>&1 || status=$?
-          grep -E "Test Case .*(passed|failed|skipped)|TEST (SUCCEEDED|FAILED)|REPRO (round|SUMMARY)|\.swift:[0-9]+: error" "$RUNNER_TEMP/ipad.log" \
+          grep -E "Test Case .*(passed|failed|skipped)|TEST (SUCCEEDED|FAILED)|REPRO (round|SUMMARY)|TAPRATE|PLACEHOLDER|\.swift:[0-9]+: error" "$RUNNER_TEMP/ipad.log" \
             | sed -E 's/(XCTAssert[A-Za-z]* failed).*/\1 (text withheld)/' | tail -60 || true
           exit ${status:-0}
       - name: How soon a page number comes up (measured, by the app's own clock)
         # Gate: 3 s from the page showing. Exact counts take 5-7 s on a fresh open today (each chapter's
-        # web view loads before it can be counted, and a number waits on every chapter before it), so
-        # this reports and doesn't block until counting is ahead of the open.
+        # web view loads before it can be counted, and a number waits on every chapter before it), and
+        # 9-13 s on the iPad's side (a spread), so this reports and doesn't block until counting is
+        # ahead of the open. Until then the slot says "Counting pages…".
         continue-on-error: true
         run: |
           set -o pipefail
@@ -120,15 +124,25 @@ jobs:
             -destination "${{ steps.sim.outputs.destination }}" \
             -only-testing:GatefoldTests \
             -resultBundlePath "$RUNNER_TEMP/unit.xcresult" 2>&1 | tail -200
-      - name: Reading position survives posture and font changes (UI tests)
+      - name: Reading position survives posture and font changes; every Fine-Tune tap lands (UI tests)
         run: |
           set -o pipefail
           xcodebuild test -project Gatefold.xcodeproj -scheme Gatefold \
             -destination "${{ steps.sim.outputs.destination }}" \
             -only-testing:GatefoldUITests/PositionUITests \
+            -only-testing:GatefoldUITests/FineTuneTapUITests \
             -resultBundlePath "$RUNNER_TEMP/ui.xcresult" > "$RUNNER_TEMP/ui.log" 2>&1 || status=$?
           # No retry: a wait that runs out prints how many probe reads it made and the slowest one.
-          grep -E "error:|Test Case .*(passed|failed|skipped)|TEST (SUCCEEDED|FAILED)|probe says|probe timing" "$RUNNER_TEMP/ui.log" | tail -60 || true
+          grep -E "error:|Test Case .*(passed|failed|skipped)|TEST (SUCCEEDED|FAILED)|probe says|probe timing|TAPRATE" "$RUNNER_TEMP/ui.log" | tail -60 || true
+          exit ${status:-0}
+      - name: How soon a page number comes up on the Duo (measured, not a gate)
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          xcodebuild test -project Gatefold.xcodeproj -scheme Gatefold \
+            -destination "${{ steps.sim.outputs.destination }}" \
+            -only-testing:GatefoldUITests/PageNumberTimingUITests/testANumberComesUpWithinMomentsOfAFreshOpen > "$RUNNER_TEMP/timing.log" 2>&1 || status=$?
+          grep -E "number timing|Test Case .*(passed|failed)" "$RUNNER_TEMP/timing.log" || true
           exit ${status:-0}
       - name: Release build for devices (the same binary runs on the Mac as Designed for iPad)
         run: |

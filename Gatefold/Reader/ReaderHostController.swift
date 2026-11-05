@@ -296,16 +296,17 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
 
     /// Counts each chapter in a second navigator behind this one, laid out as this one is (no verso,
     /// no pin), so the numbers are a clean layout's. It waits out turns, so a turn never shares the CPU.
-    func countPages(_ hrefs: [String], record: @escaping @MainActor (String, Int) -> Void) {
+    func countPages(_ hrefs: [String], record: @escaping @MainActor (String, Int) -> Void, finished: @escaping @MainActor () -> Void) {
         stopCounting()
-        guard isViewLoaded, preferences.scroll != true, !hrefs.isEmpty else { return }
+        // Every way out says so, or the slot keeps promising a number.
+        guard isViewLoaded, preferences.scroll != true, !hrefs.isEmpty else { finished(); return }
         let links = hrefs.compactMap { href in publication.readingOrder.first { $0.url().removingFragment().string == href } }
         // A chapter's cost is its web view loading (about 3 s each, one after another, in build 17), not
         // its measuring: several counters behind the page take chapters from one queue at once.
         let workers = (0..<min(Self.counters, links.count)).compactMap { _ in
             try? Self.makeNavigator(publication: publication, at: nil, preferences: preferences)
         }
-        guard !workers.isEmpty else { return }
+        guard !workers.isEmpty else { finished(); return }
         // The page's own bands (`navigatorContentInset`): without them a tablet counter laid its words out
         // 276 pt taller than the page and counted about a fifth too few columns.
         let insets = CountingInsets { [weak self] in
@@ -356,6 +357,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             guard !Task.isCancelled else { return }
             readerLog.notice("pages: counted \(counted, privacy: .public) of \(links.count, privacy: .public) chapters with \(workers.count, privacy: .public) counters in \(ReaderModel.ms(since: started), privacy: .public) ms")
             if self?.counter?.navigators.first === workers.first { self?.stopCounting() }
+            finished()
         }
         counter = (workers, task)
         readerLog.notice("pages: counting \(links.count, privacy: .public) chapters behind the page with \(workers.count, privacy: .public) counters")
@@ -604,6 +606,35 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             await self.restoreAnchor(generation: generation)
             if generation == self.reflowGeneration { self.settledGeneration = generation; self.reflowRetries = 0 }
         }
+        // Begun before the book's web view had loaded (a spread opened cold): its first script can wait
+        // forever, and counting waits on the reflow. Once the web view has loaded, give it a second to
+        // settle by itself, then start it again (build 18 waited out the 12 s below: a fresh open on
+        // the iPad's side counted from 11 s after the page showed).
+        if Self.firstWebView(in: navigator.view).map({ $0.isLoading }) ?? true {
+            Task { @MainActor [weak self] in
+                @MainActor func stalled() -> Bool {
+                    guard let self else { return false }
+                    // Stalled is its first script never coming back; a restore past that is only slow.
+                    // Counting waits on the keeper's reflow: once that's over, nothing is stalled.
+                    return generation == self.reflowGeneration && self.settledGeneration != generation
+                        && self.firstScriptBack < generation && self.weakModel?.keeper.reflowing != nil
+                }
+                let deadline = ContinuousClock.now + .seconds(10)
+                var loaded = false
+                while ContinuousClock.now < deadline {
+                    try? await Task.sleep(for: .milliseconds(200))
+                    guard stalled(), let self else { return }
+                    if let web = Self.firstWebView(in: self.navigator.view), !web.isLoading { loaded = true; break }
+                }
+                // Still loading after 10 s: the 12 s watchdog's business, not this.
+                guard loaded else { return }
+                try? await Task.sleep(for: .seconds(1))
+                guard stalled(), let self, self.reflowRetries < 3 else { return }
+                self.reflowRetries += 1
+                readerLog.notice("reflow: begun before the page loaded, its first script still out a second after the load; starting it again (\(self.reflowRetries, privacy: .public)) at \(self.weakModel.map { Date().timeIntervalSince($0.openedAt) } ?? -1, privacy: .public) s")
+                self.settleReflowSoon()
+            }
+        }
         // A reflow that begins before the book's web view has loaded (a spread opened straight onto a
         // place, cold) can wait forever on its first script; the page then stays covered. If this one
         // hasn't settled well past its own budgets (3 s to lay out, 4 s to jump), start it again: the stalled one is no longer current and
@@ -618,12 +649,15 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         }
     }
     private var settledGeneration = -1
+    /// The newest reflow whose restore has had its first script back from the page.
+    private var firstScriptBack = -1
     private var reflowRetries = 0
 
     private func restoreAnchor(generation: Int) async {
         // A newer reflow may begin during any await below; it owns the restore from then on.
         func current() -> Bool { generation == reflowGeneration && weakModel != nil }
         _ = await navigator.evaluateJavaScript(ReaderJS.install)
+        firstScriptBack = max(firstScriptBack, generation)
         _ = await navigator.evaluateJavaScript(ReaderJS.setColumns(columns))
         guard current() else { return }
         // A slow device may still be paginating: judge the page only once it shows text. Each
