@@ -19,7 +19,10 @@ jobs:
     name: GatefoldCore tests
     # GatefoldCore is pure Swift (Foundation only, no UIKit or Readium), so it tests on Linux and
     # spends no macOS minutes. The app's build still compiles it against the iOS 27 SDK below.
+    # In Swift's own image: the Ubuntu 26.04 runner image stopped carrying Swift (exit 127 on
+    # `swift --version`, 2026-11-05).
     runs-on: ubuntu-latest
+    container: swift:6.2
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4

@@ -35,6 +35,8 @@ struct ReaderScreen: View {
             let layout = Self.placed(input, fontScale: model.preferences.fontScale, proxy: proxy, bare: !model.chromeVisible && !coverScreen)
             let clearance = ChromeClearance.resolve(container: proxy.size, occlusions: FoldReader.occlusions(in: proxy))
             let safeTop = ReaderChrome.safeTop(proxy.safeAreaInsets)
+            // Where the top bar starts: below a band across the window's top, as ReaderChrome sets it.
+            let barTop = max(safeTop, clearance.top)
             // An open "ahead" offer gets its own band: the page slides down below it, its foot fading
             // at the screen's edge, and slides back when the offer folds. No line sits under the slip.
             let aheadOpen = model.slip != nil && model.slipKind == .ahead && !model.slipFolded && !model.chromeVisible && layout.deck == nil
@@ -55,7 +57,7 @@ struct ReaderScreen: View {
             // bars (and its status column), so it keeps the plain lift.
             let chromeLift = UIDevice.current.userInterfaceIdiom == .pad && model.chromeVisible && layout.deck == nil && push == 0
                 ? PageSafeArea.chromeLift(textTop: layout.pageFrame.minY + pageTopClearance(layout, clearance: clearance),
-                                          height: proxy.size.height, barBottom: safeTop + ReaderChrome.topBarHeight)
+                                          height: proxy.size.height, barBottom: barTop + ReaderChrome.topBarHeight)
                 : PageSafeArea.Lift(scale: 0.96, anchorY: 0.5)
             // Reduce Motion drops the plain lift, but not one that keeps a line out from under the capsule.
             let liftNeeded = chromeLift.anchorY != 0.5
@@ -78,7 +80,7 @@ struct ReaderScreen: View {
                     }
                     .animation(reduceMotion ? .easeOut(duration: 0.2) : .spring(duration: 0.4, bounce: 0.1), value: push)
 
-                scrims(proxy: proxy, layout: layout, safeTop: safeTop)
+                scrims(proxy: proxy, layout: layout, safeTop: safeTop, barTop: barTop)
                     .task(id: "\(footerNeed(proxy: proxy, layout: layout))-\(model.totalProgression)-\(model.location?.href.string ?? "")-\(model.location?.locations.progression ?? -1)-\(proxy.size.width)x\(proxy.size.height)-\(model.pageReady)") {
                         // Let a turn or a reflow settle before reading where the lines are; then again
                         // as a jump's veil lifts and its page settles on the words (the lines move, or
@@ -154,7 +156,7 @@ struct ReaderScreen: View {
                         x: slipX,
                         y: kind == .landed
                             ? proxy.size.height - slipBottomBand(proxy) - slipHeight
-                            : (model.chromeVisible ? safeTop + 8 + ReaderChrome.topBarHeight : slipTop)
+                            : (model.chromeVisible ? barTop + 8 + ReaderChrome.topBarHeight : slipTop)
                     )
                     .animation(Motion.chrome, value: model.chromeVisible)
                     .transition(reduceMotion ? .opacity : .move(edge: kind == .landed ? .bottom : .top).combined(with: .opacity))
@@ -268,12 +270,12 @@ struct ReaderScreen: View {
 
     /// The theme's own paper under the bars, fading to clear over 24 pt, so glass never sits on text.
     @ViewBuilder
-    private func scrims(proxy: GeometryProxy, layout: ReaderLayout, safeTop: CGFloat) -> some View {
+    private func scrims(proxy: GeometryProxy, layout: ReaderLayout, safeTop: CGFloat, barTop: CGFloat) -> some View {
         let fade: CGFloat = 24
         let paper = model.theme.background
         // Without the controls the page moves out of the ahead slip's way (see `push`), so it needs no paper.
         let aheadSlip = model.slip != nil && model.slipKind == .ahead && !model.slipFolded && model.chromeVisible
-        let top = safeTop + (model.chromeVisible ? ReaderChrome.topBarHeight : 0) + (aheadSlip ? 8 + slipHeight + 16 : 0)
+        let top = (model.chromeVisible ? barTop + ReaderChrome.topBarHeight : safeTop) + (aheadSlip ? 8 + slipHeight + 16 : 0)
         if model.chromeVisible || aheadSlip {
             LinearGradient(stops: [.init(color: paper, location: 0), .init(color: paper, location: top / (top + fade)), .init(color: paper.opacity(0), location: 1)],
                            startPoint: .top, endPoint: .bottom)

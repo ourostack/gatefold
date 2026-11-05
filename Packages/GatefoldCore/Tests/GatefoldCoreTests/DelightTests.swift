@@ -311,6 +311,8 @@ struct ChromeClearanceTests {
     /// isn't under it any more than the page is: build 19 dropped the shelf's header 1040 pt, off screen.
     @Test func aStripDownTheSideNeverDropsTheHeader() {
         #expect(ChromeClearance.headerDrop(occlusions: [CGRect(x: 0, y: 0, width: 32, height: 1032)], band: 60, width: 1376) == 0)
+        // A camera taller than two bands is still a camera, not a strip.
+        #expect(ChromeClearance.headerDrop(occlusions: [CGRect(x: 288, y: 0, width: 62, height: 150)], band: 60, width: 700) == 158)
     }
 
     @Test func aRegionLowOnTheScreenOrOnTheLeftIsHandled() {

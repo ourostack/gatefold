@@ -127,6 +127,24 @@ final class DriftingPage: ReaderPage {
         f.model.close()
     }
 
+    /// Turning into the next chapter, Readium can first name the old one with the new page's words on
+    /// screen, then correct itself: the correction is his turn's, never the layout's.
+    @Test func aTurnReportedFirstInTheOldChapterIsKeptInTheNewOne() async throws {
+        let f = try await Self.open()
+        let next = try Self.nextChapter(f)
+        let old = try #require(f.page.currentLocation)
+        f.page.words = Self.nextWords
+        f.page.currentLocation = Locator(href: old.href, mediaType: .xhtml, locations: .init(progression: 0.99, totalProgression: 0.32))
+        f.model.userTurnedPage()
+        try await Task.sleep(for: .milliseconds(200))
+        f.page.currentLocation = next
+        try await Task.sleep(for: .milliseconds(1500))
+        let saved = f.app.library.book(ReaderSyncTests.frankenstein.fastHash)?.locatorJSON
+            .flatMap { try? Locator(jsonString: $0) }
+        #expect(saved?.href.string == next.href.string, "the turn's corrected place was taken for the layout's")
+        f.model.close()
+    }
+
     /// A turn is always his, whatever came before it.
     @Test func aTurnAfterTheControlsIsStillHisMove() async throws {
         let f = try await Self.open()

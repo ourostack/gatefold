@@ -320,10 +320,12 @@ private struct PressedRow: View {
                     litAt = Date()
                     lit = true
                 } else {
-                    let left = max(0, 0.1 - Date().timeIntervalSince(litAt))
+                    let press = litAt
+                    let left = max(0, 0.1 - Date().timeIntervalSince(press))
                     Task { @MainActor in
                         try? await Task.sleep(for: .seconds(left))
-                        guard !configuration.isPressed else { return }
+                        // A newer press holds the light (this view's copy of the press state is stale).
+                        guard litAt == press else { return }
                         withAnimation(.easeOut(duration: 0.15)) { lit = false }
                     }
                 }

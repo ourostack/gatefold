@@ -363,13 +363,13 @@ public struct ChromeClearance: Equatable, Sendable {
     /// reaches into its band (`band` points from the top). Books moves the whole header down rather than
     /// squeezing buttons away from the trailing edge. Regions outside the row (the folded Duo's status
     /// column sits in the trailing safe area, beside the content) don't move it.
-    /// A strip down the side (reaching well below the band: an iPad Pro on its side reports one the
-    /// window's whole height) is beside the header, not above it; dropping below it put the header off
+    /// A strip down the side (long and narrow, reaching well below the band: an iPad Pro on its side
+    /// reports one the window's whole height) is beside the header, not above it; dropping below it put the header off
     /// screen (build 19).
     public static func headerDrop(occlusions: [CGRect], band: CGFloat, width: CGFloat) -> CGFloat {
         occlusions
             .filter { $0.width > 0 && $0.height > 0 && $0.maxY > 0 && $0.minY < band && $0.minX < width && $0.maxX > 0 }
-            .filter { $0.maxY <= band * 2 }
+            .filter { !($0.maxY > band * 2 && $0.height > $0.width * 3) }
             .map { $0.maxY + spare }
             .max() ?? 0
     }

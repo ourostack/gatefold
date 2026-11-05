@@ -57,6 +57,18 @@ final class SlowJumpPage: ReaderPage {
         page.arrive()
         await jump.value
         #expect(model.backLocator != nil, "the way back was not offered once the page moved")
+        // Readium reports where the jump brought him.
+        await model.locationDidChange(try #require(page.currentLocation))
+        try await Task.sleep(for: .milliseconds(300))
+
+        // A second jump: the first one's way back goes down until the second has landed.
+        let second = Task { await model.go(toProgression: 0.2, rememberBack: true) }
+        for _ in 0..<100 where !page.jumping { try await Task.sleep(for: .milliseconds(20)) }
+        #expect(page.jumping)
+        #expect(model.backLocator == nil, "an earlier jump's way back was offered during this one")
+        page.arrive()
+        await second.value
+        #expect(abs((model.backLocator?.locations.totalProgression ?? 0) - 0.7) < 0.05, "the way back isn't to where the first jump went")
         model.close()
     }
 }
