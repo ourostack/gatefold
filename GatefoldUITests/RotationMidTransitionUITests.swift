@@ -116,6 +116,8 @@ final class RotationMidTransitionUITests: XCTestCase {
         turn()
         turn()
         XCUIDevice.shared.orientation = .landscapeLeft
-        expectWholeSpread("a turn of the iPad during page turns after a jump")
+        // The restore under the turns can need the 12 s watchdog, and a hosted runner runs about twice
+        // as slow as this Mac (19 s here, 21 s there): bounded at 30 s, timing printed.
+        expectWholeSpread("a turn of the iPad during page turns after a jump", within: 30)
     }
 }

@@ -109,6 +109,11 @@ final class RotationRepro: XCTestCase {
         let pick = rows.element(boundBy: min(30, max(0, rows.count - 1)))
         for _ in 0..<6 where !pick.isHittable { app.swipeUp() }
         pick.tap()
+        // The old page stays put while the jump loads (over 10 s on a hosted runner), so wait for the
+        // words to change before waiting for them to settle.
+        let jumpStart = Date()
+        while Date().timeIntervalSince(jumpStart) < 60, vtext.isEmpty || head(vtext) == head(beforeJump) { usleep(250_000) }
+        print("REPRO jump landed after \(String(format: "%.1f", Date().timeIntervalSince(jumpStart))) s")
         _ = settle(60)
         sleep(4)
         let jumped = !vtext.isEmpty && head(vtext) != head(beforeJump)
