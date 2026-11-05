@@ -71,8 +71,12 @@ final class RotationMidTransitionUITests: XCTestCase {
 
     private func turn() { el("reader.page").coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.5)).tap() }
 
-    private func expectWholeSpread(_ what: String, within limit: TimeInterval = 20) {
-        // Whatever was moving, a spread with words on both pages within the limit.
+    private func expectWholeSpread(_ what: String, within asked: TimeInterval = 20) {
+        // Whatever was moving, a spread with words on both pages within the limit. A hosted runner runs
+        // two to four times slower than this Mac and a screenshot there can take seconds, so CI sets a
+        // floor (`GATEFOLD_SPREAD_FLOOR`); the page left stuck for good, the bug this guards, still fails.
+        let floor = TimeInterval(ProcessInfo.processInfo.environment["GATEFOLD_SPREAD_FLOOR"] ?? "") ?? 0
+        let limit = max(asked, floor)
         let start = Date()
         let up = start.addingTimeInterval(limit)
         var last: (Double, Double)?
