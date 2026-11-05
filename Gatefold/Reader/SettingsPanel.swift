@@ -296,9 +296,41 @@ private struct SwitchRow: View {
     }
 }
 
-/// The row doesn't dim under his finger: the switch moving is the answer to the tap, as it was before.
+/// The row doesn't dim under his finger; a faint wash behind it says the touch landed, the way Apple
+/// Books' rows do, for at least a tenth of a second even on a quick tap. Nothing at rest.
 private struct StillRow: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View { configuration.label }
+    func makeBody(configuration: Configuration) -> some View { PressedRow(configuration: configuration) }
+}
+
+private struct PressedRow: View {
+    let configuration: ButtonStyleConfiguration
+    @State private var lit = false
+    @State private var litAt = Date.distantPast
+
+    var body: some View {
+        configuration.label
+            .background {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(Color.primary.opacity(lit ? 0.08 : 0))
+                    .padding(.horizontal, -8)
+                    .allowsHitTesting(false)
+            }
+            .onChange(of: configuration.isPressed) { _, pressed in
+                if pressed {
+                    litAt = Date()
+                    lit = true
+                } else {
+                    let press = litAt
+                    let left = max(0, 0.1 - Date().timeIntervalSince(press))
+                    Task { @MainActor in
+                        try? await Task.sleep(for: .seconds(left))
+                        // A newer press holds the light (this view's copy of the press state is stale).
+                        guard litAt == press else { return }
+                        withAnimation(.easeOut(duration: 0.15)) { lit = false }
+                    }
+                }
+            }
+    }
 }
 
 /// Smaller and larger text: a small A and a large A in one wide capsule, a hairline between them.

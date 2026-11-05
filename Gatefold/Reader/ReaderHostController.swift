@@ -642,11 +642,29 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         Task { [weak self] in
             try? await Task.sleep(for: .seconds(12))
             guard let self, generation == self.reflowGeneration, self.settledGeneration != generation,
-                  self.weakModel != nil, self.reflowRetries < 3 else { return }
+                  self.weakModel != nil else { return }
+            // Twelve seconds is already too long to look at a picture of the old page: show the page as
+            // it is now, then try the settle again behind nothing.
+            self.uncoverUnsettled()
+            guard self.reflowRetries < 3 else { return }
             self.reflowRetries += 1
             readerLog.notice("reflow: no settle after 12 s; starting it again (\(self.reflowRetries, privacy: .public))")
             self.settleReflowSoon()
         }
+    }
+    /// A reflow that hasn't settled in 12 s: the page as it is, never a picture of the old one under a
+    /// leaf that stopped rising (a cold iPad turned on its side kept that up past 14 s in build 19).
+    private func uncoverUnsettled() {
+        guard reflowCover != nil || leaf != nil || navigator.view.alpha < 1 else { return }
+        readerLog.error("reflow: no settle after 12 s; showing the page as it is")
+        unfolding = false
+        dropLeaf()
+        let cover = reflowCover
+        reflowCover = nil
+        UIView.animate(withDuration: 0.25) {
+            self.navigator.view.alpha = 1
+            cover?.alpha = 0
+        } completion: { _ in cover?.removeFromSuperview() }
     }
     private var settledGeneration = -1
     /// The newest reflow whose restore has had its first script back from the page.
@@ -660,6 +678,11 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         firstScriptBack = max(firstScriptBack, generation)
         _ = await navigator.evaluateJavaScript(ReaderJS.setColumns(columns))
         guard current() else { return }
+        if LaunchOptions.stallReflow, reflowCover != nil || leaf != nil {
+            readerLog.notice("reflow: held for the test (GatefoldStallReflow)")
+            while current(), !Task.isCancelled { try? await Task.sleep(for: .milliseconds(250)) }
+            return
+        }
         // A slow device may still be paginating: judge the page only once it shows text. Each
         // phase has its own budget, because a picture-only page never shows text.
         func laidOutRange(within budget: Duration) async -> VisibleRange? {
@@ -697,6 +720,10 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         guard current() else { return }
         model.keeper.restoreDidComplete()
         model.reflowDidFinish(visible: after)
+        // Settled now, not when the swing below has played: the 12 s watchdog took a slow, finished
+        // restore whose swing was still running for a stalled one and started it again.
+        settledGeneration = generation
+        reflowRetries = 0
         disablePanningIfNeeded()
         var cover = reflowCover
         reflowCover = nil
@@ -1077,11 +1104,11 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         let width = navigator.view.bounds.width
         let edge = width * 0.25
         if model.chromeVisible {
-            model.setChrome(false)
+            model.controlsTapped(visible: false)
             return true
         }
         if model.pageTurn == .scroll {
-            model.setChrome(true)
+            model.controlsTapped(visible: true)
             return true
         }
         if point.x < edge {
@@ -1089,7 +1116,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         } else if point.x > width - edge {
             turn(forward: true)
         } else {
-            model.setChrome(true)
+            model.controlsTapped(visible: true)
         }
         return true
     }

@@ -192,6 +192,76 @@ final class ScriptedPage: ReaderPage {
         f.model.close()
     }
 
+    /// The Cloud holds only a percent (no CFI, as the fake Cloud and many PocketBook books do). The
+    /// first open lands on it and must keep the page it shows as his place: build 20's reopen loop found
+    /// no place kept at all, so each reopen landed on the percent afresh and Readium's spread could
+    /// fall on the page beside the one he left (3 in 19).
+    @Test func aPercentLandingKeepsThePageItShows() async throws {
+        let f = try await Self.make(remote: { _, _ in
+            ReadingPosition(cfi: nil, totalProgression: 0.42, updated: Date(), source: .pocketBookNative)
+        })
+        await f.model.load()
+        let saved = try #require(f.app.library.book(Self.frankenstein.fastHash)?.locatorJSON.flatMap { try? Locator(jsonString: $0) },
+                                 "a percent landing kept no place")
+        let shown = try #require(f.page.currentLocation)
+        #expect(saved.href.string == shown.href.string, "the kept place isn't the page shown")
+        #expect(abs((saved.locations.progression ?? -1) - (shown.locations.progression ?? -2)) < 0.0001, "the kept place isn't the page shown")
+        f.model.close()
+    }
+
+    @Test func aPercentLandingBehindTheShelfKeepsItsPageAtTheTap() async throws {
+        let f = try await Self.make(remote: { _, _ in
+            ReadingPosition(cfi: nil, totalProgression: 0.42, updated: Date(), source: .pocketBookNative)
+        })
+        f.model.warm()
+        for _ in 0..<200 where !f.model.pageReady { try await Task.sleep(for: .milliseconds(25)) }
+        // The spread settling behind the shelf reports a page: the layout, not him.
+        let opening = try #require(f.page.currentLocation)
+        await f.model.locationDidChange(Self.boundary(of: opening))
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(f.app.library.book(Self.frankenstein.fastHash)?.locatorJSON == nil, "a warm open kept a place before the tap")
+        f.model.activate()
+        for _ in 0..<200 where f.app.library.book(Self.frankenstein.fastHash)?.locatorJSON == nil {
+            try await Task.sleep(for: .milliseconds(25))
+        }
+        let saved = try #require(f.app.library.book(Self.frankenstein.fastHash)?.locatorJSON.flatMap { try? Locator(jsonString: $0) },
+                                 "the tap kept no place for a percent landing")
+        let landed = try #require(f.page.currentLocation)
+        #expect(saved.href.string == landed.href.string, "saved \(ReaderModel.placeTag(saved)) shown \(ReaderModel.placeTag(landed))")
+        #expect(abs((saved.locations.progression ?? -1) - (landed.locations.progression ?? -2)) < 0.0001, "the kept place isn't the page shown")
+        // Once kept, the layout reporting the chapter's first page leaves it (build 20's loop rewrote it
+        // and reopened a page early).
+        await f.model.locationDidChange(Self.boundary(of: landed))
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(f.app.library.book(Self.frankenstein.fastHash)?.locatorJSON.flatMap { try? Locator(jsonString: $0) }?.locations.progression == saved.locations.progression,
+                "a layout report moved the saved place")
+        f.model.close()
+    }
+
+    /// Shape (b) at the model: after the landing is kept, a report from the layout with no turn, jump
+    /// or touch of his never moves the saved place.
+    @Test func aLayoutReportAfterAPercentLandingLeavesThePlace() async throws {
+        let f = try await Self.make(remote: { _, _ in
+            ReadingPosition(cfi: nil, totalProgression: 0.42, updated: Date(), source: .pocketBookNative)
+        })
+        await f.model.load()
+        let before = f.app.library.book(Self.frankenstein.fastHash)?.locatorJSON
+        #expect(before != nil)
+        let landed = try #require(f.page.currentLocation)
+        await f.model.locationDidChange(Self.boundary(of: landed))
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(f.app.library.book(Self.frankenstein.fastHash)?.locatorJSON == before, "a layout report moved the saved place")
+        f.model.close()
+    }
+
+    /// The first page of the chapter a place is in: where Readium's spread can report from.
+    static func boundary(of l: Locator) -> Locator {
+        l.copy(locations: {
+            $0.totalProgression = max(0, ($0.totalProgression ?? 0) - 0.008)
+            $0.progression = 0
+        }, text: { $0 = Locator.Text() })
+    }
+
     @Test func choosingTheLandedPlace() throws {
         let now = Date()
         let at = { (cfi: String?, total: Double) in ReadingPosition(cfi: cfi, totalProgression: total, updated: .distantPast, source: .pocketBookNative) }

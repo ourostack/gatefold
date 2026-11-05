@@ -19,7 +19,10 @@ jobs:
     name: GatefoldCore tests
     # GatefoldCore is pure Swift (Foundation only, no UIKit or Readium), so it tests on Linux and
     # spends no macOS minutes. The app's build still compiles it against the iOS 27 SDK below.
+    # In Swift's own image: the Ubuntu 26.04 runner image stopped carrying Swift (exit 127 on
+    # `swift --version`, 2026-11-05).
     runs-on: ubuntu-latest
+    container: swift:6.2
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
@@ -33,9 +36,11 @@ jobs:
     # The spread on rotation and the iPad's slow launch reflow are iPad paths: a rotation that
     # reopened a page early (build 17) and a jump lost in the launch reflow. No retry: a red here is
     # a real miss. The Duo job's posture test skips on the folded cover; this one runs it on a spread.
-    # About 74 min on build 19's first run (200 Fine-Tune taps alone take about 13 min): room to spare.
+    # About 74 min on build 19's first run (200 Fine-Tune taps alone take about 13 min); build 20's
+    # erased-iPad rotation step alone took 36-38 min on a hosted runner, plus five reopens and the
+    # window fit. The split into parallel jobs (the next PR) brings each back under 100.
     runs-on: xcode-27
-    timeout-minutes: 100
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/select-xcode
@@ -55,20 +60,54 @@ jobs:
           udid="$(xcrun simctl create gatefold-ipad "$type" "$runtime")"
           xcrun simctl boot "$udid"
           xcrun simctl bootstatus "$udid" -b
+          echo "udid=$udid" >> "$GITHUB_OUTPUT"
           echo "destination=platform=iOS Simulator,arch=$(uname -m),id=$udid" >> "$GITHUB_OUTPUT"
-      - name: Rotation, jumps and reopens keep his place; every Fine-Tune tap lands; the number's slot is never blank
+      - name: Turned on its side cold (an erased iPad), the spread always comes whole and keeps his place
+        # An erased simulator, not a new one: build 19 left the old page under a frozen leaf in 3 of 9
+        # rounds after an erase and 0 of 3 on a new simulator. Once a run, before anything warms it.
+        # 36 and 38 min on a hosted runner (16-17 to build, the rest tests; build 20), so 55 keeps 30%
+        # headroom. A runner once hung here past 90 min with nothing in the log, so the step is bounded
+        # and reports each test as it ends.
+        timeout-minutes: 55
+        env:
+          # The runner draws the spread two to four times slower than a Mac (up to 50 s seen): 90 s
+          # still fails a page left stuck for good.
+          TEST_RUNNER_GATEFOLD_SPREAD_FLOOR: "90"
+        run: |
+          udid="${{ steps.sim.outputs.udid }}"
+          echo "$(date -u +%T) erasing $udid"
+          xcrun simctl shutdown "$udid"
+          xcrun simctl erase "$udid"
+          xcrun simctl boot "$udid"
+          xcrun simctl bootstatus "$udid" -b
+          echo "$(date -u +%T) booted; building and testing"
+          xcodebuild test -project Gatefold.xcodeproj -scheme Gatefold \
+            -destination "${{ steps.sim.outputs.destination }}" \
+            -only-testing:GatefoldUITests/RotationRepro \
+            -only-testing:GatefoldUITests/RotationMidTransitionUITests \
+            -resultBundlePath "$RUNNER_TEMP/cold.xcresult" 2>&1 | tee "$RUNNER_TEMP/cold.log" \
+            | grep --line-buffered -E "Test Case .*(started|passed|failed|skipped)|TEST (SUCCEEDED|FAILED)|REPRO (setup|jump|round|SUMMARY)|MIDTURN|\.swift:[0-9]+: error" \
+            | awk '{ if (match($0, /XCTAssert[A-Za-z]* failed/)) $0 = substr($0, 1, RSTART + RLENGTH - 1) " (text withheld)"; print; fflush() }'
+          status=${PIPESTATUS[0]}
+          echo "$(date -u +%T) done ($status)"
+          exit $status
+      - name: Jumps and reopens keep his place; the reader fits its window; every Fine-Tune tap lands; the number's slot is never blank
+        env:
+          # Five rounds of the controls-then-numbers reopen (about 90 s each); 20 locally.
+          TEST_RUNNER_GATEFOLD_REOPEN_ROUNDS: "5"
         run: |
           set -o pipefail
           xcodebuild test -project Gatefold.xcodeproj -scheme Gatefold \
             -destination "${{ steps.sim.outputs.destination }}" \
-            -only-testing:GatefoldUITests/RotationRepro \
+            -only-testing:GatefoldUITests/WindowFitUITests \
+            -only-testing:GatefoldUITests/ReopenAfterControlsUITests \
             -only-testing:GatefoldUITests/NavigationPlaceUITests \
             -only-testing:GatefoldUITests/PageFurnitureUITests \
             -only-testing:GatefoldUITests/FineTuneTapUITests \
             -only-testing:GatefoldUITests/CountingPlaceholderUITests \
             -only-testing:GatefoldUITests/PositionUITests/testEveryPostureKeepsThePlace \
             -resultBundlePath "$RUNNER_TEMP/ipad.xcresult" > "$RUNNER_TEMP/ipad.log" 2>&1 || status=$?
-          grep -E "Test Case .*(passed|failed|skipped)|TEST (SUCCEEDED|FAILED)|REPRO (round|SUMMARY)|TAPRATE|PLACEHOLDER|\.swift:[0-9]+: error" "$RUNNER_TEMP/ipad.log" \
+          grep -E "Test Case .*(passed|failed|skipped)|TEST (SUCCEEDED|FAILED)|WINDOWFIT|REOPEN|TAPRATE|PLACEHOLDER|\.swift:[0-9]+: error" "$RUNNER_TEMP/ipad.log" \
             | sed -E 's/(XCTAssert[A-Za-z]* failed).*/\1 (text withheld)/' | tail -60 || true
           exit ${status:-0}
       - name: How soon a page number comes up (measured, by the app's own clock)
@@ -89,6 +128,8 @@ jobs:
         with:
           name: ipad-results
           path: |
+            ${{ runner.temp }}/cold.log
+            ${{ runner.temp }}/cold.xcresult
             ${{ runner.temp }}/ipad.log
             ${{ runner.temp }}/ipad.xcresult
 

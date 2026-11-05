@@ -295,6 +295,26 @@ struct ChromeClearanceTests {
         #expect(ChromeClearance.headerDrop(occlusions: [column], band: 60, width: 382) == 0)
     }
 
+    /// A fresh iPad Pro 13-inch upright reports a band across the whole top of its window. It is no
+    /// corner: clearing it sideways took 1040 pt from a 1032-pt window and put Close, Your Page and the
+    /// panel past the right edge (build 19). The bar steps down below it instead.
+    @Test func aBandAcrossTheTopMovesTheBarDownNotAside() {
+        let window = CGSize(width: 1032, height: 1376)
+        let c = ChromeClearance.resolve(container: window, occlusions: [CGRect(x: 0, y: 0, width: 1032, height: 32)])
+        #expect(c.leading == 0)
+        #expect(c.trailing == 0)
+        #expect(c.top == CGFloat(40))
+        #expect(!c.bookmarkLeading)
+    }
+
+    /// On its side the same iPad reports a strip down the window's left edge, top to bottom. The header
+    /// isn't under it any more than the page is: build 19 dropped the shelf's header 1040 pt, off screen.
+    @Test func aStripDownTheSideNeverDropsTheHeader() {
+        #expect(ChromeClearance.headerDrop(occlusions: [CGRect(x: 0, y: 0, width: 32, height: 1032)], band: 60, width: 1376) == 0)
+        // A camera taller than two bands is still a camera, not a strip.
+        #expect(ChromeClearance.headerDrop(occlusions: [CGRect(x: 288, y: 0, width: 62, height: 150)], band: 60, width: 700) == 158)
+    }
+
     @Test func aRegionLowOnTheScreenOrOnTheLeftIsHandled() {
         let low = CGRect(x: 300, y: 400, width: 40, height: 40)
         #expect(ChromeClearance.resolve(container: size, occlusions: [low]).trailing == 0)

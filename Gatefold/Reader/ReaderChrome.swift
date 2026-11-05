@@ -51,7 +51,7 @@ struct ReaderChrome: View {
                 }
             }
             .safeAreaPadding(.vertical, 4)
-            .padding(.top, Self.safeTop(insets))
+            .padding(.top, max(Self.safeTop(insets), clearance.top))
             .padding(.bottom, max(insets.bottom, 12))
         }
         .animation(Motion.chrome, value: up)

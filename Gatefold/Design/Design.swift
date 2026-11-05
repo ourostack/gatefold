@@ -90,6 +90,8 @@ enum LaunchOptions {
     static var noWarm: Bool { defaults.bool(forKey: "GatefoldNoWarm") }
     /// Films only: the spread's pages stay unpainted for this many seconds as the unfold swings, as on
     /// a busy device, to show the old page holding until they paint.
+    /// Tests only: every reflow's restore hangs after laying out, as a cold iPad's could; the page must still show.
+    static var stallReflow: Bool { defaults.bool(forKey: "GatefoldStallReflow") }
     static var unfoldPaintDelay: Double? { defaults.object(forKey: "GatefoldUnfoldPaintDelay") == nil ? nil : defaults.double(forKey: "GatefoldUnfoldPaintDelay") }
     /// Book IDs to open and close one after another, as taps would (see `RootView.openTour`).
     /// Seconds an open tour rests on the shelf between books (the warm books reopen meanwhile).
