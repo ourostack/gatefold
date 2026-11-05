@@ -506,7 +506,9 @@ struct ReaderScreen: View {
                 .allowsHitTesting(false)
                 .accessibilityLabel("Counting pages")
                 .accessibilityIdentifier("reader.pageCounting")
-                .onAppear { if LaunchOptions.isUITest { model.countingShownProbe = true } }
+                .onChange(of: hidden, initial: true) { _, hidden in
+                    if LaunchOptions.isUITest, !hidden { model.countingShownProbe = true }
+                }
         }
     }
 

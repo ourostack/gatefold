@@ -70,5 +70,7 @@ final class CountingPlaceholderUITests: XCTestCase {
     func testAFreshOpenOnItsSideNeverLeavesTheNumbersSlotBlank() {
         XCUIDevice.shared.orientation = .landscapeLeft
         freshOpenNeverLeavesTheSlotBlank()
+        let frame = app.windows.firstMatch.frame
+        XCTAssertGreaterThan(frame.width, frame.height, "it really was on its side")
     }
 }

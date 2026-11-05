@@ -312,10 +312,26 @@ final class ReaderModel {
     /// The page is up in a paged layout and its number isn't known yet (its count not loaded, or
     /// chapters before it still being counted): the number's slot says so quietly instead of staying
     /// blank, which took half a minute on a Duo.
-    /// Not after a count that ended with chapters still uncounted: the slot goes quiet again rather than
-    /// promising a number that won't come this session.
+    /// Not after a count that ended with chapters still uncounted, nor after a minute in which nothing
+    /// was counted (a count stopped and not restarted, or one that never began): the slot goes quiet
+    /// again rather than promising a number that isn't coming. Counting moving again brings it back.
     var countingPages: Bool {
-        pageReady && screenNumbers == nil && screenLayout != nil && !countGaveUp
+        pageReady && screenNumbers == nil && screenLayout != nil && !countGaveUp && !countStalled
+    }
+    /// No chapter counted, and no count begun, for a minute.
+    private(set) var countStalled = false
+    @ObservationIgnored private var stallTimer: Task<Void, Never>?
+    private func countMoved() {
+        countStalled = false
+        stallTimer?.cancel()
+        stallTimer = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(60))
+            guard !Task.isCancelled, let self else { return }
+            self.countStalled = true
+            if self.screenNumbers == nil, self.screenLayout != nil {
+                readerLog.error("pages: nothing counted for a minute and no number yet; the slot goes quiet")
+            }
+        }
     }
     /// UI tests: "Counting pages…" was drawn at least once (CI's slow reads can miss it on screen).
     var countingShownProbe = false
@@ -367,6 +383,9 @@ final class ReaderModel {
             screenPages = Self.pageStore.load(book: bookID, layout: key, readingOrder: readingOrderHrefs)
             screenNumbers = nil
             lastGeometry = nil
+            // A new layout's count owes nothing to the last one's.
+            countGaveUp = false
+            countMoved()
             startCounting()
         } else if recount {
             startCounting()
@@ -397,8 +416,10 @@ final class ReaderModel {
               let map = screenPages, !map.uncounted.isEmpty else { return }
         let key = map.layout
         countGaveUp = false
+        countMoved()
         page?.countPages(map.uncounted, record: { [weak self] href, columns in
             guard let self, self.screenPages?.layout == key else { return }
+            self.countMoved()
             // The page is the truth: a chapter it already counted itself (his own, as it showed) keeps its
             // count, whichever chapter he's in by the time the counter's figure arrives.
             if let kept = self.screenPages?.columns[href] {
@@ -1041,6 +1062,7 @@ final class ReaderModel {
     func close() {
         if isWarming, !pageReady { hostController?.halt() }
         isClosed = true
+        stallTimer?.cancel()
         activation?.resume()
         activation = nil
         moves += 1

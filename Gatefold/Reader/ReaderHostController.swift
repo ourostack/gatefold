@@ -620,11 +620,14 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
                         && self.firstScriptBack < generation && self.weakModel?.keeper.reflowing != nil
                 }
                 let deadline = ContinuousClock.now + .seconds(10)
+                var loaded = false
                 while ContinuousClock.now < deadline {
                     try? await Task.sleep(for: .milliseconds(200))
                     guard stalled(), let self else { return }
-                    if let web = Self.firstWebView(in: self.navigator.view), !web.isLoading { break }
+                    if let web = Self.firstWebView(in: self.navigator.view), !web.isLoading { loaded = true; break }
                 }
+                // Still loading after 10 s: the 12 s watchdog's business, not this.
+                guard loaded else { return }
                 try? await Task.sleep(for: .seconds(1))
                 guard stalled(), let self, self.reflowRetries < 3 else { return }
                 self.reflowRetries += 1
