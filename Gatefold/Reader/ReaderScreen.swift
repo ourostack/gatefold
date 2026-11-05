@@ -462,7 +462,7 @@ struct ReaderScreen: View {
                 .allowsHitTesting(false)
                 .accessibilityIdentifier("reader.runningHead")
                 .accessibilityLabel(words)
-            pageNumbers(pages: [layout.pageFrame], hidden: hidden)
+            pageNumbers(pages: [layout.pageFrame], hidden: hidden, shown: !hidden && model.pageReady)
         } else if layout.deck == nil {
             pageFurniture(layout: layout, hidden: hidden)
         }
@@ -472,7 +472,7 @@ struct ReaderScreen: View {
     /// the book at this layout (`ScreenPageMap`). Until they're counted the slot says "Counting pages…",
     /// and a blank page (the unfold's verso, a chapter's last right page) has none.
     @ViewBuilder
-    private func pageNumbers(pages: [CGRect], hidden: Bool) -> some View {
+    private func pageNumbers(pages: [CGRect], hidden: Bool, shown: Bool) -> some View {
         let band = model.textBand.bottom
         if model.preferences.showsPageNumbers, let numbers = model.screenNumbers, numbers.count == pages.count {
             ZStack(alignment: .topLeading) {
@@ -506,8 +506,9 @@ struct ReaderScreen: View {
                 .allowsHitTesting(false)
                 .accessibilityLabel("Counting pages")
                 .accessibilityIdentifier("reader.pageCounting")
-                .onChange(of: hidden, initial: true) { _, hidden in
-                    if LaunchOptions.isUITest, !hidden { model.countingShownProbe = true }
+                // `shown`: whether he can see it, whichever layer does the hiding (the spread's is outside).
+                .onChange(of: shown, initial: true) { _, shown in
+                    if LaunchOptions.isUITest, shown { model.countingShownProbe = true }
                 }
         }
     }
@@ -537,7 +538,7 @@ struct ReaderScreen: View {
                     .accessibilityIdentifier(i == pages.count - 1 ? "reader.runningHead" : "reader.runningHead.book")
                     .accessibilityLabel(heads[i])
             }
-            pageNumbers(pages: pages, hidden: false)
+            pageNumbers(pages: pages, hidden: false, shown: !hidden && model.pageReady)
         }
         .opacity(hidden || !model.pageReady ? 0 : 1)
         .animation(.easeOut(duration: 0.25), value: hidden)
