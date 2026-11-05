@@ -64,21 +64,27 @@ jobs:
       - name: Turned on its side cold (an erased iPad), the spread always comes whole and keeps his place
         # An erased simulator, not a new one: build 19 left the old page under a frozen leaf in 3 of 9
         # rounds after an erase and 0 of 3 on a new simulator. Once a run, before anything warms it.
+        # About 13 min to build and 10 of tests (build 20). A runner once hung here past 90 min with
+        # nothing in the log, so the step is bounded and reports each test as it ends.
+        timeout-minutes: 40
         run: |
-          set -o pipefail
           udid="${{ steps.sim.outputs.udid }}"
+          echo "$(date -u +%T) erasing $udid"
           xcrun simctl shutdown "$udid"
           xcrun simctl erase "$udid"
           xcrun simctl boot "$udid"
           xcrun simctl bootstatus "$udid" -b
+          echo "$(date -u +%T) booted; building and testing"
           xcodebuild test -project Gatefold.xcodeproj -scheme Gatefold \
             -destination "${{ steps.sim.outputs.destination }}" \
             -only-testing:GatefoldUITests/RotationRepro \
             -only-testing:GatefoldUITests/RotationMidTransitionUITests \
-            -resultBundlePath "$RUNNER_TEMP/cold.xcresult" > "$RUNNER_TEMP/cold.log" 2>&1 || status=$?
-          grep -E "Test Case .*(passed|failed|skipped)|TEST (SUCCEEDED|FAILED)|REPRO (setup|round|SUMMARY)|MIDTURN|\.swift:[0-9]+: error" "$RUNNER_TEMP/cold.log" \
-            | sed -E 's/(XCTAssert[A-Za-z]* failed).*/\1 (text withheld)/' | tail -40 || true
-          exit ${status:-0}
+            -resultBundlePath "$RUNNER_TEMP/cold.xcresult" 2>&1 | tee "$RUNNER_TEMP/cold.log" \
+            | grep --line-buffered -E "Test Case .*(started|passed|failed|skipped)|TEST (SUCCEEDED|FAILED)|REPRO (setup|round|SUMMARY)|MIDTURN|\.swift:[0-9]+: error" \
+            | sed -E 's/(XCTAssert[A-Za-z]* failed).*/\1 (text withheld)/'
+          status=${PIPESTATUS[0]}
+          echo "$(date -u +%T) done ($status)"
+          exit $status
       - name: Jumps and reopens keep his place; the reader fits its window; every Fine-Tune tap lands; the number's slot is never blank
         env:
           # Five rounds of the controls-then-numbers reopen (about 90 s each); 20 locally.
