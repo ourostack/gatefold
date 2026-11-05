@@ -312,9 +312,13 @@ final class ReaderModel {
     /// The page is up in a paged layout and its number isn't known yet (its count not loaded, or
     /// chapters before it still being counted): the number's slot says so quietly instead of staying
     /// blank, which took half a minute on a Duo.
+    /// Not after a count that ended with chapters still uncounted: the slot goes quiet again rather than
+    /// promising a number that won't come this session.
     var countingPages: Bool {
-        pageReady && screenNumbers == nil && screenLayout != nil
+        pageReady && screenNumbers == nil && screenLayout != nil && !countGaveUp
     }
+    /// The last count ended by itself with chapters it couldn't count; cleared when a count starts.
+    private(set) var countGaveUp = false
     private var lastGeometry: (href: String, geometry: ScreenPageGeometry)?
     private static let pageStore: ScreenPageStore = {
         let directory = URL.cachesDirectory.appending(path: "ScreenPages", directoryHint: .isDirectory)
@@ -390,7 +394,8 @@ final class ReaderModel {
         guard pageReady, reopenPicture == nil, keeper.reflowing == nil,
               let map = screenPages, !map.uncounted.isEmpty else { return }
         let key = map.layout
-        page?.countPages(map.uncounted) { [weak self] href, columns in
+        countGaveUp = false
+        page?.countPages(map.uncounted, record: { [weak self] href, columns in
             guard let self, self.screenPages?.layout == key else { return }
             // The page is the truth: a chapter it already counted itself (his own, as it showed) keeps its
             // count, whichever chapter he's in by the time the counter's figure arrives.
@@ -409,7 +414,13 @@ final class ReaderModel {
                 // the count began): take one, or a finished count never shows its number.
                 Task { await self.refreshScreenNumbers() }
             }
-        }
+        }, finished: { [weak self] in
+            guard let self, self.screenPages?.layout == key else { return }
+            self.countGaveUp = self.screenPages?.uncounted.isEmpty == false
+            if self.countGaveUp {
+                readerLog.error("pages: count ended with \(self.screenPages?.uncounted.count ?? 0, privacy: .public) chapters uncounted; no number this time")
+            }
+        })
     }
 
     // MARK: Loading

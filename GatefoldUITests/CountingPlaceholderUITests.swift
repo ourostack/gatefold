@@ -53,6 +53,8 @@ final class CountingPlaceholderUITests: XCTestCase {
         XCTAssertTrue(number.exists, "the number comes")
         XCTAssertTrue(counting.waitForNonExistence(timeout: 2), "and the placeholder goes")
         print("PLACEHOLDER saw counting=\(sawCounting) samples=\(samples)")
+        // A reset leaves nothing counted, so a fresh open always has a moment before its number.
+        XCTAssertTrue(sawCounting, "the placeholder showed while the count ran")
         if sawCounting, !words.isEmpty {
             sleep(1)
             XCTAssertEqual(visibleText, words, "the number taking the placeholder's place doesn't move the words")

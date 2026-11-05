@@ -22,8 +22,9 @@ protocol ReaderPage: AnyObject {
     func promoteStandby(for locator: Locator) async -> Bool
     /// The chapter on screen and where the screen is in its columns, for page numbers.
     func screenGeometry() async -> (href: String, geometry: ScreenPageGeometry)?
-    /// Lays `hrefs` out out of sight, one by one, at the page's layout, and hands back each one's columns.
-    func countPages(_ hrefs: [String], record: @escaping @MainActor (String, Int) -> Void)
+    /// Lays `hrefs` out out of sight, one by one, at the page's layout, and hands back each one's columns;
+    /// `finished` once the count has ended by itself (not when stopped).
+    func countPages(_ hrefs: [String], record: @escaping @MainActor (String, Int) -> Void, finished: @escaping @MainActor () -> Void)
     func stopCounting()
 }
 
@@ -32,6 +33,6 @@ extension ReaderPage {
     func dropStandby() {}
     func promoteStandby(for locator: Locator) async -> Bool { false }
     func screenGeometry() async -> (href: String, geometry: ScreenPageGeometry)? { nil }
-    func countPages(_ hrefs: [String], record: @escaping @MainActor (String, Int) -> Void) {}
+    func countPages(_ hrefs: [String], record: @escaping @MainActor (String, Int) -> Void, finished: @escaping @MainActor () -> Void) {}
     func stopCounting() {}
 }
