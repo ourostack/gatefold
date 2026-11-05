@@ -81,7 +81,14 @@ final class FineTuneTapUITests: XCTestCase {
 
     /// The review's bar: one ordinary tap at the switch's centre, then the switch must have flipped.
     /// 25 on each of the four switches, no retry, every tap counted.
-    private func tapRate() {
+    private func tapRate(landscape: Bool) {
+        // The app's window, not the runner's device: that's where the taps land.
+        let frame = app.windows.firstMatch.frame
+        let shown = frame.width > frame.height ? "landscape" : "portrait"
+        // The Duo opened out is near square whichever way up it is, so only the iPad's shape says.
+        if UIDevice.current.userInterfaceIdiom == .pad {
+            XCTAssertEqual(shown, landscape ? "landscape" : "portrait", "the window is the way it was turned")
+        }
         let panel = app.descendants(matching: .any)["appearance.panel"].firstMatch
         var trials = 0, misses = 0
         for id in switches {
@@ -96,19 +103,19 @@ final class FineTuneTapUITests: XCTestCase {
                 if value(toggle) == before { misses += 1; print("TAPRATE miss on \(id) at trial \(trials)") }
             }
         }
-        print("TAPRATE \(UIDevice.current.orientation.isLandscape ? "landscape" : "portrait") trials=\(trials) misses=\(misses)")
+        print("TAPRATE \(shown) trials=\(trials) misses=\(misses)")
         XCTAssertEqual(misses, 0, "every one of \(trials) taps flipped its switch")
     }
 
     func testEveryTapFlipsItsSwitchPortrait() {
         openFineTune()
-        tapRate()
+        tapRate(landscape: false)
     }
 
     func testEveryTapFlipsItsSwitchLandscape() {
         XCUIDevice.shared.orientation = .landscapeLeft
         openFineTune()
-        tapRate()
+        tapRate(landscape: true)
     }
 
     /// The whole row is the control: a tap on its name changes the switch too.
