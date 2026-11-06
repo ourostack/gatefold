@@ -69,8 +69,15 @@ final class ScriptedPage: ReaderPage {
         currentLocation?.locations.progression.map { $0 + 0.01 }
     }
 
+    /// A capture a stalled reflow cuts short: no first words to be had.
+    var withholdAnchor = false
+
+    /// How long reading the first words on screen takes (the web view answers in its own time).
+    var anchorDelay: Duration = .zero
+
     func currentAnchor() async -> (ReadingAnchor, Locator)? {
-        guard let here = currentLocation else { return nil }
+        if anchorDelay > .zero { try? await Task.sleep(for: anchorDelay) }
+        guard !withholdAnchor, let here = currentLocation else { return nil }
         let anchor = ReadingAnchor(href: here.href.string, progression: here.locations.progression ?? 0, text: nil)
         return (anchor, here)
     }
@@ -235,6 +242,95 @@ final class ScriptedPage: ReaderPage {
         try await Task.sleep(for: .milliseconds(100))
         #expect(f.app.library.book(Self.frankenstein.fastHash)?.locatorJSON.flatMap { try? Locator(jsonString: $0) }?.locations.progression == saved.locations.progression,
                 "a layout report moved the saved place")
+        f.model.close()
+    }
+
+    /// A jump made behind the shelf (a test's launch jump reaches every book that opens) is his once he
+    /// taps: the page he sees is kept then, and a fresh open shows it again (build 20's Duo run reopened
+    /// the jump afresh, on another page).
+    @Test func aJumpBehindTheShelfIsKeptAtTheTap() async throws {
+        let f = try await Self.make(remote: { _, _ in nil })
+        f.model.warm()
+        for _ in 0..<200 where !f.model.pageReady { try await Task.sleep(for: .milliseconds(25)) }
+        await f.model.go(toProgression: 0.5, rememberBack: false)
+        if let jumped = f.page.currentLocation { await f.model.locationDidChange(jumped) }
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(f.app.library.book(Self.frankenstein.fastHash)?.locatorJSON == nil, "a warm book kept a place before the tap")
+        f.model.activate()
+        for _ in 0..<200 where f.app.library.book(Self.frankenstein.fastHash)?.locatorJSON == nil {
+            try await Task.sleep(for: .milliseconds(25))
+        }
+        let saved = try #require(f.app.library.book(Self.frankenstein.fastHash)?.locatorJSON.flatMap { try? Locator(jsonString: $0) },
+                                 "the tap kept no place for a jump made behind the shelf")
+        let shown = try #require(f.page.currentLocation)
+        #expect(saved.href.string == shown.href.string, "saved \(ReaderModel.placeTag(saved)) shown \(ReaderModel.placeTag(shown))")
+        #expect(abs((saved.locations.progression ?? -1) - (shown.locations.progression ?? -2)) < 0.0001, "the kept place isn't the page shown")
+        await f.model.locationDidChange(Self.boundary(of: shown))
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(f.app.library.book(Self.frankenstein.fastHash)?.locatorJSON.flatMap { try? Locator(jsonString: $0) }?.locations.progression == saved.locations.progression,
+                "a layout report moved the saved place")
+        f.model.close()
+    }
+
+    /// One jump, one place: once his jump is kept, a later report with no turn, jump or touch since
+    /// (Readium naming the chapter's first page as the web view finishes loading) is the layout's.
+    /// Build 20's real-unfold run wrote it as a second move and lost his words on the next unfold.
+    @Test func aSecondReportAfterAKeptJumpLeavesThePlace() async throws {
+        let f = try await Self.make(remote: { _, _ in nil })
+        await f.model.load()
+        await f.model.go(toProgression: 0.5, rememberBack: false)
+        let jumped = try #require(f.page.currentLocation)
+        await f.model.locationDidChange(jumped)
+        try await Task.sleep(for: .milliseconds(100))
+        let kept = try #require(f.app.library.book(Self.frankenstein.fastHash)?.locatorJSON.flatMap { try? Locator(jsonString: $0) },
+                                "the jump kept no place")
+        await f.model.locationDidChange(Self.boundary(of: jumped))
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(f.app.library.book(Self.frankenstein.fastHash)?.locatorJSON.flatMap { try? Locator(jsonString: $0) }?.locations.progression == kept.locations.progression,
+                "a second report after the jump moved the saved place")
+        f.model.close()
+    }
+
+    /// The same, with the second report arriving while the first is still being written (the loop's
+    /// double writes came 0.3 s apart, inside the first write's wait for its exact position).
+    @Test func aReportDuringAJumpsWriteLeavesThePlace() async throws {
+        let f = try await Self.make(remote: { _, _ in nil })
+        await f.model.load()
+        await f.model.go(toProgression: 0.5, rememberBack: false)
+        let jumped = try #require(f.page.currentLocation)
+        // Both reports wait on the web view for his words, as they do on a device.
+        f.page.anchorDelay = .milliseconds(150)
+        async let first: Void = f.model.locationDidChange(jumped)
+        async let second: Void = f.model.locationDidChange(Self.boundary(of: jumped))
+        _ = await (first, second)
+        try await Task.sleep(for: .milliseconds(100))
+        let saved = try #require(f.app.library.book(Self.frankenstein.fastHash)?.locatorJSON.flatMap { try? Locator(jsonString: $0) })
+        #expect(saved.locations.progression == jumped.locations.progression, "a report during the jump's write moved the saved place")
+        f.model.close()
+    }
+
+    /// A landing whose first words couldn't be captured (a reflow that wouldn't settle) keeps Readium's
+    /// boundary only until the layout is still: then the page he sees is the place (build 20's loop
+    /// kept the chapter's start under a stalled reflow and reopened a page before him).
+    @Test func aLandingOnTheBoundaryTakesHisWordsOnceStill() async throws {
+        let f = try await Self.make(remote: { _, _ in
+            ReadingPosition(cfi: nil, totalProgression: 0.42, updated: Date(), source: .pocketBookNative)
+        })
+        f.page.withholdAnchor = true
+        await f.model.load()
+        let boundary = try #require(f.app.library.book(Self.frankenstein.fastHash)?.locatorJSON.flatMap { try? Locator(jsonString: $0) },
+                                    "the landing kept nothing")
+        // The layout settles on his page, a little on from the boundary, and reports it: not his move.
+        let landed = try #require(f.page.currentLocation)
+        let settled = landed.copy(locations: { $0.progression = ($0.progression ?? 0) + 0.05; $0.totalProgression = ($0.totalProgression ?? 0) + 0.001 })
+        f.page.currentLocation = settled
+        await f.model.locationDidChange(settled)
+        f.page.withholdAnchor = false
+        for _ in 0..<200 where f.app.library.book(Self.frankenstein.fastHash)?.locatorJSON.flatMap({ try? Locator(jsonString: $0) })?.locations.progression == boundary.locations.progression {
+            try await Task.sleep(for: .milliseconds(25))
+        }
+        let saved = try #require(f.app.library.book(Self.frankenstein.fastHash)?.locatorJSON.flatMap { try? Locator(jsonString: $0) })
+        #expect(saved.locations.progression == settled.locations.progression, "the boundary was kept, not the page he sees")
         f.model.close()
     }
 

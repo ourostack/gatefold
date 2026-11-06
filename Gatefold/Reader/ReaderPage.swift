@@ -26,9 +26,13 @@ protocol ReaderPage: AnyObject {
     /// `finished` once the count has ended by itself (not when stopped).
     func countPages(_ hrefs: [String], record: @escaping @MainActor (String, Int) -> Void, finished: @escaping @MainActor () -> Void)
     func stopCounting()
+    /// Puts `anchor`'s words back on the spread's left page if a late layout moved them; `stillWanted`
+    /// turns false once the reader has moved or the page is gone.
+    func keepWordsOnLeft(_ anchor: ReadingAnchor, stillWanted: @escaping @MainActor () -> Bool) async
 }
 
 extension ReaderPage {
+    func keepWordsOnLeft(_ anchor: ReadingAnchor, stillWanted: @escaping @MainActor () -> Bool) async {}
     func prepareStandby(at locator: Locator) {}
     func dropStandby() {}
     func promoteStandby(for locator: Locator) async -> Bool { false }

@@ -25,12 +25,16 @@ final class FineTuneTapUITests: XCTestCase {
 
     private let switches = ["appearance.justify", "appearance.pageNumbers", "appearance.positionLabel", "appearance.pagesLeft"]
 
-    private func openFineTune() {
+    private func launchReader() {
         app.launchArguments = common + ["-GatefoldReset", "YES", "-GatefoldDownloadAll", "YES",
                                         "-GatefoldOpenBook", "gutenberg-pride-and-prejudice", "-GatefoldGoTo", "0.31"]
         app.launch()
         XCTAssertTrue(app.descendants(matching: .any)["reader.page"].waitForExistence(timeout: 60))
         sleep(3)
+    }
+
+    private func openFineTune(launching: Bool = true) {
+        if launching { launchReader() }
         for _ in 0..<4 where !app.buttons["reader.appearance"].waitForExistence(timeout: 5) {
             app.descendants(matching: .any)["reader.page"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
         }
@@ -81,14 +85,7 @@ final class FineTuneTapUITests: XCTestCase {
 
     /// The review's bar: one ordinary tap at the switch's centre, then the switch must have flipped.
     /// 25 on each of the four switches, no retry, every tap counted.
-    private func tapRate(landscape: Bool) {
-        // The app's window, not the runner's device: that's where the taps land.
-        let frame = app.windows.firstMatch.frame
-        let shown = frame.width > frame.height ? "landscape" : "portrait"
-        // The Duo opened out is near square whichever way up it is, so only the iPad's shape says.
-        if UIDevice.current.userInterfaceIdiom == .pad {
-            XCTAssertEqual(shown, landscape ? "landscape" : "portrait", "the window is the way it was turned")
-        }
+    private func tapRate(_ shown: String) {
         let panel = app.descendants(matching: .any)["appearance.panel"].firstMatch
         var trials = 0, misses = 0
         for id in switches {
@@ -109,13 +106,33 @@ final class FineTuneTapUITests: XCTestCase {
 
     func testEveryTapFlipsItsSwitchPortrait() {
         openFineTune()
-        tapRate(landscape: false)
+        tapRate("portrait")
     }
 
-    func testEveryTapFlipsItsSwitchLandscape() {
+    /// Turned for real: the app's window (where the taps land, not the runner's idea of the device)
+    /// swaps its width and height. The opened-out Duo is near square, so its shape alone can't say.
+    func testEveryTapFlipsItsSwitchLandscape() throws {
+        launchReader()
+        let upright = app.windows.firstMatch.frame
         XCUIDevice.shared.orientation = .landscapeLeft
-        openFineTune()
-        tapRate(landscape: true)
+        let up = Date().addingTimeInterval(10)
+        while app.windows.firstMatch.frame.size == upright.size, Date() < up { RunLoop.current.run(until: Date().addingTimeInterval(0.25)) }
+        sleep(3)
+        let turned = app.windows.firstMatch.frame
+        print("TAPRATE window upright=\(upright.size) turned=\(turned.size)")
+        // The folded Duo's cover screen is portrait only (as `PositionUITests` finds); the iPad must turn.
+        if turned.size == upright.size, UIDevice.current.userInterfaceIdiom != .pad {
+            throw XCTSkip("This display does not rotate (the folded Duo's cover screen is portrait only)")
+        }
+        if abs(upright.width - upright.height) > 20 {
+            XCTAssertEqual(turned.width, upright.height, accuracy: 2, "the window turned: its width is its old height")
+            XCTAssertEqual(turned.height, upright.width, accuracy: 2, "and its height its old width")
+        } else {
+            // A square window looks the same either way round: the turn can't be proved by shape.
+            print("TAPRATE window is square: the turn is not provable by its shape")
+        }
+        openFineTune(launching: false)
+        tapRate("landscape")
     }
 
     /// The whole row is the control: a tap on its name changes the switch too.
