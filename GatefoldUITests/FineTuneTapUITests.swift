@@ -111,7 +111,7 @@ final class FineTuneTapUITests: XCTestCase {
 
     /// Turned for real: the app's window (where the taps land, not the runner's idea of the device)
     /// swaps its width and height. The opened-out Duo is near square, so its shape alone can't say.
-    func testEveryTapFlipsItsSwitchLandscape() {
+    func testEveryTapFlipsItsSwitchLandscape() throws {
         launchReader()
         let upright = app.windows.firstMatch.frame
         XCUIDevice.shared.orientation = .landscapeLeft
@@ -120,6 +120,10 @@ final class FineTuneTapUITests: XCTestCase {
         sleep(3)
         let turned = app.windows.firstMatch.frame
         print("TAPRATE window upright=\(upright.size) turned=\(turned.size)")
+        // The folded Duo's cover screen is portrait only (as `PositionUITests` finds); the iPad must turn.
+        if turned.size == upright.size, UIDevice.current.userInterfaceIdiom != .pad {
+            throw XCTSkip("This display does not rotate (the folded Duo's cover screen is portrait only)")
+        }
         if abs(upright.width - upright.height) > 20 {
             XCTAssertEqual(turned.width, upright.height, accuracy: 2, "the window turned: its width is its old height")
             XCTAssertEqual(turned.height, upright.width, accuracy: 2, "and its height its old width")

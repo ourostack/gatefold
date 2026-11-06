@@ -43,7 +43,8 @@ jobs:
       matrix:
         include:
           - name: place
-            timeout: 120
+            # 48 min measured with the erased-iPad rotation at 23; it has taken 38, so 63 / 0.7.
+            timeout: 90
             # Rotation first, on an erased iPad (the cold step), then the rest on the same one.
             cold: true
             title: Jumps keep his place; the number's slot is never blank
@@ -51,11 +52,13 @@ jobs:
               NavigationPlaceUITests PositionUITests/testEveryPostureKeepsThePlace
               CountingPlaceholderUITests
           - name: taps
-            timeout: 120
+            # 53 min measured (a 10 min simulator boot among them); measured / 0.7 keeps 30% headroom.
+            timeout: 80
             title: Every Fine-Tune tap lands; the furniture never moves the words
             tests: FineTuneTapUITests PageFurnitureUITests
           - name: reviewer
-            timeout: 120
+            # 65 min measured; measured / 0.7 keeps 30% headroom.
+            timeout: 95
             title: The reviewers' checks - reopen by hash, true numbers, reader-wide toggles, density, landing; the reader fits its window
             tests: >-
               ReviewerChecksUITests PageNumberUITests/testOnASpreadEveryTurnMovesOnTwoPages
@@ -155,11 +158,20 @@ jobs:
             -only-testing:GatefoldUITests/PageNumberTimingUITests > "$RUNNER_TEMP/timing.log" 2>&1 || status=$?
           grep -E "number timing|Test Case .*(passed|failed)" "$RUNNER_TEMP/timing.log" || true
           exit ${status:-0}
+      - name: The app's place log, for a miss (file and progression only, never the book's words)
+        if: failure()
+        run: |
+          xcrun simctl spawn "${{ steps.sim.outputs.udid }}" log show --last 4h --style compact \
+            --predicate 'subsystem == "bot.ouro.gatefold"' 2>/dev/null \
+            | grep -E 'place (read|write)|place:|location |reflow|landing|landed|reopen' \
+            | grep -v -E 'text:|\] visible' > "$RUNNER_TEMP/place.log" || true
+          wc -l < "$RUNNER_TEMP/place.log"
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
           name: ipad-${{ matrix.name }}-results
           path: |
+            ${{ runner.temp }}/place.log
             ${{ runner.temp }}/cold.log
             ${{ runner.temp }}/cold.xcresult
             ${{ runner.temp }}/ipad.log
@@ -237,7 +249,8 @@ jobs:
     # The reviewers' standing checks on the Duo: reopen by hash, true numbers and reader-wide toggles
     # (density is the iPad's), and a page a turn with a reopen keeping its numbers.
     runs-on: xcode-27
-    timeout-minutes: 75
+    # 45 min measured (build 20): 65 keeps 30% headroom.
+    timeout-minutes: 65
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/select-xcode
@@ -255,6 +268,7 @@ jobs:
           udid="$(xcrun simctl create gatefold-duo com.apple.CoreSimulator.SimDeviceType.iPhone-Duo "$runtime")"
           xcrun simctl boot "$udid"
           xcrun simctl bootstatus "$udid" -b
+          echo "udid=$udid" >> "$GITHUB_OUTPUT"
           echo "destination=platform=iOS Simulator,arch=$(uname -m),id=$udid" >> "$GITHUB_OUTPUT"
       - name: The reviewers' checks on the Duo
         run: |
@@ -267,10 +281,19 @@ jobs:
           grep -E "Test Case .*(passed|failed|skipped)|TEST (SUCCEEDED|FAILED)|REVIEWER|\.swift:[0-9]+: error" "$RUNNER_TEMP/duo.log" \
             | sed -E 's/(XCTAssert[A-Za-z]* failed).*/\1 (text withheld)/' | tail -60 || true
           exit ${status:-0}
+      - name: The app's place log, for a miss (file and progression only, never the book's words)
+        if: failure()
+        run: |
+          xcrun simctl spawn "${{ steps.sim.outputs.udid }}" log show --last 4h --style compact \
+            --predicate 'subsystem == "bot.ouro.gatefold"' 2>/dev/null \
+            | grep -E 'place (read|write)|place:|location |reflow|landing|landed|reopen' \
+            | grep -v -E 'text:|\] visible' > "$RUNNER_TEMP/place.log" || true
+          wc -l < "$RUNNER_TEMP/place.log"
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
           name: duo-reviewer-results
           path: |
+            ${{ runner.temp }}/place.log
             ${{ runner.temp }}/duo.log
             ${{ runner.temp }}/duo.xcresult
