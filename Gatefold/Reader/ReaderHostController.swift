@@ -755,66 +755,86 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
 
     /// Moves the spread so `anchor`'s words start its left page: a blank verso before the file's first
     /// page shifts every page one side over. Returns what's on screen after a move, nil when none was needed.
+    /// The moves are `SpreadSettler`'s: each is judged by measuring the page again once it stands still.
     private func keepOnLeft(_ anchor: ReadingAnchor, current: () -> Bool) async -> VisibleRange? {
         guard let text = anchor.text?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else { return nil }
-        func side() async -> Int? {
-            ((try? await navigator.evaluateJavaScript(ReaderJS.sideOf(text)).get()) as? NSNumber)?.intValue
-        }
-        // A jump can land one spread past the words: a word hyphenated across pages leaves the
-        // sentence's first letters on the spread before. Step to the spread where it starts.
-        var now = await side()
-        readerLog.notice("spread: the sentence starts on side \(now.map(String.init) ?? "nil", privacy: .public)")
-        var stepped = false
-        if now == -1 || now == 2 {
-            if now == -1 { _ = await navigator.goBackward(options: .init(animated: false)) }
-            else { _ = await navigator.goForward(options: .init(animated: false)) }
-            try? await Task.sleep(for: .milliseconds(120))
-            guard current() else { return nil }
-            stepped = true
-            now = await side()
-        }
-        // Start a fresh column at the reader's words, so they open a page instead of sitting mid-way
-        // down it; the column count shifts, so find the words' spread again.
-        var pinned = false
-        if now == 0 || now == 1,
-           ((try? await navigator.evaluateJavaScript(ReaderJS.pinToTop(text)).get()) as? NSNumber)?.intValue == 1 {
-            pinned = true
-            try? await Task.sleep(for: .milliseconds(120))
-            guard current(), let locator = model.locator(for: anchor) else { return nil }
-            _ = await navigator.go(to: locator, options: .init(animated: false))
-            try? await Task.sleep(for: .milliseconds(160))
-            for _ in 0..<2 {
-                guard current() else { return nil }
-                switch await side() {
-                case 2: _ = await navigator.goForward(options: .init(animated: false))
-                case -1: _ = await navigator.goBackward(options: .init(animated: false))
-                default: break
-                }
-                try? await Task.sleep(for: .milliseconds(120))
-            }
-            now = await side()
-            readerLog.notice("spread: a new column starts at the sentence; it is on side \(now.map(String.init) ?? "nil", privacy: .public)")
-        }
-        guard now == 1 else { return stepped || pinned ? await visibleRange() : nil }
-        _ = await navigator.evaluateJavaScript(ReaderJS.toggleVerso)
-        try? await Task.sleep(for: .milliseconds(120))
-        guard current(), let locator = model.locator(for: anchor) else { return nil }
-        _ = await navigator.go(to: locator, options: .init(animated: false))
-        try? await Task.sleep(for: .milliseconds(160))
-        // The progression moved with the verso; step to the spread that holds the words.
-        for _ in 0..<2 {
-            guard current() else { return nil }
-            switch await side() {
-            case 2: _ = await navigator.goForward(options: .init(animated: false))
-            case -1: _ = await navigator.goBackward(options: .init(animated: false))
-            default: break
-            }
-            try? await Task.sleep(for: .milliseconds(120))
-        }
-        now = await side()
-        readerLog.notice("spread: sentence on the \(now == 0 ? "left" : now == 1 ? "right" : "other", privacy: .public) page after the verso")
-        return await visibleRange()
+        let surface = WebSpread(host: self, anchor: anchor, text: text)
+        guard await SpreadSettler.keepOnLeft(surface, current: current) == true, current() else { return nil }
+        let visible = await visibleRange()
+        readerLog.notice("spread: words placed on the left page; \(surface.moves, privacy: .public) moves")
+        return visible
     }
+
+    func keepWordsOnLeft(_ anchor: ReadingAnchor, stillWanted: @escaping @MainActor () -> Bool) async {
+        guard columns == 2, stillWanted() else { return }
+        if await keepOnLeft(anchor, current: stillWanted) != nil {
+            readerLog.notice("spread: a late layout had moved his words; put back on the left page")
+        }
+    }
+
+    /// The reader's page as `SpreadSettler` moves it.
+    private final class WebSpread: SpreadSurface {
+        private unowned let host: ReaderHostController
+        private let anchor: ReadingAnchor
+        private let text: String
+        private(set) var moves = 0
+
+        init(host: ReaderHostController, anchor: ReadingAnchor, text: String) {
+            self.host = host
+            self.anchor = anchor
+            self.text = text
+        }
+
+        private func number(_ script: String) async -> Int? {
+            ((try? await host.navigator.evaluateJavaScript(script).get()) as? NSNumber)?.intValue
+        }
+
+        func wordsSide() async -> WordsSide? {
+            let side = await number(ReaderJS.sideOf(text)).flatMap(WordsSide.init(rawValue:))
+            readerLog.notice("spread: the sentence starts on side \(side.map { String($0.rawValue) } ?? "nil", privacy: .public)")
+            return side
+        }
+
+        func pinWords() async -> Bool {
+            let pinned = await number(ReaderJS.pinToTop(text)) == 1
+            if pinned { moves += 1 }
+            return pinned
+        }
+
+        func toggleVerso() async {
+            moves += 1
+            _ = await host.navigator.evaluateJavaScript(ReaderJS.toggleVerso)
+        }
+
+        func goToSavedPlace() async {
+            guard let locator = host.model.locator(for: anchor) else { return }
+            moves += 1
+            _ = await host.navigator.go(to: locator, options: .init(animated: false))
+        }
+
+        func goToWords() async {
+            guard let saved = host.model.locator(for: anchor) else { return }
+            // Where the words are in the page as it is laid out now, not where the place was saved.
+            let progression = await host.progression(of: text) ?? saved.locations.progression
+            moves += 1
+            _ = await host.navigator.go(to: saved.copy(locations: { $0.progression = progression }), options: .init(animated: false))
+        }
+
+        func stepSpread(forward: Bool) async {
+            moves += 1
+            _ = forward ? await host.navigator.goForward(options: .init(animated: false))
+                        : await host.navigator.goBackward(options: .init(animated: false))
+        }
+
+        func stillness() async -> String? {
+            let geometry = (try? await host.navigator.evaluateJavaScript(ReaderJS.geometry).get()) as? String ?? "-"
+            let at = host.navigator.currentLocation?.locations.progression ?? -1
+            return "\(geometry)@\(at)"
+        }
+
+        func beat() async { try? await Task.sleep(for: .milliseconds(120)) }
+    }
+
 
     private static let heldTag = 0x6A7E
     private var holding = false
