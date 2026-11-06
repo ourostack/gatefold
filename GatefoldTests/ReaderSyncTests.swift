@@ -284,6 +284,22 @@ final class ScriptedPage: ReaderPage {
         f.model.close()
     }
 
+    /// The same, with the second report arriving while the first is still being written (the loop's
+    /// double writes came 0.3 s apart, inside the first write's wait for its exact position).
+    @Test func aReportDuringAJumpsWriteLeavesThePlace() async throws {
+        let f = try await Self.make(remote: { _, _ in nil })
+        await f.model.load()
+        await f.model.go(toProgression: 0.5, rememberBack: false)
+        let jumped = try #require(f.page.currentLocation)
+        async let first: Void = f.model.locationDidChange(jumped)
+        async let second: Void = f.model.locationDidChange(Self.boundary(of: jumped))
+        _ = await (first, second)
+        try await Task.sleep(for: .milliseconds(100))
+        let saved = try #require(f.app.library.book(Self.frankenstein.fastHash)?.locatorJSON.flatMap { try? Locator(jsonString: $0) })
+        #expect(saved.locations.progression == jumped.locations.progression, "a report during the jump's write moved the saved place")
+        f.model.close()
+    }
+
     /// Shape (b) at the model: after the landing is kept, a report from the layout with no turn, jump
     /// or touch of his never moves the saved place.
     @Test func aLayoutReportAfterAPercentLandingLeavesThePlace() async throws {

@@ -1094,7 +1094,24 @@ final class ReaderModel {
         }
         // Behind the shelf nothing is opened yet: recording now would make the book "just read",
         // shuffle Reading Now under the reader's eyes and send the Cloud a place nobody read. The tap records it.
-        if isWarming { pendingRecord = record } else { record(now) }
+        if isWarming, fresh == nil {
+            // His first words weren't on this page when it landed (a reflow cut the capture short): the
+            // boundary would reopen a page beside the one he sees. Take them at the tap and keep those.
+            let move = moves
+            pendingRecord = { [weak self] _ in
+                Task { [weak self] in
+                    guard let self, !self.isClosed, self.moves == move else { return }
+                    await self.captureAnchor()
+                    guard !self.isClosed, self.moves == move, let now = self.page?.currentLocation else { return }
+                    readerLog.notice("place: the landing's first words taken at the tap")
+                    await self.recordLanding(now, target: target, cloud: cloud)
+                }
+            }
+        } else if isWarming {
+            pendingRecord = record
+        } else {
+            record(now)
+        }
         openedLocation = here
         refreshBookmarkState(await page?.visibleRange())
     }
@@ -1323,6 +1340,9 @@ final class ReaderModel {
         // not a move, so opening a book never overwrites a further-ahead place on the InkPad.
         // A book warmed behind the shelf has had no move of his yet: nothing it reports is his place.
         guard hasMoved, readerMoved, !fromLayout, !isWarming else { return refreshBookmarkState(await page?.visibleRange()) }
+        // Kept as of now, before any wait: a second report arriving while this one maps its position
+        // must find the move kept (build 20's loop saved two places for one jump, 0.3 s apart).
+        recordedMoves = moves
         // The first words on screen make the place exact; Readium's progression is a page boundary.
         // Only words captured on this very page count; a capture a reflow cut short leaves the last page's.
         let fresh = anchorLocator.flatMap { a in
@@ -1332,7 +1352,6 @@ final class ReaderModel {
         if let json = try? here.jsonString() {
             let now = Date()
             let exact = await mapper?.position(for: BookLocation(here), at: now)
-            recordedMoves = moves
             readerLog.notice("place write: his move (\(fresh != nil ? "his first words" : "Readium's boundary", privacy: .public)) \(Self.placeTag(here), privacy: .public); reported \(Self.placeTag(locator), privacy: .public); move \(self.moves, privacy: .public), touched \(self.touchedSinceLocation, privacy: .public), layoutOnly \(self.layoutOnly, privacy: .public)")
             app.library.recordPlace(
                 bookID: bookID,
