@@ -652,6 +652,7 @@ final class ReaderModel {
                 host?.turn(forward: forward)
             }
             pageShownAt = Date()
+            if LaunchOptions.isUITest { refreshBookmarkState(await page?.visibleRange()) }
             readerLog.notice("reopen: the live page took the picture's place at \(LaunchClock.sinceLaunch, privacy: .public) s after launch (\(same ? "same layout, swapped" : "laid out differently, faded", privacy: .public))")
         }
     }
@@ -1623,11 +1624,14 @@ final class ReaderModel {
         app.library.update(bookID) { $0.bookmarks = list }
     }
 
-    /// For UI tests: the words on screen, as of the last settled page.
+    /// For UI tests: the words on screen, as of the last settled page. While the reopen picture covers
+    /// the page the screen shows the picture, not the web view laying out under it, so nothing is
+    /// reported until the live page takes its place (CI's reviewer check hashed the page under a
+    /// picture that stayed up 24 s on a slow runner, and called a correct reopen a miss).
     private(set) var visibleTextProbe = ""
 
     private func refreshBookmarkState(_ visible: VisibleRange?) {
-        if LaunchOptions.isUITest, let text = visible?.text { visibleTextProbe = String(text.prefix(2400)) }
+        if LaunchOptions.isUITest, reopenPicture == nil, let text = visible?.text { visibleTextProbe = String(text.prefix(2400)) }
         guard let location else { return }
         let here = location.href.string
         let p = location.locations.progression ?? 0
