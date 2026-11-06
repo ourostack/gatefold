@@ -238,6 +238,33 @@ final class ScriptedPage: ReaderPage {
         f.model.close()
     }
 
+    /// A jump made behind the shelf (a test's launch jump reaches every book that opens) is his once he
+    /// taps: the page he sees is kept then, and a fresh open shows it again (build 20's Duo run reopened
+    /// the jump afresh, on another page).
+    @Test func aJumpBehindTheShelfIsKeptAtTheTap() async throws {
+        let f = try await Self.make(remote: { _, _ in nil })
+        f.model.warm()
+        for _ in 0..<200 where !f.model.pageReady { try await Task.sleep(for: .milliseconds(25)) }
+        await f.model.go(toProgression: 0.5, rememberBack: false)
+        if let jumped = f.page.currentLocation { await f.model.locationDidChange(jumped) }
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(f.app.library.book(Self.frankenstein.fastHash)?.locatorJSON == nil, "a warm book kept a place before the tap")
+        f.model.activate()
+        for _ in 0..<200 where f.app.library.book(Self.frankenstein.fastHash)?.locatorJSON == nil {
+            try await Task.sleep(for: .milliseconds(25))
+        }
+        let saved = try #require(f.app.library.book(Self.frankenstein.fastHash)?.locatorJSON.flatMap { try? Locator(jsonString: $0) },
+                                 "the tap kept no place for a jump made behind the shelf")
+        let shown = try #require(f.page.currentLocation)
+        #expect(saved.href.string == shown.href.string, "saved \(ReaderModel.placeTag(saved)) shown \(ReaderModel.placeTag(shown))")
+        #expect(abs((saved.locations.progression ?? -1) - (shown.locations.progression ?? -2)) < 0.0001, "the kept place isn't the page shown")
+        await f.model.locationDidChange(Self.boundary(of: shown))
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(f.app.library.book(Self.frankenstein.fastHash)?.locatorJSON.flatMap { try? Locator(jsonString: $0) }?.locations.progression == saved.locations.progression,
+                "a layout report moved the saved place")
+        f.model.close()
+    }
+
     /// Shape (b) at the model: after the landing is kept, a report from the layout with no turn, jump
     /// or touch of his never moves the saved place.
     @Test func aLayoutReportAfterAPercentLandingLeavesThePlace() async throws {

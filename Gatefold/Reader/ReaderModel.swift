@@ -116,6 +116,9 @@ final class ReaderModel {
         if let record = pendingRecord {
             pendingRecord = nil
             record(Date())
+        } else if hasMoved, moves != recordedMoves, landingMove == nil {
+            // (A landing still waiting on a reflow records itself.)
+            Task { [weak self] in await self?.keepMoveMadeBehindTheShelf() }
         }
         if let landed = pendingLanded {
             pendingLanded = nil
@@ -126,6 +129,24 @@ final class ReaderModel {
                 showLanded(landed.slip, underline: landed.underline)
             }
         }
+    }
+
+    /// A jump made while the book warmed behind the shelf (a test's launch jump reaches every book that
+    /// opens) wrote nothing then; at his tap it is his, so the page he sees becomes the place, and a
+    /// fresh open shows that page rather than making the jump afresh.
+    private func keepMoveMadeBehindTheShelf() async {
+        guard !isClosed, moves != recordedMoves, let here = page?.currentLocation else { return }
+        readerLog.notice("place: a move made behind the shelf is kept at the tap (reported \(Self.placeTag(here), privacy: .public))")
+        layoutOnly = false
+        // Under a reflow the report is owed, and the reflow's end records it.
+        guard keeper.reflowing == nil else { return await locationDidChange(here) }
+        await captureAnchor()
+        guard !isClosed, moves != recordedMoves, let now = page?.currentLocation else { return }
+        let movesNow = moves
+        recordingOwed = true
+        await locationDidChange(now)
+        recordingOwed = false
+        if moves == movesNow, !touchedSinceLocation { layoutOnly = true }
     }
 
     private func untilActive() async {
