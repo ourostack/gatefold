@@ -69,8 +69,11 @@ final class ScriptedPage: ReaderPage {
         currentLocation?.locations.progression.map { $0 + 0.01 }
     }
 
+    /// A capture a stalled reflow cuts short: no first words to be had.
+    var withholdAnchor = false
+
     func currentAnchor() async -> (ReadingAnchor, Locator)? {
-        guard let here = currentLocation else { return nil }
+        guard !withholdAnchor, let here = currentLocation else { return nil }
         let anchor = ReadingAnchor(href: here.href.string, progression: here.locations.progression ?? 0, text: nil)
         return (anchor, here)
     }
@@ -297,6 +300,31 @@ final class ScriptedPage: ReaderPage {
         try await Task.sleep(for: .milliseconds(100))
         let saved = try #require(f.app.library.book(Self.frankenstein.fastHash)?.locatorJSON.flatMap { try? Locator(jsonString: $0) })
         #expect(saved.locations.progression == jumped.locations.progression, "a report during the jump's write moved the saved place")
+        f.model.close()
+    }
+
+    /// A landing whose first words couldn't be captured (a reflow that wouldn't settle) keeps Readium's
+    /// boundary only until the layout is still: then the page he sees is the place (build 20's loop
+    /// kept the chapter's start under a stalled reflow and reopened a page before him).
+    @Test func aLandingOnTheBoundaryTakesHisWordsOnceStill() async throws {
+        let f = try await Self.make(remote: { _, _ in
+            ReadingPosition(cfi: nil, totalProgression: 0.42, updated: Date(), source: .pocketBookNative)
+        })
+        f.page.withholdAnchor = true
+        await f.model.load()
+        let boundary = try #require(f.app.library.book(Self.frankenstein.fastHash)?.locatorJSON.flatMap { try? Locator(jsonString: $0) },
+                                    "the landing kept nothing")
+        // The layout settles on his page, a little on from the boundary, and reports it: not his move.
+        let landed = try #require(f.page.currentLocation)
+        let settled = landed.copy(locations: { $0.progression = ($0.progression ?? 0) + 0.05; $0.totalProgression = ($0.totalProgression ?? 0) + 0.001 })
+        f.page.currentLocation = settled
+        await f.model.locationDidChange(settled)
+        f.page.withholdAnchor = false
+        for _ in 0..<200 where f.app.library.book(Self.frankenstein.fastHash)?.locatorJSON.flatMap({ try? Locator(jsonString: $0) })?.locations.progression == boundary.locations.progression {
+            try await Task.sleep(for: .milliseconds(25))
+        }
+        let saved = try #require(f.app.library.book(Self.frankenstein.fastHash)?.locatorJSON.flatMap { try? Locator(jsonString: $0) })
+        #expect(saved.locations.progression == settled.locations.progression, "the boundary was kept, not the page he sees")
         f.model.close()
     }
 

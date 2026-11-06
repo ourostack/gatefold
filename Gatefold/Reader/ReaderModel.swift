@@ -1056,7 +1056,7 @@ final class ReaderModel {
     /// Records a settled landing. The first words on screen are the place, unless they come before the
     /// place we landed on (the page starts a few lines above it): then the target itself is, so the
     /// other device's place comes back unchanged instead of a few lines behind.
-    private func recordLanding(_ here: Locator, target: ReadingPosition?, cloud: Double? = nil) async {
+    private func recordLanding(_ here: Locator, target: ReadingPosition?, cloud: Double? = nil, retake: Bool = true) async {
         location = here
         let fresh = anchorLocator.flatMap { a in
             a.href == here.href && a.locations.progression == here.locations.progression ? a : nil
@@ -1094,18 +1094,18 @@ final class ReaderModel {
         }
         // Behind the shelf nothing is opened yet: recording now would make the book "just read",
         // shuffle Reading Now under the reader's eyes and send the Cloud a place nobody read. The tap records it.
-        if isWarming, fresh == nil {
-            // His first words weren't on this page when it landed (a reflow cut the capture short): the
-            // boundary would reopen a page beside the one he sees. Take them at the tap and keep those.
+        if fresh == nil, retake {
+            // His first words weren't captured on this page (a reflow that wouldn't settle cut the
+            // capture short): Readium's boundary reopens a page beside the one he sees. Keep it only for
+            // now, and once the layout is still, take his first words and keep those instead.
             let move = moves
-            pendingRecord = { [weak self] _ in
-                Task { [weak self] in
-                    guard let self, !self.isClosed, self.moves == move else { return }
-                    await self.captureAnchor()
-                    guard !self.isClosed, self.moves == move, let now = self.page?.currentLocation else { return }
-                    readerLog.notice("place: the landing's first words taken at the tap")
-                    await self.recordLanding(now, target: target, cloud: cloud)
+            if isWarming {
+                pendingRecord = { [weak self] _ in
+                    Task { [weak self] in await self?.retakeLanding(move: move, target: target, cloud: cloud, orKeep: record) }
                 }
+            } else {
+                record(now)
+                Task { [weak self] in await self?.retakeLanding(move: move, target: target, cloud: cloud, orKeep: nil) }
             }
         } else if isWarming {
             pendingRecord = record
@@ -1114,6 +1114,30 @@ final class ReaderModel {
         }
         openedLocation = here
         refreshBookmarkState(await page?.visibleRange())
+    }
+
+    /// A landing kept on Readium's boundary is provisional: when no reflow is moving the page, take his
+    /// first words and keep them as the landing, unless he has moved since. `orKeep` (behind the shelf)
+    /// is the boundary's record, kept at the tap if his words can't be had.
+    private func retakeLanding(move: Int, target: ReadingPosition?, cloud: Double?, orKeep: (@MainActor (Date) -> Void)?) async {
+        var captures = 0
+        for _ in 0..<120 where !isClosed && moves == move && captures < 8 {
+            if keeper.reflowing == nil {
+                captures += 1
+                await captureAnchor()
+                guard !isClosed, moves == move else { return }
+                if keeper.reflowing == nil, let now = page?.currentLocation, let a = anchorLocator,
+                   a.href == now.href, a.locations.progression == now.locations.progression {
+                    readerLog.notice("place: the landing's first words taken once the layout was still (try \(captures, privacy: .public))")
+                    return await recordLanding(now, target: target, cloud: cloud, retake: false)
+                }
+            }
+            try? await Task.sleep(for: .milliseconds(500))
+        }
+        if !isClosed, moves == move, let orKeep {
+            readerLog.notice("place: no first words for the landing; keeping Readium's boundary")
+            orKeep(Date())
+        }
     }
 
     /// Readium places the page by its own progression, which counts layout, not text; once the
