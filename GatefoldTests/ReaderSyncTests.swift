@@ -72,7 +72,11 @@ final class ScriptedPage: ReaderPage {
     /// A capture a stalled reflow cuts short: no first words to be had.
     var withholdAnchor = false
 
+    /// How long reading the first words on screen takes (the web view answers in its own time).
+    var anchorDelay: Duration = .zero
+
     func currentAnchor() async -> (ReadingAnchor, Locator)? {
+        if anchorDelay > .zero { try? await Task.sleep(for: anchorDelay) }
         guard !withholdAnchor, let here = currentLocation else { return nil }
         let anchor = ReadingAnchor(href: here.href.string, progression: here.locations.progression ?? 0, text: nil)
         return (anchor, here)
@@ -294,6 +298,8 @@ final class ScriptedPage: ReaderPage {
         await f.model.load()
         await f.model.go(toProgression: 0.5, rememberBack: false)
         let jumped = try #require(f.page.currentLocation)
+        // Both reports wait on the web view for his words, as they do on a device.
+        f.page.anchorDelay = .milliseconds(150)
         async let first: Void = f.model.locationDidChange(jumped)
         async let second: Void = f.model.locationDidChange(Self.boundary(of: jumped))
         _ = await (first, second)
