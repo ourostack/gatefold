@@ -1220,10 +1220,29 @@ final class ReaderModel {
 
     func reflowDidBegin() {
         reflowCount += 1
+        landingChecks = 0
         anchorCheck = "settling \(reflowCount)"
     }
 
     private var reflowSettledAt: Date?
+    @ObservationIgnored private var landingChecks = 0
+
+    /// A report that is the layout's, not his move, may mean the page moved under the restore (the
+    /// navigator laying out again after the restore's last look; CI's reopen landed a page beside him).
+    /// Until he moves, his words are looked for on the left page again, a few times per reflow.
+    private func recheckLanding() {
+        guard !hasMoved, !touchedSinceLocation, !isClosed, !isWarming, keeper.reflowing == nil,
+              let anchor = keeper.anchor, anchor.text != nil, landingChecks < 3 else { return }
+        landingChecks += 1
+        let movesNow = moves
+        Task { [weak self] in
+            await self?.page?.keepWordsOnLeft(anchor, stillWanted: { [weak self] in
+                guard let self else { return false }
+                return !self.isClosed && self.moves == movesNow && !self.hasMoved
+                    && !self.touchedSinceLocation && self.keeper.reflowing == nil
+            })
+        }
+    }
 
     func reflowDidFinish(visible: VisibleRange?) {
         reflowSettledAt = Date()
@@ -1332,8 +1351,10 @@ final class ReaderModel {
             readerLog.notice("location of a move a reflow held; anchor just taken (reported \(Self.placeTag(locator), privacy: .public))")
         } else if let settled = reflowSettledAt, Date().timeIntervalSince(settled) < 1.2 {
             readerLog.notice("location after reflow; anchor kept (reported \(Self.placeTag(locator), privacy: .public))")
+            recheckLanding()
         } else if !readerMoved, keeper.anchor != nil {
             readerLog.notice("location without a move; anchor and place kept (reported \(Self.placeTag(locator), privacy: .public))")
+            recheckLanding()
         } else {
             let held = keeper.anchor, heldLocator = anchorLocator
             await captureAnchor()
