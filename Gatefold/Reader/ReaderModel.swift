@@ -1270,7 +1270,11 @@ final class ReaderModel {
         // reflow, with none of them since, is the layout (a rotation, an unfold, a late report from the new spread), and it never
         // re-anchors or rewrites the saved place: a spread that slips a verso before his page starts a
         // page early, and saving its start reopened him a page early (build 17's rotation miss).
-        let readerMoved = !layoutOnly || touchedSinceLocation
+        // One move, one place: once a move is kept, a further report with no turn, jump or touch since
+        // is the layout's too (build 20's real unfold: the web view finishing its load had Readium name
+        // the chapter's first page after a kept jump, and saving it lost his words on the next unfold).
+        let alreadyKept = moves == recordedMoves && !hisMove
+        let readerMoved = (!layoutOnly && !alreadyKept) || touchedSinceLocation
         // A touch that brought a report is his gesture (a slide or a scroll, which Readium owns and
         // `moves` never sees): the rest of its reports are his too. A tap that only shows the controls
         // brings none, so it never opens the place to a late report from the layout.

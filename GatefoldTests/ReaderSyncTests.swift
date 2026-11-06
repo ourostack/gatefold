@@ -265,6 +265,25 @@ final class ScriptedPage: ReaderPage {
         f.model.close()
     }
 
+    /// One jump, one place: once his jump is kept, a later report with no turn, jump or touch since
+    /// (Readium naming the chapter's first page as the web view finishes loading) is the layout's.
+    /// Build 20's real-unfold run wrote it as a second move and lost his words on the next unfold.
+    @Test func aSecondReportAfterAKeptJumpLeavesThePlace() async throws {
+        let f = try await Self.make(remote: { _, _ in nil })
+        await f.model.load()
+        await f.model.go(toProgression: 0.5, rememberBack: false)
+        let jumped = try #require(f.page.currentLocation)
+        await f.model.locationDidChange(jumped)
+        try await Task.sleep(for: .milliseconds(100))
+        let kept = try #require(f.app.library.book(Self.frankenstein.fastHash)?.locatorJSON.flatMap { try? Locator(jsonString: $0) },
+                                "the jump kept no place")
+        await f.model.locationDidChange(Self.boundary(of: jumped))
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(f.app.library.book(Self.frankenstein.fastHash)?.locatorJSON.flatMap { try? Locator(jsonString: $0) }?.locations.progression == kept.locations.progression,
+                "a second report after the jump moved the saved place")
+        f.model.close()
+    }
+
     /// Shape (b) at the model: after the landing is kept, a report from the layout with no turn, jump
     /// or touch of his never moves the saved place.
     @Test func aLayoutReportAfterAPercentLandingLeavesThePlace() async throws {
