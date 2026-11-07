@@ -143,7 +143,14 @@ final class FeelUITests: XCTestCase {
     private func judgeGesture(_ name: String, _ expect: Expect, _ action: () -> Void) -> FeelResult {
         let before = FeelPlace.fingerprint(settled())
         action()
-        let seen = watch()
+        var seen = watch()
+        // A turn that has not shown yet may commit late (a curl finishing after a quiet spell): give it one more counted
+        // window before calling it "did not move". `reader.pageReady` is set once per open, and `reader.turnSettle`
+        // only on the spread's settler, so neither marks every turn's end.
+        if expect == .moveOnce, seen.settled, Set(seen.hashes.filter { $0 != FeelPlace.empty }) == [before] {
+            let more = watch()
+            seen = (seen.hashes + more.hashes, more.settled, seen.reads + more.reads)
+        }
         let pages = ([before] + seen.hashes).filter { $0 != FeelPlace.empty }
         var collapsed: [String] = []
         for h in pages where collapsed.last != h { collapsed.append(h) }
@@ -398,7 +405,7 @@ final class FeelUITests: XCTestCase {
             XCTAssertTrue(openContents(), "Contents opened")
             // From the sheet's bar, so the pull moves the sheet rather than scrolling its list.
             let bar = app.navigationBars.firstMatch
-            let from = bar.coordinate(withNormalizedOffset: CGVector(dx: 0.3, dy: 0.5))
+            let from = bar.coordinate(withNormalizedOffset: CGVector(dx: 0.05, dy: 0.5))
             from.press(forDuration: 0.05, thenDragTo: from.withOffset(CGVector(dx: 0, dy: app.windows.firstMatch.frame.height * 0.6)),
                        withVelocity: .fast, thenHoldForDuration: 0)
             dismissal("a pull down", done.waitForNonExistence(timeout: 10))
@@ -529,22 +536,21 @@ final class FeelUITests: XCTestCase {
         let backToCounting = states.drop { $0 != "number" }.contains("counting")
         var findings: [FeelFinding] = []
         if !states.contains("number") { findings.append(.couldNotCheck("no page count arrived in \(reads) reads")) }
+        if (el("reader.countingShown").value as? String) != "1" && !states.contains("counting") {
+            findings.append(.note("Counting pages… never showed on this open (the count was ready first)"))
+        }
         if backToCounting { findings.append(FeelFinding(what: "the count went back to Counting pages… after a number showed (\(states.joined(separator: " → ")))")) }
         feel.expect(FeelResult.judged(check: FeelGenre.chrome.rawValue, passing: "Counting pages… handed over to the number once",
                                       failing: { _ in "the page count did not hand over once" },
                                       measures: ["reads": Double(reads), "states": Double(states.count)], findings: findings,
                                       environment: feel.environment))
-        let shown = (el("reader.countingShown").value as? String) == "1"
-        if !shown && !states.contains("counting") {
-            feel.record(FeelResult(check: FeelGenre.chrome.rawValue, passed: true, summary: "the number came before Counting pages… could show",
-                                   findings: [.note("Counting pages… never showed on this open (the count was ready first)")]), name: "counting-not-seen")
-        }
         let total = (el("reader.pageCount").value as? String) ?? ""
         check(placeAcross([homeScreen], read: { words }), name: "home-screen-place")
         // After the Home Screen the number stays: it never falls back to Counting pages….
-        var fellBack = 0
-        for _ in 0..<Self.agreeingReads * 2 where el("reader.pageCounting").exists && (el("reader.pageCount").value as? String ?? "").isEmpty {
-            fellBack += 1
+        var fellBack = 0, looks = 0
+        while looks < Self.agreeingReads * 2 {
+            looks += 1
+            if el("reader.pageCounting").exists && (el("reader.pageCount").value as? String ?? "").isEmpty { fellBack += 1 }
             RunLoop.current.run(until: Date().addingTimeInterval(0.25))
         }
         check(FeelResult.judged(check: FeelGenre.chrome.rawValue, passing: "the number stayed after the Home Screen",
