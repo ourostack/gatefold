@@ -849,6 +849,37 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         }
 
         func beat() async { try? await Task.sleep(for: .milliseconds(120)) }
+
+        var isCovered: Bool {
+            host.reflowCover != nil || host.veil != nil || host.navigator.view.alpha < 0.5
+                || host.weakModel?.reopenPicture != nil
+        }
+
+        private var picture: UIView?
+
+        func hold() async {
+            let page = host.navigator.view!
+            guard picture == nil, let container = page.superview,
+                  let cover = page.snapshotView(afterScreenUpdates: false) else { return }
+            cover.frame = page.frame
+            cover.isUserInteractionEnabled = false
+            container.insertSubview(cover, aboveSubview: page)
+            picture = cover
+            readerLog.notice("spread: held a picture over the page he is reading while his words are put back")
+        }
+
+        func release() async {
+            guard let cover = picture else { return }
+            picture = nil
+            // His words on the left page as the moves left them, painted, before the picture goes.
+            _ = await host.renderedSnapshot(afterChange: true)
+            await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
+                UIView.animate(withDuration: 0.2, delay: 0, options: [.curveEaseInOut]) {
+                    cover.alpha = 0
+                } completion: { _ in done.resume() }
+            }
+            cover.removeFromSuperview()
+        }
     }
 
 

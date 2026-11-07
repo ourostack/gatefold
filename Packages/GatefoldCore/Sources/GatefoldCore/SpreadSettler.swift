@@ -25,6 +25,19 @@ public protocol SpreadSurface: AnyObject {
     func stillness() async -> String?
     /// One short wait.
     func beat() async
+    /// True while something stands over the page (a reflow's cover, the reopen picture, a jump's veil),
+    /// so a move is not seen. False on a spread the reader is reading.
+    var isCovered: Bool { get }
+    /// Puts a picture of the page as it is over it, so the moves that follow are not seen one by one.
+    func hold() async
+    /// Takes the picture away onto the page as the moves left it: one change on screen.
+    func release() async
+}
+
+public extension SpreadSurface {
+    var isCovered: Bool { true }
+    func hold() async {}
+    func release() async {}
 }
 
 /// Brings a spread opened on a place so the place's words start its left page. Every move is judged by
@@ -62,8 +75,27 @@ public enum SpreadSettler {
     /// move is always followed by one more such measurement. A move is never judged from the page as it
     /// was before the move, or from the progression the place was saved with (that is the old
     /// layout's, and means another page once a verso or a column break has gone in).
+    ///
+    /// On a spread he is reading (`isCovered` false) it never puts a column break in: his words already
+    /// on the left page stay where he is reading them. Any moves it does make there are held behind a
+    /// picture of the page and shown as one change (build 20: a late look for his words moved the
+    /// spread under his eyes, the verso's in-between spread and then his own).
     @MainActor
     public static func keepOnLeft(_ s: SpreadSurface, current: () -> Bool, maxPasses: Int = 8) async -> Bool? {
+        let visible = !s.isCovered
+        var held = false
+        let result = await settle(s, current: current, maxPasses: maxPasses, mayPin: !visible) {
+            guard visible, !held else { return }
+            held = true
+            await s.hold()
+        }
+        if held { await s.release() }
+        return result
+    }
+
+    @MainActor
+    private static func settle(_ s: SpreadSurface, current: () -> Bool, maxPasses: Int, mayPin: Bool,
+                               beforeMove: () async -> Void) async -> Bool? {
         var moved = false
         var pinTried = false
         var confirmed = false
@@ -74,11 +106,12 @@ public enum SpreadSettler {
             guard current(), let side = await s.wordsSide() else { return moved ? true : nil }
             switch side {
             case .before, .after:
+                await beforeMove()
                 await s.goToWords()
             case .left, .right:
                 if !pinTried {
                     pinTried = true
-                    if await s.pinWords() {
+                    if mayPin, await s.pinWords() {
                         await s.goToWords()
                         moved = true
                         confirmed = false
@@ -90,6 +123,7 @@ public enum SpreadSettler {
                     confirmed = true
                     continue
                 }
+                await beforeMove()
                 await s.toggleVerso()
                 await s.goToWords()
             }
