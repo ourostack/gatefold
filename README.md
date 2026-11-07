@@ -6,7 +6,7 @@
 
 # Gatefold
 
-**Pick up on the very same line.** Gatefold is a free reader for iPhone and iPad that keeps your place in step with your PocketBook e-reader, and it is built for every posture of iPhone Duo.
+**Pick up on the very same line.** Gatefold is a free reader for iPhone and iPad that keeps your place in step with your PocketBook e-reader through PocketBook Cloud, and it is built for every posture of iPhone Duo.
 
 <p align="center">
   <img src="docs/shots/01-shelf.webp" alt="Your shelf, in your pocket: the Gatefold library with every book from PocketBook Cloud" width="32%">
@@ -21,6 +21,6 @@
 - **A real gatefold.** On iPhone Duo it reads folded, flat as a two-page spread, or half-open on the table.
 - **Free, for good.** No ads, no subscriptions, no tracking.
 
-**Get it:** Gatefold is in TestFlight testing and not on the App Store yet. To run it today, build it from source: `xcodegen generate`, then open `Gatefold.xcodeproj` in Xcode.
+**Get it:** Gatefold is in invite-only TestFlight testing and not on the App Store yet. To run it today, build it from source with Xcode and [XcodeGen](https://github.com/yonaskolb/XcodeGen) (`brew install xcodegen`): run `xcodegen generate`, then open `Gatefold.xcodeproj`.
 
 Not affiliated with or endorsed by PocketBook International SA.
