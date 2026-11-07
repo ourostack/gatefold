@@ -269,12 +269,9 @@ struct Scrubber: View {
                         if let d = dragging, model.chapterMap.crossesChapter(from: d, to: next) { crossings += 1 }
                         withAnimation(.interactiveSpring) { dragging = next }
                     }
-                    .onEnded { g in
+                    .onEnded { _ in
+                        // Only a drag that became deliberate has a target; it lands where he lifts.
                         guard let target = dragging else { return }
-                        guard ScrubberIntent.isDeliberate(translation: g.translation) else {
-                            withAnimation(.interactiveSpring) { dragging = nil }
-                            return
-                        }
                         pending = target
                         dragging = nil
                         Task {
@@ -292,7 +289,7 @@ struct Scrubber: View {
         .accessibilityAdjustableAction { direction in
             let step = 0.01
             let target = model.totalProgression + (direction == .increment ? step : -step)
-            Task { await model.go(toProgression: min(1, max(0, target)), rememberBack: true) }
+            Task { await model.go(toProgression: min(1, max(0, target)), rememberBack: false) }
         }
         .accessibilityIdentifier("reader.scrubber")
     }

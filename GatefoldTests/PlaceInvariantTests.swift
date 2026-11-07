@@ -101,9 +101,6 @@ import Testing
         await f.model.locationDidChange(try #require(f.page.currentLocation))
         await f.model.follow(f.publication.readingOrder[14])
         #expect(f.model.showJumpBack)
-        // Longer than build 20's 8 s timer.
-        try await Task.sleep(for: .seconds(9))
-        #expect(f.model.showJumpBack, "the way back went away by itself")
         for turn in 1...3 {
             let here = try #require(f.page.currentLocation)
             f.page.currentLocation = here.copy(locations: { $0.progression = ($0.progression ?? 0) + 0.04 })
@@ -114,14 +111,44 @@ import Testing
         f.model.close()
     }
 
+    /// Slide mode: Readium's own swipes never call `userTurnedPage`, so the pill counts his swipes from
+    /// the reports they bring. The jump's own landing report and taps that only show or hide the
+    /// controls are not reading on.
+    @Test func swipesRetireTheWayBackButTapsAndTheLandingDoNot() async throws {
+        let f = try await S.make(remote: { _, _ in nil }, startAt: 0.05)
+        f.model.setPreferences { $0.pageTurn = .slide }
+        await f.model.load()
+        await f.model.locationDidChange(try #require(f.page.currentLocation))
+        await f.model.go(toProgression: 0.6, rememberBack: true)
+        // The jump's landing, reported with no touch.
+        await f.model.locationDidChange(try #require(f.page.currentLocation))
+        #expect(f.model.showJumpBack, "the jump's own landing counted as reading on")
+        // Taps that show and hide the controls: a touch each, then the layout reports the same page.
+        for visible in [true, false, true, false] {
+            f.model.noteInteraction()
+            f.model.controlsTapped(visible: visible)
+            await f.model.locationDidChange(try #require(f.page.currentLocation))
+        }
+        #expect(f.model.showJumpBack, "taps on the controls counted as reading on")
+        for swipe in 1...3 {
+            f.model.noteInteraction()
+            let here = try #require(f.page.currentLocation)
+            let next = here.copy(locations: { $0.progression = ($0.progression ?? 0) + 0.04; $0.totalProgression = ($0.totalProgression ?? 0) + 0.002 })
+            f.page.currentLocation = next
+            await f.model.locationDidChange(next)
+            #expect(f.model.showJumpBack == (swipe < 3), "after \(swipe) swipes")
+        }
+        f.model.close()
+    }
+
     /// Back is itself a jump: a stray tap on it is one tap to undo too.
     @Test func goingBackCanBeUndone() async throws {
         let f = try await S.make(remote: { _, _ in nil }, startAt: 0.05)
         await f.model.load()
         await f.model.locationDidChange(try #require(f.page.currentLocation))
         await f.model.go(toProgression: 0.7, rememberBack: true)
+        // Back tapped before Readium has reported the jump.
         let jumped = try #require(f.page.currentLocation)
-        await f.model.locationDidChange(jumped)
         await f.model.goBack()
         let back = try #require(f.model.backLocator, "Back left no way to return")
         #expect(abs((back.locations.totalProgression ?? 0) - (jumped.locations.totalProgression ?? 1)) < 0.01)

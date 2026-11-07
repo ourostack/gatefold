@@ -193,8 +193,6 @@ final class ReaderModel {
     /// First open here of a book the InkPad has a place in: the cover stays up until the reader has
     /// landed there, so the book's first page never flashes past (or loads blank) on the way.
     private var awaitingLanding: Bool
-    /// Our own place was front matter, so the InkPad's place is opened directly, as on a first open.
-    private var landsOverFrontMatter = false
     /// The Cloud's place as the shelf last saw it, to decide before asking whether to land there.
     private let cloudHint: Double?
     /// A landing made behind the shelf says so once the reader is looking.
@@ -531,14 +529,8 @@ final class ReaderModel {
         chapterMap = ChapterMap(chapters: toc.filter { $0.level == 0 }.map { .init(title: $0.title, start: $0.progression) }, positionCount: max(1, count))
         // Chapters that begin partway through a file take their own page, after the page is up.
         Task { [weak self] in await self?.placeFragments(starts: starts, positionCount: max(1, count)) }
-        // A place of ours that's still in the front matter (a list of illustrations, a title page) isn't
-        // reading yet: when the InkPad has the book further on, open there instead of offering a Jump.
-        if !awaitingLanding, let local = openedSnapshot?.totalProgression, let cloud = cloudHint, cloud > local + JumpSuggestion.threshold,
-           FrontMatter.isUnread(local, storyStart: toc.first(where: { $0.level == 0 })?.progression ?? 0) {
-            readerLog.notice("open: our place \(local, privacy: .public) is front matter; landing on the InkPad's")
-            awaitingLanding = true
-            landsOverFrontMatter = true
-        }
+        // A place of ours in the front matter is still his place: the InkPad's further one is offered
+        // once the page shows, never landed over (build 21).
 
         // The first page can take seconds to lay out on a cold web view; nothing below means anything
         // until the navigator reports where it is.
@@ -753,7 +745,7 @@ final class ReaderModel {
         // words: a place the Cloud has as a whole percent can land pages away. Anything else (a place
         // of ours, a percent, a page he can already see) is offered, never landed on: only he moves
         // the place (build 20 moved it under him on a foreground check).
-        if Self.landsAtOpen(neverOpenedHere: openedSnapshot == nil, overFrontMatter: landsOverFrontMatter,
+        if Self.landsAtOpen(neverOpenedHere: openedSnapshot == nil,
                             exact: target.locator != nil, coverUp: awaitingLanding && !pageReady, moved: hasMoved) {
             readerLog.notice("first open: landing on the Cloud place \(remote.pointer ?? "no pointer", privacy: .public)")
             await land(on: target.locator, progression: target.totalProgression, target: aim, cloud: remote.totalProgression, rememberBack: true)
@@ -811,8 +803,8 @@ final class ReaderModel {
 
     /// Whether a Cloud place is landed on rather than offered: a book never opened here, on the Cloud's
     /// exact words, before its first page has shown.
-    nonisolated static func landsAtOpen(neverOpenedHere: Bool, overFrontMatter: Bool, exact: Bool, coverUp: Bool, moved: Bool) -> Bool {
-        neverOpenedHere && !overFrontMatter && exact && coverUp && !moved
+    nonisolated static func landsAtOpen(neverOpenedHere: Bool, exact: Bool, coverUp: Bool, moved: Bool) -> Bool {
+        neverOpenedHere && exact && coverUp && !moved
     }
 
     /// The first words of the sentence at a place in the book, read from the book itself, and a
@@ -970,7 +962,6 @@ final class ReaderModel {
             watchUnderline()
         }
         readerLog.notice("catch-up: underlined \(Self.ms(since: tapped), privacy: .public) ms after the tap")
-        holdJumpBack()
     }
 
     /// For UI tests: the underline boxes drawn on screen, read every quarter second while it lasts.
@@ -1426,6 +1417,10 @@ final class ReaderModel {
         if notHisMove, let words = anchorLocator, keeper.anchor?.text != nil { location = words }
         let fromLayout = layoutReport
         layoutReport = false
+        // A swipe or a scroll of his that moved the page is reading on, as a turn is (slide and scroll
+        // never call `userTurnedPage`). A jump's own landing brings no touch, nor does a tap that only
+        // shows the controls.
+        if touchedAtReport && readerMoved && !fromLayout { readOnAfterJump() }
         // Only the reader moves the place. Readium reopening a page boundary off from the saved one is
         // not a move, so opening a book never overwrites a further-ahead place on the InkPad.
         // A book warmed behind the shelf has had no move of his yet: nothing it reports is his place.
@@ -1464,11 +1459,7 @@ final class ReaderModel {
     /// A touch on the page. If the next location (outside a reflow) differs from where the book
     /// opened, it was a swipe in slide or scroll mode and the place is the reader's own. A tap that
     /// only shows the controls changes no location, so it moves nothing.
-    func noteInteraction() {
-        touchesSinceLocation += 1
-        // Scrolling has no turns: a touch on the page is his reading on.
-        if pageTurn == .scroll { readOnAfterJump() }
-    }
+    func noteInteraction() { touchesSinceLocation += 1 }
     /// Touches on the page since the last location report; a tap that only shows or hides the controls
     /// clears them.
     @ObservationIgnored private var touchesSinceLocation = 0
@@ -1637,7 +1628,8 @@ final class ReaderModel {
         guard let back = backLocator else { return }
         hasMoved = true
         moves += 1
-        let undo = rememberPlace()
+        // The page on screen now: a Back tapped right after a jump comes before Readium's report of it.
+        let undo = rememberPlace(at: page?.currentLocation)
         defer { publishBack(undo) }
         withAnimation(Motion.chrome) { showJumpBack = false }
         await veiled { _ = await self.page?.go(to: back) }
@@ -1647,10 +1639,13 @@ final class ReaderModel {
     /// The place a jump leaves, held until the jump has moved the page: "Back to page" offered while
     /// the old page was still up (3.6 to 8.8 s on a cold Contents jump in build 19) read as a jump that
     /// had already happened. An earlier jump's way back goes down meanwhile; it isn't this jump's.
-    private func rememberPlace() -> Int {
+    private func rememberPlace(at here: Locator? = nil) -> Int {
         backJumps += 1
-        // The page number he sees, once counted; never Readium's positions, which aren't his pages.
-        pendingBack = (backJumps, location, screenNumbers?.compactMap { $0 }.first)
+        let place = here ?? location
+        // The page number he sees, once counted and taken on that page; never Readium's positions,
+        // which aren't his pages.
+        let number = lastGeometry.flatMap { g in place.map { ContentsIndex.sameResource($0.href.string, g.href) } == true ? screenNumbers?.compactMap { $0 }.first : nil }
+        pendingBack = (backJumps, place, number)
         backLocator = nil
         backPage = nil
         return backJumps
