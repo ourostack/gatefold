@@ -10,6 +10,8 @@ name: App
 #
 # A pull request that changes only Markdown still gets every required check: `changes` says so, the jobs below skip,
 # and `ipad-docs` reports the three iPad checks (a skipped matrix job reports under its unexpanded name; gatefold#42).
+# The jobs run unless `changes` said "only Markdown", so a failed `changes` or `build` turns them red instead of
+# letting them skip, which would count as a pass.
 
 on:
   pull_request:
@@ -56,7 +58,7 @@ jobs:
   build:
     name: Build for testing
     needs: changes
-    if: needs.changes.outputs.app == 'true'
+    if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
     runs-on: xcode-27
     timeout-minutes: 35
     outputs:
@@ -66,7 +68,7 @@ jobs:
       - uses: ./.github/actions/select-xcode
       - id: name
         name: Name the build by commit and Xcode version
-        run: echo "artifact=gatefold-tests-${{ github.sha }}-xcode-$(xcodebuild -version | sed -n '1s/Xcode //p')" >> "$GITHUB_OUTPUT"
+        run: echo "artifact=gatefold-tests-${{ github.sha }}-xcode-$(xcodebuild -version | tr -s ' \n' '-' | sed 's/-$//; s/^Xcode-//; s/-Build-version-/-/')" >> "$GITHUB_OUTPUT"
       - name: Install the Metal toolchain (the page curl is a Metal shader)
         run: xcodebuild -downloadComponent MetalToolchain
       - name: Generate the Xcode project from project.yml
@@ -88,11 +90,14 @@ jobs:
           name: ${{ steps.name.outputs.artifact }}
           path: ${{ runner.temp }}/products.tgz
           retention-days: 2
+          compression-level: 0
+          overwrite: true
       - uses: actions/upload-artifact@v4
         if: failure() || cancelled()
         with:
           name: build-log
           path: ${{ runner.temp }}/build.log
+          overwrite: true
 
   core:
     name: GatefoldCore tests
@@ -101,7 +106,7 @@ jobs:
     # In Swift's own image: the Ubuntu 26.04 runner image stopped carrying Swift (exit 127 on
     # `swift --version`, 2026-11-05).
     needs: changes
-    if: needs.changes.outputs.app == 'true'
+    if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
     runs-on: ubuntu-latest
     container: swift:6.2
     timeout-minutes: 20
@@ -150,7 +155,7 @@ jobs:
             pr_tests: >-
               ReviewerChecksUITests/testTheLastPagesNumberIsTheCount WindowFitUITests
     needs: [changes, build]
-    if: needs.changes.outputs.app == 'true'
+    if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
     runs-on: xcode-27
     timeout-minutes: ${{ matrix.timeout }}
     steps:
@@ -163,10 +168,15 @@ jobs:
           name: ${{ needs.build.outputs.artifact }}
           path: ${{ runner.temp }}
       - name: Unpack the app and its tests (built once, for this commit and Xcode)
+        env:
+          ARTIFACT: ${{ needs.build.outputs.artifact }}
         run: |
           set -eu
           mkdir -p "$RUNNER_TEMP/dd/Build"
           tar -xzf "$RUNNER_TEMP/products.tgz" -C "$RUNNER_TEMP/dd/Build"
+          # The build is keyed by commit and Xcode version and build; this job must have selected the same Xcode.
+          want="gatefold-tests-$GITHUB_SHA-xcode-$(xcodebuild -version | tr -s ' \n' '-' | sed 's/-$//; s/^Xcode-//; s/-Build-version-/-/')"
+          [ "$want" = "$ARTIFACT" ] || { echo "::error::Built as $ARTIFACT, but this job's Xcode makes $want"; exit 1; }
           echo "XCTESTRUN=$(ls "$RUNNER_TEMP"/dd/Build/Products/*.xctestrun | head -1)" >> "$GITHUB_ENV"
       - name: The iPad finished booting
         # boot-sim.sh retries a boot that fails or hangs (#57); this step waits for it with a limit.
@@ -254,7 +264,7 @@ jobs:
     # only Xcode 26, so this job cannot move there.
     # ~55 min in build 19: 85 keeps 30% headroom.
     needs: [changes, build]
-    if: needs.changes.outputs.app == 'true'
+    if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
     runs-on: xcode-27
     timeout-minutes: 85
     steps:
@@ -279,10 +289,15 @@ jobs:
           name: ${{ needs.build.outputs.artifact }}
           path: ${{ runner.temp }}
       - name: Unpack the app and its tests (built once, for this commit and Xcode)
+        env:
+          ARTIFACT: ${{ needs.build.outputs.artifact }}
         run: |
           set -eu
           mkdir -p "$RUNNER_TEMP/dd/Build"
           tar -xzf "$RUNNER_TEMP/products.tgz" -C "$RUNNER_TEMP/dd/Build"
+          # The build is keyed by commit and Xcode version and build; this job must have selected the same Xcode.
+          want="gatefold-tests-$GITHUB_SHA-xcode-$(xcodebuild -version | tr -s ' \n' '-' | sed 's/-$//; s/^Xcode-//; s/-Build-version-/-/')"
+          [ "$want" = "$ARTIFACT" ] || { echo "::error::Built as $ARTIFACT, but this job's Xcode makes $want"; exit 1; }
           echo "XCTESTRUN=$(ls "$RUNNER_TEMP"/dd/Build/Products/*.xctestrun | head -1)" >> "$GITHUB_ENV"
       - name: The iPhone Duo finished booting
         timeout-minutes: 12
@@ -321,7 +336,7 @@ jobs:
     # Pull requests run its smoke (a page a turn, and a reopen keeps the numbers); pushes to main add the reviewers'
     # full list, about 13 min a test on this runner (gatefold#39).
     needs: [changes, build]
-    if: needs.changes.outputs.app == 'true'
+    if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
     runs-on: xcode-27
     # 45 min measured (build 20): 65 keeps 30% headroom.
     timeout-minutes: 65
@@ -335,10 +350,15 @@ jobs:
           name: ${{ needs.build.outputs.artifact }}
           path: ${{ runner.temp }}
       - name: Unpack the app and its tests (built once, for this commit and Xcode)
+        env:
+          ARTIFACT: ${{ needs.build.outputs.artifact }}
         run: |
           set -eu
           mkdir -p "$RUNNER_TEMP/dd/Build"
           tar -xzf "$RUNNER_TEMP/products.tgz" -C "$RUNNER_TEMP/dd/Build"
+          # The build is keyed by commit and Xcode version and build; this job must have selected the same Xcode.
+          want="gatefold-tests-$GITHUB_SHA-xcode-$(xcodebuild -version | tr -s ' \n' '-' | sed 's/-$//; s/^Xcode-//; s/-Build-version-/-/')"
+          [ "$want" = "$ARTIFACT" ] || { echo "::error::Built as $ARTIFACT, but this job's Xcode makes $want"; exit 1; }
           echo "XCTESTRUN=$(ls "$RUNNER_TEMP"/dd/Build/Products/*.xctestrun | head -1)" >> "$GITHUB_ENV"
       - name: The iPhone Duo finished booting
         timeout-minutes: 12

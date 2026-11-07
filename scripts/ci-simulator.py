@@ -94,7 +94,13 @@ def main(argv):
     if argv == ["--selftest"]:
         return selftest()
     if len(argv) >= 3 and argv[0] == "start":
-        start(argv[1], argv[2])
+        try:
+            start(argv[1], argv[2])
+        except (SystemExit, subprocess.SubprocessError, ValueError, KeyError) as e:
+            # The wait step reports it, with the log; the job goes on downloading meanwhile.
+            d = state_dir()
+            (d / f"{argv[1]}.log").open("a").write(f"ci-simulator start failed: {e!r}\n")
+            (d / f"{argv[1]}.status").write_text("97\n")
         return 0
     if len(argv) >= 3 and argv[0] == "wait":
         name, limit = argv[1], int(argv[3]) if len(argv) > 3 else 600
