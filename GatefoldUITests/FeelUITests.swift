@@ -1,4 +1,3 @@
-import CryptoKit
 import OuroFeel
 import OuroFeelCore
 import UIKit
@@ -52,6 +51,8 @@ final class FeelUITests: XCTestCase {
 
     private func el(_ id: String) -> XCUIElement { app.descendants(matching: .any)[id].firstMatch }
     private var words: String { (el("reader.visibleText").value as? String) ?? "" }
+    /// The reader's own word that its page is laid out and showing (`reader.pageReady`).
+    private var ready: Bool { (el("reader.pageReady").value as? String) == "1" }
     private func page(_ x: Double, _ y: Double) -> XCUICoordinate {
         el("reader.page").coordinate(withNormalizedOffset: CGVector(dx: x, dy: y))
     }
@@ -77,6 +78,8 @@ final class FeelUITests: XCTestCase {
             reads += 1
             let h = FeelPlace.fingerprint(words)
             if seq.last == h { same += 1 } else { seq.append(h); same = 1 }
+            // Only reads taken once the reader says its page is ready count towards agreement.
+            if !ready { same = 0 }
             if h != FeelPlace.empty, same >= Self.agreeingReads { return (seq, true, reads) }
             RunLoop.current.run(until: Date().addingTimeInterval(0.1))
         }
@@ -88,6 +91,43 @@ final class FeelUITests: XCTestCase {
     private func settled() -> String {
         _ = watch()
         return words
+    }
+
+    /// A step for ``placeAcross(_:read:)``: its name and what it does.
+    private typealias Step = (name: String, run: () -> Void)
+
+    private var homeScreen: Step {
+        ("the Home Screen and back", {
+            XCUIDevice.shared.press(.home)
+            _ = self.app.wait(for: .runningBackground, timeout: 10)
+            self.app.activate()
+            _ = self.app.wait(for: .runningForeground, timeout: 30)
+        })
+    }
+
+    private var relaunch: Step {
+        ("relaunch", {
+            self.app.terminate()
+            self.keepLibraryOnRelaunch()
+            self.app.launch()
+            self.waitForPage()
+            self.hideChrome()
+        })
+    }
+
+    /// Feel's place stability, read by events: the place is read once the words have settled (``watch()``) before
+    /// and after each step, and compared as SHA-256 prefixes (`FeelPlace`). Feel's own `place(across:)` settles on the
+    /// runner's clock, which a slow reopen outlasts.
+    private func placeAcross(_ steps: [Step], read: () -> String) -> FeelResult {
+        _ = watch()
+        let start = FeelPlace.fingerprint(read())
+        var after: [String: String] = [:]
+        for step in steps {
+            step.run()
+            _ = watch()
+            after[step.name] = FeelPlace.fingerprint(read())
+        }
+        return FeelPlace.compare(start: start, after: after)
     }
 
     // TODO(ouro-ui-apple 0.3.6): when it is tagged, judge the `.stay` gestures with `feel.placeHeld(across:read:)`, the
@@ -189,7 +229,8 @@ final class FeelUITests: XCTestCase {
 
         let email = app.textFields["signIn.email"]
         let toEmail = feel.film(["signIn.email", "signIn.continue"], for: 3) { start.tap() }
-        check(toEmail.jumps(of: "signIn.continue"), name: "email-step-jumps", film: toEmail)
+        // A film samples on the runner's clock, so its jumps are recorded for the reviewers, never judged here.
+        feel.record(toEmail.jumps(of: "signIn.continue"), name: "email-step-jumps", film: toEmail)
         XCTAssertTrue(email.waitForExistence(timeout: 15), "the email step")
         check(feel.insideWindow(poses: [.current]), name: "email-inside-window")
 
@@ -218,7 +259,7 @@ final class FeelUITests: XCTestCase {
         password.typeText("feel-fixture")
         let toShelf = feel.film(["library.grid"], for: 4) { self.app.buttons["signIn.continue"].tap() }
         XCTAssertTrue(el("library.grid").waitForExistence(timeout: 60), "signed in, on the shelf")
-        check(toShelf.jumps(of: "library.grid"), name: "shelf-jumps", film: toShelf)
+        feel.record(toShelf.jumps(of: "library.grid"), name: "shelf-jumps", film: toShelf)
         check(feel.insideWindow(poses: [.current]), name: "shelf-inside-window")
     }
 
@@ -233,21 +274,27 @@ final class FeelUITests: XCTestCase {
         // Off the first page, so the place is his own.
         expectGesture("turn before the place checks", .moveOnce) { page(0.92, 0.5).tap() }
         expectGesture("a second turn", .moveOnce) { page(0.92, 0.5).tap() }
-        keepLibraryOnRelaunch()
-        let reopen = FeelPlaceStep("close to the shelf and open again") { _ in
+        let reopen: Step = ("close to the shelf and open again", {
             self.toShelf()
             self.openFromShelf()
             self.hideChrome()
-        }
-        check(feel.place(across: [.background, reopen, .relaunch], read: { self.words }), name: "open-reopen-place")
+        })
+        check(placeAcross([homeScreen, reopen, relaunch], read: { words }), name: "open-reopen-place")
 
-        // The way back from the reader (Close Book returns to the shelf), checked by Feel's own walk on the iPhone.
-        // On the iPad the walk's edge swipe is unproven (ouro-ui-apple docs), so it is recorded, not judged there.
-        app.terminate()
-        launch(open: false)
+        // The reader's way back is Close Book, under a tap (its chrome starts hidden, and an edge swipe turns the page,
+        // so Feel's walk cannot judge the reader): it must return to the shelf.
+        showChrome()
+        let close = app.buttons["reader.close"]
+        let backToShelf = close.exists && { close.tap(); return el("library.grid").waitForExistence(timeout: 30) }()
+        check(FeelResult(check: FeelGenre.wayBack.rawValue, passed: backToShelf,
+                         summary: backToShelf ? "Close Book returned to the shelf" : "Close Book did not return to the shelf",
+                         findings: backToShelf ? [] : [FeelFinding(what: "the reader's Close Book did not return to the shelf")],
+                         environment: feel.environment), name: "reader-way-back")
+
+        // Feel's walk over the shelf's own screens (Account). On the iPad its edge swipe is unproven (ouro-ui-apple
+        // docs), so there it is recorded, not judged.
         let shelf = FeelEntry("shelf") { app in _ = app.descendants(matching: .any)["library.grid"].waitForExistence(timeout: 60) }
-        let walk = feel.wayBack(from: [shelf], follow: FeelFollow(types: [], prefixes: ["book.\(Self.book)", "library.account"]),
-                                depth: 1, limit: 4)
+        let walk = feel.wayBack(from: [shelf], follow: FeelFollow(types: [], prefixes: ["library.account"]), depth: 1, limit: 4)
         if pad { feel.record(walk, name: "way-back-ipad-unjudged") } else { check(walk, name: "way-back") }
     }
 
@@ -294,17 +341,23 @@ final class FeelUITests: XCTestCase {
             let now = self.words.split(whereSeparator: \.isWhitespace).joined(separator: " ")
             return now.isEmpty ? "" : (now.contains(anchor) ? "the first words he was on are in view" : FeelPlace.fingerprint(now))
         }
-        var steps: [FeelPlaceStep] = [.rotate, .background]
+        let rotate: Step = ("rotate and back", {
+            XCUIDevice.shared.orientation = .landscapeLeft
+            _ = self.watch()
+            XCUIDevice.shared.orientation = .portrait
+        })
+        var steps: [Step] = [rotate, homeScreen]
         let wide = app.windows.firstMatch.frame.width >= 700
         if !pad, wide, el("debug.posture.spread").exists || app.buttons["debug.posture.spread"].waitForExistence(timeout: 5) {
             for posture in ["spread", "tabletop", "single"] {
-                steps.append(FeelPlaceStep("posture \(posture)") { feel in
-                    feel.app.buttons["debug.posture.\(posture)"].tap()
-                    _ = feel.app.descendants(matching: .any)["reader.posture"].waitForExistence(timeout: 10)
-                })
+                steps.append(("posture \(posture)", {
+                    self.app.buttons["debug.posture.\(posture)"].tap()
+                    let probe = self.el("reader.posture")
+                    _ = XCTWaiter.wait(for: [self.expectation(for: NSPredicate(format: "label == %@", posture), evaluatedWith: probe)], timeout: 60)
+                }))
             }
         }
-        let result = feel.place(across: steps, read: read)
+        let result = placeAcross(steps, read: read)
         var noted = result
         if !wide && !pad {
             noted.findings.append(.note("the folded cover screen (\(Int(app.windows.firstMatch.frame.width)) pt) shows no spread, so posture was not walked here"))
@@ -321,24 +374,34 @@ final class FeelUITests: XCTestCase {
         hideChrome()
         let start = FeelPlace.fingerprint(settled())
         let contents = app.buttons["reader.contents"]
-        let current = el("contents.current")
+        // The sheet is up while its Done is: a row (even the current one) can scroll out of a lazy list.
+        let done = app.navigationBars.buttons.matching(NSPredicate(format: "label == 'Done' OR label == 'Close'")).firstMatch
         func openContents() -> Bool {
             showChrome()
             guard contents.waitForExistence(timeout: 5) else { return false }
             contents.tap()
-            return app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'contents.'")).firstMatch.waitForExistence(timeout: 15)
+            return done.waitForExistence(timeout: 15)
+        }
+        func dismissal(_ how: String, _ gone: Bool) {
+            check(FeelResult(check: FeelGenre.overlayDismissal.rawValue, passed: gone,
+                             summary: gone ? "\(how) put Contents away" : "Contents stayed up after \(how)",
+                             findings: gone ? [] : [FeelFinding(what: "Contents stayed up after \(how)")],
+                             environment: feel.environment), name: "contents-dismissal-" + how.replacingOccurrences(of: " ", with: "-"))
+            if !gone, done.exists { done.tap(); _ = done.waitForNonExistence(timeout: 10) }
         }
         expectGesture("Contents opened and closed with Done", .stay) {
-            XCTAssertTrue(openContents(), "Contents opened")
-            let done = app.navigationBars.buttons.matching(NSPredicate(format: "label == 'Done' OR label == 'Close'")).firstMatch
-            XCTAssertTrue(done.waitForExistence(timeout: 5), "Contents has a visible way back")
+            XCTAssertTrue(openContents(), "Contents opened, with a visible way back")
             done.tap()
-            _ = current.waitForNonExistence(timeout: 10)
+            dismissal("Done", done.waitForNonExistence(timeout: 10))
         }
-        expectGesture("Contents opened and swiped down", .stay) {
+        expectGesture("Contents opened and pulled down", .stay) {
             XCTAssertTrue(openContents(), "Contents opened")
-            app.swipeDown(velocity: .fast)
-            _ = current.waitForNonExistence(timeout: 10)
+            // From the sheet's bar, so the pull moves the sheet rather than scrolling its list.
+            let bar = app.navigationBars.firstMatch
+            let from = bar.coordinate(withNormalizedOffset: CGVector(dx: 0.3, dy: 0.5))
+            from.press(forDuration: 0.05, thenDragTo: from.withOffset(CGVector(dx: 0, dy: app.windows.firstMatch.frame.height * 0.6)),
+                       withVelocity: .fast, thenHoldForDuration: 0)
+            dismissal("a pull down", done.waitForNonExistence(timeout: 10))
         }
         // A chapter well ahead: the list is lazy, so scroll it into view.
         expectGesture("a Contents jump", .moveOnce) {
@@ -347,39 +410,39 @@ final class FeelUITests: XCTestCase {
             for _ in 0..<20 where !(row.exists && row.isHittable) { app.swipeUp(velocity: .slow) }
             XCTAssertTrue(row.exists && row.isHittable, "Contents lists a chapter ahead")
             row.tap()
+            dismissal("a pick", done.waitForNonExistence(timeout: 10))
         }
-        let closed = current.waitForNonExistence(timeout: 10)
-        feel.expect(FeelResult(check: FeelGenre.overlayDismissal.rawValue, passed: closed,
-                               summary: closed ? "picking a chapter closed Contents" : "Contents stayed open after a pick",
-                               findings: closed ? [] : [FeelFinding(what: "Contents stayed open after a chapter was picked")],
-                               environment: feel.environment))
-        expectGesture("Back after the jump", .moveOnce) {
+        func goBack(_ after: String) {
             let back = app.buttons["reader.back"]
             if !back.waitForExistence(timeout: 5) { showChrome() }
-            XCTAssertTrue(back.waitForExistence(timeout: 5), "a way back after the jump")
+            XCTAssertTrue(back.waitForExistence(timeout: 5), "a way back after \(after)")
             back.tap()
         }
-        let returned = FeelPlace.compare(start: start, after: ["Back after a Contents jump": FeelPlace.fingerprint(settled())])
-        check(returned, name: "contents-back-place")
+        expectGesture("Back after the jump", .moveOnce) { goBack("the jump") }
+        check(FeelPlace.compare(start: start, after: ["Back after a Contents jump": FeelPlace.fingerprint(settled())]),
+              name: "contents-back-place")
 
-        // A link in the book: the front matter's own contents links into the text.
+        // A link in the book: the front matter links into the text. The first page is the cover, so turn (counted, at
+        // most eight turns) until a page shows a link.
         app.terminate()
         launch(open: true, ["-GatefoldGoTo", "0"])
         hideChrome()
-        let linkStart = FeelPlace.fingerprint(settled())
         let link = el("reader.page").links.firstMatch
-        guard link.waitForExistence(timeout: 10) else {
-            feel.expect(FeelResult(check: FeelGenre.wayBack.rawValue, passed: false, summary: "could not check: no link on the opening page",
-                                   findings: [.couldNotCheck("no link was found on the book's opening page")], environment: feel.environment))
+        var turns = 0
+        while !link.exists && turns < 8 {
+            turns += 1
+            page(0.92, 0.5).tap()
+            _ = watch()
+        }
+        guard link.exists else {
+            check(FeelResult(check: FeelGenre.wayBack.rawValue, passed: false, summary: "could not check: no link in the first \(turns + 1) pages",
+                             findings: [.couldNotCheck("no link was found in the book's first \(turns + 1) pages")], environment: feel.environment),
+                  name: "link-way-back")
             return
         }
+        let linkStart = FeelPlace.fingerprint(settled())
         expectGesture("a link followed", .moveOnce) { link.tap() }
-        expectGesture("Back after the link", .moveOnce) {
-            let back = app.buttons["reader.back"]
-            if !back.waitForExistence(timeout: 5) { showChrome() }
-            XCTAssertTrue(back.waitForExistence(timeout: 5), "a way back after the link")
-            back.tap()
-        }
+        expectGesture("Back after the link", .moveOnce) { goBack("the link") }
         check(FeelPlace.compare(start: linkStart, after: ["Back after a link": FeelPlace.fingerprint(settled())]),
               name: "link-back-place")
     }
@@ -424,14 +487,22 @@ final class FeelUITests: XCTestCase {
         // A tap on the page above the panel puts it away, as any overlay should, and does not turn the page.
         expectGesture("Appearance put away by a tap beside it", .stay) {
             openAppearance()
-            let panel = el("appearance.panel").frame, window = app.windows.firstMatch.frame
-            let y = max(window.minY + 120, panel.minY - 60)
-            app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: window.midX, dy: y)).tap()
+            // Between the top bar's controls and the panel, clear of both, in the page's middle third (not a turn zone).
+            let panel = el("appearance.panel").frame, pageFrame = el("reader.page").frame
+            let barFoot = max(app.buttons["reader.close"].frame.maxY, pageFrame.minY)
+            guard panel.minY - barFoot > 60 else {
+                check(FeelResult(check: FeelGenre.overlayDismissal.rawValue, passed: false, summary: "could not check: no page between the bar and the panel",
+                                 findings: [.couldNotCheck("the panel reaches the top bar, so there is no page to tap beside it")],
+                                 environment: feel.environment), name: "appearance-tap-beside")
+                close()
+                return
+            }
+            app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: pageFrame.midX, dy: (barFoot + panel.minY) / 2)).tap()
             let gone = el("appearance.panel").waitForNonExistence(timeout: 5)
-            feel.expect(FeelResult(check: FeelGenre.overlayDismissal.rawValue, passed: gone,
+            check(FeelResult(check: FeelGenre.overlayDismissal.rawValue, passed: gone,
                                    summary: gone ? "a tap beside Appearance put it away" : "Appearance stayed after a tap beside it",
                                    findings: gone ? [] : [FeelFinding(what: "a tap on the page above the Appearance panel did not put it away")],
-                                   environment: feel.environment))
+                                   environment: feel.environment), name: "appearance-tap-beside")
             if !gone { close() }
             hideChrome()
         }
@@ -463,9 +534,24 @@ final class FeelUITests: XCTestCase {
                                       failing: { _ in "the page count did not hand over once" },
                                       measures: ["reads": Double(reads), "states": Double(states.count)], findings: findings,
                                       environment: feel.environment))
+        let shown = (el("reader.countingShown").value as? String) == "1"
+        if !shown && !states.contains("counting") {
+            feel.record(FeelResult(check: FeelGenre.chrome.rawValue, passed: true, summary: "the number came before Counting pages… could show",
+                                   findings: [.note("Counting pages… never showed on this open (the count was ready first)")]), name: "counting-not-seen")
+        }
         let total = (el("reader.pageCount").value as? String) ?? ""
-        keepLibraryOnRelaunch()
-        check(feel.place(across: [.background], read: { self.words }), name: "home-screen-place")
+        check(placeAcross([homeScreen], read: { words }), name: "home-screen-place")
+        // After the Home Screen the number stays: it never falls back to Counting pages….
+        var fellBack = 0
+        for _ in 0..<Self.agreeingReads * 2 where el("reader.pageCounting").exists && (el("reader.pageCount").value as? String ?? "").isEmpty {
+            fellBack += 1
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        }
+        check(FeelResult.judged(check: FeelGenre.chrome.rawValue, passing: "the number stayed after the Home Screen",
+                                failing: { _ in "Counting pages… came back after the Home Screen" },
+                                measures: ["countingReads": Double(fellBack)],
+                                findings: fellBack == 0 ? [] : [FeelFinding(what: "Counting pages… showed again in \(fellBack) reads after the Home Screen")],
+                                environment: feel.environment), name: "counting-after-home-screen")
         let after = (el("reader.pageCount").value as? String) ?? ""
         feel.expect(FeelResult(check: FeelGenre.placeStability.rawValue, passed: !total.isEmpty && after == total,
                                summary: after == total ? "the page count held across the Home Screen" : "the page count changed across the Home Screen",
