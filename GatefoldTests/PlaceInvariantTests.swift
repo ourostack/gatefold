@@ -103,6 +103,8 @@ import Testing
         #expect(f.model.showJumpBack)
         for turn in 1...3 {
             let here = try #require(f.page.currentLocation)
+            // An edge tap: a touch on the page, then the turn lands.
+            f.model.noteInteraction()
             f.page.currentLocation = here.copy(locations: { $0.progression = ($0.progression ?? 0) + 0.04 })
             f.model.userTurnedPage()
             try await Task.sleep(for: .milliseconds(100))
@@ -146,8 +148,9 @@ import Testing
         let f = try await S.make(remote: { _, _ in nil }, startAt: 0.05)
         await f.model.load()
         await f.model.locationDidChange(try #require(f.page.currentLocation))
-        await f.model.go(toProgression: 0.7, rememberBack: true)
         // Back tapped before Readium has reported the jump.
+        f.page.reportsJumps = false
+        await f.model.go(toProgression: 0.7, rememberBack: true)
         let jumped = try #require(f.page.currentLocation)
         await f.model.goBack()
         let back = try #require(f.model.backLocator, "Back left no way to return")

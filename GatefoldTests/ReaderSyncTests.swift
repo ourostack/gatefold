@@ -20,6 +20,9 @@ final class ScriptedPage: ReaderPage {
 
     init(at location: Locator) { currentLocation = location }
 
+    /// Whether a jump reports its page (a test holds the report back to act before Readium's).
+    var reportsJumps = true
+
     @discardableResult
     func go(to locator: Locator) async -> Bool {
         jumps.append(locator)
@@ -35,7 +38,7 @@ final class ScriptedPage: ReaderPage {
         if let words = locator.text.highlight {
             visibleText = showsWords(locator) ? "the lines above the place. " + words + " and on down the page" : "a page of something else entirely"
         }
-        if let model { Task { await model.locationDidChange(landed) } }
+        if let model, reportsJumps { Task { await model.locationDidChange(landed) } }
         return true
     }
 
