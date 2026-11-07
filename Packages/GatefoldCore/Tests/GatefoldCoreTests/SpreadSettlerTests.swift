@@ -232,4 +232,26 @@ struct SpreadSettlerTests {
         _ = await SpreadSettler.keepOnLeft(page, current: { false })
         #expect(page.versoToggles == 0)
     }
+    /// A page that never stands still (a busy device, a layout that keeps shifting): the settler ends
+    /// after its read budget, counted in reads, not seconds. CI's cold iPad ran it past the reflow's
+    /// 12 s watchdog, which started the restore again, and the settler again, three times an open.
+    @Test func aPageThatNeverStandsStillEndsTheSettlerWithinItsReads() async {
+        let page = RestlessPage()
+        _ = await SpreadSettler.keepOnLeft(page, current: { true })
+        #expect(page.stillnessReads <= SpreadSettler.readBudget)
+    }
+}
+
+@MainActor
+private final class RestlessPage: SpreadSurface {
+    var stillnessReads = 0
+    var side = WordsSide.right
+    func wordsSide() async -> WordsSide? { side }
+    func pinWords() async -> Bool { false }
+    func toggleVerso() async { side = side == .right ? .left : .right }
+    func goToSavedPlace() async {}
+    func goToWords() async { side = side == .left ? .right : .left }
+    func stepSpread(forward: Bool) async {}
+    func stillness() async -> String? { stillnessReads += 1; return "\(stillnessReads)" }
+    func beat() async {}
 }

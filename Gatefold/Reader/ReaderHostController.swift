@@ -641,6 +641,12 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         // gives way as soon as it wakes.
         Task { [weak self] in
             try? await Task.sleep(for: .seconds(12))
+            // A restore placing his words on the left page is not stalled: it is measuring, within its
+            // own read budget. Starting it again threw that work away and began it once more (CI's cold
+            // iPad: three restarts, a 91 s open, and a place job run out of time).
+            while let self, self.placingGeneration == generation, generation == self.reflowGeneration {
+                try? await Task.sleep(for: .milliseconds(200))
+            }
             guard let self, generation == self.reflowGeneration, self.settledGeneration != generation,
                   self.weakModel != nil else { return }
             // Twelve seconds is already too long to look at a picture of the old page: show the page as
@@ -667,6 +673,8 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         } completion: { _ in cover?.removeFromSuperview() }
     }
     private var settledGeneration = -1
+    /// The reflow whose restore is placing his words on the left page right now.
+    private var placingGeneration = -1
     /// The newest reflow whose restore has had its first script back from the page.
     private var firstScriptBack = -1
     private var reflowRetries = 0
@@ -716,7 +724,12 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         // A spread keeps the reader's sentence on its left page, the page he was on.
         var target: ReadingAnchor? = held
         if case let .jump(anchor) = action { target = anchor }
-        if columns == 2, let target, let moved = await keepOnLeft(target, current: current) { after = moved }
+        if columns == 2, let target {
+            placingGeneration = generation
+            let moved = await keepOnLeft(target, current: current)
+            if placingGeneration == generation { placingGeneration = -1 }
+            if let moved { after = moved }
+        }
         guard current() else { return }
         model.keeper.restoreDidComplete()
         model.reflowDidFinish(visible: after)

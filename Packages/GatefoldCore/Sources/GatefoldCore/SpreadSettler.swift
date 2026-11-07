@@ -31,17 +31,28 @@ public protocol SpreadSurface: AnyObject {
 /// measuring the page again once it has stopped moving, because the navigator's own relayout and the
 /// restore's edits to the page land in any order.
 public enum SpreadSettler {
+    /// How many reads of `stillness` one settle may make, across all its passes. Counted in reads, not
+    /// seconds: each read is a script on the page, and on a busy device eight passes of twelve reads ran
+    /// past the reflow's 12 s watchdog, which started the restore (and this) again, three times an open.
+    public static let readBudget = 32
+
     /// Waits until two reads of `stillness` agree, up to `reads` reads.
     @MainActor
-    static func waitStill(_ s: SpreadSurface, current: () -> Bool, reads: Int = 12) async {
+    /// Returns how many reads it made.
+    @discardableResult
+    static func waitStill(_ s: SpreadSurface, current: () -> Bool, reads: Int = 12) async -> Int {
+        guard reads > 0 else { return 0 }
         var last = await s.stillness()
-        for _ in 0..<reads {
+        var made = 1
+        while made < reads {
             await s.beat()
-            guard current() else { return }
+            guard current() else { return made }
             let now = await s.stillness()
-            if now == last { return }
+            made += 1
+            if now == last { return made }
             last = now
         }
+        return made
     }
 
     /// True when the page was moved, nil when the words were already right or are not here.
@@ -56,9 +67,10 @@ public enum SpreadSettler {
         var moved = false
         var pinTried = false
         var confirmed = false
+        var readsLeft = readBudget
         for _ in 0..<maxPasses {
-            guard current() else { return nil }
-            await waitStill(s, current: current)
+            guard current(), readsLeft > 0 else { return current() && moved ? true : nil }
+            readsLeft -= await waitStill(s, current: current, reads: min(12, readsLeft))
             guard current(), let side = await s.wordsSide() else { return moved ? true : nil }
             switch side {
             case .before, .after:
