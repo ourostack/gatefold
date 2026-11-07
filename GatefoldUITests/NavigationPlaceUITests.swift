@@ -126,13 +126,15 @@ final class NavigationPlaceUITests: XCTestCase {
         showChrome()
         let scrubber = app.descendants(matching: .any)["reader.scrubber"]
         XCTAssertTrue(scrubber.waitForExistence(timeout: 5))
-        scrubber.coordinate(withNormalizedOffset: CGVector(dx: 0.62, dy: 0.5)).tap()
+        // A deliberate drag along the bar: a tap on it never jumps (PlaceUndoUITests).
+        let from = scrubber.coordinate(withNormalizedOffset: CGVector(dx: 0.1, dy: 0.5))
+        from.press(forDuration: 0.1, thenDragTo: scrubber.coordinate(withNormalizedOffset: CGVector(dx: 0.62, dy: 0.5)))
         _ = waitForWords(changingFrom: first, timeout: 20)
         leaveAndReturn(expecting: first, "scrubber jump")
     }
 
     private func turn(forward: Bool) {
-        app.descendants(matching: .any)["reader.page"].coordinate(withNormalizedOffset: CGVector(dx: forward ? 0.92 : 0.08, dy: 0.5)).tap()
+        app.descendants(matching: .any)["reader.page"].coordinate(withNormalizedOffset: CGVector(dx: forward ? 0.97 : 0.03, dy: 0.5)).tap()
     }
 
     private func leaveAndRelaunch() {

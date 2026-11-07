@@ -55,7 +55,7 @@ final class ReopenUITests: XCTestCase {
         let picture = app.descendants(matching: .any)["reader.reopenPicture"].firstMatch
         XCTAssertTrue(picture.waitForExistence(timeout: 5), "no picture of his page at launch")
         // A tap on the right edge of the picture, before the live page is up.
-        picture.coordinate(withNormalizedOffset: CGVector(dx: 0.92, dy: 0.5)).tap()
+        picture.coordinate(withNormalizedOffset: CGVector(dx: 0.97, dy: 0.5)).tap()
         let tapped = Date().timeIntervalSince(launched)
         XCTAssertTrue(picture.exists, "the live page was already up when the picture was tapped")
         print("REOPEN tapped the picture \(String(format: "%.2f", tapped)) s after the launch began")
@@ -74,7 +74,7 @@ final class ReopenUITests: XCTestCase {
         XCTAssertFalse(picture.exists)
         print("REOPEN on the next page \(String(format: "%.2f", Date().timeIntervalSince(launched) - 2)) s after the launch began")
         // Forward, not back: the page he left is not the one now showing, and a back turn shows it again.
-        app.descendants(matching: .any)["reader.page"].coordinate(withNormalizedOffset: CGVector(dx: 0.08, dy: 0.5)).tap()
+        app.descendants(matching: .any)["reader.page"].coordinate(withNormalizedOffset: CGVector(dx: 0.03, dy: 0.5)).tap()
         // His page may break a line or two differently once relaid, so "his page" means the same words
         // in the middle of it, not the same first and last words.
         let middle = Self.middle(of: left)
@@ -99,7 +99,7 @@ final class ReopenUITests: XCTestCase {
         // Tap the screen, not the found element: finding it costs a second of accessibility snapshots.
         // The picture is up from Gatefold's first frame, so a tap a moment after it is foreground lands on it.
         RunLoop.current.run(until: Date().addingTimeInterval(0.3))
-        running.coordinate(withNormalizedOffset: CGVector(dx: 0.92, dy: 0.5)).tap()
+        running.coordinate(withNormalizedOffset: CGVector(dx: 0.97, dy: 0.5)).tap()
         XCTAssertTrue(picture.exists, "the tap came after the picture was gone")
         print("REOPEN tapped the running app's picture")
     }

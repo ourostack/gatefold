@@ -34,7 +34,7 @@ final class PageTurnPlacementUITests: XCTestCase {
         let page = app.descendants(matching: .any)["reader.page"]
         let report = app.descendants(matching: .any)["reader.turnPlacement"]
         for i in 0..<3 {
-            page.coordinate(withNormalizedOffset: CGVector(dx: 0.93, dy: 0.5)).tap()
+            page.coordinate(withNormalizedOffset: CGVector(dx: 0.97, dy: 0.5)).tap()
             XCTAssertTrue(XCTWaiter.wait(for: [expectation(for: NSPredicate(format: "label BEGINSWITH 'landed \(i + 1) '"), evaluatedWith: report)], timeout: 25) == .completed,
                           "turn \(i + 1) landed (\(placement(app)))")
             // Landed: the leaf's last frame and the page beneath are the same rectangle, and the

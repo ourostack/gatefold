@@ -304,7 +304,7 @@ struct ReopenPictureView: View {
             DragGesture(minimumDistance: 0)
                 .onEnded { value in
                     readerLog.notice("reopen: touch on the picture at x \(Int(value.startLocation.x), privacy: .public) moved \(Int(value.translation.width), privacy: .public),\(Int(value.translation.height), privacy: .public) of width \(Int(width), privacy: .public)")
-                    if let forward = ReopenTurn.forward(start: value.startLocation, translation: value.translation, width: width), onTurn(forward) {
+                    if let forward = ReopenTurn.forward(start: value.startLocation, translation: value.translation, width: width, spread: isSpread), onTurn(forward) {
                         lift(forward: forward)
                     }
                 }
@@ -370,12 +370,13 @@ enum ReopenTurn {
         CGPoint(x: lifted.x + (corner.x - lifted.x) * 0.15, y: lifted.y + (corner.y - lifted.y) * 0.15)
     }
 
-    static func forward(start: CGPoint, translation: CGSize, width: CGFloat) -> Bool? {
+    static func forward(start: CGPoint, translation: CGSize, width: CGFloat, spread: Bool = false) -> Bool? {
         if abs(translation.width) > 30, abs(translation.width) > abs(translation.height) {
             return translation.width < 0
         }
         guard abs(translation.width) < 12, abs(translation.height) < 12, width > 0 else { return nil }
-        let edge = width * 0.25
+        // The live page's own turn zones (`TapZones`): a margin, never the text tapped to wake the controls.
+        let edge = TapZones.edge(viewWidth: width, spread: spread)
         if start.x < edge { return false }
         if start.x > width - edge { return true }
         return nil

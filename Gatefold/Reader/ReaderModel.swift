@@ -56,9 +56,11 @@ final class ReaderModel {
     private(set) var aheadTab: String?
     /// Bumped each time a slip appears, for its haptic.
     private(set) var slipCount = 0
-    /// After a Jump, the way back stays on screen for a few seconds even with the controls hidden.
+    /// After any jump that is not a turn, the way back stays on screen with the controls hidden, until
+    /// he has read on `JumpBack.turnsToKeep` turns or taken it.
     private(set) var showJumpBack = false
-    @ObservationIgnored private var jumpBackTask: Task<Void, Never>?
+    /// Turns since the way back came up.
+    @ObservationIgnored private var turnsSinceJump = 0
     @ObservationIgnored private var slipTask: Task<Void, Never>?
     /// The end leaf, once the reader turns past the story's last page.
     private(set) var endLeaf: EndLeaf?
@@ -746,11 +748,15 @@ final class ReaderModel {
         readerLog.notice("remote check: remote \(target.totalProgression, privacy: .public) here \(self.totalProgression, privacy: .public)")
         guard JumpSuggestion.isAhead(remote: target.totalProgression, percentOnly: percentOnly, local: totalProgression) else { return }
         let aim = landingTarget(remote, at: target.totalProgression)
-        // First time this book opens here: there's no place of ours to protect, so just open where
-        // the InkPad is, like picking the book up off the nightstand.
-        if openedSnapshot == nil || landsOverFrontMatter, !hasMoved {
+        // First time this book opens here, the cover still up: there's no place of ours to protect, so
+        // just open where the InkPad is, like picking the book up off the nightstand. Only on its exact
+        // words: a place the Cloud has as a whole percent can land pages away. Anything else (a place
+        // of ours, a percent, a page he can already see) is offered, never landed on: only he moves
+        // the place (build 20 moved it under him on a foreground check).
+        if Self.landsAtOpen(neverOpenedHere: openedSnapshot == nil, overFrontMatter: landsOverFrontMatter,
+                            exact: target.locator != nil, coverUp: awaitingLanding && !pageReady, moved: hasMoved) {
             readerLog.notice("first open: landing on the Cloud place \(remote.pointer ?? "no pointer", privacy: .public)")
-            await land(on: target.locator, progression: target.totalProgression, target: aim, cloud: remote.totalProgression, rememberBack: false)
+            await land(on: target.locator, progression: target.totalProgression, target: aim, cloud: remote.totalProgression, rememberBack: true)
             guard !isClosed else { return }
             awaitingLanding = false
             markReady()
@@ -801,6 +807,12 @@ final class ReaderModel {
             now: Date(),
             passage: passage
         ), kind: .ahead)
+    }
+
+    /// Whether a Cloud place is landed on rather than offered: a book never opened here, on the Cloud's
+    /// exact words, before its first page has shown.
+    nonisolated static func landsAtOpen(neverOpenedHere: Bool, overFrontMatter: Bool, exact: Bool, coverUp: Bool, moved: Bool) -> Bool {
+        neverOpenedHere && !overFrontMatter && exact && coverUp && !moved
     }
 
     /// The first words of the sentence at a place in the book, read from the book itself, and a
@@ -982,15 +994,26 @@ final class ReaderModel {
         return Int(d.components.seconds * 1000 + d.components.attoseconds / 1_000_000_000_000_000)
     }
 
-    /// The Back pill stays for 8 seconds after a Jump, controls or not.
+    /// The Back pill comes up after a jump, controls or not, and stays until he reads on: a timer took
+    /// it away before he noticed a jump he never meant (build 20), and then the way back took two taps.
     private func holdJumpBack() {
-        jumpBackTask?.cancel()
+        turnsSinceJump = 0
         withAnimation(Motion.chrome) { showJumpBack = backLocator != nil }
-        jumpBackTask = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(8))
-            guard !Task.isCancelled else { return }
-            withAnimation(Motion.chrome) { self?.showJumpBack = false }
-        }
+    }
+
+    /// A turn or a scroll of his: after a few the jump is where he reads, and the pill goes.
+    private func readOnAfterJump() {
+        guard showJumpBack else { return }
+        turnsSinceJump += 1
+        if turnsSinceJump >= JumpBack.turnsToKeep { withAnimation(Motion.chrome) { showJumpBack = false } }
+    }
+
+    /// What the pill says: the page he left, when its number is known; else the start, or just "where
+    /// you were" (Readium's positions are not the pages he sees).
+    var backLabel: String {
+        if let page = backPage { return "Back to page \(page)" }
+        if (backLocator?.locations.totalProgression ?? 1) < 0.005 { return "Back to the start" }
+        return "Back to where you were"
     }
 
     /// A jump keeps the old page on screen, dimmed, until the new one has painted, then cross-fades.
@@ -1196,7 +1219,6 @@ final class ReaderModel {
         activation = nil
         moves += 1
         slipTask?.cancel()
-        jumpBackTask?.cancel()
         slip = nil
         suggestion = nil
         page?.dropStandby()
@@ -1442,7 +1464,11 @@ final class ReaderModel {
     /// A touch on the page. If the next location (outside a reflow) differs from where the book
     /// opened, it was a swipe in slide or scroll mode and the place is the reader's own. A tap that
     /// only shows the controls changes no location, so it moves nothing.
-    func noteInteraction() { touchesSinceLocation += 1 }
+    func noteInteraction() {
+        touchesSinceLocation += 1
+        // Scrolling has no turns: a touch on the page is his reading on.
+        if pageTurn == .scroll { readOnAfterJump() }
+    }
     /// Touches on the page since the last location report; a tap that only shows or hides the controls
     /// clears them.
     @ObservationIgnored private var touchesSinceLocation = 0
@@ -1456,6 +1482,7 @@ final class ReaderModel {
     /// A turn landed or sprang back: take the place from where the navigator is now.
     func userTurnedPage() {
         foldSlip()
+        readOnAfterJump()
         hasMoved = true
         moves += 1
         Task {
@@ -1604,12 +1631,14 @@ final class ReaderModel {
         await go(toProgression: bookmark.totalProgression, rememberBack: false)
     }
 
+    /// Back is a jump too: the page it leaves gets its own way back, so a stray tap on it is undone
+    /// with one more.
     func goBack() async {
         guard let back = backLocator else { return }
         hasMoved = true
         moves += 1
-        backLocator = nil
-        jumpBackTask?.cancel()
+        let undo = rememberPlace()
+        defer { publishBack(undo) }
         withAnimation(Motion.chrome) { showJumpBack = false }
         await veiled { _ = await self.page?.go(to: back) }
         await captureAnchor()
@@ -1620,7 +1649,8 @@ final class ReaderModel {
     /// had already happened. An earlier jump's way back goes down meanwhile; it isn't this jump's.
     private func rememberPlace() -> Int {
         backJumps += 1
-        pendingBack = (backJumps, location, chapterMap.page(at: totalProgression))
+        // The page number he sees, once counted; never Readium's positions, which aren't his pages.
+        pendingBack = (backJumps, location, screenNumbers?.compactMap { $0 }.first)
         backLocator = nil
         backPage = nil
         return backJumps
@@ -1635,6 +1665,7 @@ final class ReaderModel {
         pendingBack = nil
         backLocator = pending.locator
         backPage = pending.page
+        holdJumpBack()
     }
 
     // MARK: Bookmarks

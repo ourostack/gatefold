@@ -38,7 +38,7 @@ final class PageCountCostUITests: XCTestCase {
 
     private func burst(_ n: Int) {
         for _ in 0..<n {
-            app.descendants(matching: .any)["reader.page"].coordinate(withNormalizedOffset: CGVector(dx: 0.92, dy: 0.5)).tap()
+            app.descendants(matching: .any)["reader.page"].coordinate(withNormalizedOffset: CGVector(dx: 0.97, dy: 0.5)).tap()
             RunLoop.current.run(until: Date().addingTimeInterval(0.9))
         }
     }
