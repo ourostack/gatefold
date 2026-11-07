@@ -21,6 +21,10 @@ packages:
     exactVersion: 3.11.1
   GatefoldCore:
     path: Packages/GatefoldCore
+  # Ouro Feel, for the UI tests only (FeelUITests): the app never links it. Exact, so a check never changes under us.
+  OuroUIApple:
+    url: https://github.com/ourostack/ouro-ui-apple
+    exactVersion: 0.3.4
   GatefoldCloud:
     path: Packages/GatefoldCloud
 targets:
@@ -76,6 +80,10 @@ targets:
     sources: [GatefoldUITests]
     dependencies:
       - target: Gatefold
+      - package: OuroUIApple
+        product: OuroFeel
+      - package: OuroUIApple
+        product: OuroFeelCore
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: bot.ouro.gatefold.uitests
