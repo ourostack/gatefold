@@ -139,7 +139,7 @@ final class ReaderModel {
 
     private func keepMoveMadeBehindTheShelf() async {
         // A jump still on its way is kept where it lands, not where it passes through.
-        for _ in 0..<75 where launchJumpInFlight && !isClosed { try? await Task.sleep(for: .milliseconds(200)) }
+        for _ in 0..<(JumpLanding.reads + 25) where launchJumpInFlight && !isClosed { try? await Task.sleep(for: .milliseconds(200)) }
         guard !isClosed, moves != recordedMoves, let here = page?.currentLocation else { return }
         readerLog.notice("place: a move made behind the shelf is kept at the tap (reported \(Self.placeTag(here), privacy: .public))")
         layoutOnly = false
@@ -550,24 +550,16 @@ final class ReaderModel {
             launchJumpInFlight = true
             hasMoved = true
             moves += 1
-            // Readium refuses a jump while it is still loading; try until it takes.
-            var tries = 0
-            while await page?.go(to: locator) != true, tries < 50 {
-                tries += 1
-                try? await Task.sleep(for: .milliseconds(200))
-            }
-            // Readium can report the old resource for a moment after the jump; the first place taken
-            // must name the resource whose words are on screen, so wait until it reports the new one.
-            for _ in 0..<25 where page?.currentLocation.map({ !ContentsIndex.sameResource($0.href.string, locator.href.string) }) ?? true {
-                try? await Task.sleep(for: .milliseconds(200))
-            }
-            // Within the resource it reports the chapter's first page before it scrolls to the place:
-            // the jump is done once the report is near where it was sent (CI's page-numbers check kept
-            // the chapter's start at the tap of a warm book whose jump was still on its way).
+            // Sent until the page says it is there: Readium refuses a jump while it is loading, and a
+            // web view still loading can take one, open the file's first page and drop the place inside
+            // it (CI's Duo opened a jump to 0.993 at 0.938 and stayed; #30). Counted in reads.
             let target = locator.locations.totalProgression ?? goTo
-            for _ in 0..<25 where abs((page?.currentLocation?.locations.totalProgression ?? -1) - target) > 0.015 {
-                try? await Task.sleep(for: .milliseconds(200))
-            }
+            let landed = await JumpLanding.land(
+                target: target,
+                go: { [weak self] in await self?.page?.go(to: locator) == true },
+                reported: { [weak self] in self?.page?.currentLocation?.locations.totalProgression },
+                beat: { try? await Task.sleep(for: .milliseconds(200)) })
+            readerLog.notice("open: the launch jump to \(target, privacy: .public) \(landed ? "landed" : "ran out of reads", privacy: .public) at \(self.page?.currentLocation?.locations.totalProgression ?? -1, privacy: .public)")
             launchJumpInFlight = false
         }
         // A book about to land on the InkPad's place takes its first place there, not on the cover.
@@ -600,11 +592,9 @@ final class ReaderModel {
             let held = Date()
             // Checked often, and a page Readium would hold back after it has scrolled into place is
             // shown as soon as it has painted (`unveilPlacedPages`).
-            for _ in 0..<320 where host?.isLoadingPage == true {
-                await host?.unveilPlacedPages()
-                guard host?.isLoadingPage == true else { break }
-                try? await Task.sleep(for: .milliseconds(25))
-            }
+            // Waited out in looks, however long the chapter takes: the cover gave up after 8 s and
+            // showed a blank page and a spinner on a slow device (#38).
+            await host?.waitWhileLoading()
             readerLog.notice("open: Readium's loading held \(Date().timeIntervalSince(held), privacy: .public) s (asked \(Date().timeIntervalSince(self.askedAt), privacy: .public) s ago)")
             revealing = false
             guard !pageReady else { return }
@@ -649,6 +639,8 @@ final class ReaderModel {
                 while keeper.reflowing != nil, Date() < reflowBudget, !isClosed { try? await Task.sleep(for: .milliseconds(100)) }
                 await host?.waitForSettledPage()
             }
+            // The picture never lifts onto a page still loading (#38).
+            await host?.waitWhileLoading()
             let same = !reopenAdapted && (reopenPageFrame.map { abs($0.minY - layout.pageFrame.minY) < 1 && abs($0.height - layout.pageFrame.height) < 1 && abs($0.width - layout.pageFrame.width) < 1 } ?? true)
             // A turn asked of the picture: its lifted leaf lands on the live page beneath, then the
             // picture goes. Without a lifted leaf (no leaf to lift), the turn plays on the live page.
@@ -680,8 +672,13 @@ final class ReaderModel {
     /// The cover placeholder's own timeout: a page that never reports in still shows.
     func forceReady() {
         guard !pageReady else { return }
-        readerLog.notice("first page forced ready after \(Date().timeIntervalSince(self.openedAt), privacy: .public) s")
-        showPage()
+        Task {
+            // A page still loading isn't forced into view: a blank page and a spinner is no first page.
+            await host?.waitWhileLoading()
+            guard !pageReady else { return }
+            readerLog.notice("first page forced ready after \(Date().timeIntervalSince(self.openedAt), privacy: .public) s")
+            showPage()
+        }
     }
 
     /// Moves each contents entry that names a place inside its file (`ch.xhtml#ch8`) from the file's first

@@ -87,6 +87,40 @@ final class NavigationPlaceUITests: XCTestCase {
         leaveAndReturn(expecting: first, "contents jump")
     }
 
+    /// A Contents jump whose chapter is still loading keeps the old page veiled until it has loaded, and
+    /// the veil lifts onto words, never onto a blank page and Readium's spinner (#38). The load is held
+    /// open for a set number of looks (`-GatefoldHoldChapterLoad`), as a slow device does: the old veil
+    /// gave up after 160 looks (8 s) and lifted while the chapter still loaded.
+    func testAJumpsVeilHoldsWhileTheChapterLoads() {
+        let first = openFresh(["-GatefoldHoldChapterLoad", "400"])
+        showChrome()
+        app.buttons["reader.contents"].tap()
+        let row = app.buttons.matching(NSPredicate(format: "label CONTAINS[c] %@", "Chapter XXX")).firstMatch
+        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label CONTAINS[c] %@", "Chapter I")).firstMatch.waitForExistence(timeout: 10),
+                      "the contents opened")
+        for _ in 0..<20 where !(row.exists && row.isHittable) { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(row.exists && row.isHittable, "the contents list chapter XXX")
+        row.tap()
+        let held = app.descendants(matching: .any)["reader.loadingHeld"]
+        let veil = app.descendants(matching: .any)["reader.veil"]
+        XCTAssertTrue(held.waitForExistence(timeout: 10), "the chapter's load is held open")
+        // Sampled until the held load ends: every sample while it is held must find the veil up.
+        var samples = 0, bare = 0
+        let up = Date().addingTimeInterval(120)
+        while held.exists, Date() < up {
+            samples += 1
+            if !veil.exists, held.exists { bare += 1 }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+        }
+        print("VEIL samples=\(samples) bareWhileLoading=\(bare) heldAtEnd=\(held.exists)")
+        XCTAssertEqual(bare, 0, "the veil stayed up while the chapter loaded")
+        XCTAssertFalse(held.exists, "the held load ended (the veil kept looking)")
+        XCTAssertTrue(veil.waitForNonExistence(timeout: 15), "the veil lifted once the chapter had loaded")
+        let words = waitForWords(changingFrom: first, timeout: 15)
+        XCTAssertFalse(words.isEmpty, "the veil lifted onto words")
+        XCTAssertNotEqual(opening(words), opening(first), "the jump moved the page")
+    }
+
     func testAScrubberJumpKeepsThePlace() {
         let first = openFresh()
         showChrome()

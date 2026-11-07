@@ -650,7 +650,10 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             guard let self, generation == self.reflowGeneration, self.settledGeneration != generation,
                   self.weakModel != nil else { return }
             // Twelve seconds is already too long to look at a picture of the old page: show the page as
-            // it is now, then try the settle again behind nothing.
+            // it is now, then try the settle again behind nothing. A page still loading isn't shown:
+            // that would be a blank page and a spinner.
+            await self.waitWhileLoading()
+            guard generation == self.reflowGeneration, self.settledGeneration != generation else { return }
             self.uncoverUnsettled()
             guard self.reflowRetries < 3 else { return }
             self.reflowRetries += 1
@@ -921,6 +924,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         let waitStart = ContinuousClock.now
         var waits = 0
         var previous: PageSignature?
+        var loadingLooks = 0
         while waits < 60 {
             let halves = Self.paintedHalves(image, spine: spine / max(1, frame.width), paper: paperLevel)
             let signature = PageSignature(image)
@@ -928,10 +932,12 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             let settled = signature.map { s in previous.map { s.matches($0) } ?? false } ?? true
             if halves.left && (halves.right || settled) { break }
             previous = halves.left ? signature : nil
-            waits += 1
             try? await Task.sleep(for: .milliseconds(50))
             if isLoadingPage { await unveilPlacedPages() }
-            if isLoadingPage { previous = nil; continue }
+            // A chapter still loading holds the old page on its own allowance, not the 60 looks for
+            // painting (#38).
+            if isLoadingPage, loadingLooks < Self.loadingLooks { loadingLooks += 1; previous = nil; continue }
+            waits += 1
             image = await snapshot()
         }
         if waits > 0 {
@@ -1442,6 +1448,11 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         cover.addSubview(wash)
         view.insertSubview(cover, belowSubview: curlHost.view)
         veil = cover
+        if LaunchOptions.isUITest {
+            cover.isAccessibilityElement = true
+            cover.accessibilityIdentifier = "reader.veil"
+            holdChapterLoadForTest()
+        }
         // The running head stays with the page on screen: it changes chapter as the new page is revealed.
         weakModel?.heldRunningHead = .some(weakModel?.chapterTitle)
         defer { weakModel?.heldRunningHead = nil }
@@ -1695,8 +1706,27 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
                 painted(cg.cropping(to: CGRect(x: split, y: 0, width: cg.width - split, height: cg.height))))
     }
 
+    /// Looks left in a load held open for a test (`-GatefoldHoldChapterLoad`), and its marker.
+    private var heldLoadLooks = 0
+    private var heldLoadMarker: UIView?
+
+    private func holdChapterLoadForTest() {
+        guard let looks = LaunchOptions.holdChapterLoadLooks, looks > 0 else { return }
+        heldLoadLooks = looks
+        let marker = UIView(frame: CGRect(x: 0, y: 0, width: 1, height: 1))
+        marker.isAccessibilityElement = true
+        marker.accessibilityIdentifier = "reader.loadingHeld"
+        view.addSubview(marker)
+        heldLoadMarker = marker
+    }
+
     /// Readium's own loading spinner is showing: the page in view hasn't loaded yet.
     var isLoadingPage: Bool {
+        if heldLoadLooks > 0 {
+            heldLoadLooks -= 1
+            if heldLoadLooks == 0 { heldLoadMarker?.removeFromSuperview(); heldLoadMarker = nil }
+            return true
+        }
         let host = navigator.view!
         func spinning(_ v: UIView) -> Bool {
             guard !v.isHidden, v.alpha > 0.01 else { return false }
@@ -1895,15 +1925,19 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     func renderedSnapshot(afterChange: Bool) async -> UIImage {
         let paper = PageSignature.rgb(weakModel?.theme.uiBackground ?? .white)
         var last: (UIImage, PageSignature)?
-        // A turn into a chapter still loading holds the old page until it has: as long as Readium's
-        // spinner is up (up to 8 s), else up to 2 s for a page that is still bare.
-        for attempt in 0..<160 {
-            if afterChange || attempt > 0 { try? await Task.sleep(for: .milliseconds(attempt == 0 ? 60 : 50)) }
+        // A turn or a jump into a chapter still loading holds the old page until it has: as long as
+        // Readium's spinner is up (its own allowance of looks), else up to 40 looks for a page that is
+        // still bare. The spinner's allowance was 8 s in all: on CI's iPad a Contents jump's chapter
+        // took over 25 s, and the veil lifted onto a blank page and a spinner.
+        var loadingLooks = 0
+        var attempt = 0
+        while attempt < 40 {
+            if afterChange || attempt > 0 || loadingLooks > 0 { try? await Task.sleep(for: .milliseconds(attempt == 0 && loadingLooks == 0 ? 60 : 50)) }
             if isLoadingPage {
                 await unveilPlacedPages()
-                if isLoadingPage { last = nil; continue }
+                if isLoadingPage, loadingLooks < Self.loadingLooks { loadingLooks += 1; last = nil; continue }
             }
-            if attempt >= 40 { break }
+            defer { attempt += 1 }
             let image = await snapshot()
             guard let signature = PageSignature(image) else { return image }
             let usable = !signature.isBlack(paper: paper) && !signature.isBare(paper: paper)
@@ -1912,8 +1946,29 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             if usable { last = (image, signature) }
             if !usable { readerLog.notice("snapshot \(attempt) unusable: black=\(signature.isBlack(paper: paper)) bare=\(signature.isBare(paper: paper))") }
         }
+        if loadingLooks > 0 { readerLog.notice("veil: held the old page \(loadingLooks, privacy: .public) looks while the chapter loaded") }
         if let last { return last.0 }
         return await snapshot()
+    }
+
+    /// How many looks (about 50 ms each) the old page is held while Readium's spinner is up.
+    static let loadingLooks = 1200
+
+    /// Waits while Readium's spinner is up, showing a page that has scrolled into place as soon as it
+    /// has painted; returns the looks it took. Nothing that covers the page (the opening cover, the
+    /// reopen picture, a reflow's cover, a jump's veil) lifts onto the spinner: it waits here first,
+    /// counted in looks, not seconds (#38).
+    @discardableResult
+    func waitWhileLoading() async -> Int {
+        var looks = 0
+        while isLoadingPage, looks < Self.loadingLooks {
+            await unveilPlacedPages()
+            guard isLoadingPage else { break }
+            looks += 1
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+        if looks > 0 { readerLog.notice("veil: waited \(looks, privacy: .public) looks for the chapter to load") }
+        return looks
     }
 
     private func nextFrame() async {
