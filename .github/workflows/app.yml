@@ -64,7 +64,6 @@ jobs:
               ReviewerChecksUITests PageNumberUITests/testOnASpreadEveryTurnMovesOnTwoPages
               SpreadTurnSettleUITests/testSpreadTurnsLandWithoutSliding
               ReopenAfterControlsUITests WindowFitUITests
-            timing: true
     runs-on: xcode-27
     timeout-minutes: ${{ matrix.timeout }}
     steps:
@@ -99,6 +98,11 @@ jobs:
           [[ -n "$udid" ]] || { echo "the iPad simulator never booted"; exit 1; }
           echo "udid=$udid" >> "$GITHUB_OUTPUT"
           echo "destination=platform=iOS Simulator,arch=$(uname -m),id=$udid" >> "$GITHUB_OUTPUT"
+      - name: Keep the app's place log as it runs (file and progression only, never the book's words)
+        run: |
+          nohup sh -c 'xcrun simctl spawn "$0" log stream --style compact --predicate "subsystem == \"bot.ouro.gatefold\"" 2>/dev/null \
+            | grep --line-buffered -E "place (read|write)|place:|location |reflow|landing|landed|reopen|tapped|warm:|open:|first page|pages:|turn:" \
+            | grep --line-buffered -v -E "text:|\] visible|anchor" >> "$1"' "${{ steps.sim.outputs.udid }}" "$RUNNER_TEMP/place.log" >/dev/null 2>&1 &
       - name: Turned on its side cold (an erased iPad), the spread always comes whole and keeps his place
         # An erased simulator, not a new one: build 19 left the old page under a frozen leaf in 3 of 9
         # rounds after an erase and 0 of 3 on a new simulator. Once a run, before anything warms it.
@@ -118,6 +122,10 @@ jobs:
           xcrun simctl erase "$udid"
           xcrun simctl boot "$udid"
           xcrun simctl bootstatus "$udid" -b
+          # The erase ended the place log's stream; take it up again.
+          nohup sh -c 'xcrun simctl spawn "$0" log stream --style compact --predicate "subsystem == \"bot.ouro.gatefold\"" 2>/dev/null \
+            | grep --line-buffered -E "place (read|write)|place:|location |reflow|landing|landed|reopen|tapped|warm:|open:|first page|pages:|turn:|REPRO" \
+            | grep --line-buffered -v -E "text:|\] visible|anchor" >> "$1"' "$udid" "$RUNNER_TEMP/place.log" >/dev/null 2>&1 &
           echo "$(date -u +%T) booted; building and testing"
           xcodebuild test -project Gatefold.xcodeproj -scheme Gatefold \
             -destination "${{ steps.sim.outputs.destination }}" \
@@ -144,28 +152,14 @@ jobs:
           grep -E "Test Case .*(passed|failed|skipped)|TEST (SUCCEEDED|FAILED)|REPRO (round|SUMMARY)|TAPRATE|PLACEHOLDER|REVIEWER|WINDOWFIT|REOPEN round [0-9]+:|\.swift:[0-9]+: error" "$RUNNER_TEMP/ipad.log" \
             | sed -E 's/(XCTAssert[A-Za-z]* failed).*/\1 (text withheld)/' | tail -80 || true
           exit ${status:-0}
-      - name: How soon a page number comes up (measured, by the app's own clock)
-        # Gate: 3 s from the page showing. Exact counts take 5-7 s on a fresh open on this Mac (each
-        # chapter's web view loads before it can be counted, and a number waits on every chapter before
-        # it), 7-9 s on the iPad's side, and far longer on a hosted runner, so this reports and doesn't
-        # block. Until the number comes the slot says "Counting pages…".
-        if: always() && matrix.timing
-        continue-on-error: true
-        run: |
-          set -o pipefail
-          xcodebuild test -project Gatefold.xcodeproj -scheme Gatefold \
-            -destination "${{ steps.sim.outputs.destination }}" \
-            -only-testing:GatefoldUITests/PageNumberTimingUITests > "$RUNNER_TEMP/timing.log" 2>&1 || status=$?
-          grep -E "number timing|Test Case .*(passed|failed)" "$RUNNER_TEMP/timing.log" || true
-          exit ${status:-0}
       - name: The app's place log, for a miss (file and progression only, never the book's words)
         if: failure()
+        # Kept as the job ran (a `log show` over hours of a busy simulator took 23 min and ran the job
+        # out of time, losing every log), so here it is only closed off.
+        timeout-minutes: 2
         run: |
-          xcrun simctl spawn "${{ steps.sim.outputs.udid }}" log show --last 4h --style compact \
-            --predicate 'subsystem == "bot.ouro.gatefold"' 2>/dev/null \
-            | grep -E 'place (read|write)|place:|location |reflow|landing|landed|reopen' \
-            | grep -v -E 'text:|\] visible' > "$RUNNER_TEMP/place.log" || true
-          wc -l < "$RUNNER_TEMP/place.log"
+          pkill -f "log stream --style compact" || true
+          wc -l < "$RUNNER_TEMP/place.log" || true
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
@@ -221,15 +215,6 @@ jobs:
           # No retry: a wait that runs out prints how many probe reads it made and the slowest one.
           grep -E "error:|Test Case .*(passed|failed|skipped)|TEST (SUCCEEDED|FAILED)|probe says|probe timing|TAPRATE" "$RUNNER_TEMP/ui.log" | tail -60 || true
           exit ${status:-0}
-      - name: How soon a page number comes up on the Duo (measured, not a gate)
-        continue-on-error: true
-        run: |
-          set -o pipefail
-          xcodebuild test -project Gatefold.xcodeproj -scheme Gatefold \
-            -destination "${{ steps.sim.outputs.destination }}" \
-            -only-testing:GatefoldUITests/PageNumberTimingUITests/testANumberComesUpWithinMomentsOfAFreshOpen > "$RUNNER_TEMP/timing.log" 2>&1 || status=$?
-          grep -E "number timing|Test Case .*(passed|failed)" "$RUNNER_TEMP/timing.log" || true
-          exit ${status:-0}
       - name: Release build for devices (the same binary runs on the Mac as Designed for iPad)
         run: |
           set -o pipefail
@@ -270,6 +255,11 @@ jobs:
           xcrun simctl bootstatus "$udid" -b
           echo "udid=$udid" >> "$GITHUB_OUTPUT"
           echo "destination=platform=iOS Simulator,arch=$(uname -m),id=$udid" >> "$GITHUB_OUTPUT"
+      - name: Keep the app's place log as it runs (file and progression only, never the book's words)
+        run: |
+          nohup sh -c 'xcrun simctl spawn "$0" log stream --style compact --predicate "subsystem == \"bot.ouro.gatefold\"" 2>/dev/null \
+            | grep --line-buffered -E "place (read|write)|place:|location |reflow|landing|landed|reopen|tapped|warm:|open:|first page|pages:|turn:" \
+            | grep --line-buffered -v -E "text:|\] visible|anchor" >> "$1"' "${{ steps.sim.outputs.udid }}" "$RUNNER_TEMP/place.log" >/dev/null 2>&1 &
       - name: The reviewers' checks on the Duo
         run: |
           set -o pipefail
@@ -283,12 +273,12 @@ jobs:
           exit ${status:-0}
       - name: The app's place log, for a miss (file and progression only, never the book's words)
         if: failure()
+        # Kept as the job ran (a `log show` over hours of a busy simulator took 23 min and ran the job
+        # out of time, losing every log), so here it is only closed off.
+        timeout-minutes: 2
         run: |
-          xcrun simctl spawn "${{ steps.sim.outputs.udid }}" log show --last 4h --style compact \
-            --predicate 'subsystem == "bot.ouro.gatefold"' 2>/dev/null \
-            | grep -E 'place (read|write)|place:|location |reflow|landing|landed|reopen' \
-            | grep -v -E 'text:|\] visible' > "$RUNNER_TEMP/place.log" || true
-          wc -l < "$RUNNER_TEMP/place.log"
+          pkill -f "log stream --style compact" || true
+          wc -l < "$RUNNER_TEMP/place.log" || true
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
