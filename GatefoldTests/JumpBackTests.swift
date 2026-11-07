@@ -33,7 +33,7 @@ final class SlowJumpPage: ReaderPage {
     }
 }
 
-/// "Back to page" comes up with the page the jump brought, never while the old page is still showing.
+/// The way back comes up with the page the jump brought, never while the old page is still showing.
 @MainActor @Suite(.serialized) struct JumpBackTests {
     @Test func theWayBackWaitsForThePageToMove() async throws {
         let sync = StubSync()

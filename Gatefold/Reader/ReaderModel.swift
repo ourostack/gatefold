@@ -45,7 +45,6 @@ final class ReaderModel {
     var contentsFragment: String?
     /// Where the reader was before a jump, so Back can return there.
     private(set) var backLocator: Locator?
-    private(set) var backPage: Int?
     var errorMessage: String?
     /// The paper slip under the top bar: the sync landed, or the other device is further on.
     enum SlipKind: Equatable { case landed, ahead }
@@ -996,10 +995,9 @@ final class ReaderModel {
         if turnsSinceJump >= JumpBack.turnsToKeep { withAnimation(Motion.chrome) { showJumpBack = false } }
     }
 
-    /// What the pill says: the page he left, when its number is known; else the start, or just "where
-    /// you were" (Readium's positions are not the pages he sees).
+    /// What the pill says: the start, or just "where you were" (a counted page number could still be the
+    /// page before a jump within the chapter, and Readium's positions are not the pages he sees).
     var backLabel: String {
-        if let page = backPage { return "Back to page \(page)" }
         if (backLocator?.locations.totalProgression ?? 1) < 0.005 { return "Back to the start" }
         return "Back to where you were"
     }
@@ -1650,13 +1648,12 @@ final class ReaderModel {
         backJumps += 1
         // No page number: the counted one can still be the page before a jump within the chapter, and
         // Readium's positions aren't his pages. The pill says where it goes in words.
-        pendingBack = (backJumps, here ?? location, nil)
+        pendingBack = (backJumps, here ?? location)
         backLocator = nil
-        backPage = nil
         return backJumps
     }
     @ObservationIgnored private var backJumps = 0
-    @ObservationIgnored private var pendingBack: (jump: Int, locator: Locator?, page: Int?)?
+    @ObservationIgnored private var pendingBack: (jump: Int, locator: Locator?)?
 
     /// Offers the way back once its jump has landed (a veiled jump returns once the new page has
     /// painted), and only for the newest jump: one overtaken by another offers nothing.
@@ -1664,7 +1661,6 @@ final class ReaderModel {
         guard let jump, let pending = pendingBack, pending.jump == jump else { return }
         pendingBack = nil
         backLocator = pending.locator
-        backPage = pending.page
         holdJumpBack()
     }
 
