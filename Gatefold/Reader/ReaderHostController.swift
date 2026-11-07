@@ -1143,7 +1143,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         let width = navigator.view.bounds.width
         // While a jump's veil is up the page beneath is on its way somewhere: a tap then would turn
         // from wherever the jump has got to, and the place he chose is lost.
-        guard veil == nil else { return true }
+        guard veil == nil, !jumpStarting else { return true }
         let edge = TapZones.edge(viewWidth: width, spread: model.layout.columns == .two)
         if model.chromeVisible {
             model.controlsTapped(visible: false)
@@ -1390,7 +1390,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
         if gestureRecognizer is TouchNoticer { return true }
         guard let pan = gestureRecognizer as? UIPanGestureRecognizer else { return true }
-        guard model.pageTurn == .curl || model.pageTurn == .fade, !isTurning, veil == nil else { return false }
+        guard model.pageTurn == .curl || model.pageTurn == .fade, !isTurning, veil == nil, !jumpStarting else { return false }
         let v = pan.velocity(in: view)
         return abs(v.x) > abs(v.y) * 1.2
     }
@@ -1430,13 +1430,17 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     // MARK: Jumps
 
     private var veil: UIView?
+    /// A jump has begun (its old page is being pictured for the veil): no tap or swipe turns meanwhile.
+    private var jumpStarting = false
 
     /// Runs a jump with the old page left on screen, dimmed to 60 %, until the new page has painted;
     /// then the old page cross-fades away over 0.2 s (no blank page, no spinner). With `riffle`, a few
     /// leaves flick past first.
     func veiledJump(riffle: Bool, forward: Bool, _ body: @escaping () async -> Void) async {
         guard veil == nil, !isTurning, view.window != nil else { return await body() }
+        jumpStarting = true
         let old = await renderedSnapshot(afterChange: false)
+        jumpStarting = false
         // The old page, opaque, with a wash of paper over it: it reads as dimmed to 60 %, and nothing
         // of the new page shows through until the cross-fade.
         let cover = UIView(frame: navigator.view.frame)

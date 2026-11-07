@@ -50,7 +50,7 @@ jobs:
             title: Jumps keep his place; the number's slot is never blank
             tests: >-
               NavigationPlaceUITests PositionUITests/testEveryPostureKeepsThePlace
-              CountingPlaceholderUITests
+              CountingPlaceholderUITests PlaceUndoUITests
           - name: taps
             # 53 min measured (a 10 min simulator boot among them); measured / 0.7 keeps 30% headroom.
             timeout: 80

@@ -1,4 +1,8 @@
+#if canImport(CoreGraphics)
 import CoreGraphics
+#else
+import Foundation
+#endif
 
 /// Where a tap on the page turns it. Each page keeps its own outer quarter: on a spread a quarter of
 /// the whole view was half of each page, so a tap meant for the controls on the left page turned
