@@ -134,7 +134,12 @@ final class ReaderModel {
     /// A jump made while the book warmed behind the shelf (a test's launch jump reaches every book that
     /// opens) wrote nothing then; at his tap it is his, so the page he sees becomes the place, and a
     /// fresh open shows that page rather than making the jump afresh.
+    /// A test's launch jump is still on its way to its page.
+    @ObservationIgnored private var launchJumpInFlight = false
+
     private func keepMoveMadeBehindTheShelf() async {
+        // A jump still on its way is kept where it lands, not where it passes through.
+        for _ in 0..<75 where launchJumpInFlight && !isClosed { try? await Task.sleep(for: .milliseconds(200)) }
         guard !isClosed, moves != recordedMoves, let here = page?.currentLocation else { return }
         readerLog.notice("place: a move made behind the shelf is kept at the tap (reported \(Self.placeTag(here), privacy: .public))")
         layoutOnly = false
@@ -197,6 +202,8 @@ final class ReaderModel {
     private var hasMoved = false
     /// The saved place, with the first words that were on screen.
     private let initialLocator: Locator?
+    /// `-GatefoldGoTo`, if it applies to this open (see `init`).
+    private let launchGoTo: Double?
     /// Counts every move of the page (a turn, a jump, a landing, the close). A settle or a landing
     /// that started before the latest move has been overtaken and must not move or record anything.
     private var moves = 0 { didSet { layoutOnly = false } }
@@ -233,6 +240,10 @@ final class ReaderModel {
         self.highlights = HighlightStore(bookID: book.id, cloudBook: book.cloud, sync: app.sync)
         let initial = book.locatorJSON.flatMap { try? Locator(jsonString: $0) }
         self.initialLocator = initial
+        // A test's launch jump sets up the book it opens, once: a book he already has a place in (or
+        // another book opened in the same launch) opens on its own place. Jumping every open re-made
+        // the jump on a return and called the page it reached his (CI's page-numbers check).
+        self.launchGoTo = initial == nil && (LaunchOptions.openBook == nil || LaunchOptions.openBook == book.id) ? LaunchOptions.goTo : nil
         readerLog.notice("place read [r\(self.readerNumber, privacy: .public)]: \(book.id, privacy: .public) opening on \(initial.map(Self.placeTag) ?? "none", privacy: .public)")
         // His saved words are the place from the first frame. A reflow can start before the page has
         // shown any words (an iPad relaunched in landscape lays out in portrait first, then rotates);
@@ -531,11 +542,12 @@ final class ReaderModel {
         // until the navigator reports where it is.
         await waitForLocation()
         readerLog.notice("open: location after \(Date().timeIntervalSince(self.openedAt), privacy: .public) s")
-        if LaunchOptions.goTo == nil, let initialLocator { await settle(on: initialLocator, move: moves) }
+        if launchGoTo == nil, let initialLocator { await settle(on: initialLocator, move: moves) }
         readerLog.notice("open: settled after \(Date().timeIntervalSince(self.openedAt), privacy: .public) s")
         // A test's launch jump shows its page once, after the jump, not the book's start first.
-        if LaunchOptions.goTo == nil { markReady() }
-        if let goTo = LaunchOptions.goTo, let locator = await publication.locate(progression: goTo) {
+        if launchGoTo == nil { markReady() }
+        if let goTo = launchGoTo, let locator = await publication.locate(progression: goTo) {
+            launchJumpInFlight = true
             hasMoved = true
             moves += 1
             // Readium refuses a jump while it is still loading; try until it takes.
@@ -549,6 +561,14 @@ final class ReaderModel {
             for _ in 0..<25 where page?.currentLocation.map({ !ContentsIndex.sameResource($0.href.string, locator.href.string) }) ?? true {
                 try? await Task.sleep(for: .milliseconds(200))
             }
+            // Within the resource it reports the chapter's first page before it scrolls to the place:
+            // the jump is done once the report is near where it was sent (CI's page-numbers check kept
+            // the chapter's start at the tap of a warm book whose jump was still on its way).
+            let target = locator.locations.totalProgression ?? goTo
+            for _ in 0..<25 where abs((page?.currentLocation?.locations.totalProgression ?? -1) - target) > 0.015 {
+                try? await Task.sleep(for: .milliseconds(200))
+            }
+            launchJumpInFlight = false
         }
         // A book about to land on the InkPad's place takes its first place there, not on the cover.
         if !awaitingLanding {
@@ -1315,7 +1335,7 @@ final class ReaderModel {
         refreshAheadTab()
         // The navigator opens on the saved place, so its first report is a page worth showing: don't
         // keep the cover up while the rest of the book is indexed.
-        if !pageReady, LaunchOptions.goTo == nil { markReady() }
+        if !pageReady, launchGoTo == nil { markReady() }
         Task { await refreshScreenNumbers() }
         if !duringTurn, hasMoved, isPastStory(locator) { reachedEnd() }
         // A landing records its place once it has settled; the steps on the way are not places.
