@@ -193,8 +193,6 @@ final class ReaderModel {
     /// First open here of a book the InkPad has a place in: the cover stays up until the reader has
     /// landed there, so the book's first page never flashes past (or loads blank) on the way.
     private var awaitingLanding: Bool
-    /// The Cloud's place as the shelf last saw it, to decide before asking whether to land there.
-    private let cloudHint: Double?
     /// A landing made behind the shelf says so once the reader is looking.
     private var pendingLanded: (slip: SyncSlip, underline: Locator?)?
     /// Where the book opened; nothing is recorded or pushed until the reader moves from it,
@@ -236,7 +234,6 @@ final class ReaderModel {
         self.awaitingLanding = book.localSnapshot == nil
             && ((book.remote?.totalProgression ?? 0) > JumpSuggestion.threshold || (book.cloud?.readPercent ?? 0) > 0)
         self.cover = app.library.cover(for: book)
-        self.cloudHint = book.remote?.totalProgression ?? book.cloud?.readPercent.map { Double($0) / 100 }
         self.highlights = HighlightStore(bookID: book.id, cloudBook: book.cloud, sync: app.sync)
         let initial = book.locatorJSON.flatMap { try? Locator(jsonString: $0) }
         self.initialLocator = initial
@@ -1339,6 +1336,8 @@ final class ReaderModel {
 
     func locationDidChange(_ locator: Locator, duringTurn: Bool = false, hisMove: Bool = false) async {
         guard !isClosed else { return }
+        let reportedBefore = lastReported
+        lastReported = locator
         location = locator
         // The reader turning on: the other device's line has done its job.
         if !landing, duringTurn || touchedSinceLocation { host?.clearUnderline() }
@@ -1407,6 +1406,9 @@ final class ReaderModel {
             }
             if openedLocation == nil { openedLocation = locator }
         }
+        // No turn or jump of ours since the last report: a page move his touch brought is Readium's own
+        // swipe or scroll (a turn counts itself in `userTurnedPage`).
+        let noMoveOfOurs = moves == movesAtLastReport
         touchesSinceLocation = 0
         movesAtLastReport = moves
         // A report that isn't his move leaves "where he is" on his words: the running head, the
@@ -1420,7 +1422,10 @@ final class ReaderModel {
         // A swipe or a scroll of his that moved the page is reading on, as a turn is (slide and scroll
         // never call `userTurnedPage`). A jump's own landing brings no touch, nor does a tap that only
         // shows the controls.
-        if touchedAtReport && readerMoved && !fromLayout { readOnAfterJump() }
+        if touchedAtReport && readerMoved && !fromLayout && noMoveOfOurs,
+           reportedBefore.map({ $0.href != locator.href || $0.locations.progression != locator.locations.progression }) ?? true {
+            readOnAfterJump()
+        }
         // Only the reader moves the place. Readium reopening a page boundary off from the saved one is
         // not a move, so opening a book never overwrites a further-ahead place on the InkPad.
         // A book warmed behind the shelf has had no move of his yet: nothing it reports is his place.
@@ -1469,6 +1474,8 @@ final class ReaderModel {
     /// This report came from the layout (see `locationDidChange`).
     @ObservationIgnored private var layoutReport = false
     private var openedLocation: Locator?
+    /// The navigator's last report, to tell a swipe that moved the page from a touch that didn't.
+    @ObservationIgnored private var lastReported: Locator?
 
     /// A turn landed or sprang back: take the place from where the navigator is now.
     func userTurnedPage() {
@@ -1641,11 +1648,9 @@ final class ReaderModel {
     /// had already happened. An earlier jump's way back goes down meanwhile; it isn't this jump's.
     private func rememberPlace(at here: Locator? = nil) -> Int {
         backJumps += 1
-        let place = here ?? location
-        // The page number he sees, once counted and taken on that page; never Readium's positions,
-        // which aren't his pages.
-        let number = lastGeometry.flatMap { g in place.map { ContentsIndex.sameResource($0.href.string, g.href) } == true ? screenNumbers?.compactMap { $0 }.first : nil }
-        pendingBack = (backJumps, place, number)
+        // No page number: the counted one can still be the page before a jump within the chapter, and
+        // Readium's positions aren't his pages. The pill says where it goes in words.
+        pendingBack = (backJumps, here ?? location, nil)
         backLocator = nil
         backPage = nil
         return backJumps
