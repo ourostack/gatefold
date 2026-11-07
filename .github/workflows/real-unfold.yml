@@ -11,23 +11,48 @@ on:
       rounds:
         description: Unfolds at each place in the book
         default: "3"
+  # Every pull request, because Real unfold is a required check: `changes` decides, and on a pull request that
+  # doesn't touch the reader the job skips, which reports success (a workflow-level path filter never reported, so
+  # such a pull request waited forever; gatefold#42).
   pull_request:
-    paths:
-      - .github/workflows/real-unfold.yml
-      - Gatefold/Reader/**
-      - Packages/GatefoldCore/Sources/GatefoldCore/ReadingAnchor.swift
-      - Packages/GatefoldCore/Sources/GatefoldCore/ScreenPages.swift
 
 permissions:
   contents: read
 
 concurrency:
   group: real-unfold-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  changes:
+    name: Does it touch the reader?
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      reader: ${{ steps.diff.outputs.reader }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: diff
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -eu
+          if [ "$EVENT" != pull_request ]; then echo "reader=true" >> "$GITHUB_OUTPUT"; exit 0; fi
+          git diff --name-only "$BASE...$HEAD" > changed.txt
+          if grep -E '^(\.github/workflows/real-unfold\.yml|Gatefold/Reader/|Packages/GatefoldCore/Sources/GatefoldCore/(ReadingAnchor|ScreenPages)\.swift$|project\.yml$)' changed.txt; then
+            echo "reader=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "reader=false" >> "$GITHUB_OUTPUT"
+          fi
+
   real-unfold:
     name: Real unfold
+    needs: changes
+    if: needs.changes.outputs.reader == 'true'
     runs-on: xcode-27
     timeout-minutes: 75
     env:
