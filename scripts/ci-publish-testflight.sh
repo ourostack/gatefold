@@ -14,7 +14,8 @@
 #   GATEFOLD_ARTIFACT_DIR          where every App Store Connect answer and log is kept
 #
 # No key, token, issuer ID or certificate is printed: the kit redacts its own output, altool gets
-# the key file by path, and xcodebuild signs with the imported identity without Apple's servers.
+# the key file by path (its argv is dropped from altool-upload.json), tester answers are kept only
+# as counts, and xcodebuild signs with the imported identity without Apple's servers.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -28,7 +29,13 @@ mkdir -p "$out"
 
 fail() { echo "ci-publish-testflight: $*" >&2; exit 1; }
 kit() { node "$APPLE_DISTRIBUTION_KIT_BIN" "$@"; }
-asc_get() { kit asc get "$@" --config "$APPLE_DISTRIBUTION_KIT_CONFIG" --json; }
+# One App Store Connect GET to stdout; on failure, says which path failed and the kit's redacted error.
+asc_get() {
+  local body
+  body="$(kit asc get "$@" --config "$APPLE_DISTRIBUTION_KIT_CONFIG" --json)" \
+    || { printf '%s\n' "$body" | jq -c '.error // .' >&2 || true; echo "ci-publish-testflight: App Store Connect GET failed: $*" >&2; return 1; }
+  printf '%s\n' "$body"
+}
 
 for v in APPLE_DISTRIBUTION_KIT_BIN APPLE_DISTRIBUTION_KIT_CONFIG GATEFOLD_SIGNING_XCCONFIG GATEFOLD_EXPORT_OPTIONS_PLIST GATEFOLD_WHATS_NEW_FILE; do
   [[ -n "${!v:-}" ]] || fail "$v is not set"
@@ -76,8 +83,11 @@ shasum -a 256 "$ipa" | tee "$out/Gatefold.ipa.sha256"
 # 3. Upload.
 kit xcode run --kind altool-upload --mode apply --package-path "$ipa" --platform ios \
   --api-key "$key_id" --api-issuer "$issuer_id" --p8-file-path "$key_path" \
-  --provider-public-id "$provider_id" --json > "$out/altool-upload.json" \
-  || { cat "$out/altool-upload.json"; fail "upload failed"; }
+  --provider-public-id "$provider_id" --json > "$out/altool-upload.raw" \
+  || { jq 'del(.command, .argv, .args)' "$out/altool-upload.raw" || true; fail "upload failed"; }
+# Keep the key and issuer IDs in the argv out of the published artifact.
+jq 'del(.command, .argv, .args)' "$out/altool-upload.raw" > "$out/altool-upload.json"
+: > "$out/altool-upload.raw"
 date -u +%FT%TZ > "$out/uploaded-at.txt"
 
 # 4. Wait for processing (up to an hour).
@@ -137,12 +147,12 @@ jq -e --arg want "$notes" 'any(.result.data[]?; .attributes.locale == "en-US" an
   "$out/asc-notes.json" > /dev/null || fail "What's New on build $build does not match"
 if [[ -n "${GATEFOLD_TESTFLIGHT_TESTER:-}" ]]; then
   asc_get --path /v1/betaTesters --query "filter[email]=$GATEFOLD_TESTFLIGHT_TESTER" --query "filter[betaGroups]=$group_id" \
-    --query 'fields[betaTesters]=state' > "$out/asc-tester.json"
-  [[ "$(jq -r '.result.data | length' "$out/asc-tester.json")" != "0" ]] || fail "the tester is not in $GROUP_NAME"
+    --query 'fields[betaTesters]=state' | jq '{testersMatched: (.result.data | length)}' > "$out/tester-check.json"
+  [[ "$(jq -r .testersMatched "$out/tester-check.json")" != "0" ]] || fail "the tester is not in $GROUP_NAME"
   testers=1
 else
-  asc_get --path "/v1/betaGroups/$group_id/betaTesters" --query limit=200 > "$out/asc-group-testers.json"
-  testers="$(jq -r '.result.data | length' "$out/asc-group-testers.json")"
+  # Only the count is kept: the answer holds testers' names and emails, and artifacts are public.
+  testers="$(asc_get --path "/v1/betaGroups/$group_id/betaTesters" --query limit=200 | jq -r '.result.data | length')"
   (( testers > 0 )) || fail "$GROUP_NAME has no testers"
 fi
 

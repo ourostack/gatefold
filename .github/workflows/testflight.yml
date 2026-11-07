@@ -147,7 +147,12 @@ jobs:
           if [[ -n "${WHATS_NEW//[[:space:]]/}" ]]; then
             printf '%s\n' "$WHATS_NEW" > "$notes"
           else
-            git log -1 --format=%s "$GITHUB_SHA" > "$notes"
+            subject="$(git log -1 --format=%s "$GITHUB_SHA")"
+            # A merge commit's subject is "Merge pull request #N from ..."; its body's first line is the PR title.
+            if [[ "$subject" == "Merge pull request "* ]]; then
+              subject="$(git log -1 --format=%b "$GITHUB_SHA" | sed -n '/[^[:space:]]/{p;q;}')"
+            fi
+            printf '%s\n' "$subject" > "$notes"
           fi
           echo "GATEFOLD_WHATS_NEW_FILE=$notes" >> "$GITHUB_ENV"
 
