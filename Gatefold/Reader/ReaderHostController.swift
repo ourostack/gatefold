@@ -1141,7 +1141,10 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
 
     private func handleTap(at point: CGPoint) -> Bool {
         let width = navigator.view.bounds.width
-        let edge = width * 0.25
+        // While a jump's veil is up the page beneath is on its way somewhere: a tap then would turn
+        // from wherever the jump has got to, and the place he chose is lost.
+        guard veil == nil else { return true }
+        let edge = TapZones.edge(viewWidth: width, spread: model.layout.columns == .two)
         if model.chromeVisible {
             model.controlsTapped(visible: false)
             return true
@@ -1387,7 +1390,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
         if gestureRecognizer is TouchNoticer { return true }
         guard let pan = gestureRecognizer as? UIPanGestureRecognizer else { return true }
-        guard model.pageTurn == .curl || model.pageTurn == .fade, !isTurning else { return false }
+        guard model.pageTurn == .curl || model.pageTurn == .fade, !isTurning, veil == nil else { return false }
         let v = pan.velocity(in: view)
         return abs(v.x) > abs(v.y) * 1.2
     }

@@ -219,7 +219,16 @@ jobs:
         run: |
           set -o pipefail
           xcodebuild build -project Gatefold.xcodeproj -scheme Gatefold -configuration Release \
-            -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO 2>&1 | tail -50
+            -destination 'generic/platform=iOS' -derivedDataPath "$RUNNER_TEMP/release" CODE_SIGNING_ALLOWED=NO 2>&1 | tail -50
+      - name: The shipped app can't move his place by itself (test-only launch jumps are compiled out)
+        run: |
+          binary="$RUNNER_TEMP/release/Build/Products/Release-iphoneos/Gatefold.app/Gatefold"
+          test -f "$binary"
+          if strings "$binary" | grep -q "GatefoldGoTo"; then
+            echo "::error::The Release app reads -GatefoldGoTo: a launch jump could move his place"
+            exit 1
+          fi
+          echo "No launch jump in the Release app"
       - uses: actions/upload-artifact@v4
         if: failure()
         with:

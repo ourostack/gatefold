@@ -115,7 +115,14 @@ enum LaunchOptions {
     }
     /// Tests: the first launch's type size, in place of the one Dynamic Type gives.
     static var fontScale: Double? { defaults.object(forKey: "GatefoldFontScale") == nil ? nil : defaults.double(forKey: "GatefoldFontScale") }
-    static var goTo: Double? { defaults.object(forKey: "GatefoldGoTo") == nil ? nil : defaults.double(forKey: "GatefoldGoTo") }
+    /// Tests only: a launch jump. Compiled out of Release, so a shipped app can never move his place by itself.
+    static var goTo: Double? {
+        #if DEBUG
+        defaults.object(forKey: "GatefoldGoTo") == nil ? nil : defaults.double(forKey: "GatefoldGoTo")
+        #else
+        nil
+        #endif
+    }
     static var forcedPosture: Posture? { defaults.string(forKey: "GatefoldForcePosture").flatMap(Posture.init(rawValue:)) }
     /// Tests: every book shows its page numbers, position and pages left (all off by default).
     static var pageFurniture: Bool { defaults.bool(forKey: "GatefoldPageFurniture") }

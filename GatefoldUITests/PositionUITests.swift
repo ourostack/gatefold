@@ -35,7 +35,7 @@ final class PositionUITests: XCTestCase {
         // An unfolded Duo can reflow before the first place is taken, so the number may not be 0.
         waitForProbe(prefix: "ready", timeout: 90, what: "first page")
         // Turn a page so the place is the reader's own.
-        app.descendants(matching: .any)["reader.page"].coordinate(withNormalizedOffset: CGVector(dx: 0.92, dy: 0.5)).tap()
+        app.descendants(matching: .any)["reader.page"].coordinate(withNormalizedOffset: CGVector(dx: 0.97, dy: 0.5)).tap()
         sleep(2)
     }
 

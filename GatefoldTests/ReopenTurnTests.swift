@@ -12,6 +12,13 @@ struct ReopenTurnTests {
         #expect(ReopenTurn.forward(start: CGPoint(x: 20, y: 300), translation: .zero, width: width) == false)
     }
 
+    /// The Duo unfolded on the reopen picture: a tap on the left page's text wakes nothing and turns
+    /// nothing (it turned back in build 20, a quarter of the whole spread being half a page).
+    @Test func aTapOnASpreadsTextTurnsNothing() {
+        #expect(ReopenTurn.forward(start: CGPoint(x: 200, y: 300), translation: .zero, width: 1100, spread: true) == nil)
+        #expect(ReopenTurn.forward(start: CGPoint(x: 30, y: 300), translation: .zero, width: 1100, spread: true) == false)
+    }
+
     @Test func aTapInTheMiddleTurnsNothing() {
         #expect(ReopenTurn.forward(start: CGPoint(x: 200, y: 300), translation: .zero, width: width) == nil)
     }
