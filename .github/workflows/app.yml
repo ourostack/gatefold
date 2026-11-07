@@ -101,7 +101,7 @@ jobs:
       - name: Keep the app's place log as it runs (file and progression only, never the book's words)
         run: |
           nohup sh -c 'xcrun simctl spawn "$0" log stream --style compact --predicate "subsystem == \"bot.ouro.gatefold\"" 2>/dev/null \
-            | grep --line-buffered -E "place (read|write)|place:|location |reflow|landing|landed|reopen|tapped|warm:|open:|first page|pages:|turn:" \
+            | grep --line-buffered -E "place (read|write)|place:|location |reflow|landing|landed|reopen|tapped|warm:|open:|first page|pages:|turn:|spread:|veil:|settle [0-9]" \
             | grep --line-buffered -v -E "text:|\] visible|anchor" >> "$1"' "${{ steps.sim.outputs.udid }}" "$RUNNER_TEMP/place.log" >/dev/null 2>&1 &
       - name: Turned on its side cold (an erased iPad), the spread always comes whole and keeps his place
         # An erased simulator, not a new one: build 19 left the old page under a frozen leaf in 3 of 9
@@ -124,7 +124,7 @@ jobs:
           xcrun simctl bootstatus "$udid" -b
           # The erase ended the place log's stream; take it up again.
           nohup sh -c 'xcrun simctl spawn "$0" log stream --style compact --predicate "subsystem == \"bot.ouro.gatefold\"" 2>/dev/null \
-            | grep --line-buffered -E "place (read|write)|place:|location |reflow|landing|landed|reopen|tapped|warm:|open:|first page|pages:|turn:|REPRO" \
+            | grep --line-buffered -E "place (read|write)|place:|location |reflow|landing|landed|reopen|tapped|warm:|open:|first page|pages:|turn:|spread:|veil:|settle [0-9]|REPRO" \
             | grep --line-buffered -v -E "text:|\] visible|anchor" >> "$1"' "$udid" "$RUNNER_TEMP/place.log" >/dev/null 2>&1 &
           echo "$(date -u +%T) booted; building and testing"
           xcodebuild test -project Gatefold.xcodeproj -scheme Gatefold \
@@ -146,14 +146,16 @@ jobs:
           set -o pipefail
           only=()
           for t in $TESTS; do only+=("-only-testing:GatefoldUITests/$t"); done
+          # Each test's result prints as it finishes: a job cut off at its limit still names the slow test
+          # (run 42393941976's reviewer leg printed nothing, since this read the log only at the end).
           xcodebuild test -project Gatefold.xcodeproj -scheme Gatefold \
             -destination "${{ steps.sim.outputs.destination }}" "${only[@]}" \
-            -resultBundlePath "$RUNNER_TEMP/ipad.xcresult" > "$RUNNER_TEMP/ipad.log" 2>&1 || status=$?
-          grep -E "Test Case .*(passed|failed|skipped)|TEST (SUCCEEDED|FAILED)|REPRO (round|SUMMARY)|TAPRATE|PLACEHOLDER|REVIEWER|WINDOWFIT|REOPEN round [0-9]+:|\.swift:[0-9]+: error" "$RUNNER_TEMP/ipad.log" \
-            | sed -E 's/(XCTAssert[A-Za-z]* failed).*/\1 (text withheld)/' | tail -80 || true
-          exit ${status:-0}
+            -resultBundlePath "$RUNNER_TEMP/ipad.xcresult" 2>&1 | tee "$RUNNER_TEMP/ipad.log" \
+            | grep --line-buffered -E "Test Case .*(started|passed|failed|skipped)|TEST (SUCCEEDED|FAILED)|REPRO (round|SUMMARY)|TAPRATE|PLACEHOLDER|REVIEWER|WINDOWFIT|REOPEN round [0-9]+:|\.swift:[0-9]+: error" \
+            | awk '{ if (match($0, /XCTAssert[A-Za-z]* failed/)) $0 = substr($0, 1, RSTART + RLENGTH - 1) " (text withheld)"; print; fflush() }'
+          exit ${PIPESTATUS[0]}
       - name: The app's place log, for a miss (file and progression only, never the book's words)
-        if: failure()
+        if: failure() || cancelled()
         # Kept as the job ran (a `log show` over hours of a busy simulator took 23 min and ran the job
         # out of time, losing every log), so here it is only closed off.
         timeout-minutes: 2
@@ -161,7 +163,7 @@ jobs:
           pkill -f "log stream --style compact" || true
           wc -l < "$RUNNER_TEMP/place.log" || true
       - uses: actions/upload-artifact@v4
-        if: failure()
+        if: failure() || cancelled()
         with:
           name: ipad-${{ matrix.name }}-results
           path: |
@@ -258,7 +260,7 @@ jobs:
       - name: Keep the app's place log as it runs (file and progression only, never the book's words)
         run: |
           nohup sh -c 'xcrun simctl spawn "$0" log stream --style compact --predicate "subsystem == \"bot.ouro.gatefold\"" 2>/dev/null \
-            | grep --line-buffered -E "place (read|write)|place:|location |reflow|landing|landed|reopen|tapped|warm:|open:|first page|pages:|turn:" \
+            | grep --line-buffered -E "place (read|write)|place:|location |reflow|landing|landed|reopen|tapped|warm:|open:|first page|pages:|turn:|spread:|veil:|settle [0-9]" \
             | grep --line-buffered -v -E "text:|\] visible|anchor" >> "$1"' "${{ steps.sim.outputs.udid }}" "$RUNNER_TEMP/place.log" >/dev/null 2>&1 &
       - name: The reviewers' checks on the Duo
         run: |
@@ -267,12 +269,12 @@ jobs:
             -destination "${{ steps.sim.outputs.destination }}" \
             -only-testing:GatefoldUITests/ReviewerChecksUITests \
             -only-testing:GatefoldUITests/PageNumberUITests/testEveryTurnMovesOnAPageAndAReopenKeepsTheNumbers \
-            -resultBundlePath "$RUNNER_TEMP/duo.xcresult" > "$RUNNER_TEMP/duo.log" 2>&1 || status=$?
-          grep -E "Test Case .*(passed|failed|skipped)|TEST (SUCCEEDED|FAILED)|REVIEWER|\.swift:[0-9]+: error" "$RUNNER_TEMP/duo.log" \
-            | sed -E 's/(XCTAssert[A-Za-z]* failed).*/\1 (text withheld)/' | tail -60 || true
-          exit ${status:-0}
+            -resultBundlePath "$RUNNER_TEMP/duo.xcresult" 2>&1 | tee "$RUNNER_TEMP/duo.log" \
+            | grep --line-buffered -E "Test Case .*(started|passed|failed|skipped)|TEST (SUCCEEDED|FAILED)|REVIEWER|\.swift:[0-9]+: error" \
+            | awk '{ if (match($0, /XCTAssert[A-Za-z]* failed/)) $0 = substr($0, 1, RSTART + RLENGTH - 1) " (text withheld)"; print; fflush() }'
+          exit ${PIPESTATUS[0]}
       - name: The app's place log, for a miss (file and progression only, never the book's words)
-        if: failure()
+        if: failure() || cancelled()
         # Kept as the job ran (a `log show` over hours of a busy simulator took 23 min and ran the job
         # out of time, losing every log), so here it is only closed off.
         timeout-minutes: 2
@@ -280,7 +282,7 @@ jobs:
           pkill -f "log stream --style compact" || true
           wc -l < "$RUNNER_TEMP/place.log" || true
       - uses: actions/upload-artifact@v4
-        if: failure()
+        if: failure() || cancelled()
         with:
           name: duo-reviewer-results
           path: |
