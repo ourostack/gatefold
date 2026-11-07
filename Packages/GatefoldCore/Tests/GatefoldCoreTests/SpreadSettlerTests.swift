@@ -265,7 +265,10 @@ private final class VisibleSpreads: SpreadSurface {
     private(set) var shown: [String] = []
     private(set) var held = false
     private(set) var moves = 0
-    var isCovered: Bool { false }
+    private(set) var releases: [Bool] = []
+    /// Covered until this many moves have been made (a reopen picture or a veil lifting mid-settle).
+    var coveredForMoves = 0
+    var isCovered: Bool { moves < coveredForMoves }
 
     init(_ page: FakeSpreads) {
         self.page = page
@@ -273,10 +276,10 @@ private final class VisibleSpreads: SpreadSurface {
     }
 
     private var state: String { "\(page.spread)|\(page.columns)" }
-    private func drew() { if !held, shown.last != state { shown.append(state) } }
+    private func drew() { if !held, !isCovered, shown.last != state { shown.append(state) } }
 
-    func hold() async { held = true }
-    func release() async { held = false; drew() }
+    func hold() async -> Bool { held = true; return true }
+    func release(landed: Bool) async { held = false; releases.append(landed); drew() }
 
     func wordsSide() async -> WordsSide? { await page.wordsSide() }
     func pinWords() async -> Bool { let p = await page.pinWords(); if p { moves += 1 }; drew(); return p }
@@ -325,5 +328,28 @@ struct VisibleSettleTests {
             }
         }
         #expect(spazzes.isEmpty, "\(spazzes.count) corrections showed in-between spreads; first: \(spazzes.first ?? "")")
+    }
+
+    /// A cover that lifts while the settle is still moving (the reopen picture, a jump's veil): the
+    /// moves left are held behind a picture taken then, not played on screen one by one.
+    @Test func aCoverLiftingMidSettleStillShowsOneChange() async {
+        let fake = FakeSpreads(columns: 52, wordsColumn: 45, pinnable: false, startSpread: 21, relayoutAt: nil)
+        let page = VisibleSpreads(fake)
+        page.coveredForMoves = 1
+        _ = await SpreadSettler.keepOnLeft(page, current: { true })
+        #expect(fake.landed)
+        // The spread he had, the one the cover lifted onto, then his words: never the verso's
+        // in-between spread as well.
+        #expect(page.shown.count <= 3, "he saw \(page.shown)")
+        #expect(page.releases == [true])
+    }
+
+    /// Overtaken (he turned, the book closed, a reflow began): the picture goes at once, never faded
+    /// onto a page he has moved on from.
+    @Test func anOvertakenCorrectionDropsItsPictureAtOnce() async {
+        let fake = FakeSpreads(columns: 52, wordsColumn: 45, pinnable: false, startSpread: 22, relayoutAt: nil)
+        let page = VisibleSpreads(fake)
+        _ = await SpreadSettler.keepOnLeft(page, current: { page.moves == 0 })
+        #expect(page.releases == [false])
     }
 }
