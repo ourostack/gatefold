@@ -31,9 +31,21 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Hold switch: the repository variable TESTFLIGHT_HOLD=1 stops pushes from publishing (for
+  # example while fixes land that are not yet proven on a device). A manual run still publishes.
+  held:
+    name: Publishing is on hold
+    if: github.event_name == 'push' && vars.TESTFLIGHT_HOLD == '1'
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          msg="TestFlight publishing is on hold (repository variable TESTFLIGHT_HOLD=1). Nothing was published. Clear the variable to resume, or run this workflow by hand to publish this commit."
+          echo "::notice::$msg"
+          echo "$msg" >> "$GITHUB_STEP_SUMMARY"
+
   publish:
     name: Publish to Gatefold Internal
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'workflow_dispatch' || vars.TESTFLIGHT_HOLD != '1')
     environment: internal-testflight
     runs-on: xcode-27
     timeout-minutes: 90
