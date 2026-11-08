@@ -303,7 +303,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         let links = hrefs.compactMap { href in publication.readingOrder.first { $0.url().removingFragment().string == href } }
         // A chapter's cost is its web view loading (about 3 s each, one after another, in build 17), not
         // its measuring: several counters behind the page take chapters from one queue at once.
-        let workers = (0..<min(Self.counters, links.count)).compactMap { _ in
+        let workers = (0..<min(LaunchOptions.counters ?? Self.counters, links.count)).compactMap { _ in
             try? Self.makeNavigator(publication: publication, at: nil, preferences: preferences)
         }
         guard !workers.isEmpty else { finished(); return }
