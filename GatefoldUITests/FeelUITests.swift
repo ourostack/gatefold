@@ -200,13 +200,36 @@ final class FeelUITests: XCTestCase {
     /// What the reader is meant to do after a gesture: move once, or stay.
     private enum Expect { case moveOnce, stay }
 
+    /// A turn's film in one line: the display refresh (frame index from the film's start, which is just before the
+    /// gesture) on which the page number first changed, its time, the film's cadence, and its longest gap between
+    /// refreshes (a gap well over the cadence is the runner or the app stalling, not the page being slow).
+    private func filmed(_ film: FeelFilm) -> String {
+        let numbers = film.frames.map { $0.seen.filter { $0.key == "reader.pageNumber" }.map(\.label).joined(separator: ",") }
+        let first = numbers.first ?? ""
+        let changed = numbers.firstIndex { $0 != first && !$0.isEmpty }
+        let gaps = zip(film.frames.dropFirst(), film.frames).map { $0.t - $1.t }
+        let at = changed.map { "firstChangedRefresh=\($0) t=\(String(format: "%.3f", film.frames[$0].t))" }
+            ?? "firstChangedRefresh=none filmEnd=\(String(format: "%.3f", film.frames.last?.t ?? 0))"
+        return "\(at) refreshes=\(film.frames.count) cadence=\(String(format: "%.4f", film.cadence)) maxGap=\(String(format: "%.3f", gaps.max() ?? 0))"
+            + (film.stalledAt.map { " stalledAt=\(String(format: "%.3f", $0))" } ?? "")
+            + (first.isEmpty ? " number=hidden" : "")
+    }
+
     /// Runs `action` and judges what the words did, by counting changes: a turn moves them exactly once (A→B), a gesture
     /// that is not a turn leaves them alone. Two or more changes is the "spazz" (A→B→A, A→B→C); "empty" frames between
     /// two pages are not a change of their own.
     private func judgeGesture(_ name: String, _ expect: Expect, _ action: () -> Void) -> FeelResult {
         let before = FeelPlace.fingerprint(settled())
         let chapterBefore = chapter
-        action()
+        // A turn is filmed by the app, one sample per display refresh, so when it first shows the new page is read off
+        // the app's own clock, not the probe's read speed. The words live in a web view the film cannot see, so it
+        // watches the page number (`reader.pageNumber`, digits only), which changes with the page.
+        var turnFilm: FeelFilm?
+        if expect == .moveOnce {
+            turnFilm = feel.recordedFilm(["reader.pageNumber"]) { action() }
+        } else {
+            action()
+        }
         var seen = watch(away: before)
         var firstChange = seen.firstChange
         // A turn that has not shown yet may commit late (a turn into the next chapter waits for it to load): keep
@@ -248,7 +271,7 @@ final class FeelUITests: XCTestCase {
             // (gatefold#77), so this is an upper bound on how slow the page was, read on this machine's clock.
             let chapterAfter = chapter
             let crossed = chapterBefore.flatMap { b in chapterAfter.map { "\(b != $0)" } } ?? "unknown"
-            print("FEEL-TURN \(name) crossed=\(crossed) firstChangeRead=\(firstChange.map { "\($0)" } ?? "none") reads=\(seen.reads)")
+            print("FEEL-TURN \(name) crossed=\(crossed) \(turnFilm.map { filmed($0) } ?? "film=none") readsAfterFilm=\(firstChange.map { "\($0)" } ?? "none") reads=\(seen.reads)")
         }
         if expect == .moveOnce, changes > 0, lateBy > 0 {
             findings.append(.note("\(name): it moved late, \(lateBy) reads after the first settled watch"))
