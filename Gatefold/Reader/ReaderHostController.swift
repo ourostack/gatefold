@@ -81,7 +81,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError() }
 
-    private static func makeNavigator(publication: Publication, at location: Locator?, preferences: EPUBPreferences) throws -> EPUBNavigatorViewController {
+    static func makeNavigator(publication: Publication, at location: Locator?, preferences: EPUBPreferences) throws -> EPUBNavigatorViewController {
         try EPUBNavigatorViewController(
             publication: publication,
             initialLocation: location,
@@ -221,9 +221,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         guard let old = standby else { return }
         standby = nil
         old.ready.cancel()
-        old.navigator.willMove(toParent: nil)
-        old.navigator.view.removeFromSuperview()
-        old.navigator.removeFromParent()
+        Self.retire(old.navigator)
     }
 
     /// Puts the standby page in front when it is `locator`'s, waiting for it to finish loading if it
@@ -258,9 +256,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         next.navigator.view.accessibilityElementsHidden = false
         navigator = next.navigator
         wire(navigator)
-        old.willMove(toParent: nil)
-        old.view.removeFromSuperview()
-        old.removeFromParent()
+        Self.retire(old)
         weakModel?.highlights.navigatorChanged()
         if let here = navigator.currentLocation { self.navigator(navigator, locationDidChange: here) }
         return true
@@ -408,6 +404,13 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         return false
     }
 
+    /// Takes a navigator that is done (a counter, a standby page, the page a swap replaced) out of the reader.
+    static func retire(_ navigator: EPUBNavigatorViewController) {
+        navigator.willMove(toParent: nil)
+        navigator.view.removeFromSuperview()
+        navigator.removeFromParent()
+    }
+
     func stopCounting() {
         guard let old = counter else { return }
         counter = nil
@@ -420,9 +423,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         }
         for counting in old.navigators {
             stop(counting.view)
-            counting.willMove(toParent: nil)
-            counting.view.removeFromSuperview()
-            counting.removeFromParent()
+            Self.retire(counting)
         }
     }
 
