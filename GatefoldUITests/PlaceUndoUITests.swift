@@ -63,7 +63,7 @@ final class PlaceUndoUITests: XCTestCase {
         // them down.
         let contents = app.buttons["reader.contents"]
         if contents.exists {
-            let hittable = expectation(for: NSPredicate(format: "isHittable == true"), evaluatedWith: contents)
+            let hittable = XCTNSPredicateExpectation(predicate: NSPredicate(format: "isHittable == true"), object: contents)
             if XCTWaiter.wait(for: [hittable], timeout: 2) == .completed { return }
         }
         el("reader.page").coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
@@ -153,6 +153,7 @@ final class PlaceUndoUITests: XCTestCase {
         window.coordinate(withNormalizedOffset: CGVector(dx: 0.07, dy: 0.47)).tap()
         let back2 = waitForWords(changingFrom: ahead2, timeout: 15)
         XCTAssertEqual(opening(back2), opening(first), "a tap at x 0.07, 0.47 down, on the spread didn't turn back")
+        XCTAssertFalse(app.buttons["reader.contents"].exists, "the higher tap showed the controls instead of turning")
     }
 
     /// A tap on the turn zone while a jump's veil is up is not a turn: the page lands where he chose.

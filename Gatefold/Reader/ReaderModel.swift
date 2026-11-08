@@ -1008,18 +1008,21 @@ final class ReaderModel {
     private func veiled(riffle: Bool = false, forward: Bool = true, _ body: @escaping () async -> Void) async {
         jumpsMade += 1
         let jump = jumpsMade
-        jumpsInFlight += 1
-        defer {
-            jumpsInFlight -= 1
-            // Where the newest jump left the page: a jump overtaken meanwhile (a Back freed by its
-            // count) that lands late is put back here.
-            if jump == jumpsMade { lastLanded = page?.currentLocation }
+        // Counted while Readium has the jump, and where the newest one left the page noted the moment
+        // it is back: a jump overtaken meanwhile (a Back freed by its count) that lands late is put back
+        // there.
+        let tracked: () async -> Void = { [weak self] in
+            self?.jumpsInFlight += 1
+            await body()
+            guard let self else { return }
+            self.jumpsInFlight -= 1
+            if jump == self.jumpsMade { self.lastLanded = self.page?.currentLocation }
         }
         // Behind the cover placeholder there's nothing to veil.
         if let host, pageReady {
-            await host.veiledJump(riffle: riffle && !reduceMotion && pageTurn == .curl, forward: forward, body)
+            await host.veiledJump(riffle: riffle && !reduceMotion && pageTurn == .curl, forward: forward, tracked)
         } else {
-            await body()
+            await tracked()
         }
     }
     @ObservationIgnored private var jumpsMade = 0
@@ -1501,6 +1504,8 @@ final class ReaderModel {
         moves += 1
         Task {
             guard let first = page?.currentLocation else { return }
+            // A turn is a move too: a Back that comes back late after it puts the page back here.
+            lastLanded = first
             await locationDidChange(first)
             // Turning into the next resource, Readium can name the old one until the new one has
             // loaded, and its update arrives mid-turn when it's ignored. Look again once it has.
@@ -1664,6 +1669,7 @@ final class ReaderModel {
             guard let self, self.goingBack == trip else { return }
             readerLog.notice("back: trip \(trip, privacy: .public) ran out of reads; Back is free again")
             self.goingBack = nil
+            self.host?.abandonVeil()
         }
         hasMoved = true
         moves += 1
@@ -1681,7 +1687,7 @@ final class ReaderModel {
             // Readium has moved the page to this trip's place by now. With no newer jump still on its
             // way (that one lands after and wins), the page goes back to where the newest left it.
             readerLog.notice("back: trip \(trip, privacy: .public) came back after another move; page put back, its words not taken")
-            if jumpsInFlight == 0, !isClosed, let newest = lastLanded { _ = await page?.go(to: newest) }
+            if jumpsInFlight == 0, !isClosed, let newest = lastLanded { await veiled { _ = await self.page?.go(to: newest) } }
             return
         }
         await captureAnchor()
