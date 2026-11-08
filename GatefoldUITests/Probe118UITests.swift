@@ -43,10 +43,11 @@ final class Probe118UITests: XCTestCase {
         let window = app.windows.firstMatch.frame
         let bar = app.navigationBars.firstMatch
         let from = bar.coordinate(withNormalizedOffset: CGVector(dx: dx, dy: dy))
+        let start = from.screenPoint
         from.press(forDuration: 0.05, thenDragTo: from.withOffset(CGVector(dx: 0, dy: window.height * fraction)),
                    withVelocity: velocity, thenHoldForDuration: 0)
         let gone = app.navigationBars.firstMatch.waitForNonExistence(timeout: 10)
-        print("PROBE118 \(name): gone=\(gone) window=\(window) bars=\(bars) start=\(from.screenPoint)")
+        print("PROBE118 \(name): gone=\(gone) window=\(window) bars=\(bars) start=\(start)")
         if !gone { done.tap(); _ = app.navigationBars.firstMatch.waitForNonExistence(timeout: 10) }
     }
 
@@ -56,7 +57,7 @@ final class Probe118UITests: XCTestCase {
         app.launch()
         XCTAssertTrue(app.descendants(matching: .any)["reader.page"].waitForExistence(timeout: 60))
         sleep(3)
-        for round in 1...2 {
+        for round in 1...3 {
             pull("r\(round) leading 0.05 by 0.6 fast", from: 0.05, 0.5, by: 0.6, velocity: .fast)
             pull("r\(round) leading 0.05 by 0.9 fast", from: 0.05, 0.5, by: 0.9, velocity: .fast)
             pull("r\(round) leading 0.05 by 0.6 3000", from: 0.05, 0.5, by: 0.6, velocity: XCUIGestureVelocity(3000))
