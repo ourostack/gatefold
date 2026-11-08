@@ -841,20 +841,31 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             return side
         }
 
+        /// A move made on a page nothing covers is one he watches: counted, so a test can say there was none.
+        private func moving(_ kind: String) {
+            moves += 1
+            guard !isCovered, host.settlePicture == nil else { return }
+            host.noteVisibleMove(kind)
+        }
+
         func pinWords() async -> Bool {
+            let visible = !isCovered && host.settlePicture == nil
             let pinned = await number(ReaderJS.pinToTop(text)) == 1
-            if pinned { moves += 1 }
+            if pinned {
+                moves += 1
+                if visible { host.noteVisibleMove("column break") }
+            }
             return pinned
         }
 
         func toggleVerso() async {
-            moves += 1
+            moving("verso")
             _ = await host.navigator.evaluateJavaScript(ReaderJS.toggleVerso)
         }
 
         func goToSavedPlace() async {
             guard let locator = host.model.locator(for: anchor) else { return }
-            moves += 1
+            moving("saved place")
             _ = await host.navigator.go(to: locator, options: .init(animated: false))
         }
 
@@ -862,12 +873,12 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             guard let saved = host.model.locator(for: anchor) else { return }
             // Where the words are in the page as it is laid out now, not where the place was saved.
             let progression = await host.progression(of: text) ?? saved.locations.progression
-            moves += 1
+            moving("to his words")
             _ = await host.navigator.go(to: saved.copy(locations: { $0.progression = progression }), options: .init(animated: false))
         }
 
         func stepSpread(forward: Bool) async {
-            moves += 1
+            moving("a spread")
             _ = forward ? await host.navigator.goForward(options: .init(animated: false))
                         : await host.navigator.goBackward(options: .init(animated: false))
         }
@@ -918,6 +929,18 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
 
     /// The picture a correction on a spread he is reading holds over the page (`WebSpread.hold`).
     private var settlePicture: UIView?
+    /// UI tests: up once a settle moved a page nothing covered, so a test can say every move was hidden.
+    private var visibleMoveMarker: UIView?
+
+    fileprivate func noteVisibleMove(_ kind: String) {
+        readerLog.error("spread: moved a page he can see (\(kind, privacy: .public))")
+        guard LaunchOptions.isUITest, visibleMoveMarker == nil else { return }
+        let marker = UIView(frame: CGRect(x: 0, y: 0, width: 1, height: 1))
+        marker.isAccessibilityElement = true
+        marker.accessibilityIdentifier = "reader.visibleSettleMove"
+        view.addSubview(marker)
+        visibleMoveMarker = marker
+    }
     /// A late look for his words is running: one at a time, so two never stack pictures or undo each
     /// other's verso.
     private var lateSettling = false

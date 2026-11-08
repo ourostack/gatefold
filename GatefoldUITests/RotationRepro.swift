@@ -72,6 +72,12 @@ final class RotationRepro: XCTestCase {
         while Date() < deadline, vtext == old || vtext.isEmpty { usleep(200_000) }
         _ = settle(20)
     }
+    /// Every move a settle made was behind a cover or a held picture: none on a page he could see.
+    private func assertNoVisibleSettleMove(_ when: String) {
+        let seen = el("reader.visibleSettleMove").exists
+        note("visibleSettleMove \(when)=\(seen)")
+        XCTAssertFalse(seen, "\(when): a settle moved the page with nothing over it")
+    }
     private func waitCounted(_ timeout: TimeInterval = 300) -> Bool {
         let count = el("reader.pageCount")
         let deadline = Date().addingTimeInterval(timeout)
@@ -145,6 +151,7 @@ final class RotationRepro: XCTestCase {
         let his = vtext
         XCTAssertFalse(his.isEmpty)
         note("setup counted=\(counted) contentsRows=\(rowCount) jumped=\(jumped) hisHead=\(hash(head(his)))")
+        assertNoVisibleSettleMove("the rotation")
 
         // 5. Leave without turning, three times.
         var green = 0
@@ -165,8 +172,31 @@ final class RotationRepro: XCTestCase {
             if startsSame { green += 1 }
             note("round \(round) \(startsSame ? "GREEN" : "RED") startsSame=\(startsSame) middleSame=\(middleSame) hisStartAt=\(at) reopenedHead=\(hash(head(back)))")
             XCTAssertTrue(startsSame, "round \(round): reopened on his page")
+            assertNoVisibleSettleMove("round \(round)")
         }
         note("SUMMARY green=\(green) of 3")
+
+        // 6. Two turns on the spread the restore laid out (a column break at his words, when it put one in), then
+        // leave: the reopen lands on the spread he turned to, not one the fresh layout's own columns make.
+        turnForward()
+        turnForward()
+        sleep(3)
+        let turned = settle(20)
+        XCUIDevice.shared.press(.home)
+        sleep(3)
+        app.quit()
+        app.launchArguments = base + extra
+        app.relaunch()
+        XCUIDevice.shared.orientation = .landscapeLeft
+        sleep(2)
+        _ = settle(60)
+        sleep(4)
+        let afterTurns = settle(10)
+        let turnedSame = !turned.isEmpty && head(afterTurns) == head(turned)
+        let turnedAt = afterTurns.range(of: head(turned)).map { afterTurns.distance(from: afterTurns.startIndex, to: $0.lowerBound) } ?? -1
+        note("round turned \(turnedSame ? "GREEN" : "RED") startsSame=\(turnedSame) hisStartAt=\(turnedAt) turnedHead=\(hash(head(turned))) reopenedHead=\(hash(head(afterTurns)))")
+        XCTAssertTrue(turnedSame, "after two turns: reopened on the spread he turned to")
+        assertNoVisibleSettleMove("after two turns")
         // Ended here, not by XCTest at teardown, where #44 recorded "Failed to terminate" (gatefold#76).
         app.quit()
     }
