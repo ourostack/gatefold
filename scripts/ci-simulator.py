@@ -15,6 +15,11 @@ boot-sim.sh's log, as "Simulator did not boot", when it failed or did not finish
 the time spent downloading meanwhile counts toward it. A boot has taken 10 min on a hosted runner, and boot-sim.sh
 bounds each bootstatus at 7 min so a hang falls through to its next attempt; the wait step's own timeout is longer.
 
+Before it passes, `wait` checks that the device is still Booted and its runtime is still listed as available: a
+runtime that fails to mount ("Malformed bundle") can vanish after the boot, and the test launch then fails with
+"runtime path not found" (gatefold#71). If not, it runs boot-sim.sh once more for a fresh device, on the time left.
+Offline test: bash scripts/test-ci-simulator.sh (a fake xcrun and boot-sim.sh; no simulator).
+
 A prefix that is a whole device name ("iPhone Duo") picks that device only, never a sibling such as "iPhone Duo Pro".
 """
 import json
@@ -26,7 +31,8 @@ import tempfile
 import time
 from pathlib import Path
 
-BOOT_SIM = Path(__file__).resolve().parent.parent / ".github" / "scripts" / "boot-sim.sh"
+BOOT_SIM = Path(os.environ.get("CI_SIMULATOR_BOOT_SIM")
+                or Path(__file__).resolve().parent.parent / ".github" / "scripts" / "boot-sim.sh")
 
 
 def state_dir():
@@ -62,6 +68,7 @@ def start(name, prefix):
     print(f"Booting {kind} on {runtime} (simulator SDK {sdk})")
     d = state_dir()
     (d / f"{name}.started").write_text(f"{time.time()}\n")
+    (d / f"{name}.plan").write_text(f"{kind} {runtime}\n")
     # Detached, so it outlives this step: the UDID goes to <name>.udid, boot-sim.sh's exit code to <name>.status.
     subprocess.Popen(
         ["sh", "-c", '"$1" "$2" "$3" "$4" > "$5.udid"; echo $? > "$5.status"', "boot",
@@ -90,11 +97,52 @@ def outcome(code, udid, limit):
     return "booted" if udid else "boot-sim.sh printed no UDID"
 
 
+def unready(udid, runtimes, devices):
+    """Why a booted device can't take the tests yet, or None. The runtime can vanish after the boot ("Malformed
+    bundle" while it mounts; the test launch then says "runtime path not found", gatefold#71)."""
+    runtime = next((rt for rt, ds in devices.items() for d in ds if d.get("udid") == udid), None)
+    if runtime is None:
+        return f"{udid} is no longer listed"
+    state = next(d.get("state") for d in devices[runtime] if d.get("udid") == udid)
+    if state != "Booted":
+        return f"{udid} is {state}, not Booted"
+    if not any(r.get("identifier") == runtime and r.get("isAvailable") for r in runtimes):
+        return f"its runtime {runtime} is no longer available"
+    return None
+
+
+def check(udid):
+    try:
+        runtimes = json.loads(subprocess.run(["xcrun", "simctl", "list", "runtimes", "-j"], capture_output=True,
+                                             text=True, timeout=120).stdout)["runtimes"]
+        devices = json.loads(subprocess.run(["xcrun", "simctl", "list", "devices", "-j"], capture_output=True,
+                                            text=True, timeout=120).stdout)["devices"]
+    except (subprocess.SubprocessError, ValueError, KeyError) as e:
+        return f"simctl could not list the simulators ({e!r})"
+    return unready(udid, runtimes, devices)
+
+
 def export(udid):
     env = os.environ.get("GITHUB_ENV")
     if env:
         with open(env, "a") as f:
             f.write(f"UDID={udid}\nDESTINATION=platform=iOS Simulator,arch={platform.machine()},id={udid}\n")
+
+
+def again(name, limit):
+    """Run boot-sim.sh once more, in the foreground, with the device and runtime `start` chose. (udid, outcome)"""
+    plan = state_dir() / f"{name}.plan"
+    if not plan.exists():
+        return "", "no record of what `start` booted"
+    kind, runtime = plan.read_text().split()
+    try:
+        out = subprocess.run([str(BOOT_SIM), f"{name}-2", kind, runtime], capture_output=True, text=True,
+                             timeout=limit)
+    except subprocess.TimeoutExpired:
+        return "", f"the fresh device did not boot within {int(limit)} s"
+    print(out.stderr[-4000:])
+    udid = out.stdout.strip()
+    return udid, outcome(out.returncode, udid, limit)
 
 
 def main(argv):
@@ -118,9 +166,23 @@ def main(argv):
         log = state_dir() / f"{name}.log"
         print(log.read_text(errors="replace")[-4000:] if log.exists() else "(no boot-sim.sh log)")
         if said == "booted":
-            export(udid)
-            print(f"{udid} booted")
-            return 0
+            problem = check(udid)
+            if problem is None:
+                export(udid)
+                print(f"{udid} booted, and its runtime is available")
+                return 0
+            # The machine, not the app: one fresh device, on whatever time is left (gatefold#71).
+            print(f"::warning title=Infrastructure retry::Booted, but {problem}. Booting a fresh device.")
+            started = state_dir() / f"{name}.started"
+            left = (float(started.read_text()) if started.exists() else time.time()) + limit - time.time()
+            udid, said = again(name, max(left, 60))
+            if said == "booted":
+                problem = check(udid)
+                if problem is None:
+                    export(udid)
+                    print(f"{udid} booted on the second try, and its runtime is available")
+                    return 0
+                said = f"booted again, but {problem}"
         print(f"::error title=Simulator did not boot::{said}. No app code ran.")
         return 1
     print(__doc__, file=sys.stderr)
@@ -162,6 +224,14 @@ def selftest():
     assert outcome(1, "", 600) == "boot-sim.sh exited 1"
     assert outcome(None, "", 600) == "boot-sim.sh did not finish within 600 s"
     assert BOOT_SIM.exists(), "boot-sim.sh is where start runs it from"
+    devs = {"iOS-27-2": [{"udid": "a", "state": "Booted"}, {"udid": "b", "state": "Shutdown"}]}
+    rts = [{"identifier": "iOS-27-2", "isAvailable": True}]
+    assert unready("a", rts, devs) is None
+    assert unready("b", rts, devs) == "b is Shutdown, not Booted"
+    assert unready("c", rts, devs) == "c is no longer listed"
+    assert unready("a", [{"identifier": "iOS-27-2", "isAvailable": False}], devs) == \
+        "its runtime iOS-27-2 is no longer available", "gatefold#71: booted, then the runtime went"
+    assert unready("a", [], devs) == "its runtime iOS-27-2 is no longer available"
     print("ci-simulator: selftest passed")
     return 0
 
