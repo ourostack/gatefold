@@ -146,7 +146,8 @@ jobs:
               NavigationPlaceUITests PositionUITests/testEveryPostureKeepsThePlace
               CountingPlaceholderUITests
           - name: taps
-            # 53 min measured (a 10 min simulator boot among them); measured / 0.7 keeps 30% headroom.
+            # 53 min measured (a 10 min simulator boot among them) before ContentsPullUITests' 1-3 min;
+            # measured / 0.7 keeps 30% headroom. Re-measure on its first run.
             timeout: 80
             title: Every Fine-Tune tap lands; the furniture never moves the words
             tests: FineTuneTapUITests PageFurnitureUITests ContentsPullUITests
@@ -334,7 +335,7 @@ jobs:
             -destination "$DESTINATION" \
             -only-testing:GatefoldTests \
             -resultBundlePath "$RUNNER_TEMP/unit.xcresult" 2>&1 | tail -200
-      - name: Reading position survives posture and font changes; every Fine-Tune tap lands (UI tests)
+      - name: Reading position survives posture and font changes; every Fine-Tune tap lands; a pull puts Contents away (UI tests)
         run: |
           set -o pipefail
           sh scripts/ci-crashes.sh mark

@@ -20,6 +20,9 @@ final class ContentsPullUITests: XCTestCase {
     }
 
     private var done: XCUIElement { app.buttons["contents.done"] }
+    /// Contents' bar. Its Done isn't in the bar's accessibility subtree (a query for the bar holding it finds
+    /// nothing), so it's the only navigation bar up: the shelf hides its own and the reader has none.
+    private var bar: XCUIElement { app.navigationBars.firstMatch }
 
     private func openContents() -> Bool {
         let contents = app.buttons["reader.contents"]
@@ -29,7 +32,7 @@ final class ContentsPullUITests: XCTestCase {
         }
         guard contents.exists else { return false }
         contents.tap()
-        return app.navigationBars.firstMatch.waitForExistence(timeout: 15) && done.waitForExistence(timeout: 15)
+        return done.waitForExistence(timeout: 15) && bar.waitForExistence(timeout: 15)
     }
 
     /// A pull from the middle of the bar (the book's title) and from its top edge, three times each, as soon
@@ -49,7 +52,6 @@ final class ContentsPullUITests: XCTestCase {
         for round in 1...3 {
             for (name, dy) in [("middle", 0.5), ("top edge", 0.05)] {
                 XCTAssertTrue(openContents(), "round \(round): Contents opened")
-                let bar = app.navigationBars.firstMatch
                 let from = bar.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: dy))
                 from.press(forDuration: 0.05, thenDragTo: from.withOffset(CGVector(dx: 0, dy: window.height * 0.6)),
                            withVelocity: .fast, thenHoldForDuration: 0)
