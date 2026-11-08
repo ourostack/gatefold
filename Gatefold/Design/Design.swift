@@ -95,6 +95,9 @@ enum LaunchOptions {
     /// Debug only: a jump's chapter counts as still loading (Readium's spinner up) for this many looks,
     /// so a test can hold the load open as a slow device does and watch the veil (#38).
     static var holdChapterLoadLooks: Int? { defaults.object(forKey: "GatefoldHoldChapterLoad") == nil ? nil : defaults.integer(forKey: "GatefoldHoldChapterLoad") }
+    /// Tests only: the first page counts as still loading for this many looks, so the opening cover
+    /// stays up as it does on a slow device or a stuck load (#94), and a test can tap through it (#104).
+    static var holdOpeningLoadLooks: Int? { defaults.object(forKey: "GatefoldHoldOpeningLoad") == nil ? nil : defaults.integer(forKey: "GatefoldHoldOpeningLoad") }
     static var unfoldPaintDelay: Double? { defaults.object(forKey: "GatefoldUnfoldPaintDelay") == nil ? nil : defaults.double(forKey: "GatefoldUnfoldPaintDelay") }
     /// Book IDs to open and close one after another, as taps would (see `RootView.openTour`).
     /// Seconds an open tour rests on the shelf between books (the warm books reopen meanwhile).
