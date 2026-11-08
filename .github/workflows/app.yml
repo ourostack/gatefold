@@ -230,6 +230,8 @@ jobs:
           echo "$(date -u +%T) done ($status)"
           exit $status
       - name: ${{ matrix.title }}
+        # A miss in the cold step still lets the rest report: one failure must not hide the others.
+        if: ${{ !cancelled() }}
         env:
           TESTS: ${{ needs.changes.outputs.full != 'false' && matrix.tests || matrix.pr_tests || matrix.tests }}
           # Five rounds of the controls-then-numbers reopen (about 2 min each); 30 locally.
