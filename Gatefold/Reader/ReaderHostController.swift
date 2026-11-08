@@ -231,6 +231,8 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
            let picture = page.snapshotView(afterScreenUpdates: false) {
             picture.frame = page.frame
             picture.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+            // A picture, not the page: VoiceOver has nothing to find on it while it leaves.
+            picture.accessibilityElementsHidden = true
             view.addSubview(picture)
         }
         Self.retire(navigator)
