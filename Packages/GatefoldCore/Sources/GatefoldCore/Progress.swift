@@ -71,6 +71,13 @@ public struct JumpSuggestion: Equatable, Sendable {
         )
     }
 
+    /// His own saved place, found only after the page was already in view: offered, never jumped to.
+    public static func ownPlace(at totalProgression: Double, page: Int?) -> JumpSuggestion {
+        JumpSuggestion(headline: "Where you stopped reading",
+                       detail: page.map { "Page \($0). Jump there?" } ?? "Jump there?",
+                       targetProgression: totalProgression)
+    }
+
     /// A plain name for the other device: "InkPad", "PocketBook", "web reader".
     public static func deviceKind(_ device: String) -> String {
         let d = device.lowercased()

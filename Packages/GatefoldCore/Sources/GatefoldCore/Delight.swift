@@ -190,6 +190,21 @@ public struct SyncSlip: Equatable, Sendable {
         )
     }
 
+    /// His own place, found only after the page was already in view: offered, never jumped to.
+    public static func ownPlace(pagesAway: Int?, passage: String?) -> SyncSlip {
+        let how: String
+        if let pages = pagesAway, pages != 0 {
+            let n = abs(pages)
+            how = (n == 1 ? "1 page " : "\(n) pages ") + (pages > 0 ? "on" : "back")
+        } else {
+            how = "Jump back to it"
+        }
+        return SyncSlip(title: "Where you stopped reading", detail: how, passage: passage.flatMap(excerpt))
+    }
+
+    /// The tab his own place's slip folds into.
+    public static let ownPlaceTab = "Your place"
+
     /// The slip folded away into a tab at the page's edge: who, and how far.
     public static func tab(device: String, pagesAhead: Int?) -> String {
         if let pages = pagesAhead, pages > 0 { return "\(deviceWord(device)) +\(pages)" }
