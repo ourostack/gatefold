@@ -96,6 +96,20 @@ struct SpreadVisibleTextTests {
         #expect(VisibleRange(href: "chapter.html", start: 0, end: 0.1, text: text).contains(anchor), "his words on the left page read as lost")
     }
 
+    /// Readium's own count decides when it gives one: a one-page window whose column width is under half
+    /// of it (an 850-pt-wide landscape window takes Readium's 20em columns) is one page, and a count of
+    /// two is two.
+    @Test func aChapterNotYetToldItsPagesTakesReadiumsCount() async throws {
+        for (style, pages) in [("column-count: 1; column-width: 150px", 1), ("column-count: 2; column-width: 150px", 2),
+                               ("column-width: 200px", 2), ("column-width: 400px", 1)] {
+            let html = Self.html(columns: 1, picture: false, words: 30)
+                .replacingOccurrences(of: "column-width: 100vw;", with: style + ";")
+            let (window, web) = try await load(html, columns: nil)
+            #expect(await eval(web, "window.gatefold.pages()") as? Int == pages, "\(style) read as \(pages == 1 ? "two pages" : "one page")")
+            window.isHidden = true
+        }
+    }
+
     /// The mirror: a chapter's last spread, whose right page ends a few lines down while the left page is
     /// full. The words on screen run to the right page's last word, not the left page's.
     @Test func theRightPagesWordsAreOnScreenWhenItEndsHigher() async throws {

@@ -25,7 +25,9 @@ enum ReaderJS {
         if (window.gatefoldColumns) { return window.gatefoldColumns === 2; }
         const cs = getComputedStyle(document.documentElement);
         const count = parseInt(cs.columnCount, 10), width = parseFloat(cs.columnWidth);
-        return count === 2 || (width > 0 && width <= window.innerWidth / 2 + 1);
+        // Readium sets the count (1 or 2); a width alone counts only when the count is left to it.
+        if (!isNaN(count)) { return count === 2; }
+        return width > 0 && width <= window.innerWidth / 2 + 1;
       }
       // Scan a column from its top-left for the first character.
       function first(x0, x1) {
@@ -240,6 +242,8 @@ enum ReaderJS {
           }
           return null;
         },
+        // How many pages the script reads the screen as.
+        pages: function () { return twoPages() ? 2 : 1; },
         // All the text on screen, whitespace collapsed. A spread is read page by page: from the left
         // page's first words to the right page's last. Scanned across both pages at once, a left page
         // opening with a picture (whose caption is never a place) started at the right page's first
