@@ -1,3 +1,5 @@
+import GatefoldCloud
+import GatefoldCore
 import ReadiumNavigator
 import ReadiumShared
 import Testing
@@ -48,5 +50,48 @@ import WebKit
         }
         let alive = held.filter { $0.web != nil }.count
         #expect(alive == 0, "\(alive) of \(held.count) retired web views are still alive")
+    }
+
+    /// Open a book, close it, and its page's web views go once the reader is off screen: three times over,
+    /// as he opens and closes books in a session.
+    @Test func aClosedReaderLetsGoOfItsWebViews() async throws {
+        let publication = try await HighlightTests.publication()
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 820, height: 1180))
+        let root = UIViewController()
+        window.rootViewController = root
+        window.isHidden = false
+        defer { window.isHidden = true }
+        var held: [Held] = []
+        for round in 0..<3 {
+            let app = AppModel(sync: FakeSyncService(), libraryRoot: URL.temporaryDirectory.appending(path: "release-\(UUID().uuidString)"))
+            let cloud = CloudBook(fastHash: "release-\(round)", name: "pride-and-prejudice.epub", title: "Pride and Prejudice")
+            await app.library.merge([cloud])
+            let entry = try #require(app.library.book("release-\(round)"))
+            var model: ReaderModel? = ReaderModel(book: entry, publication: publication, app: app)
+            let host = try #require(model?.hostController)
+            // As SwiftUI shows the reader: a child controller whose view is in the window.
+            root.addChild(host)
+            host.view.frame = root.view.bounds
+            root.view.addSubview(host.view)
+            host.didMove(toParent: root)
+            var webs: [WKWebView] = []
+            for _ in 0..<100 where webs.isEmpty {
+                try await Task.sleep(for: .milliseconds(100))
+                webs = Self.webViews(in: host.view)
+            }
+            try #require(!webs.isEmpty, "the reader made a web view")
+            held += webs.map(Held.init)
+            // As the app closes it: the model first, then SwiftUI takes the reader off screen.
+            model?.close()
+            host.willMove(toParent: nil)
+            host.view.removeFromSuperview()
+            host.removeFromParent()
+            model = nil
+        }
+        for _ in 0..<50 where held.contains(where: { $0.web != nil }) {
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        let alive = held.filter { $0.web != nil }.count
+        #expect(alive == 0, "\(alive) of \(held.count) closed readers' web views are still alive")
     }
 }
