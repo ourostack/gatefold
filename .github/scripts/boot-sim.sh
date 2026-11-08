@@ -2,27 +2,50 @@
 # Create and boot a simulator, and print its UDID once it is really booted.
 # `simctl bootstatus -b` can exit 0 on a device whose first boot failed ("Data Migration Failed",
 # or a runtime that won't mount), and the install then dies minutes later (#57). So check the
-# device's state, and try a fresh device up to three times. A failed first boot can repeat on every
-# new device on the same host, so each retry also restarts CoreSimulatorService (#57, run 42437958662).
+# device's state. On some hosts the failure repeats on every new device even after restarting
+# CoreSimulatorService (#57, runs 42437958662 and 42439381768), so the attempts escalate:
+#   1. a plain create and boot;
+#   2. the same device booted a second time (the migration has run once), then a fresh one;
+#   3. `xcodebuild -runFirstLaunch` and a service restart, then a fresh device.
+# On every failure the device's migration lines go to the log, so the next failure names its cause.
 # Usage: boot-sim.sh <name> <device type id> <runtime id>
 set -uo pipefail
 name="$1" type="$2" runtime="$3"
 booted() { xcrun simctl list devices -j | python3 -c 'import json,sys; print(any(d["udid"]==sys.argv[1] and d["state"]=="Booted" for v in json.load(sys.stdin)["devices"].values() for d in v))' "$1"; }
-for attempt in 1 2 3; do
-  udid="$(xcrun simctl create "$name" "$type" "$runtime")" || { echo "attempt $attempt: create failed" >&2; sleep 20; continue; }
-  xcrun simctl boot "$udid" >&2 || true
-  status="$(xcrun simctl bootstatus "$udid" -b 2>&1)" || true
+try_boot() {
+  xcrun simctl boot "$1" >&2 || true
+  status="$(xcrun simctl bootstatus "$1" -b 2>&1)" || true
   echo "$status" | tail -3 >&2
-  if [[ "$(booted "$udid")" == "True" ]] && ! grep -q "Failed" <<<"$status"; then
-    echo "$udid"
-    exit 0
+  [[ "$(booted "$1")" == "True" ]] && ! grep -q "Failed" <<<"$status"
+}
+diagnose() {
+  echo "--- migration lines for $1" >&2
+  grep -hiE "migrat|datamigrator|failed" "$HOME/Library/Logs/CoreSimulator/$1/system.log" 2>/dev/null | tail -15 >&2 || true
+  df -h / | tail -1 >&2
+}
+restart_service() {
+  xcrun simctl shutdown all >/dev/null 2>&1 || true
+  killall -9 com.apple.CoreSimulator.CoreSimulatorService >/dev/null 2>&1 || true
+  sleep 20
+  xcrun simctl list devices >/dev/null 2>&1 || true
+}
+for attempt in 1 2 3; do
+  if [[ $attempt == 3 ]]; then
+    xcodebuild -runFirstLaunch >&2 || true
+    restart_service
+  fi
+  udid="$(xcrun simctl create "$name" "$type" "$runtime")" || { echo "attempt $attempt: create failed" >&2; restart_service; continue; }
+  if try_boot "$udid"; then echo "$udid"; exit 0; fi
+  diagnose "$udid"
+  if [[ $attempt == 2 ]]; then
+    echo "attempt 2: booting $udid a second time" >&2
+    xcrun simctl shutdown "$udid" >/dev/null 2>&1 || true
+    if try_boot "$udid"; then echo "$udid"; exit 0; fi
   fi
   echo "attempt $attempt: $udid did not boot" >&2
   xcrun simctl shutdown "$udid" >/dev/null 2>&1 || true
   xcrun simctl delete "$udid" >&2 || true
-  xcrun simctl shutdown all >/dev/null 2>&1 || true
-  killall -9 com.apple.CoreSimulator.CoreSimulatorService >/dev/null 2>&1 || true
-  sleep 20
+  restart_service
 done
 echo "the $name simulator never booted" >&2
 exit 1
