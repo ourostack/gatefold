@@ -203,7 +203,8 @@ final class ReaderModel {
     private let launchGoTo: Double?
     /// Counts every move of the page (a turn, a jump, a landing, the close). A settle or a landing
     /// that started before the latest move has been overtaken and must not move or record anything.
-    private var moves = 0 { didSet { layoutOnly = false } }
+    /// Every move of his counts a step too (see `steps`).
+    private var moves = 0 { didSet { layoutOnly = false; if moves > oldValue { steps += 1 } } }
     /// Set from the moment the reader closes; nothing moves the page or records a place after it.
     private(set) var isClosed = false
     /// While a landing settles, the navigator's in-between locations are not places: the landing
@@ -1005,29 +1006,38 @@ final class ReaderModel {
     }
 
     /// A jump keeps the old page on screen, dimmed, until the new one has painted, then cross-fades.
-    private func veiled(riffle: Bool = false, forward: Bool = true, _ body: @escaping () async -> Void) async {
-        jumpsMade += 1
-        let jump = jumpsMade
-        // Counted while Readium has the jump, and where the newest one left the page noted the moment
-        // it is back: a jump overtaken meanwhile (a Back freed by its count) that lands late is put back
-        // there.
+    /// Returns the jump's step; `step` is one the caller took for it beforehand.
+    @discardableResult
+    private func veiled(riffle: Bool = false, forward: Bool = true, step: Int? = nil, _ body: @escaping () async -> Void) async -> Int {
+        let jump = step ?? takeStep()
+        // Where the newest move left the page, noted the moment its jump is back: a jump overtaken
+        // meanwhile (a Back freed by its count) that lands late is put back there.
         let tracked: () async -> Void = { [weak self] in
-            self?.jumpsInFlight += 1
             await body()
             guard let self else { return }
-            self.jumpsInFlight -= 1
-            if jump == self.jumpsMade { self.lastLanded = self.page?.currentLocation }
+            self.landed(jump, at: self.page?.currentLocation)
         }
         // Behind the cover placeholder there's nothing to veil.
         if let host, pageReady {
-            await host.veiledJump(riffle: riffle && !reduceMotion && pageTurn == .curl, forward: forward, tracked)
+            await host.veiledJump(riffle: riffle && !reduceMotion && pageTurn == .curl, forward: forward, jump: jump, tracked)
         } else {
             await tracked()
         }
+        return jump
     }
-    @ObservationIgnored private var jumpsMade = 0
-    @ObservationIgnored private var jumpsInFlight = 0
+    /// Every move of the page, his or ours: a jump, a turn, a swipe. Only the newest one's landing is
+    /// where the page belongs.
+    @ObservationIgnored private var steps = 0
+    @ObservationIgnored private var landedStep = 0
     @ObservationIgnored private var lastLanded: Locator?
+    private func takeStep() -> Int { steps += 1; return steps }
+    private func landed(_ step: Int, at here: Locator?) {
+        guard step == steps, let here else { return }
+        lastLanded = here
+        landedStep = step
+    }
+    /// The page is on the newest move's landing (none still on its way).
+    private var newestHasLanded: Bool { landedStep == steps }
 
     /// Goes to another device's place: the exact spot when its CFI resolved, else its percent.
     /// Records the place once, when the page has settled, and never earlier than `target`.
@@ -1437,10 +1447,12 @@ final class ReaderModel {
         // A swipe or a scroll of his that moved the page is reading on, as a turn is (slide and scroll
         // never call `userTurnedPage`). A jump's own landing brings no touch, nor does a tap that only
         // shows the controls.
-        if touchedAtReport && readerMoved && !fromLayout && noMoveOfOurs,
-           reportedBefore.map({ $0.href != locator.href || $0.locations.progression != locator.locations.progression }) ?? true {
-            readOnAfterJump()
-        }
+        let swiped = touchedAtReport && readerMoved && !fromLayout
+            && reportedBefore.map({ $0.href != locator.href || $0.locations.progression != locator.locations.progression }) ?? true
+        if swiped && noMoveOfOurs { readOnAfterJump() }
+        // A swipe is a move of the page too (a late Back after it puts the page back here). A Back freed
+        // by its count never reported its move, so with one out a swipe counts without a report since.
+        if swiped && (noMoveOfOurs || strayBack != nil) { landed(takeStep(), at: locator) }
         // Only the reader moves the place. Readium reopening a page boundary off from the saved one is
         // not a move, so opening a book never overwrites a further-ahead place on the InkPad.
         // A book warmed behind the shelf has had no move of his yet: nothing it reports is his place.
@@ -1502,16 +1514,23 @@ final class ReaderModel {
         readOnAfterJump()
         hasMoved = true
         moves += 1
+        let step = steps
         Task {
             guard let first = page?.currentLocation else { return }
             // A turn is a move too: a Back that comes back late after it puts the page back here.
-            lastLanded = first
+            landed(step, at: first)
             await locationDidChange(first)
             // Turning into the next resource, Readium can name the old one until the new one has
             // loaded, and its update arrives mid-turn when it's ignored. Look again once it has.
             try? await Task.sleep(for: .milliseconds(700))
+            // Not with a freed Back still out: the page may be that trip's late landing, not this turn's.
+            guard strayBack == nil else {
+                readerLog.notice("turn: second look skipped, a freed Back is still out")
+                return
+            }
             if let later = page?.currentLocation, later.href != first.href
                 || later.locations.progression != first.locations.progression {
+                landed(step, at: later)
                 // His turn's own report, corrected: never taken for the layout's (same words, no move since).
                 await locationDidChange(later, hisMove: true)
             }
@@ -1661,6 +1680,9 @@ final class ReaderModel {
         // Released on every way out, and by the count if the jump never comes back (a load that hangs
         // must not leave Back dead for the rest of the session).
         defer { if goingBack == trip { goingBack = nil } }
+        hasMoved = true
+        moves += 1
+        let jump = takeStep()
         Task { [weak self] in
             for _ in 0..<JumpLanding.reads {
                 guard let self, self.goingBack == trip, !self.isClosed else { return }
@@ -1669,25 +1691,31 @@ final class ReaderModel {
             guard let self, self.goingBack == trip else { return }
             readerLog.notice("back: trip \(trip, privacy: .public) ran out of reads; Back is free again")
             self.goingBack = nil
-            self.host?.abandonVeil()
+            self.strayBack = jump
+            // Only this trip's own veil, or the one it was about to put up.
+            self.host?.abandonVeil(jump: jump)
         }
-        hasMoved = true
-        moves += 1
-        let move = moves
         // The page on screen now: a Back tapped right after a jump comes before Readium's report of it.
         // The pill stays up through the jump and turns into this one's way back when it lands, never
         // taken down under his finger mid-tap (on the Duo a Back taken down and put up again never
         // showed, and going back could not be undone).
         let undo = rememberPlace(at: page?.currentLocation, keepingTheWayBack: true)
         defer { publishBack(undo) }
-        await veiled { _ = await self.page?.go(to: back) }
-        // A trip that came back after its reads ran out, with another move made since, takes no words:
-        // the page is that move's now.
-        guard moves == move else {
-            // Readium has moved the page to this trip's place by now. With no newer jump still on its
-            // way (that one lands after and wins), the page goes back to where the newest left it.
+        await veiled(step: jump) {
+            _ = await self.page?.go(to: back)
+            // Back at once, before its report: that report is this trip's landing, never a swipe.
+            if self.strayBack == jump { self.strayBack = nil }
+        }
+        // A trip that came back after its reads ran out, with another move made since (a jump, a turn,
+        // a swipe), takes no words: the page is that move's now.
+        guard steps == jump else {
+            // Readium has moved the page to this trip's place by now. With the newest move landed (one
+            // still on its way, a jump or a turn, lands after and wins), the page goes back to where it
+            // left it, and that place is kept again: a report meanwhile may have kept this trip's.
             readerLog.notice("back: trip \(trip, privacy: .public) came back after another move; page put back, its words not taken")
-            if jumpsInFlight == 0, !isClosed, let newest = lastLanded { await veiled { _ = await self.page?.go(to: newest) } }
+            guard newestHasLanded, host?.isTurning != true, !isClosed, let newest = lastLanded else { return }
+            let restore = await veiled { _ = await self.page?.go(to: newest) }
+            if steps == restore, !isClosed, let here = page?.currentLocation { await locationDidChange(here, hisMove: true) }
             return
         }
         await captureAnchor()
@@ -1695,6 +1723,8 @@ final class ReaderModel {
     /// The Back trip under way: a second tap meanwhile is not a second jump.
     @ObservationIgnored private var goingBack: Int?
     @ObservationIgnored private var backTrips = 0
+    /// The step of a Back trip freed by its count whose jump hasn't come back yet.
+    @ObservationIgnored private var strayBack: Int?
     var isGoingBack: Bool { goingBack != nil }
     /// One beat of the wait for Back's jump (a sleep, counted as `JumpLanding` counts its reads):
     /// `JumpLanding.reads` of them free Back again.

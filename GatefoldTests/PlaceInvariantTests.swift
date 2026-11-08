@@ -227,10 +227,47 @@ import Testing
         // He jumps somewhere else meanwhile (Back would go to the same place as the hung one).
         await f.model.go(toProgression: 0.4, rememberBack: true)
         let chosen = try #require(f.page.currentLocation)
+        // Readium lands on the very place it is sent (the put-back is exact, not one page boundary off).
+        f.page.pageStartsBefore = 0
         f.page.releaseJumps()
         await hung.value
         let at = f.page.currentLocation?.locations.totalProgression ?? -1
-        #expect(abs(at - (chosen.locations.totalProgression ?? 0)) < 0.001, "the late Back left the page on its own place")
+        #expect(abs(at - (chosen.locations.totalProgression ?? 0)) < 0.00001, "the late Back left the page on its own place")
+        f.model.close()
+    }
+
+    /// A Back freed by its count, then a turn or a swipe of his (no jump of ours), then the hung Back
+    /// landing at last: the page ends on the page he turned to, and that is the place kept.
+    @Test(arguments: [false, true]) func aBackThatLandsLateAfterHisTurnLeavesHisPage(swipe: Bool) async throws {
+        let f = try await S.make(remote: { _, _ in nil }, startAt: 0.05)
+        await f.model.load()
+        await f.model.locationDidChange(try #require(f.page.currentLocation))
+        await f.model.go(toProgression: 0.7, rememberBack: true)
+        f.model.backBeat = { await Task.yield() }
+        f.page.holdsJumps = true
+        let hung = Task { await f.model.goBack() }
+        for _ in 0..<(JumpLanding.reads * 4) where !f.model.isGoingBack { await Task.yield() }
+        for _ in 0..<(JumpLanding.reads * 4) where f.model.isGoingBack { await Task.yield() }
+        #expect(!f.model.isGoingBack, "the hung Back was never freed")
+        // He turns (or swipes) to the next page meanwhile: Readium moves itself and tells the reader.
+        let next = try #require(await S.locate(f.publication, 0.72))
+        f.page.currentLocation = next
+        if swipe {
+            f.model.noteInteraction()
+            await f.model.locationDidChange(next)
+        } else {
+            f.model.userTurnedPage()
+            for _ in 0..<200 { await Task.yield() }
+        }
+        f.page.pageStartsBefore = 0
+        f.page.holdsJumps = false
+        f.page.releaseJumps()
+        await hung.value
+        for _ in 0..<200 { await Task.yield() }
+        let at = f.page.currentLocation?.locations.totalProgression ?? -1
+        #expect(abs(at - (next.locations.totalProgression ?? 0)) < 0.00001, "the late Back left the page on its own place")
+        let kept = saved(f).flatMap { try? Locator(jsonString: $0) }?.locations.totalProgression ?? -1
+        #expect(abs(kept - (next.locations.totalProgression ?? 0)) < 0.001, "the late Back's place was kept")
         f.model.close()
     }
 }
