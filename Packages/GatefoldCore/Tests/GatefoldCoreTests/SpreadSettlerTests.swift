@@ -344,6 +344,30 @@ struct VisibleSettleTests {
         #expect(page.releases == [true])
     }
 
+    /// gatefold#108: a restore (a rotation's reflow, a reopen) paginated two ways at the same place and
+    /// size. Its column break at his words went in only while a cover happened to be up, so a slow
+    /// rotation (its 12 s watchdog had shown the page) kept the natural columns and a quick reopen put the
+    /// break in: the reopened spread started part of a page past the one he left. Covered or not, a
+    /// restore lands on one spread, and an uncovered one shows it as one change.
+    @Test func aRestorePaginatesTheSameWhetherOrNotACoverIsStillUp() async {
+        var differ: [String] = []
+        for wordsColumn in 40...47 {
+            var landings: [String] = []
+            for covered in [true, false] {
+                let fake = FakeSpreads(columns: 52, wordsColumn: wordsColumn, pinnable: true,
+                                       startSpread: wordsColumn / 2, relayoutAt: nil)
+                let page = VisibleSpreads(fake)
+                page.coveredForMoves = covered ? 99 : 0
+                _ = await SpreadSettler.keepOnLeft(page, current: { true })
+                #expect(fake.landed, "words \(wordsColumn) covered \(covered): not on the left page")
+                if !covered { #expect(page.shown.count <= 2, "words \(wordsColumn): he saw \(page.shown)") }
+                landings.append("\(fake.spread)|\(fake.columns)")
+            }
+            if landings[0] != landings[1] { differ.append("words \(wordsColumn): covered \(landings[0]), uncovered \(landings[1])") }
+        }
+        #expect(differ.isEmpty, "\(differ.count) places paginated two ways; first: \(differ.first ?? "")")
+    }
+
     /// Overtaken (he turned, the book closed, a reflow began): the picture goes at once, never faded
     /// onto a page he has moved on from.
     @Test func anOvertakenCorrectionDropsItsPictureAtOnce() async {
