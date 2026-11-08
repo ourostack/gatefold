@@ -35,9 +35,20 @@ final class PositionUITests: XCTestCase {
         // An unfolded Duo can reflow before the first place is taken, so the number may not be 0.
         waitForProbe(prefix: "ready", timeout: 90, what: "first page")
         // Turn a page so the place is the reader's own.
+        let before = words
         app.descendants(matching: .any)["reader.page"].coordinate(withNormalizedOffset: CGVector(dx: 0.92, dy: 0.5)).tap()
+        // Judged in reads, not seconds: up to 120 reads for the new words.
+        for _ in 0..<120 where !turned {
+            let now = words
+            turned = !before.isEmpty && !now.isEmpty && now != before
+            if !turned { Thread.sleep(forTimeInterval: 0.25) }
+        }
         sleep(2)
     }
+
+    private var words: String { (app.descendants(matching: .any)["reader.visibleText"].value as? String) ?? "" }
+    /// Whether the launch's turn moved the page (judged by equality only, never quoted).
+    private var turned = false
 
     /// Reads `element`'s label until `ok` holds or `timeout` passes, timing each read: a read that
     /// takes seconds means the app's main thread was busy, not that the reader was in the wrong state.
@@ -134,6 +145,7 @@ final class PositionUITests: XCTestCase {
         for _ in 0..<4 where !app.buttons["reader.appearance"].waitForExistence(timeout: 5) {
             app.descendants(matching: .any)["reader.page"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
         }
+        XCTAssertTrue(turned, "the launch's turn moved the page, so the place kept below is the turned page")
         app.buttons["reader.appearance"].tap()
         let larger = app.buttons["appearance.larger"]
         XCTAssertTrue(larger.waitForExistence(timeout: 10))
