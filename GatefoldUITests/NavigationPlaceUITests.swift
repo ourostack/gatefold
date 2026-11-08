@@ -121,6 +121,50 @@ final class NavigationPlaceUITests: XCTestCase {
         XCTAssertNotEqual(opening(words), opening(first), "the jump moved the page")
     }
 
+    /// A Contents jump made while the page he leaves is still loading starts at once: the old page is
+    /// pictured as it is, never waited on (the wait held the jump back about 60 s on CI's iPad, and the
+    /// page never moved in time: gatefold#73). Judged in probe reads against the same jump from a
+    /// loaded page, on the same runner: the held load (1200 looks, about a minute) may add at most 10
+    /// reads to the jump, and Back follows within 10 more.
+    func testAJumpFromAPageStillLoadingStartsAtOnce() {
+        let plain = contentsJumpReads([])
+        let held = contentsJumpReads(["-GatefoldHoldOldPageLoad", "1200"])
+        print("OLDPAGEHELD reads to move: loaded \(plain.move), still loading \(held.move); to Back: loaded \(plain.back), still loading \(held.back)")
+        XCTAssertTrue(plain.move < Self.jumpReadLimit, "the jump from a loaded page never moved the page (\(plain.move) reads)")
+        XCTAssertLessThanOrEqual(held.move, plain.move + 10, "a jump from a page still loading moved the page only after \(held.move) reads (\(plain.move) from a loaded one)")
+        XCTAssertLessThanOrEqual(held.back, 10, "the jump from a page still loading left no way back within 10 reads (\(held.back))")
+    }
+
+    private static let jumpReadLimit = 400
+
+    /// Opens fresh, jumps to chapter XXX through Contents, and counts probe reads from the tap until
+    /// the words change, then until Back is up (the limit when they never do).
+    private func contentsJumpReads(_ extra: [String]) -> (move: Int, back: Int) {
+        let first = openFresh(extra)
+        showChrome()
+        app.buttons["reader.contents"].tap()
+        let row = app.buttons.matching(NSPredicate(format: "label CONTAINS[c] %@", "Chapter XXX")).firstMatch
+        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label CONTAINS[c] %@", "Chapter I")).firstMatch.waitForExistence(timeout: 10),
+                      "the contents opened")
+        for _ in 0..<20 where !(row.exists && row.isHittable) { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(row.exists && row.isHittable, "the contents list chapter XXX")
+        row.tap()
+        var move = 0
+        while move < Self.jumpReadLimit {
+            move += 1
+            let now = visibleText
+            if !now.isEmpty, opening(now) != opening(first) { break }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        }
+        var back = 0
+        while back < Self.jumpReadLimit, !app.buttons["reader.back"].exists {
+            back += 1
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        }
+        app.terminate()
+        return (move, back)
+    }
+
     func testAScrubberJumpKeepsThePlace() {
         let first = openFresh()
         showChrome()

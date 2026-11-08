@@ -95,6 +95,15 @@ enum LaunchOptions {
     /// Debug only: a jump's chapter counts as still loading (Readium's spinner up) for this many looks,
     /// so a test can hold the load open as a slow device does and watch the veil (#38).
     static var holdChapterLoadLooks: Int? { defaults.object(forKey: "GatefoldHoldChapterLoad") == nil ? nil : defaults.integer(forKey: "GatefoldHoldChapterLoad") }
+    /// Debug only: when a jump starts, the page it leaves counts as still loading (Readium's spinner
+    /// up) for this many looks, as a page still loading on a slow device does (gatefold#73).
+    static var holdOldPageLoadLooks: Int? {
+        #if DEBUG
+        defaults.object(forKey: "GatefoldHoldOldPageLoad") == nil ? nil : defaults.integer(forKey: "GatefoldHoldOldPageLoad")
+        #else
+        nil
+        #endif
+    }
     /// Tests only: how many counters count pages behind the page (0 counts none), for an A/B of what
     /// counting costs a turn.
     static var counters: Int? {

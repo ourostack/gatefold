@@ -1540,7 +1540,11 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         guard veil == nil, !jumpStarting, !isTurning, view.window != nil else { return await body() }
         jumpStarting = true
         veilJump = jump
-        let old = await renderedSnapshot(afterChange: false)
+        if LaunchOptions.isUITest, let looks = LaunchOptions.holdOldPageLoadLooks, looks > 0 { heldLoadLooks = looks }
+        // The jump he chose starts now: the old page is pictured as it is, never waited on while it
+        // loads (its spinner held the jump back up to 60 s, and the page never moved: gatefold#73).
+        let old = await renderedSnapshot(afterChange: false, waitsForLoad: true)
+        if LaunchOptions.isUITest, LaunchOptions.holdOldPageLoadLooks != nil { heldLoadLooks = 0 }
         jumpStarting = false
         // Let go of while its old page was being pictured (`abandonVeil`): no cover goes up.
         guard veilJump == jump else { return await body() }
@@ -1858,15 +1862,41 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             if heldLoadLooks == 0 { heldLoadMarker?.removeFromSuperview(); heldLoadMarker = nil }
             return true
         }
+        return readiumSpinner != nil
+    }
+
+    /// Readium's spinner in view, if one is up, and where: the frame in the navigator's view.
+    private var readiumSpinner: CGRect? {
         let host = navigator.view!
-        func spinning(_ v: UIView) -> Bool {
-            guard !v.isHidden, v.alpha > 0.01 else { return false }
+        func spinning(_ v: UIView) -> CGRect? {
+            guard !v.isHidden, v.alpha > 0.01 else { return nil }
             if let a = v as? UIActivityIndicatorView {
-                return a.isAnimating && a.convert(a.bounds, to: host).intersects(host.bounds)
+                let frame = a.convert(a.bounds, to: host)
+                return a.isAnimating && frame.intersects(host.bounds) ? frame : nil
             }
-            return v.subviews.contains(where: spinning)
+            for sub in v.subviews { if let f = spinning(sub) { return f } }
+            return nil
         }
         return spinning(host)
+    }
+
+    /// Where Readium's spinner is and what the page is, for a log line: no words, only geometry and
+    /// the chapter's file. Which web view it sits in (one per spread) says what is loading.
+    private func spinnerReport() -> String {
+        let host = navigator.view!
+        let at = readiumSpinner.map { "\(Int($0.minX)),\(Int($0.minY)) \(Int($0.width))x\(Int($0.height))" } ?? "gone"
+        var webs: [String] = []
+        func walk(_ v: UIView) {
+            if let w = v as? WKWebView {
+                let f = w.convert(w.bounds, to: host)
+                if f.intersects(host.bounds) { webs.append("\(Int(f.minX)),\(Int(f.minY)) \(Int(f.width))x\(Int(f.height)) loading \(w.isLoading)") }
+                return
+            }
+            v.subviews.forEach(walk)
+        }
+        walk(host)
+        let file = navigator.currentLocation?.href.string.split(separator: "/").last.map(String.init) ?? "none"
+        return "spinner at \(at) of \(Int(host.bounds.width))x\(Int(host.bounds.height)); web views in view [\(webs.joined(separator: "; "))]; at \(file) @\(navigator.currentLocation?.locations.progression ?? -1)"
     }
 
     /// The page as the web views draw it. `drawHierarchy` misplaces a paginated web view's content
@@ -2055,7 +2085,9 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         weakModel?.turnPlacement = line
     }
 
-    func renderedSnapshot(afterChange: Bool) async -> UIImage {
+    /// With `waitsForLoad` false the page is pictured as it is, a few tries at most, however long
+    /// Readium's spinner stays up: a jump's old page.
+    func renderedSnapshot(afterChange: Bool, waitsForLoad: Bool = true) async -> UIImage {
         let paper = PageSignature.rgb(weakModel?.theme.uiBackground ?? .white)
         var last: (UIImage, PageSignature)?
         // A turn or a jump into a chapter still loading holds the old page until it has: as long as
@@ -2065,9 +2097,13 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         var loadingLooks = 0
         var attempt = 0
         defer { lastSnapshotLooks = loadingLooks + attempt }
-        while attempt < 40 {
+        let attempts = waitsForLoad ? 40 : 10
+        while attempt < attempts {
             if afterChange || attempt > 0 || loadingLooks > 0 { try? await Task.sleep(for: .milliseconds(attempt == 0 && loadingLooks == 0 ? 60 : 50)) }
-            if isLoadingPage {
+            if attempt == 0, loadingLooks == 0, heldLoadLooks == 0, readiumSpinner != nil {
+                readerLog.notice("snapshot: Readium's spinner is up \(afterChange ? "on the page beneath" : "on the page in view", privacy: .public): \(self.spinnerReport(), privacy: .public)")
+            }
+            if waitsForLoad, isLoadingPage {
                 await unveilPlacedPages()
                 if isLoadingPage, loadingLooks < Self.loadingLooks { loadingLooks += 1; last = nil; continue }
             }
