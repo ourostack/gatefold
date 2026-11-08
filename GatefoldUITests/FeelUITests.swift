@@ -522,10 +522,8 @@ final class FeelUITests: XCTestCase {
             back.tap()
         }
         expectGesture("Back after the jump", .moveOnce) { goBack("the jump") }
-        let backPlace = FeelPlace.fingerprint(settled())
-        XCTExpectFailure("gatefold#83: Back after a Contents jump lands on a different page than he left", strict: true) {
-            check(FeelPlace.compare(start: start, after: ["Back after a Contents jump": backPlace]), name: "contents-back-place")
-        }
+        check(FeelPlace.compare(start: start, after: ["Back after a Contents jump": FeelPlace.fingerprint(settled())]),
+              name: "contents-back-place")
 
         // A link in the book: the front matter links into the text. The first page is the cover, so turn (counted, at
         // most eight turns) until a page shows a link.
