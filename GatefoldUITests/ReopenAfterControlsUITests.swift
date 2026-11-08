@@ -85,7 +85,7 @@ final class ReopenAfterControlsUITests: XCTestCase {
             app.launchArguments = ["-GatefoldUITest", "YES", "-GatefoldFakeCloud", "YES", "-GatefoldSkipWelcome", "YES",
                                    "-GatefoldSignedIn", "YES", "-GatefoldAllowReopen", "YES", "-GatefoldNoLatency", "YES",
                                    "-GatefoldReset", "YES", "-GatefoldDownloadAll", "YES"]
-            app.launch()
+            app.relaunch()
             open()
             let opened = settle()
             numbersOn()

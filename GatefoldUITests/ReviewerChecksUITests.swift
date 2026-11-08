@@ -163,7 +163,7 @@ final class ReviewerChecksUITests: XCTestCase {
         for spot in ["0.31", "0.12", "0.47"] {
             app.launchArguments = base + ["-GatefoldReset", "YES", "-GatefoldDownloadAll", "YES",
                                           "-GatefoldOpenBook", "gutenberg-pride-and-prejudice", "-GatefoldGoTo", spot]
-            app.launch()
+            app.relaunch()
             XCTAssertTrue(el("reader.page").waitForExistence(timeout: 120), "the book opened at \(spot)")
             _ = settle(120)
             turnForward(); turnForward()

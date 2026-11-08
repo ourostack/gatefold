@@ -51,7 +51,7 @@ final class ReopenUITests: XCTestCase {
         // Back to Gatefold, no book asked for: it reopens on the picture of his page.
         app.launchArguments = common
         let launched = Date()
-        app.launch()
+        app.launch()  // not relaunch(): its wait for the foreground would spend the picture's 5 s window (gatefold#76)
         let picture = app.descendants(matching: .any)["reader.reopenPicture"].firstMatch
         XCTAssertTrue(picture.waitForExistence(timeout: 5), "no picture of his page at launch")
         // A tap on the right edge of the picture, before the live page is up.
