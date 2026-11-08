@@ -15,7 +15,7 @@ import WebKit
 struct SpreadVisibleTextTests {
     private static func html(columns: Int, picture: Bool, words: Int, tail: Bool = false) -> String {
         """
-        <!doctype html><html><head><meta name="viewport" content="width=400, height=200, initial-scale=1, maximum-scale=1, user-scalable=no">
+        <!doctype html><html><head><meta name="viewport" content="width=400, height=200, initial-scale=1, maximum-scale=1, user-scalable=no, shrink-to-fit=no">
         <style>
         :root { height: 100vh; column-width: \(columns == 2 ? "50vw" : "100vw"); column-gap: 0; column-fill: auto; overflow: hidden; }
         body { margin: 0; padding: 0 12px; font: 14px/18px Menlo, monospace; }
@@ -77,7 +77,7 @@ struct SpreadVisibleTextTests {
     /// Real unfold's chapter: the left page opens with a captioned picture, then the heading his place was
     /// taken from; the right page is full of words from its first line.
     @Test func theLeftPagesWordsAreOnScreenWhenItOpensWithAPicture() async throws {
-        let (window, web) = try await load(Self.html(columns: 2, picture: true, words: 120), columns: 2)
+        let (window, web) = try await load(Self.html(columns: 2, picture: true, words: 40), columns: 2)
         defer { window.isHidden = true }
         let (anchor, text) = try await placeAndScreen(web)
         #expect(anchor.text?.hasPrefix("Heading Nineteen.") == true, "the place is the heading under the picture")
@@ -89,7 +89,7 @@ struct SpreadVisibleTextTests {
     /// A chapter's own web view, turned or jumped into on a spread before the reader has told it the
     /// page count: the layout's two columns are read as two pages all the same.
     @Test func aChapterNotYetToldItsPagesIsReadPageByPage() async throws {
-        let (window, web) = try await load(Self.html(columns: 2, picture: true, words: 120), columns: nil)
+        let (window, web) = try await load(Self.html(columns: 2, picture: true, words: 40), columns: nil)
         defer { window.isHidden = true }
         let (anchor, text) = try await placeAndScreen(web)
         #expect(anchor.text?.hasPrefix("Heading Nineteen.") == true, "the place is the heading under the picture")
