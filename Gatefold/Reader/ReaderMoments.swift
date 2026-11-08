@@ -310,6 +310,11 @@ struct OpeningPlaceholder: View {
             }
         }
         .accessibilityIdentifier("reader.opening")
+        // The page beneath can't take a tap yet, so the cover answers one: a tap shows or hides the
+        // controls, which sit above it, so Close works while the first page loads (#104).
+        .contentShape(.rect)
+        .onTapGesture { model.controlsTapped(visible: !model.chromeVisible) }
+        .accessibilityAction { model.controlsTapped(visible: !model.chromeVisible) }
         .task {
             try? await Task.sleep(for: .seconds(1.5))
             withAnimation(.easeOut(duration: 0.3)) { slow = true }

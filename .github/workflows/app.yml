@@ -140,10 +140,11 @@ jobs:
             # 48 min measured with the erased-iPad rotation at 23; it has taken 38, so 63 / 0.7.
             timeout: 90
             # Rotation first, on an erased iPad (the cold step), then the rest on the same one.
-            cold: false
+            cold: true
             title: Jumps keep his place; the number's slot is never blank
-            # RED PROOF ONLY (#104), reverted in the fix commit.
-            tests: NavigationPlaceUITests/testTheOpeningCoverLetsTheControlsThrough
+            tests: >-
+              NavigationPlaceUITests PositionUITests/testEveryPostureKeepsThePlace
+              CountingPlaceholderUITests
           - name: taps
             # 53 min measured (a 10 min simulator boot among them); measured / 0.7 keeps 30% headroom.
             timeout: 80

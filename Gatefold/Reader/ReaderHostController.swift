@@ -1805,7 +1805,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
 
     private func holdLoadForTest(looks: Int) {
         heldLoadMarker?.removeFromSuperview()
-        heldLoadLooks = looks
+        heldLoadLooks = max(heldLoadLooks, looks)
         let marker = UIView(frame: CGRect(x: 0, y: 0, width: 1, height: 1))
         marker.isAccessibilityElement = true
         marker.accessibilityIdentifier = "reader.loadingHeld"

@@ -20,7 +20,22 @@ final class WindowFitUITests: XCTestCase {
         ]
         app.launch()
         XCTAssertTrue(el("reader.page").waitForExistence(timeout: 120), "the book opened")
-        sleep(4)
+        // The page is ready before anything is tapped: a tap on the opening cover is judged by #104's
+        // test, not here. Judged in reads of the app's own probe, never seconds.
+        let ready = el("reader.pageReady")
+        var reads = 0
+        while reads < 600, (ready.value as? String) != "1" { reads += 1; RunLoop.current.run(until: Date().addingTimeInterval(0.2)) }
+        print("WINDOWFIT page ready=\((ready.value as? String) == "1") after \(reads) reads")
+        XCTAssertEqual(ready.value as? String, "1", "the first page is ready")
+    }
+
+    /// Reads `e` until it exists, at most `limit` times.
+    private func appears(_ e: XCUIElement, within limit: Int) -> Bool {
+        for _ in 0..<limit {
+            if e.exists { return true }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        }
+        return e.exists
     }
 
     private func inside(_ e: XCUIElement, _ what: String, _ shape: String) {
@@ -33,7 +48,7 @@ final class WindowFitUITests: XCTestCase {
         let appearance = app.buttons["reader.appearance"]
         for _ in 0..<4 where !appearance.exists {
             el("reader.page").coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
-            _ = appearance.waitForExistence(timeout: 3)
+            _ = appears(appearance, within: 15)
         }
         XCTAssertTrue(appearance.exists, "\(shape): Your Page is up")
         sleep(1)
