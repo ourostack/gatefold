@@ -1,0 +1,177 @@
+name: UI test shard
+
+# One shard of App's UI tests, called by app.yml: download the build `build` made once, boot the simulator meanwhile,
+# run this shard's tests with test-without-building. The shards of one required check report through that check's
+# gate job in app.yml (`iPad (place)`, `iPad (taps)`, `iPad (reviewer)`, `Duo (the reviewers' checks)`).
+
+on:
+  workflow_call:
+    inputs:
+      artifact:
+        description: The build's artifact name (commit and Xcode version)
+        type: string
+        required: true
+      device:
+        description: Device name, or a prefix of it ("iPad Pro 13-inch", "iPhone Duo")
+        type: string
+        required: true
+      sim:
+        description: The simulator's name (gatefold-ipad, gatefold-duo)
+        type: string
+        required: true
+      shard:
+        description: Unique name for this shard's artifacts
+        type: string
+        required: true
+      tests:
+        description: The full list, run on main and on full-list pull requests (space-separated, under GatefoldUITests)
+        type: string
+        default: ""
+      skip:
+        description: Tests skipped from the full list (for a catch-all shard)
+        type: string
+        default: ""
+      pr_tests:
+        description: The pull-request list. Empty means the full list; "none" means this shard runs only on main.
+        type: string
+        default: ""
+      full:
+        description: needs.changes.outputs.full ('false' on a pull request that runs the PR lists)
+        type: string
+        default: "true"
+      cold:
+        description: First run the rotation tests on an erased iPad
+        type: boolean
+        default: false
+      timeout:
+        type: number
+        default: 30
+
+jobs:
+  run:
+    name: Tests
+    if: ${{ inputs.cold || inputs.full != 'false' || inputs.pr_tests != 'none' }}
+    runs-on: xcode-27
+    timeout-minutes: ${{ inputs.timeout }}
+    env:
+      ARTIFACT: ${{ inputs.artifact }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/select-xcode
+      - name: Start the ${{ inputs.device }} booting
+        run: python3 -I scripts/ci-simulator.py start "${{ inputs.sim }}" "${{ inputs.device }}"
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.artifact }}
+          path: ${{ runner.temp }}
+      - name: Unpack the app and its tests (built once, for this commit and Xcode)
+        run: |
+          set -eu
+          mkdir -p "$RUNNER_TEMP/dd/Build"
+          tar -xzf "$RUNNER_TEMP/products.tgz" -C "$RUNNER_TEMP/dd/Build"
+          # The build is keyed by commit and Xcode version and build; this job must have selected the same Xcode.
+          want="gatefold-tests-$GITHUB_SHA-xcode-$(xcodebuild -version | tr -s ' \n' '-' | sed 's/-$//; s/^Xcode-//; s/-Build-version-/-/')"
+          [ "$want" = "$ARTIFACT" ] || { echo "::error::Built as $ARTIFACT, but this job's Xcode makes $want"; exit 1; }
+          echo "XCTESTRUN=$(ls "$RUNNER_TEMP"/dd/Build/Products/*.xctestrun | head -1)" >> "$GITHUB_ENV"
+      - name: The ${{ inputs.device }} finished booting
+        # boot-sim.sh retries a boot that fails or hangs (#57); this step waits for it with a limit.
+        # 1200 s for the boot, at least 300 more for one fresh device (gatefold#71), and the listings.
+        timeout-minutes: 30
+        run: python3 -I scripts/ci-simulator.py wait "${{ inputs.sim }}" "${{ inputs.device }}" 1200
+      - name: Keep the app's place log as it runs (file and progression only, never the book's words)
+        run: |
+          nohup sh -c 'xcrun simctl spawn "$0" log stream --style compact --predicate "subsystem == \"bot.ouro.gatefold\"" 2>/dev/null \
+            | grep --line-buffered -E "place (read|write)|place:|location |reflow|landing|landed|reopen|tapped|warm:|open:|first page|pages:|turn:|spread:|veil:|settle [0-9]" \
+            | grep --line-buffered -v -E "text:|\] visible|anchor" >> "$1"' "$UDID" "$RUNNER_TEMP/place.log" >/dev/null 2>&1 &
+      - name: Turned on its side cold (an erased iPad), the spread always comes whole and keeps his place
+        # An erased simulator, not a new one: build 19 left the old page under a frozen leaf in 3 of 9
+        # rounds after an erase and 0 of 3 on a new simulator. Once a run, before anything warms it.
+        if: inputs.cold
+        # 777 s of tests in run 42442880987, and 10 min more for the erase's one fresh device (gatefold#71). A runner
+        # once hung here past 90 min with nothing in the log, so the step is bounded and reports each test as it ends.
+        timeout-minutes: 40
+        env:
+          # The runner draws the spread two to four times slower than a Mac (up to 50 s seen): 90 s
+          # still fails a page left stuck for good.
+          TEST_RUNNER_GATEFOLD_SPREAD_FLOOR: "90"
+        run: |
+          udid="$UDID"
+          echo "$(date -u +%T) erasing $udid"
+          # Each simctl call bounded, then the device checked; if its runtime went ("Malformed bundle"; gatefold#71),
+          # one fresh device, erased the same way. Prints the UDID to test on.
+          udid="$(python3 -I scripts/ci-simulator.py erase "${{ inputs.sim }}" "$udid")"
+          DESTINATION="platform=iOS Simulator,arch=$(uname -m),id=$udid"
+          # The erase ended the place log's stream; take it up again.
+          nohup sh -c 'xcrun simctl spawn "$0" log stream --style compact --predicate "subsystem == \"bot.ouro.gatefold\"" 2>/dev/null \
+            | grep --line-buffered -E "place (read|write)|place:|location |reflow|landing|landed|reopen|tapped|warm:|open:|first page|pages:|turn:|spread:|veil:|settle [0-9]|REPRO" \
+            | grep --line-buffered -v -E "text:|\] visible|anchor" >> "$1"' "$udid" "$RUNNER_TEMP/place.log" >/dev/null 2>&1 &
+          echo "$(date -u +%T) booted; testing"
+          xcodebuild test-without-building -xctestrun "$XCTESTRUN" \
+            -destination "$DESTINATION" \
+            -only-testing:GatefoldUITests/RotationRepro \
+            -only-testing:GatefoldUITests/RotationMidTransitionUITests \
+            -resultBundlePath "$RUNNER_TEMP/cold.xcresult" 2>&1 | tee "$RUNNER_TEMP/cold.log" \
+            | grep --line-buffered -E "Test Case .*(started|passed|failed|skipped)|TEST (SUCCEEDED|FAILED)|REPRO (setup|jump|round|SUMMARY)|MIDTURN|\.swift:[0-9]+: error" \
+            | awk '{ if (match($0, /XCTAssert[A-Za-z]* failed/)) $0 = substr($0, 1, RSTART + RLENGTH - 1) " (text withheld)"; print; fflush() }'
+          status=${PIPESTATUS[0]}
+          echo "$(date -u +%T) done ($status)"
+          exit $status
+      - name: This shard's tests
+        if: ${{ inputs.tests != '' && (inputs.full != 'false' || inputs.pr_tests != 'none') }}
+        env:
+          FULL: ${{ inputs.full }}
+          TESTS: ${{ inputs.tests }}
+          SKIP: ${{ inputs.skip }}
+          PR_TESTS: ${{ inputs.pr_tests }}
+          # Five rounds of the controls-then-numbers reopen (about 2 min each); 30 locally.
+          TEST_RUNNER_GATEFOLD_REOPEN_ROUNDS: "5"
+          # Ouro Feel's reports (hashes of the page, never its words), kept below.
+          TEST_RUNNER_OURO_FEEL_REPORT_DIR: ${{ runner.temp }}/feel-reports
+        run: |
+          set -o pipefail
+          mkdir -p "$RUNNER_TEMP/feel-reports"
+          # A pull request runs the PR list when the shard has one; otherwise the full list, less the skipped tests.
+          if [ "$FULL" = false ] && [ -n "$PR_TESTS" ]; then list="$PR_TESTS"; skip=""; else list="$TESTS"; skip="$SKIP"; fi
+          only=()
+          for t in $list; do only+=("-only-testing:GatefoldUITests/$t"); done
+          for t in $skip; do only+=("-skip-testing:GatefoldUITests/$t"); done
+          echo "Running: ${only[*]}"
+          # Each test's result prints as it finishes: a job cut off at its limit still names the slow test
+          # (run 42393941976's reviewer leg printed nothing, since this read the log only at the end).
+          xcodebuild test-without-building -xctestrun "$XCTESTRUN" \
+            -destination "$DESTINATION" "${only[@]}" \
+            -resultBundlePath "$RUNNER_TEMP/ui.xcresult" 2>&1 | tee "$RUNNER_TEMP/ui.log" \
+            | grep --line-buffered -E "Test Case .*(started|passed|failed|skipped)|TEST (SUCCEEDED|FAILED)|REPRO (round|SUMMARY)|TAPRATE|PLACEHOLDER|REVIEWER|WINDOWFIT|REOPEN round [0-9]+:|probe says|probe timing|FEEL:|FEEL-NOTCHECKED|FEEL-LATE|\[ouro-feel\] FAIL|\.swift:[0-9]+: error" \
+            | awk '{ if (match($0, /XCTAssert[A-Za-z]* failed/)) $0 = substr($0, 1, RSTART + RLENGTH - 1) " (text withheld)"; print; fflush() }'
+          status=${PIPESTATUS[0]}
+          # Zero tests run means the list names nothing that exists: a red, never a quiet pass.
+          if [ "$status" = 0 ] && ! grep -qE "Test Case .*(passed|failed|skipped)" "$RUNNER_TEMP/ui.log"; then
+            echo "::error title=No tests ran::$list matched no test."
+            exit 1
+          fi
+          exit $status
+      - name: The app's place log, for a miss (file and progression only, never the book's words)
+        if: failure() || cancelled()
+        # Kept as the job ran (a `log show` over hours of a busy simulator took 23 min and ran the job
+        # out of time, losing every log), so here it is only closed off.
+        timeout-minutes: 2
+        run: |
+          pkill -f "log stream --style compact" || true
+          wc -l < "$RUNNER_TEMP/place.log" || true
+      - uses: actions/upload-artifact@v4
+        if: failure() || cancelled()
+        with:
+          name: ${{ inputs.shard }}-results
+          path: |
+            ${{ runner.temp }}/place.log
+            ${{ runner.temp }}/cold.log
+            ${{ runner.temp }}/cold.xcresult
+            ${{ runner.temp }}/ui.log
+            ${{ runner.temp }}/ui.xcresult
+      - uses: actions/upload-artifact@v4
+        # Ouro Feel's reports, pass or fail: hashes of the page, never its words.
+        if: always()
+        with:
+          name: feel-reports-${{ inputs.shard }}
+          path: ${{ runner.temp }}/feel-reports
+          if-no-files-found: ignore
