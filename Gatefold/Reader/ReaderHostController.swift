@@ -1437,7 +1437,18 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     /// then the old page cross-fades away over 0.2 s (no blank page, no spinner). With `riffle`, a few
     /// leaves flick past first.
     func veiledJump(riffle: Bool, forward: Bool, _ body: @escaping () async -> Void) async {
-        guard veil == nil, !isTurning, view.window != nil else { return await body() }
+        // A jump begun while another's veil is still up (a Back freed while its load hung) goes under
+        // that veil, and the last jump under it lifts it: never a second jump on a bare page.
+        if let held = veil {
+            veilHolders += 1
+            await body()
+            _ = await renderedSnapshot(afterChange: true)
+            veilHolders -= 1
+            if veilHolders == 0, veil === held { await liftVeil(held) }
+            return
+        }
+        guard !isTurning, view.window != nil else { return await body() }
+        veilHolders = 1
         jumpStarting = true
         let old = await renderedSnapshot(afterChange: false)
         jumpStarting = false
@@ -1462,7 +1473,8 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         }
         // The running head stays with the page on screen: it changes chapter as the new page is revealed.
         weakModel?.heldRunningHead = .some(weakModel?.chapterTitle)
-        defer { weakModel?.heldRunningHead = nil }
+        // Let go only once the veil is: a jump still under it keeps the head with the page on screen.
+        defer { if veilHolders == 0 { weakModel?.heldRunningHead = nil } }
         if riffle {
             // The thumb starts riffling at once and keeps going while the far chapter loads, so the
             // wait is the riffle, never a dimmed page.
@@ -1475,14 +1487,23 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
                 await travel.value
                 return await self?.renderedSnapshot(afterChange: true) ?? old
             }
-            cover.removeFromSuperview()
-            veil = nil
+            veilHolders -= 1
+            if veilHolders == 0 { cover.removeFromSuperview(); veil = nil }
             return
         }
         let dim = UIViewPropertyAnimator(duration: 0.15, curve: .easeOut) { wash.alpha = 0.4 }
         dim.startAnimation()
         await body()
         _ = await renderedSnapshot(afterChange: true)
+        veilHolders -= 1
+        // A jump still under the veil lifts it when it lands.
+        guard veilHolders == 0 else { return }
+        await liftVeil(cover)
+    }
+    /// Jumps under the veil now; the last to land lifts it.
+    private var veilHolders = 0
+
+    private func liftVeil(_ cover: UIView) async {
         // The head changes chapter with the page, cross-fading as the veil lifts.
         withAnimation(.easeInOut(duration: 0.2)) { weakModel?.heldRunningHead = nil }
         await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
@@ -1491,7 +1512,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             } completion: { _ in done.resume() }
         }
         cover.removeFromSuperview()
-        veil = nil
+        if veil === cover { veil = nil }
     }
 
     /// Fast leaves curl away, like a thumb riffling to a place: at least three, more while the far
