@@ -49,10 +49,15 @@ final class Probe118UITests: XCTestCase {
         let bar = app.navigationBars.firstMatch
         let from = bar.coordinate(withNormalizedOffset: CGVector(dx: dx, dy: dy))
         let start = from.screenPoint
+        let picker = app.segmentedControls.firstMatch
+        let pickerFrame = picker.exists ? picker.frame : .null
+        let bar0 = app.navigationBars.firstMatch
+        let hit = (bar0.staticTexts.allElementsBoundByIndex + bar0.buttons.allElementsBoundByIndex + bar0.segmentedControls.allElementsBoundByIndex)
+            .filter { $0.frame.contains(start) }.map { "\($0.elementType.rawValue):\($0.label) \($0.frame)" }
         from.press(forDuration: 0.05, thenDragTo: from.withOffset(CGVector(dx: 0, dy: window.height * fraction)),
                    withVelocity: velocity, thenHoldForDuration: 0)
         let gone = app.navigationBars.firstMatch.waitForNonExistence(timeout: 10)
-        print("PROBE118 \(name): gone=\(gone) upReads=\(upReads) window=\(window) bars=\(bars) start=\(start)")
+        print("PROBE118 \(name): gone=\(gone) upReads=\(upReads) window=\(window) bars=\(bars) start=\(start) picker=\(pickerFrame) under=\(hit)")
         if !gone { done.tap(); _ = app.navigationBars.firstMatch.waitForNonExistence(timeout: 10) }
     }
 
@@ -63,12 +68,12 @@ final class Probe118UITests: XCTestCase {
         XCTAssertTrue(app.descendants(matching: .any)["reader.page"].waitForExistence(timeout: 60))
         sleep(3)
         for round in 1...3 {
-            pull("r\(round) leading 0.05 by 0.6 fast", from: 0.05, 0.5, by: 0.6, velocity: .fast)
-            pull("r\(round) leading 0.05 by 0.9 fast", from: 0.05, 0.5, by: 0.9, velocity: .fast)
-            pull("r\(round) leading 0.05 by 0.6 3000", from: 0.05, 0.5, by: 0.6, velocity: XCUIGestureVelocity(3000))
-            pull("r\(round) leading 0.10 by 0.6 fast", from: 0.10, 0.5, by: 0.6, velocity: .fast)
-            pull("r\(round) trailing 0.80 by 0.6 fast", from: 0.80, 0.5, by: 0.6, velocity: .fast)
-            pull("r\(round) top 0.5,0.05 by 0.6 fast", from: 0.5, 0.05, by: 0.6, velocity: .fast)
+            pull("r\(round) top centre 0.5,0.05", from: 0.5, 0.05, by: 0.6, velocity: .fast)
+            pull("r\(round) top centre 0.5,0.25", from: 0.5, 0.25, by: 0.6, velocity: .fast)
+            pull("r\(round) middle centre 0.5,0.5", from: 0.5, 0.5, by: 0.6, velocity: .fast)
+            pull("r\(round) top leading 0.05,0.05", from: 0.05, 0.05, by: 0.6, velocity: .fast)
+            pull("r\(round) top trailing 0.80,0.05", from: 0.80, 0.05, by: 0.6, velocity: .fast)
+            pull("r\(round) leading 0.05,0.5", from: 0.05, 0.5, by: 0.6, velocity: .fast)
         }
     }
 }
