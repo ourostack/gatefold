@@ -93,6 +93,10 @@ jobs:
           nohup sh -c 'xcrun simctl spawn "$0" log stream --style compact --predicate "subsystem == \"bot.ouro.gatefold\"" 2>/dev/null \
             | grep --line-buffered -E "place (read|write)|place:|location |reflow|landing|landed|reopen|tapped|warm:|open:|first page|pages:|turn:|spread:|veil:|settle [0-9]" \
             | grep --line-buffered -v -E "text:|\] visible|anchor" >> "$1"' "$UDID" "$RUNNER_TEMP/place.log" >/dev/null 2>&1 &
+          # The reader's own lines (launch-jump landings among them; gatefold#72), kept for every shard as Real unfold
+          # keeps them; lines carrying the page's text are dropped.
+          nohup sh -c 'xcrun simctl spawn "$0" log stream --style compact --predicate "subsystem == \"bot.ouro.gatefold\" AND category == \"reader\"" 2>/dev/null \
+            | grep --line-buffered -v "text:" >> "$1"' "$UDID" "$RUNNER_TEMP/reader.log" >/dev/null 2>&1 &
       - name: Turned on its side cold (an erased iPad), the spread always comes whole and keeps his place
         # An erased simulator, not a new one: build 19 left the old page under a frozen leaf in 3 of 9
         # rounds after an erase and 0 of 3 on a new simulator. Once a run, before anything warms it.
@@ -119,6 +123,8 @@ jobs:
           nohup sh -c 'xcrun simctl spawn "$0" log stream --style compact --predicate "subsystem == \"bot.ouro.gatefold\"" 2>/dev/null \
             | grep --line-buffered -E "place (read|write)|place:|location |reflow|landing|landed|reopen|tapped|warm:|open:|first page|pages:|turn:|spread:|veil:|settle [0-9]|REPRO" \
             | grep --line-buffered -v -E "text:|\] visible|anchor" >> "$1"' "$udid" "$RUNNER_TEMP/place.log" >/dev/null 2>&1 &
+          nohup sh -c 'xcrun simctl spawn "$0" log stream --style compact --predicate "subsystem == \"bot.ouro.gatefold\" AND category == \"reader\"" 2>/dev/null \
+            | grep --line-buffered -v "text:" >> "$1"' "$udid" "$RUNNER_TEMP/reader.log" >/dev/null 2>&1 &
           only=()
           for t in $TESTS; do only+=("-only-testing:GatefoldUITests/$t"); done
           for t in $SKIP; do only+=("-skip-testing:GatefoldUITests/$t"); done
@@ -197,6 +203,14 @@ jobs:
             ${{ runner.temp }}/cold.xcresult
             ${{ runner.temp }}/ui.log
             ${{ runner.temp }}/ui.xcresult
+      - uses: actions/upload-artifact@v4
+        # The reader's log, pass or fail, so a landing can be read from any shard (gatefold#72).
+        if: always()
+        with:
+          name: reader-log-${{ inputs.shard }}
+          path: ${{ runner.temp }}/reader.log
+          if-no-files-found: ignore
+          overwrite: true
       - uses: actions/upload-artifact@v4
         # Ouro Feel's reports, pass or fail: hashes of the page, never its words.
         if: always()
