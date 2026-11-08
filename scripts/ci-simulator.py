@@ -136,7 +136,7 @@ def export(udid):
             f.write(f"UDID={udid}\nDESTINATION=platform=iOS Simulator,arch={platform.machine()},id={udid}\n")
 
 
-RETRY_RESERVE = 300  # seconds of the wait kept back for one fresh device (gatefold#71)
+RETRY_RESERVE = 300  # the least a fresh device gets, past the limit if need be; the wait step allows for it
 
 
 def quietly(*args):
@@ -192,8 +192,7 @@ def main(argv):
         return 0
     if len(argv) >= 3 and argv[0] == "wait":
         name, limit = argv[1], int(argv[3]) if len(argv) > 3 else 1200
-        # The first boot gets the limit less a reserve, so a fresh device always has time (gatefold#71).
-        code = wait_boot(name, max(limit - RETRY_RESERVE, 60))
+        code = wait_boot(name, limit)
         udid_file = state_dir() / f"{name}.udid"
         udid = udid_file.read_text().strip() if udid_file.exists() else ""
         said = outcome(code, udid, limit)
@@ -207,10 +206,10 @@ def main(argv):
                 return 0
             # The machine, not the app: one fresh device, on whatever time is left (gatefold#71).
             print(f"::warning title=Infrastructure retry::Booted, but {problem}. Booting a fresh device.")
-            started = state_dir() / f"{name}.started"
-            left = (float(started.read_text()) if started.exists() else time.time()) + limit - time.time()
             quietly("shutdown", udid)
             quietly("delete", udid)
+            started = state_dir() / f"{name}.started"
+            left = (float(started.read_text()) if started.exists() else time.time()) + limit - time.time()
             udid, said = again(name, max(left, RETRY_RESERVE))
             if said == "booted":
                 problem = check(udid)
