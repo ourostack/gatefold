@@ -15,6 +15,14 @@ struct JumpSuggestionTests {
         #expect(s.targetProgression == 0.42)
     }
 
+    @Test func offersHisOwnPlaceByPageWhenThePagesAreCounted() {
+        let s = JumpSuggestion.ownPlace(at: 0.31, page: 155)
+        #expect(s.headline == "Where you stopped reading")
+        #expect(s.detail == "Page 155. Jump there?")
+        #expect(s.targetProgression == 0.31)
+        #expect(JumpSuggestion.ownPlace(at: 0.31, page: nil).detail == "Jump there?")
+    }
+
     @Test func staysQuietWhenTheOtherDeviceIsBehindOrOlderOrTheSame() {
         let a = ProgressSnapshot(totalProgression: 0.50, updated: now, device: "iPhone")
         #expect(JumpSuggestion.make(local: a, remote: .init(totalProgression: 0.40, updated: now.addingTimeInterval(60), device: "InkPad"), totalPages: nil) == nil)

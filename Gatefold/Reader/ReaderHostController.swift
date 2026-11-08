@@ -486,6 +486,12 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
 
     private func beginReflow(_ reason: ReflowReason) {
         readerLog.notice("reflow begins: \(String(describing: reason), privacy: .public)")
+        // A late correction's picture is the spread he was reading (the page beneath may be half moved):
+        // it becomes the reflow's cover.
+        if let picture = settlePicture {
+            settlePicture = nil
+            if reflowCover == nil { reflowCover = picture } else { picture.removeFromSuperview() }
+        }
         dropStandby()
         stopCounting()
         model.keeper.reflowWillBegin(reason)
@@ -508,9 +514,20 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             } else {
                 UIView.animate(withDuration: 0.12) { page.alpha = 0 }
             }
+            // The unfold plays on a page he can see: behind the opening cover (a relaunch turning on its
+            // side as it opens) a rising leaf only showed through the cover as it faded (#59).
+            // An unfold that begins covered stays a plain reflow even if the cover lifts before it lands:
+            // a swing then would play on a still picture of the old page.
+            if unfolding, !pageShown { unfolding = false }
             if unfolding { liftLeaf() }
         }
         settleReflowSoon()
+    }
+
+    /// The page is on screen for him: no opening cover or reopen picture over it.
+    private var pageShown: Bool {
+        guard let model = weakModel else { return false }
+        return model.pageReady && model.reopenPicture == nil
     }
 
     /// The leaf that starts rising from the spine at the bell, while the spread lays out behind.
@@ -743,6 +760,13 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         disablePanningIfNeeded()
         var cover = reflowCover
         reflowCover = nil
+        if unfolding, columns == 2, !pageShown {
+            // Still behind the opening cover: the spread is simply there when the cover lifts.
+            readerLog.notice("unfold: behind a cover (the opening one or a reopen picture); no swing")
+            unfolding = false
+            model.heldPicture = nil
+            model.heldPage = nil
+        }
         if unfolding, columns == 2 {
             unfolding = false
             // The swing starts from the page the reader was on, whichever screen it was drawn on.
@@ -782,7 +806,11 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     }
 
     func keepWordsOnLeft(_ anchor: ReadingAnchor, stillWanted: @escaping @MainActor () -> Bool) async {
-        guard columns == 2, stillWanted() else { return }
+        // A restore placing his words, or another late look, is already moving this page: the report
+        // its moves brought is not a new reason to move it.
+        guard columns == 2, stillWanted(), !lateSettling, placingGeneration == -1 else { return }
+        lateSettling = true
+        defer { lateSettling = false }
         if await keepOnLeft(anchor, current: stillWanted) != nil {
             readerLog.notice("spread: a late layout had moved his words; put back on the left page")
         }
@@ -849,6 +877,52 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         }
 
         func beat() async { try? await Task.sleep(for: .milliseconds(120)) }
+
+        var isCovered: Bool {
+            host.reflowCover != nil || host.veil != nil || host.navigator.view.alpha < 0.5
+                || host.weakModel?.reopenPicture != nil
+        }
+
+        func hold() async -> Bool {
+            let page = host.navigator.view!
+            guard host.settlePicture == nil, let container = page.superview,
+                  let cover = page.snapshotView(afterScreenUpdates: false) else { return false }
+            cover.frame = page.frame
+            cover.isUserInteractionEnabled = false
+            container.insertSubview(cover, aboveSubview: page)
+            host.settlePicture = cover
+            readerLog.notice("spread: held a picture over the page he is reading while his words are put back")
+            return true
+        }
+
+        func release(landed: Bool) async {
+            guard let cover = host.settlePicture else { return }
+            guard landed else {
+                // Overtaken by his move, a reflow or the close: nothing may stand over his page.
+                host.dropSettlePicture()
+                return
+            }
+            // His words on the left page as the moves left them, painted, before the picture goes.
+            _ = await host.renderedSnapshot(afterChange: true)
+            guard host.settlePicture === cover else { return }
+            await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
+                UIView.animate(withDuration: 0.2, delay: 0, options: [.curveEaseInOut]) {
+                    cover.alpha = 0
+                } completion: { _ in done.resume() }
+            }
+            if host.settlePicture === cover { host.dropSettlePicture() }
+        }
+    }
+
+    /// The picture a correction on a spread he is reading holds over the page (`WebSpread.hold`).
+    private var settlePicture: UIView?
+    /// A late look for his words is running: one at a time, so two never stack pictures or undo each
+    /// other's verso.
+    private var lateSettling = false
+
+    private func dropSettlePicture() {
+        settlePicture?.removeFromSuperview()
+        settlePicture = nil
     }
 
 

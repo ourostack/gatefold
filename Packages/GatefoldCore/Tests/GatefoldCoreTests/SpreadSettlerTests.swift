@@ -255,3 +255,101 @@ private final class RestlessPage: SpreadSurface {
     func stillness() async -> String? { stillnessReads += 1; return "\(stillnessReads)" }
     func beat() async {}
 }
+
+/// A spread the reader is looking at: no reflow cover, no reopen picture, no veil. Every move the
+/// settler makes while it is not held behind a picture is a frame he sees. `shown` is the sequence
+/// of spreads he saw, as (spread, columns), starting with the one he was reading.
+@MainActor
+private final class VisibleSpreads: SpreadSurface {
+    let page: FakeSpreads
+    private(set) var shown: [String] = []
+    private(set) var held = false
+    private(set) var moves = 0
+    private(set) var releases: [Bool] = []
+    /// Covered until this many moves have been made (a reopen picture or a veil lifting mid-settle).
+    var coveredForMoves = 0
+    var isCovered: Bool { moves < coveredForMoves }
+
+    init(_ page: FakeSpreads) {
+        self.page = page
+        shown = [state]
+    }
+
+    private var state: String { "\(page.spread)|\(page.columns)" }
+    private func drew() { if !held, !isCovered, shown.last != state { shown.append(state) } }
+
+    func hold() async -> Bool { held = true; return true }
+    func release(landed: Bool) async { held = false; releases.append(landed); drew() }
+
+    func wordsSide() async -> WordsSide? { await page.wordsSide() }
+    func pinWords() async -> Bool { let p = await page.pinWords(); if p { moves += 1 }; drew(); return p }
+    func toggleVerso() async { moves += 1; await page.toggleVerso(); drew() }
+    func goToSavedPlace() async { moves += 1; await page.goToSavedPlace(); drew() }
+    func goToWords() async { moves += 1; await page.goToWords(); drew() }
+    func stepSpread(forward: Bool) async { moves += 1; await page.stepSpread(forward: forward); drew() }
+    func stillness() async -> String? { await page.stillness() }
+    func beat() async { await page.beat() }
+}
+
+/// Build 20 "spazzed": after the page had landed, a layout-only report had the reader look for his
+/// words on the left page again (`recheckLanding` → `keepWordsOnLeft`), and every move that made was
+/// on the spread he was reading.
+@MainActor
+struct VisibleSettleTests {
+    /// His words already sit on the left page of the spread he is reading: nothing moves. A
+    /// column break put in at his words, on a page he's reading, pushes the rest of the left page
+    /// across and the spread jumps under his eyes.
+    @Test func aLandedSpreadIsNeverMovedUnderHisEyes() async {
+        for pinnable in [false, true] {
+            let fake = FakeSpreads(columns: 52, wordsColumn: 44, pinnable: pinnable, startSpread: 22, relayoutAt: nil)
+            let page = VisibleSpreads(fake)
+            _ = await SpreadSettler.keepOnLeft(page, current: { true })
+            #expect(page.moves == 0, "pinnable \(pinnable): \(page.moves) moves on a landed spread he is reading")
+            #expect(page.shown.count == 1, "pinnable \(pinnable): he saw \(page.shown)")
+        }
+    }
+
+    /// Words a late layout moved to the right page, or off this spread: the correction is one change
+    /// on screen, from the spread he saw to the one with his words on the left. Never the verso's
+    /// in-between spread, never a spread in the wrong place on the way there.
+    @Test func aCorrectionOnASpreadHeIsReadingIsOneChange() async {
+        var spazzes: [String] = []
+        for wordsColumn in 40...47 {
+            for offset in -1...1 {
+                let fake = FakeSpreads(columns: 52, wordsColumn: wordsColumn, pinnable: false,
+                                       startSpread: wordsColumn / 2 + offset, relayoutAt: nil)
+                let start = fake.spread
+                let page = VisibleSpreads(fake)
+                _ = await SpreadSettler.keepOnLeft(page, current: { true })
+                let landed = fake.landed
+                if !landed || page.shown.count > 2 {
+                    spazzes.append("words \(wordsColumn) from spread \(start): saw \(page.shown.joined(separator: " → ")) landed \(landed)")
+                }
+            }
+        }
+        #expect(spazzes.isEmpty, "\(spazzes.count) corrections showed in-between spreads; first: \(spazzes.first ?? "")")
+    }
+
+    /// A cover that lifts while the settle is still moving (the reopen picture, a jump's veil): the
+    /// moves left are held behind a picture taken then, not played on screen one by one.
+    @Test func aCoverLiftingMidSettleStillShowsOneChange() async {
+        let fake = FakeSpreads(columns: 52, wordsColumn: 45, pinnable: false, startSpread: 21, relayoutAt: nil)
+        let page = VisibleSpreads(fake)
+        page.coveredForMoves = 1
+        _ = await SpreadSettler.keepOnLeft(page, current: { true })
+        #expect(fake.landed)
+        // The spread he had, the one the cover lifted onto, then his words: never the verso's
+        // in-between spread as well.
+        #expect(page.shown.count <= 3, "he saw \(page.shown)")
+        #expect(page.releases == [true])
+    }
+
+    /// Overtaken (he turned, the book closed, a reflow began): the picture goes at once, never faded
+    /// onto a page he has moved on from.
+    @Test func anOvertakenCorrectionDropsItsPictureAtOnce() async {
+        let fake = FakeSpreads(columns: 52, wordsColumn: 45, pinnable: false, startSpread: 22, relayoutAt: nil)
+        let page = VisibleSpreads(fake)
+        _ = await SpreadSettler.keepOnLeft(page, current: { page.moves == 0 })
+        #expect(page.releases == [false])
+    }
+}
