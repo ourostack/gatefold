@@ -1,4 +1,5 @@
 import Foundation
+import GatefoldCore
 import Testing
 import UIKit
 import WebKit
