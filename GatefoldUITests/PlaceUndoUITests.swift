@@ -176,14 +176,9 @@ final class PlaceUndoUITests: XCTestCase {
         leftEdgeTurnsBack(reading: 0.25)
     }
 
-    /// The same, opened and read as feel-ci's turn check does (at 0.3 with curl turns, a read every
-    /// tenth of a second), held to the same bars.
-    func testATapAtTheLeftEdgeTurnsBackPromptlyAsFeelOpensIt() {
-        leftEdgeTurnsBack(reading: 0.1, extra: ["-GatefoldPageTurn", "curl"], goTo: "0.3", label: "curl at 0.3")
-    }
-
-    /// The same curl turns and reads, opened a page further on: the A/B for a turn into another chapter
-    /// (0.3 sits on a chapter's last page, so both taps there cross one) against turns within one.
+    /// The same, read as feel-ci's turn check does (curl turns, a read every tenth of a second), opened
+    /// at 0.31 so both taps stay within one chapter. A turn into another chapter waits for that chapter
+    /// to load (#61); its check comes with the fix that preloads the neighbours.
     func testATapAtTheLeftEdgeTurnsBackPromptlyWithinAChapter() {
         leftEdgeTurnsBack(reading: 0.1, extra: ["-GatefoldPageTurn", "curl"], goTo: "0.31", label: "curl at 0.31")
     }

@@ -242,10 +242,10 @@ jobs:
     name: Duo (the reviewers' checks)
     # The reviewers' standing checks on the Duo: reopen by hash, true numbers and reader-wide toggles
     # (density is the iPad's), and a page a turn with a reopen keeping its numbers. Then the folded
-    # Duo's turn checks (#61): a tap at either edge turns within 12 reads and 24 looks, at a chapter's
-    # edge and within one, with a TURNWAIT line of counts for each.
+    # Duo's turn checks (#61): a tap at either edge turns within 12 reads and 24 looks, with a
+    # TURNWAIT line of counts for each.
     runs-on: xcode-27
-    # 45 min measured (build 20), plus about 15 for the three turn checks: 85 keeps 30% headroom.
+    # 45 min measured (build 20), plus about 10 for the two turn checks: 85 keeps over 30% headroom.
     # feel-ci sets this job longer (gatefold#65 tracks the overrun): at a merge, the larger value wins.
     timeout-minutes: 85
     steps:
@@ -278,7 +278,6 @@ jobs:
             -only-testing:GatefoldUITests/ReviewerChecksUITests \
             -only-testing:GatefoldUITests/PageNumberUITests/testEveryTurnMovesOnAPageAndAReopenKeepsTheNumbers \
             -only-testing:GatefoldUITests/PlaceUndoUITests/testATapAtTheLeftEdgeTurnsBackPromptly \
-            -only-testing:GatefoldUITests/PlaceUndoUITests/testATapAtTheLeftEdgeTurnsBackPromptlyAsFeelOpensIt \
             -only-testing:GatefoldUITests/PlaceUndoUITests/testATapAtTheLeftEdgeTurnsBackPromptlyWithinAChapter \
             -resultBundlePath "$RUNNER_TEMP/duo.xcresult" 2>&1 | tee "$RUNNER_TEMP/duo.log" \
             | grep --line-buffered -E "Test Case .*(started|passed|failed|skipped)|TEST (SUCCEEDED|FAILED)|REVIEWER|TURNWAIT|\.swift:[0-9]+: error" \

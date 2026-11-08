@@ -90,8 +90,18 @@ final class ScriptedPage: ReaderPage {
     /// How long reading the first words on screen takes (the web view answers in its own time).
     var anchorDelay: Duration = .zero
 
+    /// The web view answers its scripts in the order they were asked, so two captures in flight end in
+    /// that order too. Two sleeps side by side can wake in either order on a loaded machine (a report
+    /// during a jump's write once failed that way, the boundary's capture ending first).
+    private var anchorQueue: Task<Void, Never>?
+
     func currentAnchor() async -> (ReadingAnchor, Locator)? {
-        if anchorDelay > .zero { try? await Task.sleep(for: anchorDelay) }
+        if anchorDelay > .zero {
+            let before = anchorQueue, delay = anchorDelay
+            let mine = Task { await before?.value; try? await Task.sleep(for: delay) }
+            anchorQueue = mine
+            await mine.value
+        }
         guard !withholdAnchor, let here = currentLocation else { return nil }
         let anchor = ReadingAnchor(href: here.href.string, progression: here.locations.progression ?? 0, text: nil)
         return (anchor, here)
@@ -144,17 +154,23 @@ final class ScriptedPage: ReaderPage {
         return ReadingPosition(cfi: cfi, pointer: "pbr:/external##" + cfi, totalProgression: percent / 100, updated: updated, source: .pocketBookNative)
     }
 
+    /// `listed`: the shelf's listing already carries the Cloud place, as every real listing does (each
+    /// book comes with its position, and `merge` keeps it). Off, the place arrives only from the reader's
+    /// own fetch: a book on a shelf kept from an earlier listing, opened before the next one returns.
     static func make(remote: @MainActor (Publication, PositionMapper) async throws -> ReadingPosition?,
                      book change: (inout LibraryBook) -> Void = { _ in },
-                     startAt: Double = 0) async throws -> Fixture {
+                     startAt: Double = 0, listed: Bool = true) async throws -> Fixture {
         let sync = StubSync()
-        await sync.setLibrary(.success([frankenstein]))
         let app = AppModel(sync: sync, libraryRoot: URL.temporaryDirectory.appending(path: "reader-sync-\(UUID().uuidString)"))
-        await app.library.refresh()
-        app.library.update(frankenstein.fastHash, change)
         let publication = try await publication()
         let mapper = try #require(await Self.mapper(publication))
-        await sync.setRemote(try await remote(publication, mapper))
+        let place = try await remote(publication, mapper)
+        var cloudBook = frankenstein
+        if listed { cloudBook.position = place }
+        await sync.setLibrary(.success([cloudBook]))
+        await app.library.refresh()
+        app.library.update(frankenstein.fastHash, change)
+        await sync.setRemote(place)
         let book = try #require(app.library.book(frankenstein.fastHash))
         let initial = book.locatorJSON.flatMap { try? Locator(jsonString: $0) }
         let start: Locator
@@ -228,6 +244,8 @@ final class ScriptedPage: ReaderPage {
         #expect(f.page.jumps.isEmpty, "a percent-only place was landed on")
         #expect(f.app.library.book(Self.frankenstein.fastHash)?.locatorJSON == nil, "a place was saved without a move of his")
         #expect(f.model.suggestion != nil, "the percent place is offered")
+        // The cover gives way once the check has answered (it was held for a landing): counted in reads.
+        for _ in 0..<100 where !f.model.pageReady { try await Task.sleep(for: .milliseconds(20)) }
         #expect(f.model.pageReady, "the cover never gave way to the page")
         f.model.close()
     }
