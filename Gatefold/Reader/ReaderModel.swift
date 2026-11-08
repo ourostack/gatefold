@@ -542,7 +542,14 @@ final class ReaderModel {
         // until the navigator reports where it is.
         await waitForLocation()
         readerLog.notice("open: location after \(Date().timeIntervalSince(self.openedAt), privacy: .public) s")
-        if launchGoTo == nil, let initialLocator { await settle(on: initialLocator, move: moves) }
+        if launchGoTo == nil, let initialLocator {
+            // The cover stays up until his words are on screen: Readium's first report can arrive
+            // before this finds them, and showing it then showed another page and jumped to his about
+            // 10 s later (a cold relaunch with no picture of his page, build 20).
+            openSettling = true
+            await settle(on: initialLocator, move: moves)
+            openSettling = false
+        }
         readerLog.notice("open: settled after \(Date().timeIntervalSince(self.openedAt), privacy: .public) s")
         // A test's launch jump shows its page once, after the jump, not the book's start first.
         if launchGoTo == nil { markReady() }
@@ -585,9 +592,18 @@ final class ReaderModel {
 
     /// The first page has painted: the cover placeholder cross-fades to it.
     private func markReady() {
-        guard !pageReady, !awaitingLanding, !revealing, page?.currentLocation != nil else { return }
+        guard !pageReady, !awaitingLanding, !revealing, !openSettling, page?.currentLocation != nil else { return }
         revealing = true
         Task {
+            // A reflow under way when the page is ready (an iPad opened in landscape lays out upright
+            // first, then turns) is still moving the spread under its cover, a picture that can be half
+            // painted: the page shows once it has placed his words. Counted in looks.
+            var looks = 0
+            while keeper.reflowing != nil, looks < Self.revealLooks, !isClosed {
+                looks += 1
+                try? await Task.sleep(for: .milliseconds(50))
+            }
+            await host?.waitForSettledPage()
             // The cover stays until Readium has finished loading the page it reports (its spinner).
             let held = Date()
             // Checked often, and a page Readium would hold back after it has scrolled into place is
@@ -604,6 +620,12 @@ final class ReaderModel {
         }
     }
     private var revealing = false
+    /// load() is settling the page on his saved words: nothing reveals the page until it has.
+    @ObservationIgnored private var openSettling = false
+    /// Looks (one check every 50 ms) the reveal waits for the open's settle or a reflow before showing
+    /// anyway: 60, about 3 s. The settle itself is bounded at 4 rounds of two page reads; this only
+    /// bounds a page whose reads never come back.
+    static let revealLooks = 60
 
     /// The cover gives way to the page. A reopen's picture of the page stays over it a moment longer,
     /// while the running head and footer come up beneath, then goes at once: the two are the same
@@ -673,6 +695,13 @@ final class ReaderModel {
     func forceReady() {
         guard !pageReady else { return }
         Task {
+            // The open's settle on his words is bounded in rounds; this bounds the wait for it in looks,
+            // so a settle whose page never answers can't leave him looking at the cover.
+            var looks = 0
+            while openSettling, looks < Self.revealLooks, !isClosed {
+                looks += 1
+                try? await Task.sleep(for: .milliseconds(50))
+            }
             // A page still loading isn't forced into view: a blank page and a spinner is no first page.
             await host?.waitWhileLoading()
             guard !pageReady else { return }
