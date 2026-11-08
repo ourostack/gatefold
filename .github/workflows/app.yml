@@ -142,13 +142,23 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - shard: ipad-place-cold
-            tests: ""
+          # The rotation tests on an erased iPad, in two shards that each erase their own (777 s together in run
+          # 42442880987: 409 s here, 368 s in the next), and 10 min more for one fresh device if the runtime goes
+          # (gatefold#71).
+          - shard: ipad-place-cold-a
+            tests: >-
+              RotationRepro RotationMidTransitionUITests/testARestoreThatNeverSettlesStillShowsTheSpread
             cold: true
-            # Boot, erase and boot again, then 13 min of tests (run 42442880987; 20-23 min in builds 19 and 20), and
-            # 10 min more for one fresh device if the runtime goes (gatefold#71).
-            timeout: 50
+            timeout: 45
             skip: ""
+            pr_tests: ""
+          - shard: ipad-place-cold-b
+            tests: >-
+              RotationMidTransitionUITests
+            skip: >-
+              RotationMidTransitionUITests/testARestoreThatNeverSettlesStillShowsTheSpread
+            cold: true
+            timeout: 45
             pr_tests: ""
           - shard: ipad-place-2
             tests: >-
