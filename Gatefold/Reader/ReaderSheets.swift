@@ -132,6 +132,7 @@ struct ContentsSheet: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done", systemImage: "xmark") { dismiss() }
                         .labelStyle(.iconOnly)
+                        .accessibilityIdentifier("contents.done")
                 }
             }
         }
