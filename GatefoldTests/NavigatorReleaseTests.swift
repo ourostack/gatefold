@@ -21,6 +21,8 @@ import WebKit
         return view.subviews.flatMap(webViews)
     }
 
+    /// Retired once its page has loaded. This passed on Readium 3.11.1 before the fix too (run 42509490935):
+    /// it guards the plain path; the mid-load case below is the one that leaked.
     @Test func retiredNavigatorsLetGoOfTheirWebViews() async throws {
         let publication = try await HighlightTests.publication()
         // In the app's scene, as the reader's window is: a window outside any scene may never send the
@@ -116,6 +118,8 @@ import WebKit
         window.isHidden = false
         defer { window.isHidden = true }
         var held: [Held] = []
+        // Kept alive to the end, so the web views go because the close retired them, not because the model did.
+        var models: [ReaderModel?] = []
         for round in 0..<3 {
             let app = AppModel(sync: FakeSyncService(), libraryRoot: URL.temporaryDirectory.appending(path: "release-\(UUID().uuidString)"))
             let cloud = CloudBook(fastHash: "release-\(round)", name: "pride-and-prejudice.epub", title: "Pride and Prejudice")
@@ -140,6 +144,10 @@ import WebKit
             host.willMove(toParent: nil)
             host.view.removeFromSuperview()
             host.removeFromParent()
+            // Retired by the close itself, not by the model going away.
+            #expect(host.navigator.parent == nil, "the closed reader's navigator is retired")
+            #expect(host.navigator.viewIfLoaded?.subviews.isEmpty ?? true, "and its pages are out")
+            models.append(model)
             model = nil
         }
         for _ in 0..<50 where held.contains(where: { $0.web != nil }) {
@@ -147,5 +155,6 @@ import WebKit
         }
         let alive = held.filter { $0.web != nil }.count
         #expect(alive == 0, "\(alive) of \(held.count) closed readers' web views are still alive")
+        withExtendedLifetime(models) {}
     }
 }
