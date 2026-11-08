@@ -498,8 +498,9 @@ final class ReaderModel {
         Task { [weak self] in
             var looks = 0
             while looks < Self.coverLooks {
-                guard let self, !self.pageReady, !self.isClosed else { return }
-                if !self.isWarming { looks += 1 }
+                guard let model = self, !model.pageReady, !model.isClosed else { return }
+                if !model.isWarming { looks += 1 }
+                _ = consume model
                 try? await Task.sleep(for: .milliseconds(50))
             }
             self?.forceReady()
