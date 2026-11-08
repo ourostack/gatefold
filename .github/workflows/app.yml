@@ -1,26 +1,120 @@
 name: App
 
+# Two tiers. Every pull request runs the seven required checks: the place, taps and unit legs in full, and a smoke of
+# the reviewers' checks (the last page's number, #30; the window fit; a Duo turn-and-reopen). Every push to main runs
+# the reviewers' full lists. A red main is fixed by whoever merged the change that turned it red (AGENTS.md, "CI").
+#
+# Build once: `build` makes the app and its tests for the simulator (build-for-testing) and uploads them, named by
+# commit and Xcode version; every simulator job boots its simulator while it downloads them and runs
+# test-without-building, so no job compiles the app again (gatefold#39: each job spent 10 to 16 min building).
+#
+# A pull request that changes only Markdown still gets every required check: `changes` says so, the jobs below skip,
+# and `ipad-docs` reports the three iPad checks (a skipped matrix job reports under its unexpanded name; gatefold#42).
+# The jobs run unless `changes` said "only Markdown", and a failed `build` turns them red at the download instead of
+# letting them skip, which would count as a pass. A failed `changes` leaves `full` empty, which runs the full lists.
+#
+# A pull request that edits a test in the full lists, or the CI that runs them, runs the full lists too.
+
 on:
   pull_request:
-    paths-ignore:
-      - "**/*.md"
   push:
     branches: [main]
     paths-ignore:
       - "**/*.md"
   workflow_dispatch:
 
+# A newer push to a pull request cancels its older run. Pushes to main keep one group per commit and are never
+# cancelled.
 concurrency:
-  group: app-${{ github.ref }}
-  cancel-in-progress: true
+  group: app-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  changes:
+    name: What this change touches
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      app: ${{ steps.diff.outputs.app }}
+      full: ${{ steps.diff.outputs.full }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: diff
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -eu
+          if [ "$EVENT" != pull_request ]; then printf 'app=true\nfull=true\n' >> "$GITHUB_OUTPUT"; exit 0; fi
+          git diff --name-only "$BASE...$HEAD" > changed.txt
+          cat changed.txt
+          if grep -qE '^(GatefoldUITests/(ReviewerChecks|PageNumber|SpreadTurnSettle|ReopenAfterControls|WindowFit)UITests\.swift|\.github/(workflows/app\.yml|scripts/boot-sim\.sh|actions/)|scripts/ci-simulator\.py)$|^\.github/actions/' changed.txt; then
+            echo "::notice::This change edits a full-list test or the CI that runs it: the full lists run."
+            echo "full=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "full=false" >> "$GITHUB_OUTPUT"
+          fi
+          if grep -qv '\.md$' changed.txt; then echo "app=true" >> "$GITHUB_OUTPUT"; else
+            echo "::notice::Only Markdown changed: the app checks report success without running."
+            echo "app=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    name: Build for testing
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
+    runs-on: xcode-27
+    timeout-minutes: 35
+    outputs:
+      artifact: ${{ steps.name.outputs.artifact }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/select-xcode
+      - id: name
+        name: Name the build by commit and Xcode version
+        run: echo "artifact=gatefold-tests-${{ github.sha }}-xcode-$(xcodebuild -version | tr -s ' \n' '-' | sed 's/-$//; s/^Xcode-//; s/-Build-version-/-/')" >> "$GITHUB_OUTPUT"
+      - name: Install the Metal toolchain (the page curl is a Metal shader)
+        run: xcodebuild -downloadComponent MetalToolchain
+      - name: Generate the Xcode project from project.yml
+        run: |
+          brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
+          xcodegen generate
+      - name: Build the app and its tests for the simulator, once
+        # About 13 to 16 min measured in each job that used to build (gatefold#39).
+        timeout-minutes: 25
+        run: |
+          set -o pipefail
+          xcodebuild build-for-testing -project Gatefold.xcodeproj -scheme Gatefold \
+            -destination 'generic/platform=iOS Simulator' ARCHS="$(uname -m)" \
+            -derivedDataPath "$RUNNER_TEMP/dd" 2>&1 | tee "$RUNNER_TEMP/build.log" | tail -60
+          ls "$RUNNER_TEMP"/dd/Build/Products/*.xctestrun
+          tar -czf "$RUNNER_TEMP/products.tgz" -C "$RUNNER_TEMP/dd/Build" Products
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.name.outputs.artifact }}
+          path: ${{ runner.temp }}/products.tgz
+          # Long enough for "Re-run failed jobs" a few days later.
+          retention-days: 5
+          compression-level: 0
+          overwrite: true
+      - uses: actions/upload-artifact@v4
+        if: failure() || cancelled()
+        with:
+          name: build-log
+          path: ${{ runner.temp }}/build.log
+          overwrite: true
+
   core:
     name: GatefoldCore tests
     # GatefoldCore is pure Swift (Foundation only, no UIKit or Readium), so it tests on Linux and
     # spends no macOS minutes. The app's build still compiles it against the iOS 27 SDK below.
     # In Swift's own image: the Ubuntu 26.04 runner image stopped carrying Swift (exit 127 on
     # `swift --version`, 2026-11-05).
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
     runs-on: ubuntu-latest
     container: swift:6.2
     timeout-minutes: 20
@@ -57,52 +151,50 @@ jobs:
             title: Every Fine-Tune tap lands; the furniture never moves the words
             tests: FineTuneTapUITests PageFurnitureUITests
           - name: reviewer
-            # 65 min measured; measured / 0.7 keeps 30% headroom.
+            # 65 min measured with the full list; measured / 0.7 keeps 30% headroom.
             timeout: 95
             title: The reviewers' checks - reopen by hash, true numbers, reader-wide toggles, density, landing; the reader fits its window
+            # Pushes to main run the whole list.
             tests: >-
               ReviewerChecksUITests PageNumberUITests/testOnASpreadEveryTurnMovesOnTwoPages
               SpreadTurnSettleUITests/testSpreadTurnsLandWithoutSliding
               ReopenAfterControlsUITests WindowFitUITests
+            # Pull requests run its smoke: the last page's number is the count (#30), and the reader fits its window.
+            pr_tests: >-
+              ReviewerChecksUITests/testTheLastPagesNumberIsTheCount WindowFitUITests
+    needs: [changes, build]
+    if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
     runs-on: xcode-27
     timeout-minutes: ${{ matrix.timeout }}
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/select-xcode
-      - name: Install the Metal toolchain
-        run: xcodebuild -downloadComponent MetalToolchain
-      - name: Generate the Xcode project from project.yml
+      - name: Start an iPad Pro 13-inch booting
+        run: python3 -I scripts/ci-simulator.py start gatefold-ipad "iPad Pro 13-inch"
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.build.outputs.artifact }}
+          path: ${{ runner.temp }}
+      - name: Unpack the app and its tests (built once, for this commit and Xcode)
+        env:
+          ARTIFACT: ${{ needs.build.outputs.artifact }}
         run: |
-          brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
-          xcodegen generate
-      - name: Create and boot an iPad Pro 13-inch
-        id: sim
-        run: |
-          set -euo pipefail
-          # The newest runtime with an iPad Pro 13-inch, and that iPad from the runtime's own list.
-          read -r runtime type < <(xcrun simctl list runtimes --json | python3 -c 'import json,sys; r=[x for x in json.load(sys.stdin)["runtimes"] if x["platform"]=="iOS" and x["isAvailable"] and any(d["name"].startswith("iPad Pro 13-inch") for d in x.get("supportedDeviceTypes",[]))]; x=max(r, key=lambda x: [int(p) for p in x["version"].split(".")]); print(x["identifier"], sorted(d["identifier"] for d in x["supportedDeviceTypes"] if d["name"].startswith("iPad Pro 13-inch"))[-1])')
-          echo "runtime $runtime, device $type"
-          # A runner can fail to mount the runtime ("Malformed bundle"): bootstatus then ends at once
-          # without a boot. Check the device really booted, and try a fresh one up to three times.
-          booted() { xcrun simctl list devices -j | python3 -c 'import json,sys; print(any(d["udid"]==sys.argv[1] and d["state"]=="Booted" for v in json.load(sys.stdin)["devices"].values() for d in v))' "$1"; }
-          for attempt in 1 2 3; do
-            udid="$(xcrun simctl create gatefold-ipad "$type" "$runtime")"
-            xcrun simctl boot "$udid" || true
-            xcrun simctl bootstatus "$udid" -b || true
-            [[ "$(booted "$udid")" == "True" ]] && break
-            echo "attempt $attempt: $udid did not boot"
-            xcrun simctl delete "$udid" || true
-            udid=""
-            sleep 20
-          done
-          [[ -n "$udid" ]] || { echo "the iPad simulator never booted"; exit 1; }
-          echo "udid=$udid" >> "$GITHUB_OUTPUT"
-          echo "destination=platform=iOS Simulator,arch=$(uname -m),id=$udid" >> "$GITHUB_OUTPUT"
+          set -eu
+          mkdir -p "$RUNNER_TEMP/dd/Build"
+          tar -xzf "$RUNNER_TEMP/products.tgz" -C "$RUNNER_TEMP/dd/Build"
+          # The build is keyed by commit and Xcode version and build; this job must have selected the same Xcode.
+          want="gatefold-tests-$GITHUB_SHA-xcode-$(xcodebuild -version | tr -s ' \n' '-' | sed 's/-$//; s/^Xcode-//; s/-Build-version-/-/')"
+          [ "$want" = "$ARTIFACT" ] || { echo "::error::Built as $ARTIFACT, but this job's Xcode makes $want"; exit 1; }
+          echo "XCTESTRUN=$(ls "$RUNNER_TEMP"/dd/Build/Products/*.xctestrun | head -1)" >> "$GITHUB_ENV"
+      - name: The iPad finished booting
+        # boot-sim.sh retries a boot that fails or hangs (#57); this step waits for it with a limit.
+        timeout-minutes: 22
+        run: python3 -I scripts/ci-simulator.py wait gatefold-ipad "iPad Pro 13-inch" 1200
       - name: Keep the app's place log as it runs (file and progression only, never the book's words)
         run: |
           nohup sh -c 'xcrun simctl spawn "$0" log stream --style compact --predicate "subsystem == \"bot.ouro.gatefold\"" 2>/dev/null \
             | grep --line-buffered -E "place (read|write)|place:|location |reflow|landing|landed|reopen|tapped|warm:|open:|first page|pages:|turn:|spread:|veil:|settle [0-9]" \
-            | grep --line-buffered -v -E "text:|\] visible|anchor" >> "$1"' "${{ steps.sim.outputs.udid }}" "$RUNNER_TEMP/place.log" >/dev/null 2>&1 &
+            | grep --line-buffered -v -E "text:|\] visible|anchor" >> "$1"' "$UDID" "$RUNNER_TEMP/place.log" >/dev/null 2>&1 &
       - name: Turned on its side cold (an erased iPad), the spread always comes whole and keeps his place
         # An erased simulator, not a new one: build 19 left the old page under a frozen leaf in 3 of 9
         # rounds after an erase and 0 of 3 on a new simulator. Once a run, before anything warms it.
@@ -116,7 +208,7 @@ jobs:
           # still fails a page left stuck for good.
           TEST_RUNNER_GATEFOLD_SPREAD_FLOOR: "90"
         run: |
-          udid="${{ steps.sim.outputs.udid }}"
+          udid="$UDID"
           echo "$(date -u +%T) erasing $udid"
           xcrun simctl shutdown "$udid"
           xcrun simctl erase "$udid"
@@ -126,9 +218,9 @@ jobs:
           nohup sh -c 'xcrun simctl spawn "$0" log stream --style compact --predicate "subsystem == \"bot.ouro.gatefold\"" 2>/dev/null \
             | grep --line-buffered -E "place (read|write)|place:|location |reflow|landing|landed|reopen|tapped|warm:|open:|first page|pages:|turn:|spread:|veil:|settle [0-9]|REPRO" \
             | grep --line-buffered -v -E "text:|\] visible|anchor" >> "$1"' "$udid" "$RUNNER_TEMP/place.log" >/dev/null 2>&1 &
-          echo "$(date -u +%T) booted; building and testing"
-          xcodebuild test -project Gatefold.xcodeproj -scheme Gatefold \
-            -destination "${{ steps.sim.outputs.destination }}" \
+          echo "$(date -u +%T) booted; testing"
+          xcodebuild test-without-building -xctestrun "$XCTESTRUN" \
+            -destination "$DESTINATION" \
             -only-testing:GatefoldUITests/RotationRepro \
             -only-testing:GatefoldUITests/RotationMidTransitionUITests \
             -resultBundlePath "$RUNNER_TEMP/cold.xcresult" 2>&1 | tee "$RUNNER_TEMP/cold.log" \
@@ -139,7 +231,7 @@ jobs:
           exit $status
       - name: ${{ matrix.title }}
         env:
-          TESTS: ${{ matrix.tests }}
+          TESTS: ${{ needs.changes.outputs.full != 'false' && matrix.tests || matrix.pr_tests || matrix.tests }}
           # Five rounds of the controls-then-numbers reopen (about 2 min each); 30 locally.
           TEST_RUNNER_GATEFOLD_REOPEN_ROUNDS: "5"
         run: |
@@ -148,8 +240,8 @@ jobs:
           for t in $TESTS; do only+=("-only-testing:GatefoldUITests/$t"); done
           # Each test's result prints as it finishes: a job cut off at its limit still names the slow test
           # (run 42393941976's reviewer leg printed nothing, since this read the log only at the end).
-          xcodebuild test -project Gatefold.xcodeproj -scheme Gatefold \
-            -destination "${{ steps.sim.outputs.destination }}" "${only[@]}" \
+          xcodebuild test-without-building -xctestrun "$XCTESTRUN" \
+            -destination "$DESTINATION" "${only[@]}" \
             -resultBundlePath "$RUNNER_TEMP/ipad.xcresult" 2>&1 | tee "$RUNNER_TEMP/ipad.log" \
             | grep --line-buffered -E "Test Case .*(started|passed|failed|skipped)|TEST (SUCCEEDED|FAILED)|REPRO (round|SUMMARY)|TAPRATE|PLACEHOLDER|REVIEWER|WINDOWFIT|REOPEN round [0-9]+:|\.swift:[0-9]+: error" \
             | awk '{ if (match($0, /XCTAssert[A-Za-z]* failed/)) $0 = substr($0, 1, RSTART + RLENGTH - 1) " (text withheld)"; print; fflush() }'
@@ -179,47 +271,64 @@ jobs:
     # APIs, the iOS 27 deployment target and the iPhone Duo simulator. macos-latest (macOS 26) has
     # only Xcode 26, so this job cannot move there.
     # ~55 min in build 19: 85 keeps 30% headroom.
+    needs: [changes, build]
+    if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
     runs-on: xcode-27
     timeout-minutes: 85
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/select-xcode
+      - name: Start an iPhone Duo booting
+        run: python3 -I scripts/ci-simulator.py start gatefold-duo "iPhone Duo"
+      # The device build runs while the Duo boots. A boot retry restarts CoreSimulatorService, which this generic
+      # device build does not use for a destination; retries are rare (#57), so the overlap is worth it.
       - name: Install the Metal toolchain (the page curl is a Metal shader)
         run: xcodebuild -downloadComponent MetalToolchain
       - name: Generate the Xcode project from project.yml
         run: |
           brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
           xcodegen generate
-      - name: Create and boot an iPhone Duo
-        id: sim
-        run: |
-          set -euo pipefail
-          runtime="$(xcrun simctl list runtimes --json | python3 -c 'import json,sys; r=[x for x in json.load(sys.stdin)["runtimes"] if x["platform"]=="iOS" and x["isAvailable"] and any(d["name"].startswith("iPhone Duo") for d in x.get("supportedDeviceTypes",[]))]; print(max(r, key=lambda x: [int(p) for p in x["version"].split(".")])["identifier"])')"
-          udid="$(.github/scripts/boot-sim.sh gatefold-duo com.apple.CoreSimulator.SimDeviceType.iPhone-Duo "$runtime")"
-          echo "destination=platform=iOS Simulator,arch=$(uname -m),id=$udid" >> "$GITHUB_OUTPUT"
-      - name: Build and run unit tests
+      - name: Release build for devices (the same binary runs on the Mac as Designed for iPad)
         run: |
           set -o pipefail
-          xcodebuild test -project Gatefold.xcodeproj -scheme Gatefold \
-            -destination "${{ steps.sim.outputs.destination }}" \
+          xcodebuild build -project Gatefold.xcodeproj -scheme Gatefold -configuration Release \
+            -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO 2>&1 | tail -50
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.build.outputs.artifact }}
+          path: ${{ runner.temp }}
+      - name: Unpack the app and its tests (built once, for this commit and Xcode)
+        env:
+          ARTIFACT: ${{ needs.build.outputs.artifact }}
+        run: |
+          set -eu
+          mkdir -p "$RUNNER_TEMP/dd/Build"
+          tar -xzf "$RUNNER_TEMP/products.tgz" -C "$RUNNER_TEMP/dd/Build"
+          # The build is keyed by commit and Xcode version and build; this job must have selected the same Xcode.
+          want="gatefold-tests-$GITHUB_SHA-xcode-$(xcodebuild -version | tr -s ' \n' '-' | sed 's/-$//; s/^Xcode-//; s/-Build-version-/-/')"
+          [ "$want" = "$ARTIFACT" ] || { echo "::error::Built as $ARTIFACT, but this job's Xcode makes $want"; exit 1; }
+          echo "XCTESTRUN=$(ls "$RUNNER_TEMP"/dd/Build/Products/*.xctestrun | head -1)" >> "$GITHUB_ENV"
+      - name: The iPhone Duo finished booting
+        timeout-minutes: 22
+        run: python3 -I scripts/ci-simulator.py wait gatefold-duo "iPhone Duo" 1200
+      - name: Unit tests
+        run: |
+          set -o pipefail
+          xcodebuild test-without-building -xctestrun "$XCTESTRUN" \
+            -destination "$DESTINATION" \
             -only-testing:GatefoldTests \
             -resultBundlePath "$RUNNER_TEMP/unit.xcresult" 2>&1 | tail -200
       - name: Reading position survives posture and font changes; every Fine-Tune tap lands (UI tests)
         run: |
           set -o pipefail
-          xcodebuild test -project Gatefold.xcodeproj -scheme Gatefold \
-            -destination "${{ steps.sim.outputs.destination }}" \
+          xcodebuild test-without-building -xctestrun "$XCTESTRUN" \
+            -destination "$DESTINATION" \
             -only-testing:GatefoldUITests/PositionUITests \
             -only-testing:GatefoldUITests/FineTuneTapUITests \
             -resultBundlePath "$RUNNER_TEMP/ui.xcresult" > "$RUNNER_TEMP/ui.log" 2>&1 || status=$?
           # No retry: a wait that runs out prints how many probe reads it made and the slowest one.
           grep -E "error:|Test Case .*(passed|failed|skipped)|TEST (SUCCEEDED|FAILED)|probe says|probe timing|TAPRATE" "$RUNNER_TEMP/ui.log" | tail -60 || true
           exit ${status:-0}
-      - name: Release build for devices (the same binary runs on the Mac as Designed for iPad)
-        run: |
-          set -o pipefail
-          xcodebuild build -project Gatefold.xcodeproj -scheme Gatefold -configuration Release \
-            -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO 2>&1 | tail -50
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
@@ -233,38 +342,50 @@ jobs:
     name: Duo (the reviewers' checks)
     # The reviewers' standing checks on the Duo: reopen by hash, true numbers and reader-wide toggles
     # (density is the iPad's), and a page a turn with a reopen keeping its numbers.
+    # Pull requests run its smoke (a page a turn, and a reopen keeps the numbers); pushes to main add the reviewers'
+    # full list, about 13 min a test on this runner (gatefold#39).
+    needs: [changes, build]
+    if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
     runs-on: xcode-27
     # 45 min measured (build 20): 65 keeps 30% headroom.
     timeout-minutes: 65
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/select-xcode
-      - name: Install the Metal toolchain
-        run: xcodebuild -downloadComponent MetalToolchain
-      - name: Generate the Xcode project from project.yml
+      - name: Start an iPhone Duo booting
+        run: python3 -I scripts/ci-simulator.py start gatefold-duo "iPhone Duo"
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.build.outputs.artifact }}
+          path: ${{ runner.temp }}
+      - name: Unpack the app and its tests (built once, for this commit and Xcode)
+        env:
+          ARTIFACT: ${{ needs.build.outputs.artifact }}
         run: |
-          brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
-          xcodegen generate
-      - name: Create and boot an iPhone Duo
-        id: sim
-        run: |
-          set -euo pipefail
-          runtime="$(xcrun simctl list runtimes --json | python3 -c 'import json,sys; r=[x for x in json.load(sys.stdin)["runtimes"] if x["platform"]=="iOS" and x["isAvailable"] and any(d["name"].startswith("iPhone Duo") for d in x.get("supportedDeviceTypes",[]))]; print(max(r, key=lambda x: [int(p) for p in x["version"].split(".")])["identifier"])')"
-          udid="$(.github/scripts/boot-sim.sh gatefold-duo com.apple.CoreSimulator.SimDeviceType.iPhone-Duo "$runtime")"
-          echo "udid=$udid" >> "$GITHUB_OUTPUT"
-          echo "destination=platform=iOS Simulator,arch=$(uname -m),id=$udid" >> "$GITHUB_OUTPUT"
+          set -eu
+          mkdir -p "$RUNNER_TEMP/dd/Build"
+          tar -xzf "$RUNNER_TEMP/products.tgz" -C "$RUNNER_TEMP/dd/Build"
+          # The build is keyed by commit and Xcode version and build; this job must have selected the same Xcode.
+          want="gatefold-tests-$GITHUB_SHA-xcode-$(xcodebuild -version | tr -s ' \n' '-' | sed 's/-$//; s/^Xcode-//; s/-Build-version-/-/')"
+          [ "$want" = "$ARTIFACT" ] || { echo "::error::Built as $ARTIFACT, but this job's Xcode makes $want"; exit 1; }
+          echo "XCTESTRUN=$(ls "$RUNNER_TEMP"/dd/Build/Products/*.xctestrun | head -1)" >> "$GITHUB_ENV"
+      - name: The iPhone Duo finished booting
+        timeout-minutes: 22
+        run: python3 -I scripts/ci-simulator.py wait gatefold-duo "iPhone Duo" 1200
       - name: Keep the app's place log as it runs (file and progression only, never the book's words)
         run: |
           nohup sh -c 'xcrun simctl spawn "$0" log stream --style compact --predicate "subsystem == \"bot.ouro.gatefold\"" 2>/dev/null \
             | grep --line-buffered -E "place (read|write)|place:|location |reflow|landing|landed|reopen|tapped|warm:|open:|first page|pages:|turn:|spread:|veil:|settle [0-9]" \
-            | grep --line-buffered -v -E "text:|\] visible|anchor" >> "$1"' "${{ steps.sim.outputs.udid }}" "$RUNNER_TEMP/place.log" >/dev/null 2>&1 &
+            | grep --line-buffered -v -E "text:|\] visible|anchor" >> "$1"' "$UDID" "$RUNNER_TEMP/place.log" >/dev/null 2>&1 &
       - name: The reviewers' checks on the Duo
+        env:
+          FULL: ${{ needs.changes.outputs.full }}
         run: |
           set -o pipefail
-          xcodebuild test -project Gatefold.xcodeproj -scheme Gatefold \
-            -destination "${{ steps.sim.outputs.destination }}" \
-            -only-testing:GatefoldUITests/ReviewerChecksUITests \
-            -only-testing:GatefoldUITests/PageNumberUITests/testEveryTurnMovesOnAPageAndAReopenKeepsTheNumbers \
+          only=(-only-testing:GatefoldUITests/PageNumberUITests/testEveryTurnMovesOnAPageAndAReopenKeepsTheNumbers)
+          if [ "$FULL" != false ]; then only+=(-only-testing:GatefoldUITests/ReviewerChecksUITests); fi
+          xcodebuild test-without-building -xctestrun "$XCTESTRUN" \
+            -destination "$DESTINATION" "${only[@]}" \
             -resultBundlePath "$RUNNER_TEMP/duo.xcresult" 2>&1 | tee "$RUNNER_TEMP/duo.log" \
             | grep --line-buffered -E "Test Case .*(started|passed|failed|skipped)|TEST (SUCCEEDED|FAILED)|REVIEWER|\.swift:[0-9]+: error" \
             | awk '{ if (match($0, /XCTAssert[A-Za-z]* failed/)) $0 = substr($0, 1, RSTART + RLENGTH - 1) " (text withheld)"; print; fflush() }'
@@ -285,3 +406,17 @@ jobs:
             ${{ runner.temp }}/place.log
             ${{ runner.temp }}/duo.log
             ${{ runner.temp }}/duo.xcresult
+
+  ipad-docs:
+    # A skipped matrix job reports under its unexpanded name, so a Markdown-only pull request gets the three iPad checks
+    # from here instead (gatefold#42). It runs only when `changes` found nothing but Markdown.
+    name: iPad (${{ matrix.name }})
+    needs: changes
+    if: needs.changes.outputs.app != 'true'
+    strategy:
+      matrix:
+        name: [place, taps, reviewer]
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - run: echo "Only Markdown changed; nothing on the iPad to test."

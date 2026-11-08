@@ -14,7 +14,11 @@ name="$1" type="$2" runtime="$3"
 booted() { xcrun simctl list devices -j | python3 -c 'import json,sys; print(any(d["udid"]==sys.argv[1] and d["state"]=="Booted" for v in json.load(sys.stdin)["devices"].values() for d in v))' "$1"; }
 try_boot() {
   xcrun simctl boot "$1" >&2 || true
+  # A bootstatus that hangs is shut down after 7 min, so the next attempt still runs.
+  ( sleep 420; echo "bootstatus for $1 hung past 7 min" >&2; xcrun simctl shutdown "$1" >/dev/null 2>&1 ) >/dev/null &
+  local watchdog=$!
   status="$(xcrun simctl bootstatus "$1" -b 2>&1)" || true
+  kill "$watchdog" 2>/dev/null || true
   echo "$status" | tail -3 >&2
   [[ "$(booted "$1")" == "True" ]] && ! grep -q "Failed" <<<"$status"
 }

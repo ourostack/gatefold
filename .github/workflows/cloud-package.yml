@@ -14,9 +14,10 @@ on:
 permissions:
   contents: read
 
+# A newer push to a pull request cancels its older run; runs on main are never cancelled.
 concurrency:
-  group: cloud-package-${{ github.ref }}
-  cancel-in-progress: true
+  group: cloud-package-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   test:
