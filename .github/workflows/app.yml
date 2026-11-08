@@ -194,19 +194,6 @@ jobs:
           nohup sh -c 'xcrun simctl spawn "$0" log stream --style compact --predicate "subsystem == \"bot.ouro.gatefold\"" 2>/dev/null \
             | grep --line-buffered -E "place (read|write)|place:|location |reflow|landing|landed|reopen|tapped|warm:|open:|first page|pages:|turn:|spread:|veil:|settle [0-9]|snapshot:|loadwatch:|mainwatch" \
             | grep --line-buffered -v -E "text:|\] visible|anchor" >> "$1"' "$UDID" "$RUNNER_TEMP/place.log" >/dev/null 2>&1 &
-      - name: "Probe (gatefold#94, not for merge): sample each new app process for its first 25 s (stacks only)"
-        run: |
-          mkdir -p "$RUNNER_TEMP/samples"
-          nohup sh -c '
-            seen=""; n=0
-            while [ $n -lt 12 ]; do
-              pid=$(pgrep -x Gatefold | head -1)
-              if [ -n "$pid" ] && ! echo " $seen " | grep -q " $pid "; then
-                seen="$seen $pid"; n=$((n+1)); echo "process $n at $(date +%H:%M:%S) pid $pid" >>"$0/sampler.log"
-                sample "$pid" 25 1 -mayDie -file "$0/process-$n.txt" >>"$0/sampler.log" 2>&1
-              fi
-              sleep 0.2
-            done' "$RUNNER_TEMP/samples" >/dev/null 2>&1 &
       - name: Turned on its side cold (an erased iPad), the spread always comes whole and keeps his place
         # An erased simulator, not a new one: build 19 left the old page under a frozen leaf in 3 of 9
         # rounds after an erase and 0 of 3 on a new simulator. Once a run, before anything warms it.

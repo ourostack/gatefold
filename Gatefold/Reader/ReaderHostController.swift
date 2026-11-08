@@ -1892,17 +1892,27 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     /// runs on it, and the page's own request waits behind whatever holds it).
     nonisolated static func watchMain(for seconds: Double, label: String) {
         let start = Date()
+        MainStackProbe.install()
         Thread.detachNewThread {
             var total = 0.0
             while Date().timeIntervalSince(start) < seconds {
                 let sent = Date()
                 let answered = DispatchSemaphore(value: 0)
                 DispatchQueue.main.async { answered.signal() }
-                answered.wait()
+                var stacks: [[String]] = []
+                // Held over 150 ms: take a stack every 50 ms until it answers.
+                if answered.wait(timeout: .now() + 0.15) == .timedOut {
+                    repeat {
+                        if let stack = MainStackProbe.sample() { stacks.append(stack) }
+                    } while answered.wait(timeout: .now() + 0.05) == .timedOut
+                }
                 let late = Date().timeIntervalSince(sent)
                 if late > 0.25 {
                     total += late
                     readerLog.notice("mainwatch \(label, privacy: .public): main busy \(Int(late * 1000), privacy: .public) ms from \(sent.timeIntervalSince(start), privacy: .public) s")
+                    if !stacks.isEmpty {
+                        readerLog.notice("mainwatch \(label, privacy: .public) stacks: \(MainStackProbe.summary(stacks), privacy: .public)")
+                    }
                 }
                 Thread.sleep(forTimeInterval: 0.05)
             }
