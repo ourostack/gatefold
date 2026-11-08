@@ -1527,8 +1527,14 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         let chapterBefore = navigator.currentLocation?.href.string.split(separator: "#").first
         // Where the turn starts, read live from the page (Readium's own location trails a turn by a debounce,
         // so straight after one it can still name the page before): a spring back returns here (#110).
-        turnFrom = await pageRange().flatMap { live in
+        let live = await pageRange()
+        turnFrom = live.flatMap { live in
             navigator.currentLocation?.copy(locations: { $0.progression = CurlRelease.jumpTarget(start: live.start, end: live.end) })
+        }
+        if let live, let target = turnFrom?.locations.progression {
+            readerLog.notice("turn: starts on \(live.href, privacy: .public) read live @\(live.start, privacy: .public)...\(live.end, privacy: .public), target @\(target, privacy: .public)")
+        } else {
+            readerLog.notice("turn: starts where the page couldn't be read live")
         }
         let moved = forward
             ? await navigator.goForward(options: .init(animated: false))
@@ -1667,7 +1673,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             now = await here()
         }
         let ok = now.map { CurlRelease.isOn(p, page: $0) } ?? false
-        readerLog.notice("turn: sprang back to \(start.href.string, privacy: .public) @\(now?.lowerBound ?? -1, privacy: .public) (started on the page with @\(p, privacy: .public))\(again ? " after a second jump" : "", privacy: .public) -> \(ok ? "same page" : "elsewhere", privacy: .public)")
+        readerLog.notice("turn: sprang back to \(start.href.string, privacy: .public) landed @\(now?.lowerBound ?? -1, privacy: .public)...\(now?.upperBound ?? -1, privacy: .public) (target @\(p, privacy: .public))\(again ? " after a second jump" : "", privacy: .public) -> \(ok ? "same page" : "elsewhere", privacy: .public)")
     }
 
     private var beneathFrames: [CGRect] = []
