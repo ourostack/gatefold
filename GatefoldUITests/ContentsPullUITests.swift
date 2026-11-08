@@ -35,20 +35,35 @@ final class ContentsPullUITests: XCTestCase {
         return done.waitForExistence(timeout: 15) && bar.waitForExistence(timeout: 15)
     }
 
-    /// A pull from the middle of the bar (the book's title) and from its top edge, three times each, as soon
-    /// as the bar shows: every one puts Contents away.
-    func testAPullFromTheBarsMiddlePutsContentsAway() {
+    /// Launches in `theme`, opens Contents and, once it has landed (Done still for ten reads), keeps a
+    /// screenshot for the visual check (Contents' rows are the book's chapter list), then puts it away with Done.
+    private func shootContents(_ base: [String], theme: String, name: String) -> CGRect {
+        app.terminate()
+        app.launchArguments = base + ["-GatefoldTheme", theme]
         app.launch()
         XCTAssertTrue(app.descendants(matching: .any)["reader.page"].waitForExistence(timeout: 120), "the book opened")
-        let window = app.windows.firstMatch.frame
-        // The sheet as it opened, for the visual check (Contents' rows are the book's chapter list, no page text).
         XCTAssertTrue(openContents(), "Contents opened")
+        var last = CGRect.null, same = 0
+        for _ in 0..<200 where same < 10 {
+            let f = done.frame
+            same = f == last ? same + 1 : 0
+            last = f
+        }
         let shot = XCTAttachment(screenshot: app.screenshot())
-        shot.name = "contents-open"
+        shot.name = name
         shot.lifetime = .keepAlways
         add(shot)
         done.tap()
         XCTAssertTrue(done.waitForNonExistence(timeout: 10), "Done put Contents away")
+        return app.windows.firstMatch.frame
+    }
+
+    /// A pull from the middle of the bar (the book's title) and from its top edge, three times each, as soon
+    /// as the bar shows: every one puts Contents away.
+    func testAPullFromTheBarsMiddlePutsContentsAway() {
+        let base = app.launchArguments
+        let window = shootContents(base, theme: "midnight", name: "contents-open-dark")
+        _ = shootContents(base, theme: "daylight", name: "contents-open-light")
         for round in 1...3 {
             for (name, dy) in [("middle", 0.5), ("top edge", 0.05)] {
                 XCTAssertTrue(openContents(), "round \(round): Contents opened")
