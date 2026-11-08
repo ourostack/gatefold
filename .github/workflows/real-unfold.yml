@@ -46,19 +46,23 @@ jobs:
         run: |
           set -euo pipefail
           runtime="$(xcrun simctl list runtimes --json | python3 -c 'import json,sys; r=[x for x in json.load(sys.stdin)["runtimes"] if x["platform"]=="iOS" and x["isAvailable"] and any(d["name"].startswith("iPhone Duo") for d in x.get("supportedDeviceTypes",[]))]; print(max(r, key=lambda x: [int(p) for p in x["version"].split(".")])["identifier"])')"
-          udid="$(xcrun simctl create gatefold-duo com.apple.CoreSimulator.SimDeviceType.iPhone-Duo "$runtime")"
+          udid="$(.github/scripts/boot-sim.sh gatefold-duo com.apple.CoreSimulator.SimDeviceType.iPhone-Duo "$runtime")"
           echo "udid=$udid" >> "$GITHUB_OUTPUT"
-          xcrun simctl boot "$udid"
-          xcrun simctl bootstatus "$udid" -b
       - name: Build and install the app
+        # 16 min measured at most; 16 / 0.7. Run 42393941976 hung here 75 min and lost its log (#35).
+        timeout-minutes: 23
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/unfold/shots"
+          echo "$(date -u +%T) building"
           xcodebuild build -project Gatefold.xcodeproj -scheme Gatefold \
             -destination "platform=iOS Simulator,arch=$(uname -m),id=${{ steps.sim.outputs.udid }}" \
-            -derivedDataPath "$RUNNER_TEMP/unfold/DerivedData" CODE_SIGNING_ALLOWED=NO 2>&1 | tail -20
+            -derivedDataPath "$RUNNER_TEMP/unfold/DerivedData" CODE_SIGNING_ALLOWED=NO 2>&1 | tee "$RUNNER_TEMP/unfold/build.log" \
+            | grep --line-buffered -E "error:|BUILD (SUCCEEDED|FAILED)|^(Compil|Link|Process|Sign)[A-Za-z]* " | awk 'NR % 25 == 1 || /error:|BUILD/ { print; fflush() }'
+          echo "$(date -u +%T) built; installing"
           for attempt in 1 2 3; do
             xcrun simctl bootstatus "${{ steps.sim.outputs.udid }}" -b >/dev/null 2>&1 || true
+            echo "$(date -u +%T) install attempt $attempt"
             if xcrun simctl install "${{ steps.sim.outputs.udid }}" "$RUNNER_TEMP/unfold/DerivedData/Build/Products/Debug-iphonesimulator/Gatefold.app"; then break; fi
             [ "$attempt" = 3 ] && exit 1
             sleep 15
@@ -141,5 +145,6 @@ jobs:
           name: real-unfold
           path: |
             ${{ runner.temp }}/unfold/reader.log
+            ${{ runner.temp }}/unfold/build.log
             ${{ runner.temp }}/unfold/marks.log
             ${{ runner.temp }}/unfold/shots

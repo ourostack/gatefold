@@ -32,15 +32,40 @@ jobs:
         run: swift test --package-path Packages/GatefoldCore
 
   ipad:
-    name: The iPad keeps his place (UI tests)
+    name: iPad (${{ matrix.name }})
     # The spread on rotation and the iPad's slow launch reflow are iPad paths: a rotation that
     # reopened a page early (build 17) and a jump lost in the launch reflow. No retry: a red here is
     # a real miss. The Duo job's posture test skips on the folded cover; this one runs it on a spread.
-    # About 74 min on build 19's first run (200 Fine-Tune taps alone take about 13 min); build 20's
-    # erased-iPad rotation step alone took 36-38 min on a hosted runner, plus five reopens and the
-    # window fit. The split into parallel jobs (the next PR) brings each back under 100.
+    # Three jobs side by side, each with at least 30% headroom (one job took 94 of 100 min in build
+    # 19). Measured on a hosted runner: about 13 min to set up and build, then the tests' own time.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: place
+            # 48 min measured with the erased-iPad rotation at 23; it has taken 38, so 63 / 0.7.
+            timeout: 90
+            # Rotation first, on an erased iPad (the cold step), then the rest on the same one.
+            cold: true
+            title: Jumps keep his place; the number's slot is never blank
+            tests: >-
+              NavigationPlaceUITests PositionUITests/testEveryPostureKeepsThePlace
+              CountingPlaceholderUITests
+          - name: taps
+            # 53 min measured (a 10 min simulator boot among them); measured / 0.7 keeps 30% headroom.
+            timeout: 80
+            title: Every Fine-Tune tap lands; the furniture never moves the words
+            tests: FineTuneTapUITests PageFurnitureUITests
+          - name: reviewer
+            # 65 min measured; measured / 0.7 keeps 30% headroom.
+            timeout: 95
+            title: The reviewers' checks - reopen by hash, true numbers, reader-wide toggles, density, landing; the reader fits its window
+            tests: >-
+              ReviewerChecksUITests PageNumberUITests/testOnASpreadEveryTurnMovesOnTwoPages
+              SpreadTurnSettleUITests/testSpreadTurnsLandWithoutSliding
+              ReopenAfterControlsUITests WindowFitUITests
     runs-on: xcode-27
-    timeout-minutes: 180
+    timeout-minutes: ${{ matrix.timeout }}
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/select-xcode
@@ -57,14 +82,31 @@ jobs:
           # The newest runtime with an iPad Pro 13-inch, and that iPad from the runtime's own list.
           read -r runtime type < <(xcrun simctl list runtimes --json | python3 -c 'import json,sys; r=[x for x in json.load(sys.stdin)["runtimes"] if x["platform"]=="iOS" and x["isAvailable"] and any(d["name"].startswith("iPad Pro 13-inch") for d in x.get("supportedDeviceTypes",[]))]; x=max(r, key=lambda x: [int(p) for p in x["version"].split(".")]); print(x["identifier"], sorted(d["identifier"] for d in x["supportedDeviceTypes"] if d["name"].startswith("iPad Pro 13-inch"))[-1])')
           echo "runtime $runtime, device $type"
-          udid="$(xcrun simctl create gatefold-ipad "$type" "$runtime")"
-          xcrun simctl boot "$udid"
-          xcrun simctl bootstatus "$udid" -b
+          # A runner can fail to mount the runtime ("Malformed bundle"): bootstatus then ends at once
+          # without a boot. Check the device really booted, and try a fresh one up to three times.
+          booted() { xcrun simctl list devices -j | python3 -c 'import json,sys; print(any(d["udid"]==sys.argv[1] and d["state"]=="Booted" for v in json.load(sys.stdin)["devices"].values() for d in v))' "$1"; }
+          for attempt in 1 2 3; do
+            udid="$(xcrun simctl create gatefold-ipad "$type" "$runtime")"
+            xcrun simctl boot "$udid" || true
+            xcrun simctl bootstatus "$udid" -b || true
+            [[ "$(booted "$udid")" == "True" ]] && break
+            echo "attempt $attempt: $udid did not boot"
+            xcrun simctl delete "$udid" || true
+            udid=""
+            sleep 20
+          done
+          [[ -n "$udid" ]] || { echo "the iPad simulator never booted"; exit 1; }
           echo "udid=$udid" >> "$GITHUB_OUTPUT"
           echo "destination=platform=iOS Simulator,arch=$(uname -m),id=$udid" >> "$GITHUB_OUTPUT"
+      - name: Keep the app's place log as it runs (file and progression only, never the book's words)
+        run: |
+          nohup sh -c 'xcrun simctl spawn "$0" log stream --style compact --predicate "subsystem == \"bot.ouro.gatefold\"" 2>/dev/null \
+            | grep --line-buffered -E "place (read|write)|place:|location |reflow|landing|landed|reopen|tapped|warm:|open:|first page|pages:|turn:|spread:|veil:|settle [0-9]" \
+            | grep --line-buffered -v -E "text:|\] visible|anchor" >> "$1"' "${{ steps.sim.outputs.udid }}" "$RUNNER_TEMP/place.log" >/dev/null 2>&1 &
       - name: Turned on its side cold (an erased iPad), the spread always comes whole and keeps his place
         # An erased simulator, not a new one: build 19 left the old page under a frozen leaf in 3 of 9
         # rounds after an erase and 0 of 3 on a new simulator. Once a run, before anything warms it.
+        if: matrix.cold
         # 36 and 38 min on a hosted runner (16-17 to build, the rest tests; build 20), so 55 keeps 30%
         # headroom. A runner once hung here past 90 min with nothing in the log, so the step is bounded
         # and reports each test as it ends.
@@ -80,6 +122,10 @@ jobs:
           xcrun simctl erase "$udid"
           xcrun simctl boot "$udid"
           xcrun simctl bootstatus "$udid" -b
+          # The erase ended the place log's stream; take it up again.
+          nohup sh -c 'xcrun simctl spawn "$0" log stream --style compact --predicate "subsystem == \"bot.ouro.gatefold\"" 2>/dev/null \
+            | grep --line-buffered -E "place (read|write)|place:|location |reflow|landing|landed|reopen|tapped|warm:|open:|first page|pages:|turn:|spread:|veil:|settle [0-9]|REPRO" \
+            | grep --line-buffered -v -E "text:|\] visible|anchor" >> "$1"' "$udid" "$RUNNER_TEMP/place.log" >/dev/null 2>&1 &
           echo "$(date -u +%T) booted; building and testing"
           xcodebuild test -project Gatefold.xcodeproj -scheme Gatefold \
             -destination "${{ steps.sim.outputs.destination }}" \
@@ -91,43 +137,37 @@ jobs:
           status=${PIPESTATUS[0]}
           echo "$(date -u +%T) done ($status)"
           exit $status
-      - name: Jumps and reopens keep his place; the reader fits its window; every Fine-Tune tap lands; the number's slot is never blank
+      - name: ${{ matrix.title }}
         env:
-          # Five rounds of the controls-then-numbers reopen (about 90 s each); 20 locally.
+          TESTS: ${{ matrix.tests }}
+          # Five rounds of the controls-then-numbers reopen (about 2 min each); 30 locally.
           TEST_RUNNER_GATEFOLD_REOPEN_ROUNDS: "5"
         run: |
           set -o pipefail
+          only=()
+          for t in $TESTS; do only+=("-only-testing:GatefoldUITests/$t"); done
+          # Each test's result prints as it finishes: a job cut off at its limit still names the slow test
+          # (run 42393941976's reviewer leg printed nothing, since this read the log only at the end).
           xcodebuild test -project Gatefold.xcodeproj -scheme Gatefold \
-            -destination "${{ steps.sim.outputs.destination }}" \
-            -only-testing:GatefoldUITests/WindowFitUITests \
-            -only-testing:GatefoldUITests/ReopenAfterControlsUITests \
-            -only-testing:GatefoldUITests/NavigationPlaceUITests \
-            -only-testing:GatefoldUITests/PageFurnitureUITests \
-            -only-testing:GatefoldUITests/FineTuneTapUITests \
-            -only-testing:GatefoldUITests/CountingPlaceholderUITests \
-            -only-testing:GatefoldUITests/PositionUITests/testEveryPostureKeepsThePlace \
-            -resultBundlePath "$RUNNER_TEMP/ipad.xcresult" > "$RUNNER_TEMP/ipad.log" 2>&1 || status=$?
-          grep -E "Test Case .*(passed|failed|skipped)|TEST (SUCCEEDED|FAILED)|WINDOWFIT|REOPEN|TAPRATE|PLACEHOLDER|\.swift:[0-9]+: error" "$RUNNER_TEMP/ipad.log" \
-            | sed -E 's/(XCTAssert[A-Za-z]* failed).*/\1 (text withheld)/' | tail -60 || true
-          exit ${status:-0}
-      - name: How soon a page number comes up (measured, by the app's own clock)
-        # Gate: 3 s from the page showing. Exact counts take 5-7 s on a fresh open today (each chapter's
-        # web view loads before it can be counted, and a number waits on every chapter before it), and
-        # 9-13 s on the iPad's side (a spread), so this reports and doesn't block until counting is
-        # ahead of the open. Until then the slot says "Counting pages…".
-        continue-on-error: true
+            -destination "${{ steps.sim.outputs.destination }}" "${only[@]}" \
+            -resultBundlePath "$RUNNER_TEMP/ipad.xcresult" 2>&1 | tee "$RUNNER_TEMP/ipad.log" \
+            | grep --line-buffered -E "Test Case .*(started|passed|failed|skipped)|TEST (SUCCEEDED|FAILED)|REPRO (round|SUMMARY)|TAPRATE|PLACEHOLDER|REVIEWER|WINDOWFIT|REOPEN round [0-9]+:|\.swift:[0-9]+: error" \
+            | awk '{ if (match($0, /XCTAssert[A-Za-z]* failed/)) $0 = substr($0, 1, RSTART + RLENGTH - 1) " (text withheld)"; print; fflush() }'
+          exit ${PIPESTATUS[0]}
+      - name: The app's place log, for a miss (file and progression only, never the book's words)
+        if: failure() || cancelled()
+        # Kept as the job ran (a `log show` over hours of a busy simulator took 23 min and ran the job
+        # out of time, losing every log), so here it is only closed off.
+        timeout-minutes: 2
         run: |
-          set -o pipefail
-          xcodebuild test -project Gatefold.xcodeproj -scheme Gatefold \
-            -destination "${{ steps.sim.outputs.destination }}" \
-            -only-testing:GatefoldUITests/PageNumberTimingUITests > "$RUNNER_TEMP/timing.log" 2>&1 || status=$?
-          grep -E "number timing|Test Case .*(passed|failed)" "$RUNNER_TEMP/timing.log" || true
-          exit ${status:-0}
+          pkill -f "log stream --style compact" || true
+          wc -l < "$RUNNER_TEMP/place.log" || true
       - uses: actions/upload-artifact@v4
-        if: failure()
+        if: failure() || cancelled()
         with:
-          name: ipad-results
+          name: ipad-${{ matrix.name }}-results
           path: |
+            ${{ runner.temp }}/place.log
             ${{ runner.temp }}/cold.log
             ${{ runner.temp }}/cold.xcresult
             ${{ runner.temp }}/ipad.log
@@ -138,8 +178,9 @@ jobs:
     # xcode-27 is the only hosted image with Xcode 27.1: the first SDK with the iPhone Duo fold
     # APIs, the iOS 27 deployment target and the iPhone Duo simulator. macos-latest (macOS 26) has
     # only Xcode 26, so this job cannot move there.
+    # ~55 min in build 19: 85 keeps 30% headroom.
     runs-on: xcode-27
-    timeout-minutes: 75
+    timeout-minutes: 85
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/select-xcode
@@ -154,9 +195,7 @@ jobs:
         run: |
           set -euo pipefail
           runtime="$(xcrun simctl list runtimes --json | python3 -c 'import json,sys; r=[x for x in json.load(sys.stdin)["runtimes"] if x["platform"]=="iOS" and x["isAvailable"] and any(d["name"].startswith("iPhone Duo") for d in x.get("supportedDeviceTypes",[]))]; print(max(r, key=lambda x: [int(p) for p in x["version"].split(".")])["identifier"])')"
-          udid="$(xcrun simctl create gatefold-duo com.apple.CoreSimulator.SimDeviceType.iPhone-Duo "$runtime")"
-          xcrun simctl boot "$udid"
-          xcrun simctl bootstatus "$udid" -b
+          udid="$(.github/scripts/boot-sim.sh gatefold-duo com.apple.CoreSimulator.SimDeviceType.iPhone-Duo "$runtime")"
           echo "destination=platform=iOS Simulator,arch=$(uname -m),id=$udid" >> "$GITHUB_OUTPUT"
       - name: Build and run unit tests
         run: |
@@ -176,15 +215,6 @@ jobs:
           # No retry: a wait that runs out prints how many probe reads it made and the slowest one.
           grep -E "error:|Test Case .*(passed|failed|skipped)|TEST (SUCCEEDED|FAILED)|probe says|probe timing|TAPRATE" "$RUNNER_TEMP/ui.log" | tail -60 || true
           exit ${status:-0}
-      - name: How soon a page number comes up on the Duo (measured, not a gate)
-        continue-on-error: true
-        run: |
-          set -o pipefail
-          xcodebuild test -project Gatefold.xcodeproj -scheme Gatefold \
-            -destination "${{ steps.sim.outputs.destination }}" \
-            -only-testing:GatefoldUITests/PageNumberTimingUITests/testANumberComesUpWithinMomentsOfAFreshOpen > "$RUNNER_TEMP/timing.log" 2>&1 || status=$?
-          grep -E "number timing|Test Case .*(passed|failed)" "$RUNNER_TEMP/timing.log" || true
-          exit ${status:-0}
       - name: Release build for devices (the same binary runs on the Mac as Designed for iPad)
         run: |
           set -o pipefail
@@ -198,3 +228,60 @@ jobs:
             ${{ runner.temp }}/unit.xcresult
             ${{ runner.temp }}/ui.xcresult
             ${{ runner.temp }}/ui.log
+
+  duo-reviewer:
+    name: Duo (the reviewers' checks)
+    # The reviewers' standing checks on the Duo: reopen by hash, true numbers and reader-wide toggles
+    # (density is the iPad's), and a page a turn with a reopen keeping its numbers.
+    runs-on: xcode-27
+    # 45 min measured (build 20): 65 keeps 30% headroom.
+    timeout-minutes: 65
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/select-xcode
+      - name: Install the Metal toolchain
+        run: xcodebuild -downloadComponent MetalToolchain
+      - name: Generate the Xcode project from project.yml
+        run: |
+          brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
+          xcodegen generate
+      - name: Create and boot an iPhone Duo
+        id: sim
+        run: |
+          set -euo pipefail
+          runtime="$(xcrun simctl list runtimes --json | python3 -c 'import json,sys; r=[x for x in json.load(sys.stdin)["runtimes"] if x["platform"]=="iOS" and x["isAvailable"] and any(d["name"].startswith("iPhone Duo") for d in x.get("supportedDeviceTypes",[]))]; print(max(r, key=lambda x: [int(p) for p in x["version"].split(".")])["identifier"])')"
+          udid="$(.github/scripts/boot-sim.sh gatefold-duo com.apple.CoreSimulator.SimDeviceType.iPhone-Duo "$runtime")"
+          echo "udid=$udid" >> "$GITHUB_OUTPUT"
+          echo "destination=platform=iOS Simulator,arch=$(uname -m),id=$udid" >> "$GITHUB_OUTPUT"
+      - name: Keep the app's place log as it runs (file and progression only, never the book's words)
+        run: |
+          nohup sh -c 'xcrun simctl spawn "$0" log stream --style compact --predicate "subsystem == \"bot.ouro.gatefold\"" 2>/dev/null \
+            | grep --line-buffered -E "place (read|write)|place:|location |reflow|landing|landed|reopen|tapped|warm:|open:|first page|pages:|turn:|spread:|veil:|settle [0-9]" \
+            | grep --line-buffered -v -E "text:|\] visible|anchor" >> "$1"' "${{ steps.sim.outputs.udid }}" "$RUNNER_TEMP/place.log" >/dev/null 2>&1 &
+      - name: The reviewers' checks on the Duo
+        run: |
+          set -o pipefail
+          xcodebuild test -project Gatefold.xcodeproj -scheme Gatefold \
+            -destination "${{ steps.sim.outputs.destination }}" \
+            -only-testing:GatefoldUITests/ReviewerChecksUITests \
+            -only-testing:GatefoldUITests/PageNumberUITests/testEveryTurnMovesOnAPageAndAReopenKeepsTheNumbers \
+            -resultBundlePath "$RUNNER_TEMP/duo.xcresult" 2>&1 | tee "$RUNNER_TEMP/duo.log" \
+            | grep --line-buffered -E "Test Case .*(started|passed|failed|skipped)|TEST (SUCCEEDED|FAILED)|REVIEWER|\.swift:[0-9]+: error" \
+            | awk '{ if (match($0, /XCTAssert[A-Za-z]* failed/)) $0 = substr($0, 1, RSTART + RLENGTH - 1) " (text withheld)"; print; fflush() }'
+          exit ${PIPESTATUS[0]}
+      - name: The app's place log, for a miss (file and progression only, never the book's words)
+        if: failure() || cancelled()
+        # Kept as the job ran (a `log show` over hours of a busy simulator took 23 min and ran the job
+        # out of time, losing every log), so here it is only closed off.
+        timeout-minutes: 2
+        run: |
+          pkill -f "log stream --style compact" || true
+          wc -l < "$RUNNER_TEMP/place.log" || true
+      - uses: actions/upload-artifact@v4
+        if: failure() || cancelled()
+        with:
+          name: duo-reviewer-results
+          path: |
+            ${{ runner.temp }}/place.log
+            ${{ runner.temp }}/duo.log
+            ${{ runner.temp }}/duo.xcresult

@@ -92,6 +92,9 @@ enum LaunchOptions {
     /// a busy device, to show the old page holding until they paint.
     /// Tests only: every reflow's restore hangs after laying out, as a cold iPad's could; the page must still show.
     static var stallReflow: Bool { defaults.bool(forKey: "GatefoldStallReflow") }
+    /// Debug only: a jump's chapter counts as still loading (Readium's spinner up) for this many looks,
+    /// so a test can hold the load open as a slow device does and watch the veil (#38).
+    static var holdChapterLoadLooks: Int? { defaults.object(forKey: "GatefoldHoldChapterLoad") == nil ? nil : defaults.integer(forKey: "GatefoldHoldChapterLoad") }
     static var unfoldPaintDelay: Double? { defaults.object(forKey: "GatefoldUnfoldPaintDelay") == nil ? nil : defaults.double(forKey: "GatefoldUnfoldPaintDelay") }
     /// Book IDs to open and close one after another, as taps would (see `RootView.openTour`).
     /// Seconds an open tour rests on the shelf between books (the warm books reopen meanwhile).

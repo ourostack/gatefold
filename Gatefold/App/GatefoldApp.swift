@@ -256,7 +256,10 @@ struct RootView: View {
     private static var tappedSinceLaunch = false
 
     private var warmKeys: [String] {
-        guard app.hasOnboarded, reader == nil, !opening, !LaunchOptions.noWarm else { return [] }
+        // A book asked for by name (a link, a test's launch) opens first: warming others on the way
+        // took the CPU from it (on CI's Duo three warm pages held the asked-for book off for minutes,
+        // and the app stopped answering).
+        guard app.hasOnboarded, reader == nil, !opening, app.openBookID == nil, !LaunchOptions.noWarm else { return [] }
         // The book only: a warm reader keeps its own place (a landing moves it), and closing the
         // reader clears the keys, so the next warm ones open where reading stopped.
         return Array(app.library.readingNow.filter(\.isOnDevice).prefix(Self.warmCount).map(\.id))
