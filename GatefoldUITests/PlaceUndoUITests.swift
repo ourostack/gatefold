@@ -62,6 +62,8 @@ final class PlaceUndoUITests: XCTestCase {
                                                 "-GatefoldOpenBook", "gutenberg-pride-and-prejudice", "-GatefoldGoTo", goTo]
             // GATEFOLD_POSTURE=spread runs the same checks on the unfolded Duo.
             + (ProcessInfo.processInfo.environment["GATEFOLD_POSTURE"].map { ["-GatefoldForcePosture", $0] } ?? [])
+            // GATEFOLD_COUNTERS=0 opens the same page with no counting behind it, for an A/B of what it costs.
+            + (ProcessInfo.processInfo.environment["GATEFOLD_COUNTERS"].map { ["-GatefoldCounters", $0] } ?? [])
         app.launch()
         XCTAssertTrue(el("reader.page").waitForExistence(timeout: 90))
         return settledWords()
@@ -168,28 +170,53 @@ final class PlaceUndoUITests: XCTestCase {
     }
 
     /// A tap at the left edge turns back as promptly as one at the right edge turns forward: the
-    /// page has moved within 12 reads (feel-ci's folded Duo saw it move only after 43).
+    /// page has moved within 12 reads (feel-ci's folded Duo saw it move only after 43), and neither
+    /// turn waited more than 24 looks for the page beneath to paint.
     func testATapAtTheLeftEdgeTurnsBackPromptly() {
-        leftEdgeTurnsBack(within: 12, reading: 0.25)
+        leftEdgeTurnsBack(reading: 0.25)
     }
 
     /// The same, opened and read as feel-ci's turn check does (at 0.3 with curl turns, a read every
-    /// tenth of a second): moved within its 24 reads.
+    /// tenth of a second), held to the same bars.
     func testATapAtTheLeftEdgeTurnsBackPromptlyAsFeelOpensIt() {
-        leftEdgeTurnsBack(within: 24, reading: 0.1, extra: ["-GatefoldPageTurn", "curl"], goTo: "0.3")
+        leftEdgeTurnsBack(reading: 0.1, extra: ["-GatefoldPageTurn", "curl"], goTo: "0.3")
     }
 
-    private func leftEdgeTurnsBack(within limit: Int, reading interval: TimeInterval, extra: [String] = [], goTo: String = "0.31") {
+    /// The newest turn's count and the looks it waited for the page beneath, from the app itself:
+    /// counted from the tap, where reads after XCUITest's tap start only once the app has gone idle.
+    private func turnWait() -> (turn: Int, looks: Int) {
+        let parts = ((el("reader.turnWait").value as? String) ?? "").split(separator: " ").compactMap { Int($0) }
+        return parts.count == 2 ? (parts[0], parts[1]) : (0, -1)
+    }
+
+    private func looks(ofTurnAfter turn: Int) -> Int {
+        for _ in 0..<100 {
+            let now = turnWait()
+            if now.turn > turn { return now.looks }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        }
+        return -1
+    }
+
+    private func leftEdgeTurnsBack(reading interval: TimeInterval, extra: [String] = [], goTo: String = "0.31",
+                                   reads limit: Int = 12, looks lookLimit: Int = 24) {
         let first = openFresh(extra, goTo: goTo)
         let page = el("reader.page")
+        let before = turnWait().turn
         page.coordinate(withNormalizedOffset: CGVector(dx: 0.92, dy: 0.5)).tap()
         let forward = readsUntilWords(changeFrom: first, atMost: 200, every: interval)
+        let forwardLooks = looks(ofTurnAfter: before)
         let ahead = settledWords()
         XCTAssertNotEqual(opening(ahead), opening(first), "the forward turn didn't happen")
+        let middle = turnWait().turn
         page.coordinate(withNormalizedOffset: CGVector(dx: 0.08, dy: 0.5)).tap()
         let reads = readsUntilWords(changeFrom: ahead, atMost: 200, every: interval)
-        XCTContext.runActivity(named: "reads to turn: forward \(forward), back \(reads)") { _ in }
+        let backLooks = looks(ofTurnAfter: middle)
+        XCTContext.runActivity(named: "reads to turn: forward \(forward), back \(reads); looks for the page beneath: forward \(forwardLooks), back \(backLooks)") { _ in }
         XCTAssertLessThanOrEqual(reads, limit, "a tap at the left edge turned back only after \(reads) reads (forward took \(forward))")
+        XCTAssertLessThanOrEqual(forward, limit, "a tap at the right edge turned forward only after \(forward) reads")
+        XCTAssertTrue((0...lookLimit).contains(forwardLooks), "the forward turn waited \(forwardLooks) looks for the page beneath")
+        XCTAssertTrue((0...lookLimit).contains(backLooks), "the back turn waited \(backLooks) looks for the page beneath")
         XCTAssertEqual(opening(settledWords()), opening(first), "the tap at the left edge didn't turn back to the page before")
     }
 

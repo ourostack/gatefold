@@ -59,6 +59,8 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         willSet { if isTurning, !newValue { lastTurnEnded = .now } }
     }
     private var lastTurnEnded: ContinuousClock.Instant?
+    /// Turns that pictured the page beneath (the turn-wait probe's count).
+    private var turnsPictured = 0
     /// A count stopped for a turn, to take up again once turns go quiet.
     private var countPausedForTurns = false
     /// Under test, each turn's frames: whether a count behind the page costs the turn any.
@@ -303,7 +305,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         let links = hrefs.compactMap { href in publication.readingOrder.first { $0.url().removingFragment().string == href } }
         // A chapter's cost is its web view loading (about 3 s each, one after another, in build 17), not
         // its measuring: several counters behind the page take chapters from one queue at once.
-        let workers = (0..<min(Self.counters, links.count)).compactMap { _ in
+        let workers = (0..<min(LaunchOptions.counters ?? Self.counters, links.count)).compactMap { _ in
             try? Self.makeNavigator(publication: publication, at: nil, preferences: preferences)
         }
         guard !workers.isEmpty else { finished(); return }
@@ -1245,6 +1247,10 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         // columns; caught halfway it ghosts).
         curl.beneath = await renderedSnapshot(afterChange: true)
         beneathFrames = lastSnapshotFrames
+        // Counted from the tap, not after it: a test's tap waits for the app to go idle, which hides the wait.
+        turnsPictured += 1
+        readerLog.notice("turn: \(self.turnsPictured, privacy: .public) waited \(self.lastSnapshotLooks, privacy: .public) looks for the page beneath")
+        if LaunchOptions.isUITest { weakModel?.turnWaitProbe = "\(turnsPictured) \(lastSnapshotLooks)" }
         #if DEBUG
         if ProcessInfo.processInfo.environment["GATEFOLD_DUMP_SNAPSHOTS"] != nil || UserDefaults.standard.bool(forKey: "GatefoldDumpSnapshots") {
             let dir = URL.temporaryDirectory
@@ -1820,6 +1826,8 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     /// Where the web views sat in the host for the last snapshot: the turn's leaf and the page beneath
     /// are drawn from them, so the live page must be at the same place when the overlay lifts.
     private(set) var lastSnapshotFrames: [CGRect] = []
+    /// How many looks (about 50 ms each, counted, not timed) the last `renderedSnapshot` took.
+    private(set) var lastSnapshotLooks = 0
     private var landedTurns = 0
 
     /// The visible web views' frames in the host now.
@@ -1966,6 +1974,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         // took over 25 s, and the veil lifted onto a blank page and a spinner.
         var loadingLooks = 0
         var attempt = 0
+        defer { lastSnapshotLooks = loadingLooks + attempt }
         while attempt < 40 {
             if afterChange || attempt > 0 || loadingLooks > 0 { try? await Task.sleep(for: .milliseconds(attempt == 0 && loadingLooks == 0 ? 60 : 50)) }
             if isLoadingPage {
