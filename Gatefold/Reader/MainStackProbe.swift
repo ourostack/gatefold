@@ -52,9 +52,19 @@ enum MainStackProbe {
 
     /// The commonest frames over a stall's samples: app frames (Gatefold, Readium) and the leaf.
     static func summary(_ stacks: [[String]]) -> String {
-        var app: [String: Int] = [:], leaf: [String: Int] = [:]
+        var app: [String: Int] = [:], leaf: [String: Int] = [:], caller: [String: Int] = [:]
         for stack in stacks {
             if let top = stack.first { leaf[top, default: 0] += 1 }
+            // What a blocked log write or a draw was called from: the innermost app frame that isn't
+            // the program's entry point.
+            if let top = stack.first, top.contains("_os_trace") || top.contains("os_log") || top.contains("argb32") || top.contains("vConvolve") || top.contains("mach_msg") {
+                let kind = top.contains("_os_trace") || top.contains("os_log") ? "log" : top.contains("mach_msg") ? "msg" : "draw"
+                if let own = stack.first(where: { ($0.hasPrefix("Gatefold") || $0.contains("Readium")) && !$0.contains("AppV5$main") && !$0.contains("entry_point") }) {
+                    caller["\(kind)<-\(own)", default: 0] += 1
+                } else {
+                    caller["\(kind)<-(no app frame) \(stack.dropFirst().prefix(4).joined(separator: " < "))", default: 0] += 1
+                }
+            }
             for frame in Set(stack) where frame.hasPrefix("Gatefold") || frame.contains("Readium") {
                 app[frame, default: 0] += 1
             }
@@ -62,6 +72,6 @@ enum MainStackProbe {
         func top(_ d: [String: Int], _ n: Int) -> String {
             d.sorted { $0.value > $1.value }.prefix(n).map { "\($0.value)x \($0.key)" }.joined(separator: " ; ")
         }
-        return "\(stacks.count) samples; app: \(top(app, 12)) || leaf: \(top(leaf, 4))"
+        return "\(stacks.count) samples; app: \(top(app, 12)) || leaf: \(top(leaf, 4)) || callers: \(top(caller, 6))"
     }
 }
