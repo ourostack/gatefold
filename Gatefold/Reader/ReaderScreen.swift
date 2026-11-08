@@ -127,8 +127,9 @@ struct ReaderScreen: View {
                     // A tap or a swipe on the page beside the panel puts it away, as any overlay does, and never
                     // reaches the page: no turn, no controls toggled (gatefold#62). Ruling: the first touch beside
                     // the panel only dismisses it; the next one reads. It lies over the page only, under the
-                    // chrome, the deck, the slip and the ahead tab, which stay live (their own buttons close the
-                    // panel first). VoiceOver's escape and the keyboard's Escape do the same, on the panel.
+                    // chrome, the deck, the slip and the ahead tab, which stay live (the bar's and the deck's
+                    // Contents, Search and Appearance close the panel first). VoiceOver's escape closes it too;
+                    // VoiceOver can still reach the page, so the bar and the deck stay reachable.
                     Color.clear
                         .contentShape(.rect)
                         .onTapGesture { showAppearance = false }

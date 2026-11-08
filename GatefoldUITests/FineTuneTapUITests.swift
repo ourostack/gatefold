@@ -145,13 +145,14 @@ final class FineTuneTapUITests: XCTestCase {
         assertChangedOnce(toggle, from: before, "a tap on the row's name changes it")
     }
 
-    /// A tap on the page beside the Appearance panel puts it away, as any overlay goes, and never reaches the page
-    /// beneath: the words stay (gatefold#62, seen on the folded Duo and the iPad).
+    /// A tap or a swipe on the page beside the Appearance panel puts it away, as any overlay goes, and never reaches
+    /// the page beneath: the words stay and the controls stay up (gatefold#62, seen on the folded Duo and the iPad).
     func testATapBesideAppearancePutsItAwayAndLeavesThePage() {
         launchReader()
         let page = app.descendants(matching: .any)["reader.page"]
         let words = { (self.app.descendants(matching: .any)["reader.visibleText"].value as? String) ?? "" }
-        for round in 1...3 {
+        // Taps and swipes, each the turn's way: a swipe that reached the page would turn it.
+        for (round, how) in ["a tap", "a swipe forward", "a tap", "a swipe back"].enumerated() {
             for _ in 0..<4 where !app.buttons["reader.appearance"].waitForExistence(timeout: 5) {
                 page.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
             }
@@ -160,14 +161,30 @@ final class FineTuneTapUITests: XCTestCase {
             XCTAssertTrue(panel.waitForExistence(timeout: 10), "Appearance opened (\(round))")
             sleep(1)
             let before = words()
-            // Between the top bar and the panel, in the page's middle third (not a turn zone).
+            XCTAssertFalse(before.isEmpty, "the page reports its words before \(how) (\(round))")
+            // Between the top bar and the panel, clear of both.
             let barFoot = max(app.buttons["reader.close"].frame.maxY, page.frame.minY)
             let gap = panel.frame.minY - barFoot
             guard gap > 60 else { XCTFail("no page between the bar (\(barFoot)) and the panel (\(panel.frame.minY))"); return }
-            app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: page.frame.midX, dy: barFoot + gap / 2)).tap()
-            XCTAssertTrue(panel.waitForNonExistence(timeout: 5), "a tap beside Appearance put it away (\(round))")
+            let origin = app.coordinate(withNormalizedOffset: .zero)
+            let y = barFoot + gap / 2, f = page.frame
+            switch how {
+            case "a tap":
+                origin.withOffset(CGVector(dx: f.midX, dy: y)).tap()
+            case "a swipe forward":
+                origin.withOffset(CGVector(dx: f.minX + f.width * 0.85, dy: y))
+                    .press(forDuration: 0.05, thenDragTo: origin.withOffset(CGVector(dx: f.minX + f.width * 0.15, dy: y)),
+                           withVelocity: .fast, thenHoldForDuration: 0)
+            default:
+                origin.withOffset(CGVector(dx: f.minX + f.width * 0.15, dy: y))
+                    .press(forDuration: 0.05, thenDragTo: origin.withOffset(CGVector(dx: f.minX + f.width * 0.85, dy: y)),
+                           withVelocity: .fast, thenHoldForDuration: 0)
+            }
+            XCTAssertTrue(panel.waitForNonExistence(timeout: 5), "\(how) beside Appearance put it away (\(round))")
+            // A touch that reached the page would also have put the controls down.
+            XCTAssertTrue(app.buttons["reader.close"].exists, "\(how) beside Appearance left the controls up (\(round))")
             sleep(2)
-            XCTAssertTrue(words() == before, "the tap beside Appearance left the page as it was (\(round))")
+            XCTAssertTrue(words() == before, "\(how) beside Appearance left the page as it was (\(round))")
             if panel.exists, app.buttons["appearance.close"].exists { app.buttons["appearance.close"].tap() }
         }
     }
