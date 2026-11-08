@@ -149,7 +149,7 @@ jobs:
             # 53 min measured (a 10 min simulator boot among them); measured / 0.7 keeps 30% headroom.
             timeout: 80
             title: Every Fine-Tune tap lands; the furniture never moves the words
-            tests: FineTuneTapUITests PageFurnitureUITests
+            tests: FineTuneTapUITests PageFurnitureUITests ContentsPullUITests
           - name: reviewer
             # 65 min measured with the full list; measured / 0.7 keeps 30% headroom.
             timeout: 95
@@ -250,7 +250,7 @@ jobs:
           xcodebuild test-without-building -xctestrun "$XCTESTRUN" \
             -destination "$DESTINATION" "${only[@]}" \
             -resultBundlePath "$RUNNER_TEMP/ipad.xcresult" 2>&1 | tee "$RUNNER_TEMP/ipad.log" \
-            | grep --line-buffered -E "Test Case .*(started|passed|failed|skipped)|TEST (SUCCEEDED|FAILED)|REPRO (round|SUMMARY)|TAPRATE|PLACEHOLDER|REVIEWER|WINDOWFIT|REOPEN round [0-9]+:|\.swift:[0-9]+: error" \
+            | grep --line-buffered -E "Test Case .*(started|passed|failed|skipped)|TEST (SUCCEEDED|FAILED)|REPRO (round|SUMMARY)|TAPRATE|CONTENTSPULL|PLACEHOLDER|REVIEWER|WINDOWFIT|REOPEN round [0-9]+:|\.swift:[0-9]+: error" \
             | awk '{ if (match($0, /XCTAssert[A-Za-z]* failed/)) $0 = substr($0, 1, RSTART + RLENGTH - 1) " (text withheld)"; print; fflush() }'
           exit ${PIPESTATUS[0]}
       - name: The app did not crash, and the system did not end it for memory (gatefold#76)
@@ -342,9 +342,10 @@ jobs:
             -destination "$DESTINATION" \
             -only-testing:GatefoldUITests/PositionUITests \
             -only-testing:GatefoldUITests/FineTuneTapUITests \
+            -only-testing:GatefoldUITests/ContentsPullUITests \
             -resultBundlePath "$RUNNER_TEMP/ui.xcresult" > "$RUNNER_TEMP/ui.log" 2>&1 || status=$?
           # No retry: a wait that runs out prints how many probe reads it made and the slowest one.
-          grep -E "error:|Test Case .*(passed|failed|skipped)|TEST (SUCCEEDED|FAILED)|probe says|probe timing|TAPRATE" "$RUNNER_TEMP/ui.log" | tail -60 || true
+          grep -E "error:|Test Case .*(passed|failed|skipped)|TEST (SUCCEEDED|FAILED)|probe says|probe timing|TAPRATE|CONTENTSPULL" "$RUNNER_TEMP/ui.log" | tail -60 || true
           exit ${status:-0}
       - name: The app did not crash, and the system did not end it for memory (gatefold#76)
         if: ${{ !cancelled() }}
