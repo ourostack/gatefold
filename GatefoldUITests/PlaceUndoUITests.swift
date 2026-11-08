@@ -34,6 +34,17 @@ final class PlaceUndoUITests: XCTestCase {
         return visibleText
     }
 
+    /// Reads of the page's words, a quarter-second apart, until they differ from `old` (`atMost` + 1
+    /// if they never do).
+    private func readsUntilWords(changeFrom old: String, atMost: Int) -> Int {
+        for read in 1...atMost {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+            let now = visibleText
+            if !now.isEmpty, now != old { return read }
+        }
+        return atMost + 1
+    }
+
     /// Settled: the same words in two reads a second apart.
     private func settledWords() -> String {
         var last = waitForWords()
@@ -154,6 +165,21 @@ final class PlaceUndoUITests: XCTestCase {
         let back2 = waitForWords(changingFrom: ahead2, timeout: 15)
         XCTAssertEqual(opening(back2), opening(first), "a tap at x 0.07, 0.47 down, on the spread didn't turn back")
         XCTAssertFalse(app.buttons["reader.contents"].exists, "the higher tap showed the controls instead of turning")
+    }
+
+    /// A tap at the left edge turns back as promptly as one at the right edge turns forward: the
+    /// page has moved within 12 reads (feel-ci's folded Duo saw it move only after 43).
+    func testATapAtTheLeftEdgeTurnsBackPromptly() {
+        let first = openFresh()
+        let page = el("reader.page")
+        page.coordinate(withNormalizedOffset: CGVector(dx: 0.92, dy: 0.5)).tap()
+        _ = waitForWords(changingFrom: first, timeout: 15)
+        let ahead = settledWords()
+        XCTAssertNotEqual(opening(ahead), opening(first), "the forward turn didn't happen")
+        page.coordinate(withNormalizedOffset: CGVector(dx: 0.08, dy: 0.5)).tap()
+        let reads = readsUntilWords(changeFrom: ahead, atMost: 40)
+        XCTAssertLessThanOrEqual(reads, 12, "a tap at the left edge turned back only after \(reads) reads")
+        XCTAssertEqual(opening(settledWords()), opening(first), "the tap at the left edge didn't turn back to the page before")
     }
 
     /// On a chapter's first page (where a Contents jump lands), a tap at the left edge and a swipe
