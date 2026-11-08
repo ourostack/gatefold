@@ -635,6 +635,8 @@ final class FeelUITests: XCTestCase {
                                        findings: gone ? [] : [FeelFinding(what: "a tap on the page above the Appearance panel did not put it away")],
                                        environment: feel.environment)
             check(dismissal, name: "appearance-tap-beside")
+            // The tap only put the panel away: the controls it fell beside are still up, not toggled off.
+            if gone { XCTAssertTrue(app.buttons["reader.close"].exists, "the tap beside Appearance also hid the controls") }
             if !gone { close() }
             hideChrome()
         }

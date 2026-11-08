@@ -101,6 +101,7 @@ struct ReaderScreen: View {
                     TabletopDeck(model: model, showAppearance: $showAppearance, showContents: $showContents)
                         .frame(width: deck.width, height: deck.height)
                         .offset(x: deck.minX, y: deck.minY)
+                        .zIndex(1)
                 }
 
                 ReaderChrome(
@@ -114,17 +115,23 @@ struct ReaderScreen: View {
                     showSearch: $showSearch
                 )
                 .frame(width: proxy.size.width, height: layout.deck == nil ? proxy.size.height : layout.pageFrame.height)
+                .zIndex(1)
 
                 if showAppearance {
-                    // A tap anywhere beside the panel puts it away, as any overlay does, and never reaches the page
-                    // (no turn, no controls toggled) (gatefold#62). VoiceOver's escape does the same, on the panel.
+                    // A tap or a swipe on the page beside the panel puts it away, as any overlay does, and never
+                    // reaches the page: no turn, no controls toggled (gatefold#62). Ruling: the first touch beside
+                    // the panel only dismisses it; the next one reads. It lies over the page only, under the
+                    // chrome, the deck, the slip and the ahead tab, which stay live (their own buttons close the
+                    // panel first). VoiceOver's escape and the keyboard's Escape do the same, on the panel.
                     Color.clear
                         .contentShape(.rect)
                         .onTapGesture { showAppearance = false }
+                        .gesture(DragGesture(minimumDistance: 12).onEnded { _ in showAppearance = false })
                         .accessibilityHidden(true)
-                        .zIndex(4.5)
+                        .zIndex(0.5)
                     // Low over the page (or the spread), inside the safe area, the top of the page in view.
                     SettingsPanel(model: model, width: proxy.size.width) { showAppearance = false }
+                        .accessibilityAddTraits(.isModal)
                         .accessibilityAction(.escape) { showAppearance = false }
                         .frame(maxWidth: 560)
                         // A height cap takes all the room it's offered, so its own alignment decides

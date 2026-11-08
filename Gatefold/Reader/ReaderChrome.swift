@@ -143,7 +143,7 @@ struct ReaderChrome: View {
                 GlassEffectContainer(spacing: 10) {
                     VStack(spacing: 10) {
                         VStack(spacing: 0) {
-                            PillButton(systemName: "list.bullet", label: "Contents and Bookmarks", id: "reader.contents") { showContents = true }
+                            PillButton(systemName: "list.bullet", label: "Contents and Bookmarks", id: "reader.contents") { showAppearance = false; showContents = true }
                             ShareLink(item: shareLine) {
                                 Image(systemName: "square.and.arrow.up")
                                     .font(.system(size: 17, weight: .semibold))
@@ -153,11 +153,12 @@ struct ReaderChrome: View {
                             .buttonStyle(.plain)
                             .accessibilityLabel("Share")
                             .accessibilityIdentifier("reader.share")
-                            PillButton(systemName: "textformat.size", label: "Your Page", id: "reader.appearance") { showAppearance = true }
+                            .simultaneousGesture(TapGesture().onEnded { showAppearance = false })
+                            PillButton(systemName: "textformat.size", label: "Your Page", id: "reader.appearance") { showAppearance.toggle() }
                         }
                         .padding(.vertical, 4)
                         .readerGlass(model.theme.background.opacity(0.7), interactive: true, in: .capsule)
-                        GlassIconButton(systemName: "magnifyingglass", label: "Search in Book", id: "reader.search") { showSearch = true }
+                        GlassIconButton(systemName: "magnifyingglass", label: "Search in Book", id: "reader.search") { showAppearance = false; showSearch = true }
                     }
                 }
                 .foregroundStyle(model.theme.text)
@@ -333,7 +334,7 @@ struct TabletopDeck: View {
             Scrubber(model: model)
                 .padding(.horizontal, 8)
             HStack(spacing: 22) {
-                GlassIconButton(systemName: "list.bullet", label: "Contents", id: "deck.contents") { showContents = true }
+                GlassIconButton(systemName: "list.bullet", label: "Contents", id: "deck.contents") { showAppearance = false; showContents = true }
                 TextSizeControl(model: model, idPrefix: "deck", large: true)
                 GlassIconButton(
                     systemName: model.isBookmarked ? "bookmark.fill" : "bookmark",
@@ -341,7 +342,7 @@ struct TabletopDeck: View {
                     id: "deck.bookmark",
                     tint: model.isBookmarked ? model.theme.accent : nil
                 ) { Task { await model.toggleBookmark() } }
-                GlassIconButton(systemName: "circle.lefthalf.filled", label: "Appearance", id: "deck.appearance") { showAppearance = true }
+                GlassIconButton(systemName: "circle.lefthalf.filled", label: "Appearance", id: "deck.appearance") { showAppearance.toggle() }
             }
         }
         .padding(.horizontal, 24)
