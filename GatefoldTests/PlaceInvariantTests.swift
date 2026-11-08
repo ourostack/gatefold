@@ -56,6 +56,36 @@ import Testing
         f.model.close()
     }
 
+    /// A first open whose shelf still holds an older listing (no Cloud place ahead on the record): the
+    /// cover isn't held for a landing, and the InkPad's place, found only by the reader's own fetch, is
+    /// offered, never jumped to (integrator ruling on #46: the slip is the fallback here).
+    @Test func aFirstOpenFromAnOldListingOffersTheInkPadsPlace() async throws {
+        let f = try await S.make(remote: { pub, mapper in try await S.inkPadPlace(pub, mapper, index: 12, percent: 40) },
+                                 listed: false)
+        await f.model.load()
+        #expect(f.model.pageReady)
+        #expect(f.page.jumps.isEmpty, "the page jumped to a Cloud place he didn't choose")
+        #expect(saved(f) == nil, "the place was saved without a move of his")
+        #expect(f.model.suggestion != nil, "the InkPad's place is offered instead")
+        f.model.close()
+    }
+
+    /// A book he has read here, read further on the InkPad: reopened, it shows his own page and offers
+    /// the InkPad's. Never lands on it (integrator ruling on #46: build 20 lost his place this way).
+    @Test func aReopenedBookOffersTheInkPadsFurtherPlaceAndNeverLands() async throws {
+        let pub = try await S.publication()
+        let early = try #require(await S.locate(pub, 0.05))
+        let json = try #require(try early.jsonString())
+        let f = try await S.make(remote: { pub, mapper in try await S.inkPadPlace(pub, mapper, index: 12, percent: 40) },
+                                 book: { $0.locatorJSON = json; $0.totalProgression = 0.05; $0.lastOpened = Date().addingTimeInterval(-3600) })
+        await f.model.load()
+        #expect(f.model.pageReady)
+        #expect(f.page.jumps.isEmpty, "a reopened book jumped to the Cloud's place")
+        #expect(f.page.currentLocation?.href == early.href, "his own page isn't the one showing")
+        #expect(f.model.suggestion != nil, "the InkPad's further place is offered instead")
+        f.model.close()
+    }
+
     /// Landing on the InkPad's place at a first open is a jump he didn't choose: the way back is on
     /// screen without the controls.
     @Test func theFirstOpenLandingCanBeUndone() async throws {
