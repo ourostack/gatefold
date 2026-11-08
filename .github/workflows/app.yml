@@ -389,6 +389,18 @@ jobs:
           nohup sh -c 'xcrun simctl spawn "$0" log stream --style compact --predicate "subsystem == \"bot.ouro.gatefold\"" 2>/dev/null \
             | grep --line-buffered -E "place (read|write)|place:|location |reflow|landing|landed|reopen|tapped|warm:|open:|first page|pages:|turn:|spread:|veil:|settle [0-9]" \
             | grep --line-buffered -v -E "text:|\] visible|anchor" >> "$1"' "$UDID" "$RUNNER_TEMP/place.log" >/dev/null 2>&1 &
+      - name: "Probe (gatefold#84, not for merge): sample the app from each Feel film's start"
+        run: |
+          mkdir -p "$RUNNER_TEMP/samples"
+          # Ouro Feel posts this Darwin notification in the simulator as each film starts, before its action.
+          nohup sh -c '
+            n=0
+            while [ $n -lt 40 ]; do
+              xcrun simctl spawn "$1" notifyutil -w bot.ouro.feel.record.start >/dev/null 2>&1 || { sleep 1; continue; }
+              pid=$(pgrep -x Gatefold | head -1); [ -n "$pid" ] || continue
+              n=$((n+1)); echo "film $n at $(date +%s) pid $pid" >>"$0/sampler.log"
+              sample "$pid" 3 1 -mayDie -file "$0/film-$n.txt" >>"$0/sampler.log" 2>&1
+            done' "$RUNNER_TEMP/samples" "$UDID" >/dev/null 2>&1 &
       - name: The reviewers' checks on the Duo; every screen and gesture feels right (Ouro Feel)
         env:
           FULL: ${{ needs.changes.outputs.full }}

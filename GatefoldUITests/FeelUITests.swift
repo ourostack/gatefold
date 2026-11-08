@@ -59,8 +59,6 @@ final class FeelUITests: XCTestCase {
         let recorder = OuroFeel.injectedRecorderEnvironment
         XCTAssertNotNil(recorder, "the UI test bundle carries OuroFeelRecorderInjectable")
         app.launchEnvironment.merge(recorder ?? [:]) { _, new in new }
-        // Probe (gatefold#84): no os_log mirror to stderr, which each XCUITest attribute fetch pays on the app's main thread.
-        app.launchEnvironment["OS_ACTIVITY_DT_MODE"] = "NO"
     }
 
     /// The arguments a reopen or relaunch uses: no reset, so the place he left is the place that comes back.
