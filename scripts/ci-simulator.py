@@ -12,7 +12,8 @@ returns at once, so the job downloads the build while the simulator boots.
 
 `wait` waits for boot-sim.sh with its own limit, writes UDID and DESTINATION to $GITHUB_ENV, and fails with
 boot-sim.sh's log, as "Simulator did not boot", when it failed or did not finish. The limit counts from `start`, so
-the time spent downloading meanwhile counts toward it. A boot has taken 10 min on a hosted runner, and boot-sim.sh
+the time spent downloading meanwhile counts toward it; a boot that has finished is read even when the wait starts after
+the limit (the unit job's Release build can outlast it, #78). A boot has taken 10 min on a hosted runner, and boot-sim.sh
 bounds each bootstatus at 7 min so a hang falls through to its next attempt; the wait step's own timeout is longer.
 
 A prefix that is a whole device name ("iPhone Duo") picks that device only, never a sibling such as "iPhone Duo Pro".
@@ -75,11 +76,14 @@ def wait_boot(name, limit, clock=time.time, nap=time.sleep):
     status = state_dir() / f"{name}.status"
     started = state_dir() / f"{name}.started"
     end = (float(started.read_text()) if started.exists() else clock()) + limit
-    while clock() < end:
+    while True:
+        # Read before the deadline check: a job that builds past the limit while the boot finishes must
+        # still see it (#78: 8 of 9 "did not finish" reports came from a boot that had already finished).
         if status.exists() and status.read_text().strip():
             return int(status.read_text().strip())
+        if clock() >= end:
+            return None
         nap(2)
-    return None
 
 
 def outcome(code, udid, limit):
@@ -157,6 +161,11 @@ def selftest():
     now[0] = 0.0
     assert wait_boot("late", 50, clock, nap) is None, "the limit counts from start"
     assert now[0] == 0.0, "no waiting once the limit has passed"
+    # #78: the unit job's Release build ran past the limit while the boot had long finished; a
+    # finished boot is read even when the wait step starts after the limit.
+    (state_dir() / "done-late.started").write_text("-2000\n")
+    (state_dir() / "done-late.status").write_text("0\n")
+    assert wait_boot("done-late", 1200, clock, nap) == 0, "a boot that finished is read after the limit"
     assert outcome(0, "ABC", 600) == "booted"
     assert outcome(0, "", 600) == "boot-sim.sh printed no UDID"
     assert outcome(1, "", 600) == "boot-sim.sh exited 1"
