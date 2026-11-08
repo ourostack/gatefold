@@ -23,10 +23,11 @@
 
 **Status:** TestFlight beta, by invite. Not on the App Store yet; ask for an invite by [opening an issue](https://github.com/ourostack/gatefold/issues/new).
 
-**Build it:** with Xcode and [XcodeGen](https://github.com/yonaskolb/XcodeGen). It runs in Simulator as is; for a device, set your own team in `project.yml` (`DEVELOPMENT_TEAM`).
+**Build it:** with Xcode 27 (the iOS 27 SDK) and [XcodeGen](https://github.com/yonaskolb/XcodeGen). It runs in Simulator as is; for a device, set your own team in `project.yml` (`DEVELOPMENT_TEAM`).
 
 ```sh
 brew install xcodegen
+xcodebuild -downloadComponent MetalToolchain
 xcodegen generate && open Gatefold.xcodeproj
 ```
 
