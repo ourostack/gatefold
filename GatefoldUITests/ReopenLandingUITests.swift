@@ -56,9 +56,9 @@ final class ReopenLandingUITests: XCTestCase {
         for round in 1...reopens {
             if freshOpen, round > 1 {
                 // He opens the book from the shelf this time, not through the reopen.
-                app.terminate()
+                app.quit()
                 app.launchArguments = common + ["-GatefoldOpenBook", book]
-                app.launch()
+                app.relaunch()
                 _ = settledText(timeout: 60, quiet: 1.5)
             }
             let turns = rng.next(turnRange)
@@ -102,9 +102,9 @@ final class ReopenLandingUITests: XCTestCase {
             }
             // iOS gives a leaving app a few seconds; the iPad spread's picture takes about two to keep.
             sleep(4)
-            app.terminate()
+            app.quit()
             app.launchArguments = common
-            app.launch()
+            app.relaunch()
             let picture = app.descendants(matching: .any)["reader.reopenPicture"].firstMatch
             let pictured = picture.waitForExistence(timeout: 5) ? XCUIScreen.main.screenshot() : nil
             let gone = Date().addingTimeInterval(40)

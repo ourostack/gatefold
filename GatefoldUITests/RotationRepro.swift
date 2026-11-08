@@ -139,9 +139,9 @@ final class RotationRepro: XCTestCase {
         for round in 1...3 {
             XCUIDevice.shared.press(.home)
             sleep(3)
-            app.terminate()
+            app.quit()
             app.launchArguments = base
-            app.launch()
+            app.relaunch()
             XCUIDevice.shared.orientation = .landscapeLeft
             sleep(2)
             _ = settle(60)
@@ -155,5 +155,7 @@ final class RotationRepro: XCTestCase {
             XCTAssertTrue(startsSame, "round \(round): reopened on his page")
         }
         note("SUMMARY green=\(green) of 3")
+        // Ended here, not by XCTest at teardown, where #44 recorded "Failed to terminate" (gatefold#76).
+        app.quit()
     }
 }

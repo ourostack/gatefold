@@ -85,7 +85,7 @@ final class ReopenAfterControlsUITests: XCTestCase {
             app.launchArguments = ["-GatefoldUITest", "YES", "-GatefoldFakeCloud", "YES", "-GatefoldSkipWelcome", "YES",
                                    "-GatefoldSignedIn", "YES", "-GatefoldAllowReopen", "YES", "-GatefoldNoLatency", "YES",
                                    "-GatefoldReset", "YES", "-GatefoldDownloadAll", "YES"]
-            app.launch()
+            app.relaunch()
             open()
             let opened = settle()
             numbersOn()
@@ -101,7 +101,7 @@ final class ReopenAfterControlsUITests: XCTestCase {
             if ok { same += 1 }
             print("REOPEN round \(round): opened \(Self.hash(opened)) left \(Self.hash(left)) back \(Self.hash(back)) \(ok ? "SAME" : "MISS")")
             XCTAssertTrue(ok, "round \(round) returned other words (\(Self.hash(left)) then \(Self.hash(back)))")
-            app.terminate()
+            app.quit()
         }
         print("REOPEN SUMMARY same=\(same) of \(rounds)")
     }

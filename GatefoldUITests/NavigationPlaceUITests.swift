@@ -63,9 +63,9 @@ final class NavigationPlaceUITests: XCTestCase {
             XCUIApplication(bundleIdentifier: "com.apple.springboard").activate()
         }
         sleep(3)
-        app.terminate()
+        app.quit()
         app.launchArguments = common
-        app.launch()
+        app.relaunch()
         _ = waitForWords()
         sleep(4)
         XCTAssertEqual(opening(visibleText), opening(settled), "after a \(how) and no turn, the reopen is on the page he jumped to")
@@ -141,9 +141,9 @@ final class NavigationPlaceUITests: XCTestCase {
             XCUIApplication(bundleIdentifier: "com.apple.springboard").activate()
         }
         sleep(3)
-        app.terminate()
+        app.quit()
         app.launchArguments = common + relaunchExtra
-        app.launch()
+        app.relaunch()
     }
 
     private var relaunchExtra: [String] = []
@@ -170,9 +170,9 @@ final class NavigationPlaceUITests: XCTestCase {
         let cover = app.descendants(matching: .any)["book.gutenberg-pride-and-prejudice"].firstMatch
         XCTAssertTrue(cover.waitForExistence(timeout: 15), "back on the shelf")
         sleep(2)
-        app.terminate()
+        app.quit()
         app.launchArguments = common
-        app.launch()
+        app.relaunch()
         XCTAssertTrue(cover.waitForExistence(timeout: 30), "the shelf after a relaunch")
         cover.tap()
         _ = waitForWords()

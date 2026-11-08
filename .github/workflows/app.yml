@@ -192,9 +192,13 @@ jobs:
         run: python3 -I scripts/ci-simulator.py wait gatefold-ipad "iPad Pro 13-inch" 1200
       - name: Keep the app's place log as it runs (file and progression only, never the book's words)
         run: |
+          sh scripts/ci-crashes.sh mark
           nohup sh -c 'xcrun simctl spawn "$0" log stream --style compact --predicate "subsystem == \"bot.ouro.gatefold\"" 2>/dev/null \
             | grep --line-buffered -E "place (read|write)|place:|location |reflow|landing|landed|reopen|tapped|warm:|open:|first page|pages:|turn:|spread:|veil:|settle [0-9]" \
             | grep --line-buffered -v -E "text:|\] visible|anchor" >> "$1"' "$UDID" "$RUNNER_TEMP/place.log" >/dev/null 2>&1 &
+          # Why the system ended the app, when it did (gatefold#76): runningboardd's lines about it, no page text.
+          nohup sh -c 'xcrun simctl spawn "$0" log stream --style compact --predicate "process == \"runningboardd\" AND eventMessage CONTAINS \"bot.ouro.gatefold\"" 2>/dev/null \
+            | grep --line-buffered -i -E "termin|kill|jetsam|exit|reason|invalidat|memory|highwater|limit" >> "$1"' "$UDID" "$RUNNER_TEMP/rb.log" >/dev/null 2>&1 &
       - name: Turned on its side cold (an erased iPad), the spread always comes whole and keeps his place
         # An erased simulator, not a new one: build 19 left the old page under a frozen leaf in 3 of 9
         # rounds after an erase and 0 of 3 on a new simulator. Once a run, before anything warms it.
@@ -218,6 +222,9 @@ jobs:
           nohup sh -c 'xcrun simctl spawn "$0" log stream --style compact --predicate "subsystem == \"bot.ouro.gatefold\"" 2>/dev/null \
             | grep --line-buffered -E "place (read|write)|place:|location |reflow|landing|landed|reopen|tapped|warm:|open:|first page|pages:|turn:|spread:|veil:|settle [0-9]|REPRO" \
             | grep --line-buffered -v -E "text:|\] visible|anchor" >> "$1"' "$udid" "$RUNNER_TEMP/place.log" >/dev/null 2>&1 &
+          # Why the system ended the app, when it did (gatefold#76): runningboardd's lines about it, no page text.
+          nohup sh -c 'xcrun simctl spawn "$0" log stream --style compact --predicate "process == \"runningboardd\" AND eventMessage CONTAINS \"bot.ouro.gatefold\"" 2>/dev/null \
+            | grep --line-buffered -i -E "termin|kill|jetsam|exit|reason|invalidat|memory|highwater|limit" >> "$1"' "$udid" "$RUNNER_TEMP/rb.log" >/dev/null 2>&1 &
           echo "$(date -u +%T) booted; testing"
           xcodebuild test-without-building -xctestrun "$XCTESTRUN" \
             -destination "$DESTINATION" \
@@ -246,6 +253,9 @@ jobs:
             | grep --line-buffered -E "Test Case .*(started|passed|failed|skipped)|TEST (SUCCEEDED|FAILED)|REPRO (round|SUMMARY)|TAPRATE|PLACEHOLDER|REVIEWER|WINDOWFIT|REOPEN round [0-9]+:|\.swift:[0-9]+: error" \
             | awk '{ if (match($0, /XCTAssert[A-Za-z]* failed/)) $0 = substr($0, 1, RSTART + RLENGTH - 1) " (text withheld)"; print; fflush() }'
           exit ${PIPESTATUS[0]}
+      - name: The app did not crash, and the system did not end it for memory (gatefold#76)
+        if: ${{ !cancelled() }}
+        run: sh scripts/ci-crashes.sh check
       - name: Why each failed test failed (from the result bundles, text withheld)
         if: failure() || cancelled()
         timeout-minutes: 5
@@ -264,6 +274,8 @@ jobs:
           name: ipad-${{ matrix.name }}-results
           path: |
             ${{ runner.temp }}/place.log
+            ${{ runner.temp }}/rb.log
+            ${{ runner.temp }}/crashes
             ${{ runner.temp }}/cold.log
             ${{ runner.temp }}/cold.xcresult
             ${{ runner.temp }}/ipad.log
@@ -325,6 +337,7 @@ jobs:
       - name: Reading position survives posture and font changes; every Fine-Tune tap lands (UI tests)
         run: |
           set -o pipefail
+          sh scripts/ci-crashes.sh mark
           xcodebuild test-without-building -xctestrun "$XCTESTRUN" \
             -destination "$DESTINATION" \
             -only-testing:GatefoldUITests/PositionUITests \
@@ -333,6 +346,9 @@ jobs:
           # No retry: a wait that runs out prints how many probe reads it made and the slowest one.
           grep -E "error:|Test Case .*(passed|failed|skipped)|TEST (SUCCEEDED|FAILED)|probe says|probe timing|TAPRATE" "$RUNNER_TEMP/ui.log" | tail -60 || true
           exit ${status:-0}
+      - name: The app did not crash, and the system did not end it for memory (gatefold#76)
+        if: ${{ !cancelled() }}
+        run: sh scripts/ci-crashes.sh check
       - name: Why each failed test failed (from the result bundles, text withheld)
         if: failure() || cancelled()
         timeout-minutes: 5
@@ -345,6 +361,7 @@ jobs:
             ${{ runner.temp }}/unit.xcresult
             ${{ runner.temp }}/ui.xcresult
             ${{ runner.temp }}/ui.log
+            ${{ runner.temp }}/crashes
 
   duo-reviewer:
     name: Duo (the reviewers' checks)
@@ -382,9 +399,13 @@ jobs:
         run: python3 -I scripts/ci-simulator.py wait gatefold-duo "iPhone Duo" 1200
       - name: Keep the app's place log as it runs (file and progression only, never the book's words)
         run: |
+          sh scripts/ci-crashes.sh mark
           nohup sh -c 'xcrun simctl spawn "$0" log stream --style compact --predicate "subsystem == \"bot.ouro.gatefold\"" 2>/dev/null \
             | grep --line-buffered -E "place (read|write)|place:|location |reflow|landing|landed|reopen|tapped|warm:|open:|first page|pages:|turn:|spread:|veil:|settle [0-9]" \
             | grep --line-buffered -v -E "text:|\] visible|anchor" >> "$1"' "$UDID" "$RUNNER_TEMP/place.log" >/dev/null 2>&1 &
+          # Why the system ended the app, when it did (gatefold#76): runningboardd's lines about it, no page text.
+          nohup sh -c 'xcrun simctl spawn "$0" log stream --style compact --predicate "process == \"runningboardd\" AND eventMessage CONTAINS \"bot.ouro.gatefold\"" 2>/dev/null \
+            | grep --line-buffered -i -E "termin|kill|jetsam|exit|reason|invalidat|memory|highwater|limit" >> "$1"' "$UDID" "$RUNNER_TEMP/rb.log" >/dev/null 2>&1 &
       - name: The reviewers' checks on the Duo
         env:
           FULL: ${{ needs.changes.outputs.full }}
@@ -398,6 +419,9 @@ jobs:
             | grep --line-buffered -E "Test Case .*(started|passed|failed|skipped)|TEST (SUCCEEDED|FAILED)|REVIEWER|\.swift:[0-9]+: error" \
             | awk '{ if (match($0, /XCTAssert[A-Za-z]* failed/)) $0 = substr($0, 1, RSTART + RLENGTH - 1) " (text withheld)"; print; fflush() }'
           exit ${PIPESTATUS[0]}
+      - name: The app did not crash, and the system did not end it for memory (gatefold#76)
+        if: ${{ !cancelled() }}
+        run: sh scripts/ci-crashes.sh check
       - name: Why each failed test failed (from the result bundles, text withheld)
         if: failure() || cancelled()
         timeout-minutes: 5
@@ -416,6 +440,8 @@ jobs:
           name: duo-reviewer-results
           path: |
             ${{ runner.temp }}/place.log
+            ${{ runner.temp }}/rb.log
+            ${{ runner.temp }}/crashes
             ${{ runner.temp }}/duo.log
             ${{ runner.temp }}/duo.xcresult
 

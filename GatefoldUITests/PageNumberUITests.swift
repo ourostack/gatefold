@@ -109,9 +109,9 @@ final class PageNumberUITests: XCTestCase {
             XCUIApplication(bundleIdentifier: "com.apple.springboard").activate()
         }
         sleep(4)
-        app.terminate()
+        app.quit()
         app.launchArguments = common
-        app.launch()
+        app.relaunch()
         // Kept counts number the reopened page without counting again.
         XCTAssertEqual(settledNumbers(timeout: 40, quiet: 2.5), shown, "the reopen's numbers")
     }
