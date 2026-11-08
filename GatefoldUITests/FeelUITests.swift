@@ -67,6 +67,11 @@ final class FeelUITests: XCTestCase {
     private func el(_ id: String) -> XCUIElement { app.descendants(matching: .any)[id].firstMatch }
     private var words: String { (el("reader.visibleText").value as? String) ?? "" }
     /// The reader's own word that its page is laid out and showing (`reader.pageReady`).
+    /// The chapter's running head, as a hash only (it is the book's chapter title): a turn whose head changes crossed a chapter.
+    private var chapter: String {
+        let head = el("reader.runningHead")
+        return FeelPlace.fingerprint(head.exists ? head.label : "")
+    }
     private var ready: Bool { (el("reader.pageReady").value as? String) == "1" }
     private func page(_ x: Double, _ y: Double) -> XCUICoordinate {
         el("reader.page").coordinate(withNormalizedOffset: CGVector(dx: x, dy: y))
@@ -87,18 +92,20 @@ final class FeelUITests: XCTestCase {
 
     /// The distinct readings of the page (as hashes) from now until `agreeingReads` reads in a row agree on words.
     /// An empty read (between chapters) is kept as "empty" so a blank flash shows in the sequence.
-    private func watch() -> (hashes: [String], settled: Bool, reads: Int) {
-        var seq: [String] = [], same = 0, reads = 0
+    /// With `away`, also the read on which the words first showed something other than `away` (and not empty).
+    private func watch(away: String? = nil) -> (hashes: [String], settled: Bool, reads: Int, firstChange: Int?) {
+        var seq: [String] = [], same = 0, reads = 0, firstChange: Int?
         while reads < Self.readBudget {
             reads += 1
             let h = FeelPlace.fingerprint(words)
+            if firstChange == nil, let away, h != away, h != FeelPlace.empty { firstChange = reads }
             if seq.last == h { same += 1 } else { seq.append(h); same = 1 }
             // Only reads taken once the reader says its page is ready count towards agreement.
             if !ready { same = 0 }
-            if h != FeelPlace.empty, same >= Self.agreeingReads { return (seq, true, reads) }
+            if h != FeelPlace.empty, same >= Self.agreeingReads { return (seq, true, reads, firstChange) }
             RunLoop.current.run(until: Date().addingTimeInterval(0.1))
         }
-        return (seq, false, reads)
+        return (seq, false, reads, firstChange)
     }
 
     /// The words once settled (or what is there when the read budget runs out).
@@ -197,8 +204,10 @@ final class FeelUITests: XCTestCase {
     /// two pages are not a change of their own.
     private func judgeGesture(_ name: String, _ expect: Expect, _ action: () -> Void) -> FeelResult {
         let before = FeelPlace.fingerprint(settled())
+        let chapterBefore = chapter
         action()
-        var seen = watch()
+        var seen = watch(away: before)
+        var firstChange = seen.firstChange
         // A turn that has not shown yet may commit late (a turn into the next chapter waits for it to load): keep
         // watching until the words move or the read budget runs out, so how fast the machine reads never decides it.
         // `reader.pageReady` is set once per open, and `reader.turnSettle` only on the spread's settler, so neither
@@ -206,9 +215,10 @@ final class FeelUITests: XCTestCase {
         var lateBy = 0
         while expect == .moveOnce, seen.settled, seen.reads < Self.readBudget,
               Set(seen.hashes.filter { $0 != FeelPlace.empty }).subtracting([before]).isEmpty {
-            let more = watch()
+            let more = watch(away: before)
+            if firstChange == nil, let at = more.firstChange { firstChange = seen.reads + at }
             lateBy += more.reads
-            seen = (seen.hashes + more.hashes, more.settled, seen.reads + more.reads)
+            seen = (seen.hashes + more.hashes, more.settled, seen.reads + more.reads, nil)
         }
         let pages = ([before] + seen.hashes).filter { $0 != FeelPlace.empty }
         var collapsed: [String] = []
@@ -230,6 +240,13 @@ final class FeelUITests: XCTestCase {
             if changes > 0 {
                 findings.append(FeelFinding(what: "\(name): the words changed though nothing should move them (\(collapsed.joined(separator: " → ")))"))
             }
+        }
+        if expect == .moveOnce {
+            // One line per turn for the per-turn table: reads from the gesture to the first new words, and whether the
+            // turn crossed a chapter (its running head changed). The probe trails the screen by about 3 reads
+            // (gatefold#77), so this is an upper bound on how slow the page was, read on this machine's clock.
+            let crossed = chapter != chapterBefore
+            print("FEEL-TURN \(name) crossed=\(crossed) firstChangeRead=\(firstChange.map { "\($0)" } ?? "none") reads=\(seen.reads)")
         }
         if expect == .moveOnce, changes > 0, lateBy > 0 {
             findings.append(.note("\(name): it moved late, \(lateBy) reads after the first settled watch"))
