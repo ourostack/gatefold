@@ -38,6 +38,14 @@ final class ContentsPullUITests: XCTestCase {
         app.launch()
         XCTAssertTrue(app.descendants(matching: .any)["reader.page"].waitForExistence(timeout: 120), "the book opened")
         let window = app.windows.firstMatch.frame
+        // The sheet as it opened, for the visual check (Contents' rows are the book's chapter list, no page text).
+        XCTAssertTrue(openContents(), "Contents opened")
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = "contents-open"
+        shot.lifetime = .keepAlways
+        add(shot)
+        done.tap()
+        XCTAssertTrue(done.waitForNonExistence(timeout: 10), "Done put Contents away")
         for round in 1...3 {
             for (name, dy) in [("middle", 0.5), ("top edge", 0.05)] {
                 XCTAssertTrue(openContents(), "round \(round): Contents opened")
