@@ -213,9 +213,9 @@ jobs:
         # rounds after an erase and 0 of 3 on a new simulator. Once a run, before anything warms it.
         if: matrix.cold
         # 36 and 38 min on a hosted runner (16-17 to build, the rest tests; build 20), so 55 keeps 30%
-        # headroom. A runner once hung here past 90 min with nothing in the log, so the step is bounded
+        # headroom, and 10 more for the erase's one fresh device (gatefold#71). A runner once hung here past 90 min with nothing in the log, so the step is bounded
         # and reports each test as it ends.
-        timeout-minutes: 55
+        timeout-minutes: 65
         env:
           # The runner draws the spread two to four times slower than a Mac (up to 50 s seen): 90 s
           # still fails a page left stuck for good.
@@ -223,13 +223,9 @@ jobs:
         run: |
           udid="$UDID"
           echo "$(date -u +%T) erasing $udid"
-          # Each of these can break when the runtime fails to mount ("Malformed bundle"; gatefold#71), so none ends the
-          # step: `ready` checks the device after, and boots one fresh device (clean, like an erased one) if need be.
-          xcrun simctl shutdown "$udid" || true
-          xcrun simctl erase "$udid" || true
-          xcrun simctl boot "$udid" || true
-          xcrun simctl bootstatus "$udid" -b || true
-          udid="$(python3 -I scripts/ci-simulator.py ready gatefold-ipad "$udid")"
+          # Each simctl call bounded, then the device checked; if its runtime went ("Malformed bundle"; gatefold#71),
+          # one fresh device, erased the same way. Prints the UDID to test on.
+          udid="$(python3 -I scripts/ci-simulator.py erase gatefold-ipad "$udid")"
           DESTINATION="platform=iOS Simulator,arch=$(uname -m),id=$udid"
           # The erase ended the place log's stream; take it up again.
           nohup sh -c 'xcrun simctl spawn "$0" log stream --style compact --predicate "subsystem == \"bot.ouro.gatefold\"" 2>/dev/null \
