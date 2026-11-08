@@ -430,7 +430,8 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         let start = Date()
         Task { [weak self] in
             var seen = false, loading = false
-            for _ in 0..<300 {
+            var marks = Set<Int>()
+            for _ in 0..<1500 {
                 guard let self, let web = Self.firstWebView(in: self.navigator.view) else {
                     try? await Task.sleep(for: .milliseconds(20)); continue
                 }
@@ -438,6 +439,12 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
                 if !seen { seen = true; readerLog.notice("open: web view made after \(t, privacy: .public) s") }
                 if web.isLoading, !loading { loading = true; readerLog.notice("open: web view loading after \(t, privacy: .public) s") }
                 if loading, !web.isLoading { readerLog.notice("open: web view loaded after \(t, privacy: .public) s"); return }
+                // #94 probe: what the first web view is still waiting on before its `load`.
+                if loading, let mark = [1, 3, 6, 10, 15, 20].first(where: { Double($0) <= t && !marks.contains($0) }) {
+                    marks.insert(mark)
+                    let result = await Self.pendingLoads(in: web)
+                    readerLog.notice("loadwatch: first web view still loading \(t, privacy: .public) s in: readyState|images|pending images|pending sheets|fonts|file = \(result, privacy: .public)")
+                }
                 try? await Task.sleep(for: .milliseconds(20))
             }
         }
@@ -1829,16 +1836,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
                 }
                 if [2, 5, 15, 30, 60].contains(second), !reported.contains(second), let web {
                     reported.insert(second)
-                    let script = """
-                    (function() {
-                      function name(u) { try { return new URL(u, location.href).pathname.split('/').pop(); } catch (e) { return '?'; } }
-                      var images = Array.from(document.images).filter(function(i) { return !i.complete; }).map(function(i) { return name(i.currentSrc || i.src); });
-                      var sheets = Array.from(document.querySelectorAll('link[rel~=stylesheet]')).filter(function(l) { return !l.sheet; }).map(function(l) { return name(l.href); });
-                      var fonts = document.fonts ? document.fonts.status : 'n/a';
-                      return document.readyState + '|' + document.images.length + '|' + images.slice(0, 8).join(',') + '|' + sheets.join(',') + '|' + fonts + '|' + name(location.href);
-                    })()
-                    """
-                    let result = try? await web.evaluateJavaScript(script) as? String
+                    let result: String? = await Self.pendingLoads(in: web)
                     readerLog.notice("loadwatch: still loading \(second, privacy: .public) s after the page showed: readyState|images|pending images|pending sheets|fonts|file = \(result ?? "no answer", privacy: .public); counters \(LaunchOptions.counters ?? Self.counters, privacy: .public)")
                 }
                 try? await Task.sleep(for: .milliseconds(250))
@@ -1847,6 +1845,21 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         }
     }
     private var pageLoadWatch: Task<Void, Never>?
+
+    /// File names only, never the book's words: what a page's `load` is still waiting on.
+    static func pendingLoads(in web: WKWebView) async -> String {
+        let script = """
+        (function() {
+          function name(u) { try { return new URL(u, location.href).pathname.split('/').pop(); } catch (e) { return '?'; } }
+          var images = Array.from(document.images).filter(function(i) { return !i.complete; }).map(function(i) { return name(i.currentSrc || i.src); });
+          var sheets = Array.from(document.querySelectorAll('link[rel~=stylesheet]')).filter(function(l) { return !l.sheet; }).map(function(l) { return name(l.href); });
+          var fonts = document.fonts ? document.fonts.status : 'n/a';
+          var res = (performance.getEntriesByType ? performance.getEntriesByType('resource') : []).map(function(r) { return name(r.name) + ':' + Math.round(r.startTime) + '+' + Math.round(r.duration); });
+          return document.readyState + '|' + document.images.length + '|' + images.slice(0, 8).join(',') + '|' + sheets.join(',') + '|' + fonts + '|' + name(location.href) + '|res ' + res.length + ' slowest ' + res.sort(function(a, b) { return (+b.split('+')[1]) - (+a.split('+')[1]); }).slice(0, 5).join(',');
+        })()
+        """
+        return (try? await web.evaluateJavaScript(script) as? String) ?? "no answer"
+    }
 
     /// The web view showing the page, the one that covers most of the navigator's view.
     private func webViewInView() -> WKWebView? {
