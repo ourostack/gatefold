@@ -1361,23 +1361,8 @@ final class ReaderModel {
 
     // MARK: Navigation events
 
-    func locationDidChange(_ locator: Locator, duringTurn: Bool = false, hisMove: Bool = false, turned: Bool = false) async {
+    func locationDidChange(_ locator: Locator, duringTurn: Bool = false, hisMove: Bool = false) async {
         guard !isClosed else { return }
-        // A Back freed by its count: a report from its chapter is that trip's late landing (Readium can
-        // report before the jump returns), no move of his, no swipe (a tap swallowed meanwhile is not
-        // one) and no place; the page is put back. His own turn's report is never taken for it.
-        if !hisMove, !turned, !duringTurn, var stray = strayLanding {
-            stray.reportsLeft -= 1
-            let its = locator.href == stray.href
-            // Its report once it has landed, or one elsewhere after (it never came), ends the mark;
-            // so does the count, for a jump that never comes back.
-            strayLanding = stray.landed || stray.reportsLeft <= 0 ? nil : stray
-            if its {
-                touchesSinceLocation = 0
-                readerLog.notice("back: trip \(stray.trip, privacy: .public)'s late report is not his move")
-                return
-            }
-        }
         let reportedBefore = lastReported
         lastReported = locator
         location = locator
@@ -1468,8 +1453,10 @@ final class ReaderModel {
             && reportedBefore.map({ $0.href != locator.href || $0.locations.progression != locator.locations.progression }) ?? true
         if swiped && noMoveOfOurs { readOnAfterJump() }
         // A swipe is a move of the page too (a late Back after it puts the page back here). A Back freed
-        // by its count never reported its move, so with one out a swipe counts without a report since.
-        if swiped && (noMoveOfOurs || strayBack != nil) { landed(takeStep(), at: locator) }
+        // by its count never reported its move, so with one out a swipe counts without a report since;
+        // but not one in its chapter, which may be that trip landing (Readium reports before the jump
+        // returns). Whatever such a report kept, the trip's return keeps right (`goBack`).
+        if swiped && (noMoveOfOurs || strayBack != nil) && !isStrayChapter(locator) { landed(takeStep(), at: locator) }
         // Only the reader moves the place. Readium reopening a page boundary off from the saved one is
         // not a move, so opening a book never overwrites a further-ahead place on the InkPad.
         // A book warmed behind the shelf has had no move of his yet: nothing it reports is his place.
@@ -1536,13 +1523,13 @@ final class ReaderModel {
             guard let first = page?.currentLocation else { return }
             // A turn is a move too: a Back that comes back late after it puts the page back here.
             landed(step, at: first)
-            await locationDidChange(first, turned: true)
+            await locationDidChange(first)
             // Turning into the next resource, Readium can name the old one until the new one has
             // loaded, and its update arrives mid-turn when it's ignored. Look again once it has.
             try? await Task.sleep(for: .milliseconds(700))
-            // Not a freed Back's late landing: that page is not this turn's.
-            if let stray = strayLanding, stray.landed, let later = page?.currentLocation, later.href == stray.href {
-                readerLog.notice("turn: second look found a freed Back's late landing, skipped")
+            // Not a freed Back's chapter while it is out: that page may be the trip landing, not this turn.
+            if let later = page?.currentLocation, isStrayChapter(later) {
+                readerLog.notice("turn: second look found a freed Back's chapter, skipped")
                 return
             }
             if let later = page?.currentLocation, later.href != first.href
@@ -1709,8 +1696,7 @@ final class ReaderModel {
             guard let self, self.goingBack == trip else { return }
             readerLog.notice("back: trip \(trip, privacy: .public) ran out of reads; Back is free again")
             self.goingBack = nil
-            self.strayBack = jump
-            self.strayLanding = StrayTrip(trip: trip, href: back.href)
+            self.strayBack = (jump, back.href)
             // Only this trip's own veil, or the one it was about to put up.
             self.host?.abandonVeil(jump: jump)
         }
@@ -1720,15 +1706,11 @@ final class ReaderModel {
         // showed, and going back could not be undone).
         let undo = rememberPlace(at: page?.currentLocation, keepingTheWayBack: true)
         defer { publishBack(undo) }
-        await veiled(step: jump) {
-            _ = await self.page?.go(to: back)
-            // Back at once, before its report: with a move made since, that report is this trip's late
-            // landing, never his move.
-            guard self.strayBack == jump else { return }
-            self.strayBack = nil
-            // With no move since, it is simply his Back, late: its report is his.
-            self.strayLanding = self.steps != jump ? StrayTrip(trip: trip, href: back.href, landed: true) : nil
-        }
+        await veiled(step: jump) { _ = await self.page?.go(to: back) }
+        // Freed by its count: whatever its reports did meanwhile (Readium can report before the jump
+        // returns), the place is settled here, once, from what the page shows.
+        let freed = strayBack?.jump == jump
+        if freed { strayBack = nil }
         // A trip that came back after its reads ran out, with another move made since (a jump, a turn,
         // a swipe), takes no words: the page is that move's now.
         guard steps == jump else {
@@ -1742,21 +1724,16 @@ final class ReaderModel {
             return
         }
         await captureAnchor()
+        // No move since: it is his Back, late, and its place is kept now (its report may have come first).
+        if freed, steps == jump, !isClosed, let here = page?.currentLocation { await locationDidChange(here, hisMove: true) }
     }
     /// The Back trip under way: a second tap meanwhile is not a second jump.
     @ObservationIgnored private var goingBack: Int?
     @ObservationIgnored private var backTrips = 0
-    /// The step of a Back trip freed by its count whose jump hasn't come back yet.
-    @ObservationIgnored private var strayBack: Int?
-    /// Such a trip, out or landed late after another move, until its report has come (counted in
-    /// reports: a jump that never comes back stops being looked for).
-    @ObservationIgnored private var strayLanding: StrayTrip?
-    struct StrayTrip {
-        let trip: Int
-        let href: AnyURL
-        var landed = false
-        var reportsLeft = 12
-    }
+    /// A Back trip freed by its count whose jump hasn't come back yet: its step and its chapter.
+    @ObservationIgnored private var strayBack: (jump: Int, href: AnyURL)?
+    /// A page in that trip's chapter may be the trip landing: no swipe or turn takes it as where it went.
+    private func isStrayChapter(_ l: Locator) -> Bool { strayBack.map { $0.href == l.href } ?? false }
     var isGoingBack: Bool { goingBack != nil }
     /// One beat of the wait for Back's jump (a sleep, counted as `JumpLanding` counts its reads):
     /// `JumpLanding.reads` of them free Back again.

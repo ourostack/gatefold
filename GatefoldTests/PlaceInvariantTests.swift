@@ -238,8 +238,9 @@ import Testing
 
     /// A Back freed by its count, then a turn or a swipe of his (no jump of ours), then the hung Back
     /// landing at last: the page ends on the page he turned to, and that is the place kept. Also with
-    /// a tap meanwhile that brought no report (swallowed under a veil): the late report is no swipe.
-    @Test(arguments: ["turn", "swipe", "turn, then a swallowed tap"]) func aBackThatLandsLateAfterHisTurnLeavesHisPage(move: String) async throws {
+    /// a tap meanwhile that brought no report (swallowed under a veil): the late report is no swipe,
+    /// even when Readium reports the page before the jump returns.
+    @Test(arguments: ["turn", "swipe", "turn, then a swallowed tap", "turn, then a swallowed tap, reported early"]) func aBackThatLandsLateAfterHisTurnLeavesHisPage(move: String) async throws {
         let swipe = move == "swipe"
         let f = try await S.make(remote: { _, _ in nil }, startAt: 0.05)
         await f.model.load()
@@ -261,7 +262,8 @@ import Testing
             f.model.userTurnedPage()
             for _ in 0..<200 { await Task.yield() }
         }
-        if move.hasSuffix("tap") { f.model.noteInteraction() }
+        if move.contains("tap") { f.model.noteInteraction() }
+        f.page.reportsBeforeReturn = move.hasSuffix("early")
         f.page.pageStartsBefore = 0
         f.page.holdsJumps = false
         f.page.releaseJumps()
@@ -271,6 +273,34 @@ import Testing
         #expect(abs(at - (next.locations.totalProgression ?? 0)) < 0.00001, "the late Back left the page on its own place")
         let kept = saved(f).flatMap { try? Locator(jsonString: $0) }?.locations.totalProgression ?? -1
         #expect(abs(kept - (next.locations.totalProgression ?? 0)) < 0.001, "the late Back's place was kept")
+        f.model.close()
+    }
+
+    /// A Back freed by its count that lands late with nothing done since is just his Back, late: the
+    /// page and the place kept are where it went, even when Readium reported it before the jump returned.
+    @Test func aFreedBackWithNothingSinceKeepsItsPlace() async throws {
+        let f = try await S.make(remote: { _, _ in nil }, startAt: 0.05)
+        await f.model.load()
+        await f.model.locationDidChange(try #require(f.page.currentLocation))
+        await f.model.go(toProgression: 0.7, rememberBack: true)
+        let target = try #require(f.model.backLocator)
+        f.model.backBeat = { await Task.yield() }
+        f.page.holdsJumps = true
+        let hung = Task { await f.model.goBack() }
+        for _ in 0..<(JumpLanding.reads * 4) where !f.model.isGoingBack { await Task.yield() }
+        for _ in 0..<(JumpLanding.reads * 4) where f.model.isGoingBack { await Task.yield() }
+        #expect(!f.model.isGoingBack, "the hung Back was never freed")
+        f.page.holdsJumps = false
+        f.page.reportsBeforeReturn = true
+        f.page.pageStartsBefore = 0
+        f.page.releaseJumps()
+        await hung.value
+        for _ in 0..<200 { await Task.yield() }
+        let want = target.locations.totalProgression ?? -1
+        let at = f.page.currentLocation?.locations.totalProgression ?? -2
+        #expect(abs(at - want) < 0.00001, "the page is not where Back went")
+        let kept = saved(f).flatMap { try? Locator(jsonString: $0) }?.locations.totalProgression ?? -1
+        #expect(abs(kept - want) < 0.001, "the late Back's place was not kept")
         f.model.close()
     }
 }
