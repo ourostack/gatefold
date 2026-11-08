@@ -1436,11 +1436,14 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     /// Runs a jump with the old page left on screen, dimmed to 60 %, until the new page has painted;
     /// then the old page cross-fades away over 0.2 s (no blank page, no spinner). With `riffle`, a few
     /// leaves flick past first.
-    func veiledJump(riffle: Bool, forward: Bool, _ body: @escaping () async -> Void) async {
-        guard veil == nil, !isTurning, view.window != nil else { return await body() }
+    func veiledJump(riffle: Bool, forward: Bool, jump: Int, _ body: @escaping () async -> Void) async {
+        guard veil == nil, !jumpStarting, !isTurning, view.window != nil else { return await body() }
         jumpStarting = true
+        veilJump = jump
         let old = await renderedSnapshot(afterChange: false)
         jumpStarting = false
+        // Let go of while its old page was being pictured (`abandonVeil`): no cover goes up.
+        guard veilJump == jump else { return await body() }
         // The old page, opaque, with a wash of paper over it: it reads as dimmed to 60 %, and nothing
         // of the new page shows through until the cross-fade.
         let cover = UIView(frame: navigator.view.frame)
@@ -1461,8 +1464,8 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             holdChapterLoadForTest()
         }
         // The running head stays with the page on screen: it changes chapter as the new page is revealed.
+        // Let go only while the cover is still this jump's: an abandoned one leaves a newer jump's head.
         weakModel?.heldRunningHead = .some(weakModel?.chapterTitle)
-        defer { weakModel?.heldRunningHead = nil }
         if riffle {
             // The thumb starts riffling at once and keeps going while the far chapter loads, so the
             // wait is the riffle, never a dimmed page.
@@ -1471,12 +1474,13 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
                 await body()
                 arrived = true
             }
-            await riffleLeaves(from: old, forward: forward, arrived: { arrived }) { [weak self] in
+            await riffleLeaves(from: old, cover: cover, forward: forward, arrived: { arrived }) { [weak self] in
                 await travel.value
                 return await self?.renderedSnapshot(afterChange: true) ?? old
             }
+            if veil === cover { weakModel?.heldRunningHead = nil }
             cover.removeFromSuperview()
-            if veil === cover { veil = nil }
+            if veil === cover { veil = nil; veilJump = nil }
             return
         }
         let dim = UIViewPropertyAnimator(duration: 0.15, curve: .easeOut) { wash.alpha = 0.4 }
@@ -1484,7 +1488,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         await body()
         _ = await renderedSnapshot(afterChange: true)
         // The head changes chapter with the page, cross-fading as the veil lifts.
-        withAnimation(.easeInOut(duration: 0.2)) { weakModel?.heldRunningHead = nil }
+        if veil === cover { withAnimation(.easeInOut(duration: 0.2)) { weakModel?.heldRunningHead = nil } }
         await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
             UIView.animate(withDuration: 0.2, delay: 0, options: [.curveEaseInOut, .beginFromCurrentState]) {
                 cover.alpha = 0
@@ -1492,23 +1496,31 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         }
         cover.removeFromSuperview()
         // Its own cover only: one abandoned meanwhile (`abandonVeil`) may have made way for a newer one.
-        if veil === cover { veil = nil }
+        if veil === cover { veil = nil; veilJump = nil }
     }
+    /// The jump whose veil is up, or whose old page is being pictured for one.
+    private var veilJump: Int?
 
     /// Lifts the veil of a jump that never came back (a Back freed by its count): the reader gets the
     /// page and his taps back, and the next jump puts up a veil of its own. The hung jump, if it ever
     /// returns, takes down only its own cover.
-    func abandonVeil() {
-        guard let cover = veil else { return }
+    /// Only `jump`'s own veil: a jump that ran unveiled under another's leaves that one alone.
+    func abandonVeil(jump: Int) {
+        guard veilJump == jump else { return }
+        veilJump = nil
+        guard let cover = veil else {
+            readerLog.notice("veil: a jump that never came back puts up no cover")
+            return
+        }
         readerLog.notice("veil: a jump that never came back lets go of the page")
         veil = nil
-        weakModel?.heldRunningHead = nil
+        withAnimation(.easeInOut(duration: 0.2)) { weakModel?.heldRunningHead = nil }
         UIView.animate(withDuration: 0.2, animations: { cover.alpha = 0 }, completion: { _ in cover.removeFromSuperview() })
     }
 
     /// Fast leaves curl away, like a thumb riffling to a place: at least three, more while the far
     /// page is still on its way, and the last one uncovers it.
-    private func riffleLeaves(from old: UIImage, forward: Bool, arrived: @escaping () -> Bool, fresh: @escaping () async -> UIImage) async {
+    private func riffleLeaves(from old: UIImage, cover: UIView, forward: Bool, arrived: @escaping () -> Bool, fresh: @escaping () async -> UIImage) async {
         guard let model = weakModel else { return }
         isTurning = true
         defer { isTurning = false }
@@ -1538,11 +1550,12 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         let last = 0.28
         let head = Task { @MainActor in
             try? await Task.sleep(for: .seconds(last * 0.4))
+            guard self.veil === cover else { return }
             withAnimation(.easeInOut(duration: last * 0.6)) { model.heldRunningHead = nil }
         }
         await leaf(top: old, beneath: page ?? old, index: i, size: size, forward: forward, duration: last)
         await head.value
-        veil?.alpha = 0
+        cover.alpha = 0
         curl.reset()
     }
 
