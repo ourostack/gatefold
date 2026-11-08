@@ -514,9 +514,17 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             } else {
                 UIView.animate(withDuration: 0.12) { page.alpha = 0 }
             }
-            if unfolding { liftLeaf() }
+            // The unfold plays on a page he can see: behind the opening cover (a relaunch turning on its
+            // side as it opens) a rising leaf only showed through the cover as it faded (#59).
+            if unfolding, pageShown { liftLeaf() }
         }
         settleReflowSoon()
+    }
+
+    /// The page is on screen for him: no opening cover or reopen picture over it.
+    private var pageShown: Bool {
+        guard let model = weakModel else { return false }
+        return model.pageReady && model.reopenPicture == nil
     }
 
     /// The leaf that starts rising from the spine at the bell, while the spread lays out behind.
@@ -749,6 +757,13 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         disablePanningIfNeeded()
         var cover = reflowCover
         reflowCover = nil
+        if unfolding, columns == 2, !pageShown {
+            // Still behind the opening cover: the spread is simply there when the cover lifts.
+            readerLog.notice("unfold: behind the opening cover; no swing")
+            unfolding = false
+            model.heldPicture = nil
+            model.heldPage = nil
+        }
         if unfolding, columns == 2 {
             unfolding = false
             // The swing starts from the page the reader was on, whichever screen it was drawn on.
