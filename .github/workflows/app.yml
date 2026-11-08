@@ -396,7 +396,7 @@ jobs:
           nohup sh -c '
             n=0
             while [ $n -lt 40 ]; do
-              xcrun simctl spawn "$1" notifyutil -w bot.ouro.feel.record.start >/dev/null 2>&1 || { sleep 1; continue; }
+              xcrun simctl spawn "$1" notifyutil -1 bot.ouro.feel.record.start >/dev/null 2>&1 || { sleep 1; continue; }
               pid=$(pgrep -x Gatefold | head -1); [ -n "$pid" ] || continue
               n=$((n+1)); echo "film $n at $(date +%s) pid $pid" >>"$0/sampler.log"
               sample "$pid" 3 1 -mayDie -file "$0/film-$n.txt" >>"$0/sampler.log" 2>&1
