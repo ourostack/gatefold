@@ -19,8 +19,11 @@ case "${1:-}" in
     status=0
     rb="$RUNNER_TEMP/rb.log"
     if [ -f "$rb" ]; then
-      # Only a line that ends the app and gives memory as the reason; "jetsam priority" lines set no end.
-      memory="$(grep -i -E 'terminat|kill|exit' "$rb" | grep -i -E 'jetsam|memory|highwater|per-process-limit|pageshortage' | head -5 || true)"
+      # Only an end event (not a jetsam-priority or termination-resistance attribute) whose reason is memory.
+      # The simulator rarely enforces memory limits, so this seldom fires on CI; a device would.
+      memory="$(grep -E 'Terminating with context|termination reported by|Process exited|[Kk]illed' "$rb" \
+        | grep -v -i 'TerminationResistance' \
+        | grep -i -E 'domain:jetsam|jetsam\(|highwater|per-process-limit|vm-pageshortage|memory limit|memorystatus' | head -5 || true)"
       if [ -n "$memory" ]; then
         printf '%s\n' "$memory" | while IFS= read -r l; do echo "::error::The system ended the app for memory: $l"; done
         status=1
