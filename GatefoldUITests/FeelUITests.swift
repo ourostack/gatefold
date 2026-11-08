@@ -202,19 +202,20 @@ final class FeelUITests: XCTestCase {
                                  findings: findings, environment: feel.environment)
     }
 
-    /// `result` with anything quoted in its findings that is not an accessibility identifier (a link's or a title's
+    /// `result` with anything quoted in its findings that is not one of the app's own identifiers (a link's or a title's
     /// label, which can be the book's words) replaced by its fingerprint, so reports and logs hold hashes, never text.
+    /// Greedy from the first quote to the last, so a label holding quotes of its own is hashed whole.
     private func safe(_ result: FeelResult) -> FeelResult {
-        let quoted = try! NSRegularExpression(pattern: "\"([^\"]*)\"")
-        let identifier = try! NSRegularExpression(pattern: "^[A-Za-z0-9._-]*$")
+        let quoted = try! NSRegularExpression(pattern: "\"(.*)\"")
+        let ours = ["reader.", "appearance.", "signIn.", "library.", "book.", "contents.", "debug."]
+        let named: Set<String> = ["Done", "Close", "Sign Out"]
         func scrub(_ text: String) -> String {
+            guard let m = quoted.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
+                  let r = Range(m.range(at: 1), in: text) else { return text }
+            let inner = String(text[r])
+            if named.contains(inner) || ours.contains(where: { inner.hasPrefix($0) && !inner.contains(" ") }) { return text }
             var out = text
-            for m in quoted.matches(in: text, range: NSRange(text.startIndex..., in: text)).reversed() {
-                guard let r = Range(m.range(at: 1), in: text) else { continue }
-                let inner = String(text[r])
-                if identifier.firstMatch(in: inner, range: NSRange(inner.startIndex..., in: inner)) != nil { continue }
-                out.replaceSubrange(Range(m.range(at: 1), in: out)!, with: "#" + FeelPlace.fingerprint(inner))
-            }
+            out.replaceSubrange(r, with: "#" + FeelPlace.fingerprint(inner))
             return out
         }
         var kept = result
