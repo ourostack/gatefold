@@ -137,6 +137,25 @@ struct AnchorKeeperTests {
         #expect(keeper.anchor == next)
     }
 
+    /// The 12 s watchdog shows a page whose reflow never settled and runs the restore again. He turns in
+    /// that window: his turn wins. The restore that began before it gives way and never brings the old
+    /// place back, and his page becomes the anchor (Ari: "fucked my location with accidental navigation").
+    @Test func aTurnDuringTheWatchdogWindowWinsOverTheRestore() {
+        var keeper = AnchorKeeper()
+        let old = ReadingAnchor(href: "a.xhtml", progression: 0.40, text: "It was")
+        keeper.userSettled(on: old)
+        keeper.reflowWillBegin(.rotation, move: 3)
+        #expect(keeper.restoreMayMove(move: 3))
+        // He turns: the model counts his move.
+        #expect(!keeper.restoreMayMove(move: 4), "a restore begun before his turn still moved the page")
+        keeper.restoreGaveWay()
+        #expect(keeper.reflowing == nil)
+        let his = ReadingAnchor(href: "a.xhtml", progression: 0.47, text: "words-47")
+        keeper.userSettled(on: his)
+        #expect(keeper.anchor == his)
+        #expect(keeper.reflowDidSettle(visible: VisibleRange(href: "a.xhtml", start: 0.46, end: 0.52)) == .none)
+    }
+
     @Test func anAnchorInAnotherChapterAlwaysJumps() {
         var keeper = AnchorKeeper()
         let anchor = ReadingAnchor(href: "b.xhtml", progression: 0.0, text: nil)
