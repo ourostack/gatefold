@@ -19,8 +19,11 @@ final class Probe118UITests: XCTestCase {
     private var done: XCUIElement { app.buttons["xmark"].firstMatch }
 
     private func openContents() -> Bool {
-        app.descendants(matching: .any)["reader.page"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
-        guard app.buttons["reader.contents"].waitForExistence(timeout: 5) else { return false }
+        // The controls may already be up (a tap would put them down): tap only until Contents' button shows.
+        for _ in 0..<4 where !app.buttons["reader.contents"].waitForExistence(timeout: 3) {
+            app.descendants(matching: .any)["reader.page"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        }
+        guard app.buttons["reader.contents"].exists else { return false }
         app.buttons["reader.contents"].tap()
         guard done.waitForExistence(timeout: 15) else { print("PROBE118 no Done: bars \(app.navigationBars.count)"); return false }
         // Landed: Done's frame the same for ten reads in a row.
