@@ -30,7 +30,8 @@ final class FeelUITests: XCTestCase {
 
     override func tearDown() async throws {
         // One line per test, so a Feel miss is easy to find in a job log that runs other suites too.
-        let verdict = (testRun?.hasSucceeded ?? false) ? "passed" : "FAILED"
+        // Failures so far (expected failures are not counted); `hasSucceeded` is not final until after tearDown.
+        let verdict = (testRun?.totalFailureCount ?? 0) == 0 ? "passed" : "FAILED"
         print("FEEL: \(name) \(verdict) checks=\(tally.checks) failed=\(tally.failed) notChecked=\(tally.notChecked)")
         XCUIDevice.shared.orientation = .portrait
         app?.terminate()
