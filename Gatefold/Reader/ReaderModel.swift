@@ -761,7 +761,8 @@ final class ReaderModel {
             }
             return
         }
-        if ours { return }
+        // Ours on a fresh install, not landed (a percent, or the cover already gone): offered like the
+        // InkPad's, never dropped.
         let made = JumpSuggestion.make(
             local: hasMoved ? app.library.book(bookID)?.localSnapshot : openedSnapshot,
             remote: ProgressSnapshot(totalProgression: target.totalProgression, updated: remote.updated, device: remote.deviceName),
@@ -1641,6 +1642,13 @@ final class ReaderModel {
                 await captureAnchor()
             }
         }
+    }
+
+    /// VoiceOver's adjust on the scrubber: a swipe jumps a hundredth of the book, a jump like any other
+    /// that isn't a turn, so one tap on Back undoes it.
+    func adjustScrubber(forward: Bool) async {
+        let target = totalProgression + (forward ? 0.01 : -0.01)
+        await go(toProgression: min(1, max(0, target)), rememberBack: true)
     }
 
     func go(to entry: TOCEntry) async {

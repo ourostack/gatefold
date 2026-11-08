@@ -224,7 +224,14 @@ jobs:
         run: |
           binary="$RUNNER_TEMP/release/Build/Products/Release-iphoneos/Gatefold.app/Gatefold"
           test -f "$binary"
-          if strings "$binary" | grep -q "GatefoldGoTo"; then
+          # The check must be able to see the key: the Debug app built for the unit tests reads it, so
+          # it must turn up there, or a miss in Release proves nothing.
+          debug="$(ls -d ~/Library/Developer/Xcode/DerivedData/Gatefold-*/Build/Products/Debug-iphonesimulator/Gatefold.app | head -1)"
+          if ! cat "$debug/Gatefold" "$debug"/*.dylib 2>/dev/null | strings -a | grep -q "GatefoldGoTo"; then
+            echo "::error::The Debug app's launch jump key isn't visible to this check, so it can't vouch for Release"
+            exit 1
+          fi
+          if strings -a "$binary" | grep -q "GatefoldGoTo"; then
             echo "::error::The Release app reads -GatefoldGoTo: a launch jump could move his place"
             exit 1
           fi

@@ -288,9 +288,7 @@ struct Scrubber: View {
         .accessibilityLabel("Progress")
         .accessibilityValue(model.pageLabel.isEmpty ? "\(Int((model.totalProgression * 100).rounded())) percent" : "Page \(model.pageLabel)")
         .accessibilityAdjustableAction { direction in
-            let step = 0.01
-            let target = model.totalProgression + (direction == .increment ? step : -step)
-            Task { await model.go(toProgression: min(1, max(0, target)), rememberBack: false) }
+            Task { await model.adjustScrubber(forward: direction == .increment) }
         }
         .accessibilityIdentifier("reader.scrubber")
     }

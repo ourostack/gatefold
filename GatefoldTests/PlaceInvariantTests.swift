@@ -97,7 +97,7 @@ import Testing
         f.model.close()
     }
 
-    enum Jump: String, CaseIterable, Sendable { case contents, link, highlight, scrubber }
+    enum Jump: String, CaseIterable, Sendable { case contents, link, highlight, bookmark, scrubber }
 
     /// Every jump that is not a turn shows the way back without the controls.
     @Test(arguments: Jump.allCases) func everyJumpShowsTheWayBackWithoutTheControls(_ jump: Jump) async throws {
@@ -115,6 +115,11 @@ import Testing
         case .highlight:
             let far = try #require(await S.locate(f.publication, 0.6))
             await f.model.go(to: far, rememberBack: true)
+        case .bookmark:
+            var marks = BookmarkList()
+            let far = ReadingAnchor(href: f.publication.readingOrder[14].url().string, progression: 0, text: nil)
+            _ = marks.toggle(at: far, visible: VisibleRange(href: far.href, start: 0, end: 0.03, text: nil), title: "a mark", totalProgression: 0.6)
+            await f.model.go(to: try #require(marks.items.first))
         case .scrubber:
             await f.model.go(toProgression: 0.7, rememberBack: true)
         }
@@ -291,7 +296,8 @@ import Testing
             await f.model.locationDidChange(next)
         } else {
             f.model.userTurnedPage()
-            for _ in 0..<200 { await Task.yield() }
+            // The turn records its place on its own task: wait for that write, in bounded reads.
+            await Self.settle { abs((Self.kept(f) ?? -1) - (next.locations.totalProgression ?? 0)) < 0.001 }
         }
         if move.contains("tap") { f.model.noteInteraction() }
         f.page.reportsBeforeReturn = move.hasSuffix("early")
@@ -305,7 +311,10 @@ import Testing
             f.page.releaseJumps()
         }
         await hung.value
-        for _ in 0..<200 { await Task.yield() }
+        await Self.settle {
+            abs((f.page.currentLocation?.locations.totalProgression ?? -1) - (next.locations.totalProgression ?? 0)) < 0.00001
+                && abs((Self.kept(f) ?? -1) - (next.locations.totalProgression ?? 0)) < 0.001
+        }
         let at = f.page.currentLocation?.locations.totalProgression ?? -1
         #expect(abs(at - (next.locations.totalProgression ?? 0)) < 0.00001, "the late Back left the page on its own place")
         let kept = saved(f).flatMap { try? Locator(jsonString: $0) }?.locations.totalProgression ?? -1
@@ -332,12 +341,27 @@ import Testing
         f.page.pageStartsBefore = 0
         f.page.releaseJumps()
         await hung.value
-        for _ in 0..<200 { await Task.yield() }
         let want = target.locations.totalProgression ?? -1
+        await Self.settle {
+            abs((f.page.currentLocation?.locations.totalProgression ?? -2) - want) < 0.00001 && abs((Self.kept(f) ?? -1) - want) < 0.001
+        }
         let at = f.page.currentLocation?.locations.totalProgression ?? -2
         #expect(abs(at - want) < 0.00001, "the page is not where Back went")
         let kept = saved(f).flatMap { try? Locator(jsonString: $0) }?.locations.totalProgression ?? -1
         #expect(abs(kept - want) < 0.001, "the late Back's place was not kept")
         f.model.close()
+    }
+
+    /// The place kept for the book, as a total progression.
+    private static func kept(_ f: S.Fixture) -> Double? {
+        f.app.library.book(S.frankenstein.fastHash)?.locatorJSON.flatMap { try? Locator(jsonString: $0) }?.locations.totalProgression
+    }
+
+    /// Work that runs on its own tasks (a turn's write, a late Back's report) lands in its own time: wait
+    /// until `done` holds, in reads 10 ms apart for at most 2 s, then a quiet 100 ms more so a late
+    /// wrong write still shows in the checks that follow.
+    private static func settle(_ done: () -> Bool) async {
+        for _ in 0..<200 where !done() { try? await Task.sleep(for: .milliseconds(10)) }
+        try? await Task.sleep(for: .milliseconds(100))
     }
 }

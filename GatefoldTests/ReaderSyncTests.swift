@@ -236,6 +236,31 @@ final class ScriptedPage: ReaderPage {
     /// fall on the page beside the one he left (3 in 19).
     /// A place the Cloud has only as a whole percent can be pages from his real one: a first open
     /// offers it and shows the book's own page, never lands on it (build 20 landed pages away).
+    /// A fresh install (the shelf wiped, the Cloud not) whose own place the Cloud has only as a percent:
+    /// offered like any percent-only place, never dropped (it was ours, so nothing was offered at all).
+    @Test func ourOwnPercentOnlyPlaceOnAFreshInstallIsOffered() async throws {
+        let ours = ReadingPosition(cfi: nil, totalProgression: 0.42, updated: Date(), source: .gatefold)
+        let f = try await Self.make(remote: { _, _ in ours }, book: { $0.remote = ours })
+        await f.model.load()
+        #expect(f.page.jumps.isEmpty, "a percent-only place was landed on")
+        #expect(f.app.library.book(Self.frankenstein.fastHash)?.locatorJSON == nil, "a place was saved without a move of his")
+        #expect(f.model.suggestion != nil, "his own place on the Cloud was dropped, not offered")
+        f.model.close()
+    }
+
+    /// VoiceOver's adjust on the scrubber is a jump like any other that isn't a turn: one tap undoes it.
+    @Test func aVoiceOverAdjustOnTheScrubberCanBeUndone() async throws {
+        let f = try await Self.make(remote: { _, _ in nil }, startAt: 0.05)
+        await f.model.load()
+        let before = try #require(f.page.currentLocation)
+        await f.model.locationDidChange(before)
+        await f.model.adjustScrubber(forward: true)
+        #expect(f.page.jumps.count == 1, "the adjust didn't jump")
+        #expect(f.model.showJumpBack, "an adjust on the scrubber left no way back")
+        #expect(f.model.backLocator?.locations.totalProgression == before.locations.totalProgression, "Back doesn't go to the page before the adjust")
+        f.model.close()
+    }
+
     @Test func aPercentOnlyPlaceAtAFirstOpenIsOfferedNotLanded() async throws {
         let f = try await Self.make(remote: { _, _ in
             ReadingPosition(cfi: nil, totalProgression: 0.42, updated: Date(), source: .pocketBookNative)

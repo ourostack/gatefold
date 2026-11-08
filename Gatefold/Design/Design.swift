@@ -97,7 +97,13 @@ enum LaunchOptions {
     static var holdChapterLoadLooks: Int? { defaults.object(forKey: "GatefoldHoldChapterLoad") == nil ? nil : defaults.integer(forKey: "GatefoldHoldChapterLoad") }
     /// Tests only: how many counters count pages behind the page (0 counts none), for an A/B of what
     /// counting costs a turn.
-    static var counters: Int? { defaults.object(forKey: "GatefoldCounters") == nil ? nil : defaults.integer(forKey: "GatefoldCounters") }
+    static var counters: Int? {
+        #if DEBUG
+        defaults.object(forKey: "GatefoldCounters") == nil ? nil : defaults.integer(forKey: "GatefoldCounters")
+        #else
+        nil
+        #endif
+    }
     static var unfoldPaintDelay: Double? { defaults.object(forKey: "GatefoldUnfoldPaintDelay") == nil ? nil : defaults.double(forKey: "GatefoldUnfoldPaintDelay") }
     /// Book IDs to open and close one after another, as taps would (see `RootView.openTour`).
     /// Seconds an open tour rests on the shelf between books (the warm books reopen meanwhile).

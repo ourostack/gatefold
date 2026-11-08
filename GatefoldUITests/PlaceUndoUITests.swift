@@ -154,18 +154,18 @@ final class PlaceUndoUITests: XCTestCase {
         window.coordinate(withNormalizedOffset: CGVector(dx: 0.97, dy: 0.5)).tap()
         let ahead = waitForWords(changingFrom: first, timeout: 15)
         XCTAssertNotEqual(opening(ahead), opening(first), "the forward turn didn't happen")
-        window.coordinate(withNormalizedOffset: CGVector(dx: 0.07, dy: 0.5)).tap()
+        window.coordinate(withNormalizedOffset: CGVector(dx: 0.03, dy: 0.5)).tap()
         let back = waitForWords(changingFrom: ahead, timeout: 15)
-        XCTAssertEqual(opening(back), opening(first), "a tap at x 0.07 on the spread didn't turn back")
+        XCTAssertEqual(opening(back), opening(first), "a tap at x 0.03 on the spread didn't turn back")
         XCTAssertFalse(app.buttons["reader.contents"].exists, "the tap showed the controls instead of turning")
         // Again a little higher, where the old switches sat on a tall iPad (0.45 of the page down): the
         // strip is gone at every height, not only at mid-height on a short one.
         window.coordinate(withNormalizedOffset: CGVector(dx: 0.97, dy: 0.5)).tap()
         let ahead2 = waitForWords(changingFrom: back, timeout: 15)
         XCTAssertNotEqual(opening(ahead2), opening(back), "the second forward turn didn't happen")
-        window.coordinate(withNormalizedOffset: CGVector(dx: 0.07, dy: 0.47)).tap()
+        window.coordinate(withNormalizedOffset: CGVector(dx: 0.03, dy: 0.47)).tap()
         let back2 = waitForWords(changingFrom: ahead2, timeout: 15)
-        XCTAssertEqual(opening(back2), opening(first), "a tap at x 0.07, 0.47 down, on the spread didn't turn back")
+        XCTAssertEqual(opening(back2), opening(first), "a tap at x 0.03, 0.47 down, on the spread didn't turn back")
         XCTAssertFalse(app.buttons["reader.contents"].exists, "the higher tap showed the controls instead of turning")
     }
 
@@ -204,13 +204,13 @@ final class PlaceUndoUITests: XCTestCase {
         let first = openFresh(extra, goTo: goTo)
         let page = el("reader.page")
         let before = turnWait().turn
-        page.coordinate(withNormalizedOffset: CGVector(dx: 0.92, dy: 0.5)).tap()
+        page.coordinate(withNormalizedOffset: CGVector(dx: 0.97, dy: 0.5)).tap()
         let forward = readsUntilWords(changeFrom: first, atMost: 200, every: interval)
         let forwardLooks = looks(ofTurnAfter: before)
         let ahead = settledWords()
         XCTAssertNotEqual(opening(ahead), opening(first), "the forward turn didn't happen")
         let middle = turnWait().turn
-        page.coordinate(withNormalizedOffset: CGVector(dx: 0.08, dy: 0.5)).tap()
+        page.coordinate(withNormalizedOffset: CGVector(dx: 0.03, dy: 0.5)).tap()
         let reads = readsUntilWords(changeFrom: ahead, atMost: 200, every: interval)
         let back = looks(ofTurnAfter: middle)
         // One line for CI's log (counts only, never words): which turns crossed a chapter, and what each cost.
