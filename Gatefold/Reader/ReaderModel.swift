@@ -1456,7 +1456,9 @@ final class ReaderModel {
             )
         }
         refreshBookmarkState(await page?.visibleRange())
-        // Not while Back lands on it: that one's way back replaces it when the jump is done.
+        // Not while Back's trip lands on it: that one's way back replaces it when the jump is done.
+        // (A trip slower than its reads is freed first, and its way back briefly clears here until
+        // `publishBack` puts the new one up.)
         if goingBack == nil, let back = backLocator, abs((back.locations.totalProgression ?? 0) - totalProgression) < 0.0001 {
             readerLog.notice("back: on its own place, cleared")
             backLocator = nil
@@ -1653,6 +1655,7 @@ final class ReaderModel {
         }
         hasMoved = true
         moves += 1
+        let move = moves
         // The page on screen now: a Back tapped right after a jump comes before Readium's report of it.
         // The pill stays up through the jump and turns into this one's way back when it lands, never
         // taken down under his finger mid-tap (on the Duo a Back taken down and put up again never
@@ -1660,13 +1663,20 @@ final class ReaderModel {
         let undo = rememberPlace(at: page?.currentLocation, keepingTheWayBack: true)
         defer { publishBack(undo) }
         await veiled { _ = await self.page?.go(to: back) }
+        // A trip that came back after its reads ran out, with another move made since, takes no words:
+        // the page is that move's now.
+        guard moves == move else {
+            readerLog.notice("back: trip \(trip, privacy: .public) came back after another move; its words not taken")
+            return
+        }
         await captureAnchor()
     }
     /// The Back trip under way: a second tap meanwhile is not a second jump.
     @ObservationIgnored private var goingBack: Int?
     @ObservationIgnored private var backTrips = 0
     var isGoingBack: Bool { goingBack != nil }
-    /// One read of the page while Back is under way; `JumpLanding.reads` of them free Back again.
+    /// One beat of the wait for Back's jump (a sleep, counted as `JumpLanding` counts its reads):
+    /// `JumpLanding.reads` of them free Back again.
     @ObservationIgnored var backBeat: () async -> Void = { try? await Task.sleep(for: .milliseconds(200)) }
 
     /// The place a jump leaves, held until the jump has moved the page: "Back to page" offered while

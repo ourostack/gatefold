@@ -201,8 +201,12 @@ import Testing
         await f.model.goBack()
         #expect(f.page.jumps.count == before + 2, "the next Back made no jump")
         #expect(f.model.showJumpBack && f.model.backLocator != nil)
+        let wayBack = f.model.backLocator
         f.page.releaseJumps()
         await hung.value
+        // The hung trip coming back late changes nothing: the newer Back's way back stands.
+        #expect(f.model.backLocator == wayBack && f.model.showJumpBack, "a late Back undid the newer one")
+        #expect(!f.model.isGoingBack)
         f.model.close()
     }
 }
