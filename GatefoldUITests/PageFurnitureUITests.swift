@@ -83,7 +83,7 @@ final class PageFurnitureUITests: XCTestCase {
         sleep(2)
         app.quit()
         app.launchArguments = common
-        app.launch()
+        app.relaunch()
         XCTAssertTrue(pageNumber.waitForExistence(timeout: 120), "page numbers are still on after a relaunch")
     }
 
@@ -138,7 +138,7 @@ final class PageFurnitureUITests: XCTestCase {
         sleep(4)
         app.quit()
         app.launchArguments = common
-        app.launch()
+        app.relaunch()
         let back = Date().addingTimeInterval(60)
         while visibleText.isEmpty, Date() < back { RunLoop.current.run(until: Date().addingTimeInterval(0.2)) }
         sleep(4)

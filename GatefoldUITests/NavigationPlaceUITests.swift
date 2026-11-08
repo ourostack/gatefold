@@ -65,7 +65,7 @@ final class NavigationPlaceUITests: XCTestCase {
         sleep(3)
         app.quit()
         app.launchArguments = common
-        app.launch()
+        app.relaunch()
         _ = waitForWords()
         sleep(4)
         XCTAssertEqual(opening(visibleText), opening(settled), "after a \(how) and no turn, the reopen is on the page he jumped to")
@@ -143,7 +143,7 @@ final class NavigationPlaceUITests: XCTestCase {
         sleep(3)
         app.quit()
         app.launchArguments = common + relaunchExtra
-        app.launch()
+        app.relaunch()
     }
 
     private var relaunchExtra: [String] = []
@@ -172,7 +172,7 @@ final class NavigationPlaceUITests: XCTestCase {
         sleep(2)
         app.quit()
         app.launchArguments = common
-        app.launch()
+        app.relaunch()
         XCTAssertTrue(cover.waitForExistence(timeout: 30), "the shelf after a relaunch")
         cover.tap()
         _ = waitForWords()

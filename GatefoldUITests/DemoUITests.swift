@@ -52,7 +52,7 @@ final class DemoUITests: XCTestCase {
         app.launchArguments = [
             "-GatefoldUITest", "YES", "-GatefoldFakeCloud", "YES", "-GatefoldSkipWelcome", "YES", "-GatefoldSignedIn", "YES", "-GatefoldTheme", "vellum",
         ]
-        app.launch()
+        app.relaunch()
         XCTAssertTrue(app.staticTexts["Moby-Dick"].firstMatch.waitForExistence(timeout: 10))
         XCTAssertFalse(app.descendants(matching: .any)["library.empty"].exists, "a cached shelf never shows as empty")
         XCTAssertFalse(app.descendants(matching: .any)["library.dusting"].exists, "a cached shelf never waits on the fetch")

@@ -100,7 +100,7 @@ final class PageNumberTimingUITests: XCTestCase {
             sleep(2)
             app.quit()
             app.launchArguments = common
-            app.launch()
+            app.relaunch()
             check("gutenberg-pride-and-prejudice", spot, "reopen")
         }
     }

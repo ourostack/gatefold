@@ -45,7 +45,7 @@ final class ReopenTimingUITests: XCTestCase {
             app.quit()
             app.launchArguments = common
             let launched = Date()
-            app.launch()
+            app.relaunch()
             let picture = app.descendants(matching: .any)["reader.reopenPicture"].firstMatch
             guard picture.waitForExistence(timeout: 5) else { times.append("no picture"); settle(40); continue }
             let gone = Date().addingTimeInterval(60)

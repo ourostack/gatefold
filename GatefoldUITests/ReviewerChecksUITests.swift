@@ -81,7 +81,7 @@ final class ReviewerChecksUITests: XCTestCase {
         sleep(3)
         app.quit()
         app.launchArguments = base
-        app.launch()
+        app.relaunch()
         XCTAssertTrue(el("reader.page").waitForExistence(timeout: 90), "the book reopened")
         _ = settle(90)
         sleep(3)
