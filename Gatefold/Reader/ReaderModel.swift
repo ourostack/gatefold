@@ -1599,7 +1599,9 @@ final class ReaderModel {
                 await self.captureAnchor()
                 // A turn that landed meanwhile recorded its own page and paid the debt.
                 // A jump that never landed owes where he was sent, not Readium's stale file start.
-                let target = self.owedJumpTarget.flatMap { $0.1 == self.moves ? $0.0 : nil }
+                // A slide or scroll since (no move counted; a report under the reflow leaves the touch
+                // pending) makes his page the place, not the target. A tap that only shows the controls doesn't.
+                let target = self.owedJumpTarget.flatMap { $0.1 == self.moves && !self.touchedSinceLocation ? $0.0 : nil }
                 guard self.placeOwed, !self.isClosed, self.keeper.reflowing == nil,
                       let here = target ?? self.page?.currentLocation else { return }
                 // Kept until now: a reflow that began meanwhile owes it still.
@@ -1863,11 +1865,7 @@ final class ReaderModel {
     /// A touch on the page. If the next location (outside a reflow) differs from where the book
     /// opened, it was a swipe in slide or scroll mode and the place is the reader's own. A tap that
     /// only shows the controls changes no location, so it moves nothing.
-    func noteInteraction() {
-        touchesSinceLocation += 1
-        // A slide or scroll (no move counted) makes his page the place, not an unreached jump's target.
-        owedJumpTarget = nil
-    }
+    func noteInteraction() { touchesSinceLocation += 1 }
     /// Touches on the page since the last location report; a tap that only shows or hides the controls
     /// clears them.
     @ObservationIgnored private var touchesSinceLocation = 0
