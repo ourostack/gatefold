@@ -200,16 +200,21 @@ final class FeelUITests: XCTestCase {
     /// What the reader is meant to do after a gesture: move once, or stay.
     private enum Expect { case moveOnce, stay }
 
+    /// Set once the recorder hands back no film, so later turns are not each held up waiting on it.
+    private var recorderGaveNoFilm = false
+
     /// A turn's film in one line: the display refresh (frame index from the film's start, which is just before the
     /// gesture) on which the page number first changed, its time, the film's cadence, and its longest gap between
     /// refreshes (a gap well over the cadence is the runner or the app stalling, not the page being slow).
     private func filmed(_ film: FeelFilm) -> String {
         let numbers = film.frames.map { $0.seen.filter { $0.key == "reader.pageNumber" }.map(\.label).joined(separator: ",") }
-        let first = numbers.first ?? ""
-        let changed = numbers.firstIndex { $0 != first && !$0.isEmpty }
+        // The number the page showed before the turn: the first frame that shows one (it can be hidden at first).
+        let shown = numbers.firstIndex { !$0.isEmpty }
+        let first = shown.map { numbers[$0] } ?? ""
+        let changed = shown.flatMap { i in numbers[i...].firstIndex { $0 != first && !$0.isEmpty } }
         let gaps = zip(film.frames.dropFirst(), film.frames).map { $0.t - $1.t }
         let at = changed.map { "firstChangedRefresh=\($0) t=\(String(format: "%.3f", film.frames[$0].t))" }
-            ?? "firstChangedRefresh=none filmEnd=\(String(format: "%.3f", film.frames.last?.t ?? 0))"
+            ?? "firstChangedRefresh=noChangeInFilm filmEnd=\(String(format: "%.3f", film.frames.last?.t ?? 0))"
         return "\(at) refreshes=\(film.frames.count) cadence=\(String(format: "%.4f", film.cadence)) maxGap=\(String(format: "%.3f", gaps.max() ?? 0))"
             + (film.stalledAt.map { " stalledAt=\(String(format: "%.3f", $0))" } ?? "")
             + (first.isEmpty ? " number=hidden" : "")
@@ -224,9 +229,12 @@ final class FeelUITests: XCTestCase {
         // A turn is filmed by the app, one sample per display refresh, so when it first shows the new page is read off
         // the app's own clock, not the probe's read speed. The words live in a web view the film cannot see, so it
         // watches the page number (`reader.pageNumber`, digits only), which changes with the page.
+        // The film ends half a second after the gesture once nothing moves, so the read-based watch (and its "moved
+        // late" note) now starts after it: readsAfterFilm, not reads from the gesture.
         var turnFilm: FeelFilm?
-        if expect == .moveOnce {
+        if expect == .moveOnce, !recorderGaveNoFilm {
             turnFilm = feel.recordedFilm(["reader.pageNumber"]) { action() }
+            if let film = turnFilm, film.frames.isEmpty, film.stalledAt != nil { recorderGaveNoFilm = true }
         } else {
             action()
         }
@@ -721,9 +729,10 @@ final class FeelUITests: XCTestCase {
         waitUntilStill("Done")
         // From the top of the sheet's bar, above its search field, so the pull moves the sheet.
         let bar = app.navigationBars.firstMatch
+        // To near the window's bottom edge: Search opens at its medium height, so a fixed drag could end off screen.
         let from = bar.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.15))
-        from.press(forDuration: 0.05, thenDragTo: from.withOffset(CGVector(dx: 0, dy: app.windows.firstMatch.frame.height * 0.6)),
-                   withVelocity: .fast, thenHoldForDuration: 0)
+        let to = app.windows.firstMatch.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.95))
+        from.press(forDuration: 0.05, thenDragTo: to, withVelocity: .fast, thenHoldForDuration: 0)
         let gone = done.waitForNonExistence(timeout: 10)
         expectChecked(FeelResult(check: FeelGenre.overlayDismissal.rawValue, passed: gone,
                                  summary: gone ? "a pull down put Search away" : "Search stayed up after a pull down",
