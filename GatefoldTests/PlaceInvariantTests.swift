@@ -237,8 +237,10 @@ import Testing
     }
 
     /// A Back freed by its count, then a turn or a swipe of his (no jump of ours), then the hung Back
-    /// landing at last: the page ends on the page he turned to, and that is the place kept.
-    @Test(arguments: [false, true]) func aBackThatLandsLateAfterHisTurnLeavesHisPage(swipe: Bool) async throws {
+    /// landing at last: the page ends on the page he turned to, and that is the place kept. Also with
+    /// a tap meanwhile that brought no report (swallowed under a veil): the late report is no swipe.
+    @Test(arguments: ["turn", "swipe", "turn, then a swallowed tap"]) func aBackThatLandsLateAfterHisTurnLeavesHisPage(move: String) async throws {
+        let swipe = move == "swipe"
         let f = try await S.make(remote: { _, _ in nil }, startAt: 0.05)
         await f.model.load()
         await f.model.locationDidChange(try #require(f.page.currentLocation))
@@ -259,6 +261,7 @@ import Testing
             f.model.userTurnedPage()
             for _ in 0..<200 { await Task.yield() }
         }
+        if move.hasSuffix("tap") { f.model.noteInteraction() }
         f.page.pageStartsBefore = 0
         f.page.holdsJumps = false
         f.page.releaseJumps()

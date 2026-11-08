@@ -1076,6 +1076,7 @@ final class ReaderModel {
         defer { publishBack(back) }
         moves += 1
         let move = moves
+        let step = steps
         landingMove = move
         defer { if landingMove == move { landingMove = nil } }
         let started = ContinuousClock.now
@@ -1092,6 +1093,7 @@ final class ReaderModel {
         let anchored = Self.ms(since: started)
         guard moves == move, !isClosed, let here = page?.currentLocation else { return }
         // Landed on the other device's page: that's the reader's place now.
+        landed(step, at: here)
         await recordLanding(here, target: target, cloud: cloud)
         readerLog.notice("landing timing (standby \(ready, privacy: .public)): go \(went, privacy: .public) ms, settled \(settled, privacy: .public) ms, anchored \(anchored, privacy: .public) ms, recorded \(Self.ms(since: started), privacy: .public) ms")
     }
@@ -1359,8 +1361,23 @@ final class ReaderModel {
 
     // MARK: Navigation events
 
-    func locationDidChange(_ locator: Locator, duringTurn: Bool = false, hisMove: Bool = false) async {
+    func locationDidChange(_ locator: Locator, duringTurn: Bool = false, hisMove: Bool = false, turned: Bool = false) async {
         guard !isClosed else { return }
+        // A Back freed by its count: a report from its chapter is that trip's late landing (Readium can
+        // report before the jump returns), no move of his, no swipe (a tap swallowed meanwhile is not
+        // one) and no place; the page is put back. His own turn's report is never taken for it.
+        if !hisMove, !turned, !duringTurn, var stray = strayLanding {
+            stray.reportsLeft -= 1
+            let its = locator.href == stray.href
+            // Its report once it has landed, or one elsewhere after (it never came), ends the mark;
+            // so does the count, for a jump that never comes back.
+            strayLanding = stray.landed || stray.reportsLeft <= 0 ? nil : stray
+            if its {
+                touchesSinceLocation = 0
+                readerLog.notice("back: trip \(stray.trip, privacy: .public)'s late report is not his move")
+                return
+            }
+        }
         let reportedBefore = lastReported
         lastReported = locator
         location = locator
@@ -1519,13 +1536,13 @@ final class ReaderModel {
             guard let first = page?.currentLocation else { return }
             // A turn is a move too: a Back that comes back late after it puts the page back here.
             landed(step, at: first)
-            await locationDidChange(first)
+            await locationDidChange(first, turned: true)
             // Turning into the next resource, Readium can name the old one until the new one has
             // loaded, and its update arrives mid-turn when it's ignored. Look again once it has.
             try? await Task.sleep(for: .milliseconds(700))
-            // Not with a freed Back still out: the page may be that trip's late landing, not this turn's.
-            guard strayBack == nil else {
-                readerLog.notice("turn: second look skipped, a freed Back is still out")
+            // Not a freed Back's late landing: that page is not this turn's.
+            if let stray = strayLanding, stray.landed, let later = page?.currentLocation, later.href == stray.href {
+                readerLog.notice("turn: second look found a freed Back's late landing, skipped")
                 return
             }
             if let later = page?.currentLocation, later.href != first.href
@@ -1682,6 +1699,7 @@ final class ReaderModel {
         defer { if goingBack == trip { goingBack = nil } }
         hasMoved = true
         moves += 1
+        // Its own step, apart from the move's: a newer step of any kind means another move came since.
         let jump = takeStep()
         Task { [weak self] in
             for _ in 0..<JumpLanding.reads {
@@ -1692,6 +1710,7 @@ final class ReaderModel {
             readerLog.notice("back: trip \(trip, privacy: .public) ran out of reads; Back is free again")
             self.goingBack = nil
             self.strayBack = jump
+            self.strayLanding = StrayTrip(trip: trip, href: back.href)
             // Only this trip's own veil, or the one it was about to put up.
             self.host?.abandonVeil(jump: jump)
         }
@@ -1703,8 +1722,12 @@ final class ReaderModel {
         defer { publishBack(undo) }
         await veiled(step: jump) {
             _ = await self.page?.go(to: back)
-            // Back at once, before its report: that report is this trip's landing, never a swipe.
-            if self.strayBack == jump { self.strayBack = nil }
+            // Back at once, before its report: with a move made since, that report is this trip's late
+            // landing, never his move.
+            guard self.strayBack == jump else { return }
+            self.strayBack = nil
+            // With no move since, it is simply his Back, late: its report is his.
+            self.strayLanding = self.steps != jump ? StrayTrip(trip: trip, href: back.href, landed: true) : nil
         }
         // A trip that came back after its reads ran out, with another move made since (a jump, a turn,
         // a swipe), takes no words: the page is that move's now.
@@ -1725,6 +1748,15 @@ final class ReaderModel {
     @ObservationIgnored private var backTrips = 0
     /// The step of a Back trip freed by its count whose jump hasn't come back yet.
     @ObservationIgnored private var strayBack: Int?
+    /// Such a trip, out or landed late after another move, until its report has come (counted in
+    /// reports: a jump that never comes back stops being looked for).
+    @ObservationIgnored private var strayLanding: StrayTrip?
+    struct StrayTrip {
+        let trip: Int
+        let href: AnyURL
+        var landed = false
+        var reportsLeft = 12
+    }
     var isGoingBack: Bool { goingBack != nil }
     /// One beat of the wait for Back's jump (a sleep, counted as `JumpLanding` counts its reads):
     /// `JumpLanding.reads` of them free Back again.

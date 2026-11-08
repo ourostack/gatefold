@@ -1478,7 +1478,6 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
                 await travel.value
                 return await self?.renderedSnapshot(afterChange: true) ?? old
             }
-            if veil === cover { weakModel?.heldRunningHead = nil }
             cover.removeFromSuperview()
             if veil === cover { veil = nil; veilJump = nil }
             return
