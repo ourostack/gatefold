@@ -240,7 +240,8 @@ import Testing
     /// landing at last: the page ends on the page he turned to, and that is the place kept. Also with
     /// a tap meanwhile that brought no report (swallowed under a veil): the late report is no swipe,
     /// even when Readium reports the page before the jump returns.
-    @Test(arguments: ["turn", "swipe", "turn, then a swallowed tap", "turn, then a swallowed tap, reported early"]) func aBackThatLandsLateAfterHisTurnLeavesHisPage(move: String) async throws {
+    @Test(arguments: ["turn", "swipe", "turn, then a swallowed tap", "turn, then a swallowed tap, reported early",
+                      "turn, then a swallowed tap, put back slowly"]) func aBackThatLandsLateAfterHisTurnLeavesHisPage(move: String) async throws {
         let swipe = move == "swipe"
         let f = try await S.make(remote: { _, _ in nil }, startAt: 0.05)
         await f.model.load()
@@ -265,8 +266,14 @@ import Testing
         if move.contains("tap") { f.model.noteInteraction() }
         f.page.reportsBeforeReturn = move.hasSuffix("early")
         f.page.pageStartsBefore = 0
-        f.page.holdsJumps = false
+        // Put back slowly: the late Back's report comes while the page is still being put back.
+        f.page.holdsJumps = move.hasSuffix("slowly")
         f.page.releaseJumps()
+        if move.hasSuffix("slowly") {
+            for _ in 0..<200 { await Task.yield() }
+            f.page.holdsJumps = false
+            f.page.releaseJumps()
+        }
         await hung.value
         for _ in 0..<200 { await Task.yield() }
         let at = f.page.currentLocation?.locations.totalProgression ?? -1
