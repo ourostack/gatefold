@@ -146,10 +146,11 @@ jobs:
               NavigationPlaceUITests PositionUITests/testEveryPostureKeepsThePlace
               CountingPlaceholderUITests
           - name: taps
-            # 53 min measured (a 10 min simulator boot among them); measured / 0.7 keeps 30% headroom.
-            timeout: 80
-            title: Every Fine-Tune tap lands; the furniture never moves the words
-            tests: FineTuneTapUITests PageFurnitureUITests
+            # Ouro Feel's walk (FeelUITests) rides here on every pull request, on this leg's build. With it the leg
+            # took 65 min (run 42454507796, against 29-53 before): 100 keeps 30% headroom (65 / 0.7 = 93). gatefold#65.
+            timeout: 100
+            title: Every Fine-Tune tap lands; the furniture never moves the words; every screen and gesture feels right (Ouro Feel)
+            tests: FineTuneTapUITests PageFurnitureUITests FeelUITests
           - name: reviewer
             # 65 min measured with the full list; measured / 0.7 keeps 30% headroom.
             timeout: 95
@@ -234,8 +235,11 @@ jobs:
           TESTS: ${{ needs.changes.outputs.full != 'false' && matrix.tests || matrix.pr_tests || matrix.tests }}
           # Five rounds of the controls-then-numbers reopen (about 2 min each); 30 locally.
           TEST_RUNNER_GATEFOLD_REOPEN_ROUNDS: "5"
+          # Ouro Feel's reports (hashes of the page, never its words), kept below.
+          TEST_RUNNER_OURO_FEEL_REPORT_DIR: ${{ runner.temp }}/feel-reports
         run: |
           set -o pipefail
+          mkdir -p "$RUNNER_TEMP/feel-reports"
           only=()
           for t in $TESTS; do only+=("-only-testing:GatefoldUITests/$t"); done
           # Each test's result prints as it finishes: a job cut off at its limit still names the slow test
@@ -243,7 +247,7 @@ jobs:
           xcodebuild test-without-building -xctestrun "$XCTESTRUN" \
             -destination "$DESTINATION" "${only[@]}" \
             -resultBundlePath "$RUNNER_TEMP/ipad.xcresult" 2>&1 | tee "$RUNNER_TEMP/ipad.log" \
-            | grep --line-buffered -E "Test Case .*(started|passed|failed|skipped)|TEST (SUCCEEDED|FAILED)|REPRO (round|SUMMARY)|TAPRATE|PLACEHOLDER|REVIEWER|WINDOWFIT|REOPEN round [0-9]+:|\.swift:[0-9]+: error" \
+            | grep --line-buffered -E "Test Case .*(started|passed|failed|skipped)|TEST (SUCCEEDED|FAILED)|REPRO (round|SUMMARY)|TAPRATE|PLACEHOLDER|REVIEWER|WINDOWFIT|REOPEN round [0-9]+:|FEEL:|FEEL-NOTCHECKED|FEEL-LATE|\[ouro-feel\] FAIL|\.swift:[0-9]+: error" \
             | awk '{ if (match($0, /XCTAssert[A-Za-z]* failed/)) $0 = substr($0, 1, RSTART + RLENGTH - 1) " (text withheld)"; print; fflush() }'
           exit ${PIPESTATUS[0]}
       - name: Why each failed test failed (from the result bundles, text withheld)
@@ -268,6 +272,13 @@ jobs:
             ${{ runner.temp }}/cold.xcresult
             ${{ runner.temp }}/ipad.log
             ${{ runner.temp }}/ipad.xcresult
+      - uses: actions/upload-artifact@v4
+        # Ouro Feel's reports, pass or fail: hashes of the page, never its words.
+        if: always() && contains(matrix.tests, 'FeelUITests')
+        with:
+          name: feel-reports-ipad
+          path: ${{ runner.temp }}/feel-reports
+          if-no-files-found: ignore
 
   app:
     name: Build and unit-test the app
@@ -350,13 +361,14 @@ jobs:
     name: Duo (the reviewers' checks)
     # The reviewers' standing checks on the Duo: reopen by hash, true numbers and reader-wide toggles
     # (density is the iPad's), and a page a turn with a reopen keeping its numbers.
-    # Pull requests run its smoke (a page a turn, and a reopen keeps the numbers); pushes to main add the reviewers'
-    # full list, about 13 min a test on this runner (gatefold#39).
+    # Pull requests run its smoke (a page a turn, and a reopen keeps the numbers) and Ouro Feel's walk (FeelUITests);
+    # pushes to main add the reviewers' full list, about 13 min a test on this runner (gatefold#39).
     needs: [changes, build]
     if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
     runs-on: xcode-27
-    # 45 min measured (build 20): 65 keeps 30% headroom.
-    timeout-minutes: 65
+    # The full list with Feel took 90 min (run 42454507796; 38-53 before, once 73 in run 42131914763), so 126 keeps 30%
+    # headroom ((73 + 15) / 0.7, and 90 / 0.7 = 129 is within a few minutes). Far past the 30 min bar: gatefold#65.
+    timeout-minutes: 126
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/select-xcode
@@ -385,17 +397,21 @@ jobs:
           nohup sh -c 'xcrun simctl spawn "$0" log stream --style compact --predicate "subsystem == \"bot.ouro.gatefold\"" 2>/dev/null \
             | grep --line-buffered -E "place (read|write)|place:|location |reflow|landing|landed|reopen|tapped|warm:|open:|first page|pages:|turn:|spread:|veil:|settle [0-9]" \
             | grep --line-buffered -v -E "text:|\] visible|anchor" >> "$1"' "$UDID" "$RUNNER_TEMP/place.log" >/dev/null 2>&1 &
-      - name: The reviewers' checks on the Duo
+      - name: The reviewers' checks on the Duo; every screen and gesture feels right (Ouro Feel)
         env:
           FULL: ${{ needs.changes.outputs.full }}
+          # Ouro Feel's reports (hashes of the page, never its words), kept below.
+          TEST_RUNNER_OURO_FEEL_REPORT_DIR: ${{ runner.temp }}/feel-reports
         run: |
           set -o pipefail
-          only=(-only-testing:GatefoldUITests/PageNumberUITests/testEveryTurnMovesOnAPageAndAReopenKeepsTheNumbers)
+          mkdir -p "$RUNNER_TEMP/feel-reports"
+          only=(-only-testing:GatefoldUITests/PageNumberUITests/testEveryTurnMovesOnAPageAndAReopenKeepsTheNumbers
+                -only-testing:GatefoldUITests/FeelUITests)
           if [ "$FULL" != false ]; then only+=(-only-testing:GatefoldUITests/ReviewerChecksUITests); fi
           xcodebuild test-without-building -xctestrun "$XCTESTRUN" \
             -destination "$DESTINATION" "${only[@]}" \
             -resultBundlePath "$RUNNER_TEMP/duo.xcresult" 2>&1 | tee "$RUNNER_TEMP/duo.log" \
-            | grep --line-buffered -E "Test Case .*(started|passed|failed|skipped)|TEST (SUCCEEDED|FAILED)|REVIEWER|\.swift:[0-9]+: error" \
+            | grep --line-buffered -E "Test Case .*(started|passed|failed|skipped)|TEST (SUCCEEDED|FAILED)|REVIEWER|FEEL:|FEEL-NOTCHECKED|FEEL-LATE|\[ouro-feel\] FAIL|\.swift:[0-9]+: error" \
             | awk '{ if (match($0, /XCTAssert[A-Za-z]* failed/)) $0 = substr($0, 1, RSTART + RLENGTH - 1) " (text withheld)"; print; fflush() }'
           exit ${PIPESTATUS[0]}
       - name: Why each failed test failed (from the result bundles, text withheld)
@@ -418,6 +434,13 @@ jobs:
             ${{ runner.temp }}/place.log
             ${{ runner.temp }}/duo.log
             ${{ runner.temp }}/duo.xcresult
+      - uses: actions/upload-artifact@v4
+        # Ouro Feel's reports, pass or fail: hashes of the page, never its words.
+        if: always()
+        with:
+          name: feel-reports-duo
+          path: ${{ runner.temp }}/feel-reports
+          if-no-files-found: ignore
 
   ipad-docs:
     # A skipped matrix job reports under its unexpanded name, so a Markdown-only pull request gets the three iPad checks
