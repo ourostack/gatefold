@@ -69,8 +69,6 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     private var panForward = true
     /// Set when the pan ends before the turn is ready; the preparing task finishes with it.
     private var panEnded: Bool?
-    /// When the finger last moved during a curl drag (media time): a finger that stopped before lifting isn't a flick.
-    private var panMovedAt: CFTimeInterval = 0
     private var columns = 1
 
     init(model: ReaderModel, publication: Publication, initialLocation: Locator?, preferences: EPUBPreferences) throws {
@@ -139,7 +137,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         view.addSubview(curlHost.view)
         curlHost.didMove(toParent: self)
 
-        let pan = UIPanGestureRecognizer(target: self, action: #selector(handlePan(_:)))
+        let pan = CurlPan(target: self, action: #selector(handlePan(_:)))
         pan.delegate = self
         view.addGestureRecognizer(pan)
 
@@ -1652,7 +1650,6 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             let v = pan.velocity(in: view)
             panForward = v.x < 0
             panStart = point
-            panMovedAt = CACurrentMediaTime()
             if model.chromeVisible { model.setChrome(false) }
             panEnded = nil
             Task {
@@ -1663,12 +1660,14 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             }
         case .changed:
             updateFinger(point)
-            panMovedAt = CACurrentMediaTime()
         case .ended, .cancelled:
             let v = pan.velocity(in: view).x
+            let dx = point.x - panStart.x
+            // Timed by the touches themselves, never by when the main thread got round to them (#110).
+            let still = (pan as? CurlPan)?.stillBeforeLift ?? 0
             let complete = pan.state != .cancelled
-                && CurlRelease.completes(forward: panForward, dx: point.x - panStart.x, width: view.bounds.width,
-                                         velocity: v, stillFor: CACurrentMediaTime() - panMovedAt)
+                && CurlRelease.completes(forward: panForward, dx: dx, width: view.bounds.width, velocity: v, stillFor: still)
+            readerLog.notice("turn: let go v \(Int(v), privacy: .public) dx \(Int(dx), privacy: .public) of \(Int(self.view.bounds.width), privacy: .public) still \(Int(still * 1000), privacy: .public) ms -> \(complete ? "turns" : "springs back", privacy: .public)")
             guard curl.isActive, curl.top != nil, curl.beneath != nil else {
                 panEnded = complete
                 return
