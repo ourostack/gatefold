@@ -49,12 +49,16 @@ final class PlaceUndoUITests: XCTestCase {
     private func openFresh(_ extra: [String] = []) -> String {
         app.launchArguments = common + extra + ["-GatefoldReset", "YES", "-GatefoldDownloadAll", "YES",
                                                 "-GatefoldOpenBook", "gutenberg-pride-and-prejudice", "-GatefoldGoTo", "0.31"]
+            // GATEFOLD_POSTURE=spread runs the same checks on the unfolded Duo.
+            + (ProcessInfo.processInfo.environment["GATEFOLD_POSTURE"].map { ["-GatefoldForcePosture", $0] } ?? [])
         app.launch()
         XCTAssertTrue(el("reader.page").waitForExistence(timeout: 90))
         return settledWords()
     }
 
     private func showChrome() {
+        // A tap under a jump's veil is swallowed (the veil is the page changing), so wait it out.
+        XCTAssertTrue(el("reader.veil").waitForNonExistence(timeout: 60), "the veil lifts")
         el("reader.page").coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
         XCTAssertTrue(app.buttons["reader.contents"].waitForExistence(timeout: 5))
     }
@@ -63,7 +67,9 @@ final class PlaceUndoUITests: XCTestCase {
         showChrome()
         app.buttons["reader.contents"].tap()
         let row = app.buttons.matching(NSPredicate(format: "label CONTAINS[c] %@", chapter)).firstMatch
-        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label CONTAINS[c] %@", "Chapter I")).firstMatch.waitForExistence(timeout: 10))
+        // The list opens centred on the current chapter, so the first rows are not built yet.
+        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label BEGINSWITH[c] %@", "Chapter")).firstMatch.waitForExistence(timeout: 10),
+                      "the contents list opens")
         for _ in 0..<20 where !(row.exists && row.isHittable) { app.swipeUp(velocity: .slow) }
         XCTAssertTrue(row.exists && row.isHittable, "the contents list \(chapter)")
         row.tap()
@@ -100,6 +106,19 @@ final class PlaceUndoUITests: XCTestCase {
         at.press(forDuration: 0.1, thenDragTo: at.withOffset(CGVector(dx: 6, dy: 0)))
         RunLoop.current.run(until: Date().addingTimeInterval(4))
         XCTAssertEqual(opening(settledWords()), opening(first), "a touch on the scrubber moved the page")
+    }
+
+    /// Your Page open: a tap above it, in the page's margin, closes the panel and turns nothing.
+    func testATapAboveYourPageClosesItAndKeepsThePage() {
+        let first = openFresh()
+        showChrome()
+        app.buttons["reader.appearance"].tap()
+        let panel = el("appearance.panel")
+        XCTAssertTrue(panel.waitForExistence(timeout: 10))
+        el("reader.page").coordinate(withNormalizedOffset: CGVector(dx: 0.97, dy: 0.12)).tap()
+        XCTAssertTrue(panel.waitForNonExistence(timeout: 5), "a tap above Your Page didn't close it")
+        RunLoop.current.run(until: Date().addingTimeInterval(2))
+        XCTAssertEqual(opening(settledWords()), opening(first), "closing Your Page moved the page")
     }
 
     /// A tap on the turn zone while a jump's veil is up is not a turn: the page lands where he chose.

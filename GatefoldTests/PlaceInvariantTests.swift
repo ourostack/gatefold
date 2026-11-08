@@ -158,4 +158,25 @@ import Testing
         #expect(f.model.showJumpBack)
         f.model.close()
     }
+
+    /// Back never takes its own pill down while it goes back: on the Duo, a pill taken down under his
+    /// finger and put up again never showed, so going back could not be undone. A second tap meanwhile
+    /// is not a second jump.
+    @Test func theWayBackStaysUpWhileItGoesBack() async throws {
+        let f = try await S.make(remote: { _, _ in nil }, startAt: 0.05)
+        await f.model.load()
+        await f.model.locationDidChange(try #require(f.page.currentLocation))
+        await f.model.go(toProgression: 0.7, rememberBack: true)
+        #expect(f.model.showJumpBack)
+        var midJump: [(shown: Bool, hasPlace: Bool)] = []
+        f.page.onGo = { midJump.append((f.model.showJumpBack, f.model.backLocator != nil)) }
+        let jumpsBefore = f.page.jumps.count
+        async let first: Void = f.model.goBack()
+        async let second: Void = f.model.goBack()
+        _ = await (first, second)
+        #expect(f.page.jumps.count == jumpsBefore + 1, "a second tap on Back made a second jump")
+        #expect(!midJump.isEmpty && midJump.allSatisfy { $0.shown && $0.hasPlace }, "the pill went down while Back went back")
+        #expect(f.model.showJumpBack && f.model.backLocator != nil)
+        f.model.close()
+    }
 }

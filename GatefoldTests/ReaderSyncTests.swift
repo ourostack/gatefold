@@ -22,10 +22,13 @@ final class ScriptedPage: ReaderPage {
 
     /// Whether a jump reports its page (a test holds the report back to act before Readium's).
     var reportsJumps = true
+    /// Called as each jump starts, so a test can see the reader mid-jump.
+    var onGo: (() -> Void)?
 
     @discardableResult
     func go(to locator: Locator) async -> Bool {
         jumps.append(locator)
+        onGo?()
         let before = pageStartsBefore
         let landed = locator.copy(
             locations: {

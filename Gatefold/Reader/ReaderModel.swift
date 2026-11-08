@@ -985,6 +985,7 @@ final class ReaderModel {
     /// it away before he noticed a jump he never meant (build 20), and then the way back took two taps.
     private func holdJumpBack() {
         turnsSinceJump = 0
+        readerLog.notice("back: up \(self.backLocator != nil, privacy: .public)")
         withAnimation(Motion.chrome) { showJumpBack = backLocator != nil }
     }
 
@@ -992,6 +993,7 @@ final class ReaderModel {
     private func readOnAfterJump() {
         guard showJumpBack else { return }
         turnsSinceJump += 1
+        readerLog.notice("back: read on \(self.turnsSinceJump, privacy: .public)")
         if turnsSinceJump >= JumpBack.turnsToKeep { withAnimation(Motion.chrome) { showJumpBack = false } }
     }
 
@@ -1454,7 +1456,9 @@ final class ReaderModel {
             )
         }
         refreshBookmarkState(await page?.visibleRange())
-        if let back = backLocator, abs((back.locations.totalProgression ?? 0) - totalProgression) < 0.0001 {
+        // Not while Back lands on it: that one's way back replaces it when the jump is done.
+        if !goingBack, let back = backLocator, abs((back.locations.totalProgression ?? 0) - totalProgression) < 0.0001 {
+            readerLog.notice("back: on its own place, cleared")
             backLocator = nil
         }
     }
@@ -1630,26 +1634,32 @@ final class ReaderModel {
     /// Back is a jump too: the page it leaves gets its own way back, so a stray tap on it is undone
     /// with one more.
     func goBack() async {
-        guard let back = backLocator else { return }
+        guard let back = backLocator, !goingBack else { return }
+        goingBack = true
+        defer { goingBack = false }
         hasMoved = true
         moves += 1
         // The page on screen now: a Back tapped right after a jump comes before Readium's report of it.
-        let undo = rememberPlace(at: page?.currentLocation)
+        // The pill stays up through the jump and turns into this one's way back when it lands, never
+        // taken down under his finger mid-tap (on the Duo a Back taken down and put up again never
+        // showed, and going back could not be undone).
+        let undo = rememberPlace(at: page?.currentLocation, keepingTheWayBack: true)
         defer { publishBack(undo) }
-        withAnimation(Motion.chrome) { showJumpBack = false }
         await veiled { _ = await self.page?.go(to: back) }
         await captureAnchor()
     }
+    /// Back is under way: a second tap meanwhile is not a second jump.
+    @ObservationIgnored private var goingBack = false
 
     /// The place a jump leaves, held until the jump has moved the page: "Back to page" offered while
     /// the old page was still up (3.6 to 8.8 s on a cold Contents jump in build 19) read as a jump that
     /// had already happened. An earlier jump's way back goes down meanwhile; it isn't this jump's.
-    private func rememberPlace(at here: Locator? = nil) -> Int {
+    private func rememberPlace(at here: Locator? = nil, keepingTheWayBack: Bool = false) -> Int {
         backJumps += 1
         // No page number: the counted one can still be the page before a jump within the chapter, and
         // Readium's positions aren't his pages. The pill says where it goes in words.
         pendingBack = (backJumps, here ?? location)
-        backLocator = nil
+        if !keepingTheWayBack { backLocator = nil }
         return backJumps
     }
     @ObservationIgnored private var backJumps = 0
@@ -1658,7 +1668,10 @@ final class ReaderModel {
     /// Offers the way back once its jump has landed (a veiled jump returns once the new page has
     /// painted), and only for the newest jump: one overtaken by another offers nothing.
     private func publishBack(_ jump: Int?) {
-        guard let jump, let pending = pendingBack, pending.jump == jump else { return }
+        guard let jump, let pending = pendingBack, pending.jump == jump else {
+            if let jump { readerLog.notice("back: jump \(jump, privacy: .public) superseded by \(self.pendingBack?.jump ?? -1, privacy: .public)") }
+            return
+        }
         pendingBack = nil
         backLocator = pending.locator
         holdJumpBack()
