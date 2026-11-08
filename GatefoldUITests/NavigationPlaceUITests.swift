@@ -130,12 +130,18 @@ final class NavigationPlaceUITests: XCTestCase {
         let plain = contentsJumpReads([])
         let held = contentsJumpReads(["-GatefoldHoldOldPageLoad", "1200"])
         print("OLDPAGEHELD reads to move: loaded \(plain.move), still loading \(held.move); to Back: loaded \(plain.back), still loading \(held.back)")
-        XCTAssertTrue(plain.move < Self.jumpReadLimit, "the jump from a loaded page never moved the page (\(plain.move) reads)")
+        // At once, everywhere: neither jump may take more than `jumpReadCeiling` reads, whatever the
+        // runner. Baselines on CI's iPad: loaded 9 and 81, still loading 12 (runs 42484222632 and
+        // 42490481581); the 81 was a 37 s jump, which is not at once.
+        XCTAssertLessThanOrEqual(plain.move, Self.jumpReadCeiling, "the jump from a loaded page moved the page only after \(plain.move) reads")
+        XCTAssertLessThanOrEqual(held.move, Self.jumpReadCeiling, "the jump from a page still loading moved the page only after \(held.move) reads")
         XCTAssertLessThanOrEqual(held.move, plain.move + 10, "a jump from a page still loading moved the page only after \(held.move) reads (\(plain.move) from a loaded one)")
         XCTAssertLessThanOrEqual(held.back, 10, "the jump from a page still loading left no way back within 10 reads (\(held.back))")
     }
 
     private static let jumpReadLimit = 400
+    /// About 30 s of probe reads on CI's iPad (about 0.5 s a read there).
+    private static let jumpReadCeiling = 60
 
     /// Opens fresh, jumps to chapter XXX through Contents, and counts probe reads from the tap until
     /// the words change, then until Back is up (the limit when they never do).

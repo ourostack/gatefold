@@ -1540,6 +1540,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         guard veil == nil, !jumpStarting, !isTurning, view.window != nil else { return await body() }
         jumpStarting = true
         veilJump = jump
+        let jumpTapped = ContinuousClock.now
         if LaunchOptions.isUITest, let looks = LaunchOptions.holdOldPageLoadLooks, looks > 0 { heldLoadLooks = looks }
         // The jump he chose starts now: the old page is pictured as it is, never waited on while it
         // loads (its spinner held the jump back up to 60 s, and the page never moved: gatefold#73).
@@ -1577,19 +1578,26 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             let travel = Task { @MainActor in
                 await body()
                 arrived = true
+                readerLog.notice("veil: jump \(jump, privacy: .public) arrived \(ReaderModel.ms(since: jumpTapped), privacy: .public) ms after it began (riffle)")
             }
             await riffleLeaves(from: old, cover: cover, forward: forward, arrived: { arrived }) { [weak self] in
                 await travel.value
-                return await self?.renderedSnapshot(afterChange: true) ?? old
+                let page = await self?.renderedSnapshot(afterChange: true) ?? old
+                readerLog.notice("veil: jump \(jump, privacy: .public) pictured its page \(ReaderModel.ms(since: jumpTapped), privacy: .public) ms after it began, \(self?.lastSnapshotLooks ?? -1, privacy: .public) looks")
+                return page
             }
+            readerLog.notice("veil: jump \(jump, privacy: .public) lifted \(ReaderModel.ms(since: jumpTapped), privacy: .public) ms after it began")
             cover.removeFromSuperview()
             if veil === cover { veil = nil; veilJump = nil }
             return
         }
         let dim = UIViewPropertyAnimator(duration: 0.15, curve: .easeOut) { wash.alpha = 0.4 }
         dim.startAnimation()
+        readerLog.notice("veil: jump \(jump, privacy: .public) pictured the old page in \(ReaderModel.ms(since: jumpTapped), privacy: .public) ms")
         await body()
+        readerLog.notice("veil: jump \(jump, privacy: .public) arrived \(ReaderModel.ms(since: jumpTapped), privacy: .public) ms after it began")
         _ = await renderedSnapshot(afterChange: true)
+        readerLog.notice("veil: jump \(jump, privacy: .public) pictured its page \(ReaderModel.ms(since: jumpTapped), privacy: .public) ms after it began, \(self.lastSnapshotLooks, privacy: .public) looks")
         // The head changes chapter with the page, cross-fading as the veil lifts.
         if veil === cover { withAnimation(.easeInOut(duration: 0.2)) { weakModel?.heldRunningHead = nil } }
         await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
