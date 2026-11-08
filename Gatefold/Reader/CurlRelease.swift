@@ -1,3 +1,4 @@
+import ReadiumShared
 import UIKit
 import UIKit.UIGestureRecognizerSubclass
 
@@ -19,6 +20,12 @@ enum CurlRelease {
         let v = stillFor > stopped ? 0 : velocity
         if forward { return v < -250 || (v < 250 && dx < -width * 0.25) }
         return v > 250 || (v > -250 && dx > width * 0.25)
+    }
+
+    /// Puts the page back under a curl that sprang back. `step` moves one page (forward when true).
+    @MainActor static func springBack(to start: Locator?, mirrored: Bool,
+                                      go: (Locator) async -> Bool, step: (Bool) async -> Bool) async {
+        _ = await step(mirrored)
     }
 }
 
