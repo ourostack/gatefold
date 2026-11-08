@@ -21,6 +21,10 @@ packages:
     exactVersion: 3.11.1
   GatefoldCore:
     path: Packages/GatefoldCore
+  # Ouro Feel, for the UI tests only (FeelUITests): the app never links it, nor its recorder. Exact, so a check never changes under us.
+  OuroUIApple:
+    url: https://github.com/ourostack/ouro-ui-apple
+    exactVersion: 0.4.1
   GatefoldCloud:
     path: Packages/GatefoldCloud
 targets:
@@ -76,6 +80,15 @@ targets:
     sources: [GatefoldUITests]
     dependencies:
       - target: Gatefold
+      - package: OuroUIApple
+        product: OuroFeel
+      - package: OuroUIApple
+        product: OuroFeelCore
+      # Ouro Feel's recorder, injected into the app at launch from this bundle (simulator only), so Release never
+      # links it.
+      - package: OuroUIApple
+        product: OuroFeelRecorderInjectable
+        embed: true
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: bot.ouro.gatefold.uitests
