@@ -153,7 +153,7 @@ struct ReaderChrome: View {
                             .buttonStyle(.plain)
                             .accessibilityLabel("Share")
                             .accessibilityIdentifier("reader.share")
-                            PillButton(systemName: "textformat.size", label: "Your Page", id: "reader.appearance") { showAppearance = true }
+                            PillButton(systemName: "textformat.size", label: "Your Page", id: "reader.appearance") { readerLog.notice("probe84: appearance opening"); DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { showAppearance = true } }
                         }
                         .padding(.vertical, 4)
                         .readerGlass(model.theme.background.opacity(0.7), interactive: true, in: .capsule)
@@ -341,7 +341,7 @@ struct TabletopDeck: View {
                     id: "deck.bookmark",
                     tint: model.isBookmarked ? model.theme.accent : nil
                 ) { Task { await model.toggleBookmark() } }
-                GlassIconButton(systemName: "circle.lefthalf.filled", label: "Appearance", id: "deck.appearance") { showAppearance = true }
+                GlassIconButton(systemName: "circle.lefthalf.filled", label: "Appearance", id: "deck.appearance") { readerLog.notice("probe84: appearance opening"); DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { showAppearance = true } }
             }
         }
         .padding(.horizontal, 24)
