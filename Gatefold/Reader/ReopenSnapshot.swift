@@ -381,12 +381,3 @@ enum ReopenTurn {
         return nil
     }
 }
-
-/// Whether a curl dragged and let go turns the page or springs back.
-enum CurlRelease {
-    /// A flick (over 250 pt/s the turn's way) turns it, and so does a drag a quarter of the way across.
-    static func completes(forward: Bool, dx: CGFloat, width: CGFloat, velocity v: CGFloat, stillFor: CFTimeInterval) -> Bool {
-        if forward { return v < -250 || (v < 250 && dx < -width * 0.25) }
-        return v > 250 || (v > -250 && dx > width * 0.25)
-    }
-}
