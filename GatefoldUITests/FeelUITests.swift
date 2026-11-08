@@ -149,6 +149,33 @@ final class FeelUITests: XCTestCase {
     // `.moveOnce` turns and jumps with `feel.placeFights(_:read:)` (a late restore or a re-sent jump after his own move),
     // and the turns' films with `film.flickers(of:)`, keeping `judgeGesture` only for what those do not cover.
 
+    /// Refreshes in a row an element must hold still (within half a point) to count as landed: counted in the app's own
+    /// drawn frames, never in time, so a starved runner that draws less often still judges the same way.
+    private static let restRefreshes = 12
+    /// The most refreshes a sheet may travel before it lands: 36 is 0.6 s at 60 Hz, a little over UIKit's own sheet.
+    private static let landingRefreshes = 36
+
+    /// Films `key` with no input until its last `restRefreshes` refreshes held still (at most ten films).
+    private func waitUntilStill(_ key: String) {
+        for _ in 0..<10 {
+            let track = feel.recordedFilm([key]) {}.track(key)
+            guard let last = track.last else { continue }
+            if track.reversed().prefix(while: { FeelFilm.distance($0.frame, last.frame) <= 0.5 }).count >= Self.restRefreshes { return }
+        }
+    }
+
+    /// How `key` landed in `film`, in refreshes: from the first that moved it to the first of the run it then held still
+    /// for, and how long that run is. Nil when it never moved.
+    private func landing(_ film: FeelFilm, _ key: String) -> (travel: Int, still: Int)? {
+        let track = film.track(key)
+        guard let first = track.first,
+              let start = track.firstIndex(where: { FeelFilm.distance($0.frame, first.frame) > 0.5 }) else { return nil }
+        let last = track[track.count - 1].frame
+        var rest = track.count - 1
+        while rest > start, FeelFilm.distance(track[rest - 1].frame, last) <= 0.5 { rest -= 1 }
+        return (rest - start, track.count - rest)
+    }
+
     /// What the reader is meant to do after a gesture: move once, or stay.
     private enum Expect { case moveOnce, stay }
 
@@ -488,6 +515,21 @@ final class FeelUITests: XCTestCase {
         judgeSeen(film.snaps(of: "Done", appearing: true), name: "contents-snaps", film: film)
         judgeSeen(film.jumps(of: "Done"), name: "contents-jumps", film: film)
         record(film.settles("Done", within: 1.0), name: "contents-settles")
+        // The same landing in refreshes. Recorded, not judged, until a run on a quiet runner (after the web view leak fix)
+        // says whether CI's 1.7-2.2 s landings are the app or the runner.
+        let landed = landing(film, "Done")
+        let landedFindings: [FeelFinding] = {
+            guard let landed else { return [.couldNotCheck("Contents: Done never moved in the film")] }
+            if landed.still < Self.restRefreshes { return [FeelFinding(what: "Contents was still moving when the film ended (\(landed.travel) refreshes)")] }
+            if landed.travel > Self.landingRefreshes { return [FeelFinding(what: "Contents took \(landed.travel) refreshes to land (limit \(Self.landingRefreshes))")] }
+            return []
+        }()
+        record(FeelResult.judged(check: FeelGenre.settleTime.rawValue,
+                                 passing: "Contents landed in \(landed?.travel ?? 0) refreshes",
+                                 failing: { _ in "Contents did not land within \(Self.landingRefreshes) refreshes" },
+                                 measures: ["refreshes": Double(landed?.travel ?? -1), "cadence": film.cadence],
+                                 findings: landedFindings, environment: feel.environment),
+               name: "contents-landing-refreshes")
         XCTAssertTrue(done.waitForExistence(timeout: 15), "Contents opened, with a visible way back")
         done.tap()
         _ = done.waitForNonExistence(timeout: 10)
@@ -499,11 +541,10 @@ final class FeelUITests: XCTestCase {
         }
         expectGesture("Contents opened and pulled down", .stay) {
             XCTAssertTrue(openContents(), "Contents opened")
-            // Pull once Contents has come to rest, as a person does: UIKit ignores a pull while the sheet is still
-            // travelling in, and on CI's starved runners it took 1.7-2.2 s to land (contents-settles), so a pull the
-            // moment Done exists sometimes came too early (gatefold#68's Duo, run 42502541231). The film ends once Done
-            // has held still for half a second.
-            _ = feel.recordedFilm(["Done"]) {}
+            // Pull once Contents has landed, as a person does: UIKit ignores a pull while the sheet is still travelling
+            // in, and on CI's starved runners it took 1.7-2.2 s to land (contents-settles), so a pull the moment Done
+            // existed sometimes came too early (gatefold#68's Duo, run 42502541231).
+            waitUntilStill("Done")
             // From the sheet's bar, so the pull moves the sheet rather than scrolling its list.
             let bar = app.navigationBars.firstMatch
             let from = bar.coordinate(withNormalizedOffset: CGVector(dx: 0.05, dy: 0.5))
