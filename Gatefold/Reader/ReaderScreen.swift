@@ -404,19 +404,20 @@ struct ReaderScreen: View {
             // UI tests switch posture at runtime, so one test can walk every posture. Top-centre, at the
             // top of the page frame: never in a turn zone, where they swallowed a test's edge taps on
             // a short spread (the unfolded Duo's mid-height sat inside them).
+            let switches = TestPostureSwitches.frame(pageFrame: layout.pageFrame, count: Posture.allCases.count)
             HStack(spacing: 0) {
                 ForEach(Posture.allCases, id: \.self) { posture in
                     Button {
                         readerLog.notice("debug posture \(posture.rawValue, privacy: .public)")
                         forced = posture
                     } label: {
-                        Color.clear.frame(width: 44, height: 44).contentShape(Rectangle())
+                        Color.clear.frame(width: TestPostureSwitches.button, height: TestPostureSwitches.button).contentShape(Rectangle())
                     }
                     .accessibilityLabel(posture.rawValue)
                     .accessibilityIdentifier("debug.posture.\(posture.rawValue)")
                 }
             }
-            .offset(x: layout.pageFrame.midX - CGFloat(Posture.allCases.count) * 22, y: layout.pageFrame.minY + 4)
+            .offset(x: switches.minX, y: switches.minY)
         }
     }
 

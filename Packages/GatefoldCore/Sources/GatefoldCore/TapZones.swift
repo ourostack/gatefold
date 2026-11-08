@@ -30,3 +30,15 @@ public enum ScrubberIntent {
         abs(translation.width) >= minimumDrag && abs(translation.width) > abs(translation.height)
     }
 }
+
+/// Where the UI tests' posture switches sit: top-centre on the page, out of every turn zone. In the
+/// left turn zone at mid-height they swallowed the tests' back-turn taps and right swipes (feel-ci's
+/// folded Duo, the iPad spread at x 0.07).
+public enum TestPostureSwitches {
+    public static let button: CGFloat = 44
+
+    public static func frame(pageFrame: CGRect, count: Int) -> CGRect {
+        let width = CGFloat(count) * button
+        return CGRect(x: pageFrame.midX - width / 2, y: pageFrame.minY + 4, width: width, height: button)
+    }
+}
