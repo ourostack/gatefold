@@ -171,6 +171,9 @@ final class ReaderModel {
     var tabletBands: TabletPage.Bands?
     /// For UI tests: how the last turn landed: "landed <n> leaf <frames> page <frames> in place|moved".
     var turnPlacement = "none"
+    /// UI tests (#94): "1" while the web view of the page in view is still loading after the page
+    /// showed, "0" once it has finished, "" before the page shows.
+    var pageLoadingProbe = ""
     /// For UI tests: how far a spread's outer page ever strayed from its rest, frame by frame, from the
     /// turn's last leg until 0.5 s after it landed: "settle <n> frames <k> worst <pt> pt".
     var turnSettle = "none"
@@ -644,6 +647,7 @@ final class ReaderModel {
             Task { [weak self] in await self?.host?.logTypography() }
             readerLog.notice("first page ready after \(Date().timeIntervalSince(self.isWarming ? self.openedAt : self.askedAt), privacy: .public) s\(self.isWarming ? " (behind the shelf)" : "", privacy: .public)")
             showPage()
+            host?.watchPageLoad()
         }
     }
     private var revealing = false
@@ -748,6 +752,7 @@ final class ReaderModel {
             guard !pageReady, !isClosed else { return }
             readerLog.notice("first page forced ready after \(Date().timeIntervalSince(self.openedAt), privacy: .public) s")
             showPage()
+            host?.watchPageLoad()
         }
     }
 

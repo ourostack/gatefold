@@ -1808,6 +1808,63 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     }
 
     /// Readium's own loading spinner is showing: the page in view hasn't loaded yet.
+    /// #94: watches the web view of the page in view after the first page shows, for up to 120 s:
+    /// how long it stays loading (WKWebView.isLoading, which keeps Readium's spinner up until the
+    /// page's `load` event) and, while it does, which of its images and stylesheets are still out
+    /// (file names only, never the book's words).
+    func watchPageLoad() {
+        pageLoadWatch?.cancel()
+        pageLoadWatch = Task { @MainActor [weak self] in
+            let started = ContinuousClock.now
+            var reported = Set<Int>()
+            for look in 0..<480 {
+                guard let self, !Task.isCancelled else { return }
+                let web = self.webViewInView()
+                let loading = web?.isLoading ?? false
+                if LaunchOptions.isUITest { self.weakModel?.pageLoadingProbe = loading ? "1" : "0" }
+                let second = ReaderModel.ms(since: started) / 1000
+                if !loading {
+                    readerLog.notice("loadwatch: the page in view finished loading \(ReaderModel.ms(since: started), privacy: .public) ms after it showed (\(look, privacy: .public) looks), counters \(LaunchOptions.counters ?? Self.counters, privacy: .public)")
+                    return
+                }
+                if [2, 5, 15, 30, 60].contains(second), !reported.contains(second), let web {
+                    reported.insert(second)
+                    let script = """
+                    (function() {
+                      function name(u) { try { return new URL(u, location.href).pathname.split('/').pop(); } catch (e) { return '?'; } }
+                      var images = Array.from(document.images).filter(function(i) { return !i.complete; }).map(function(i) { return name(i.currentSrc || i.src); });
+                      var sheets = Array.from(document.querySelectorAll('link[rel~=stylesheet]')).filter(function(l) { return !l.sheet; }).map(function(l) { return name(l.href); });
+                      var fonts = document.fonts ? document.fonts.status : 'n/a';
+                      return document.readyState + '|' + document.images.length + '|' + images.slice(0, 8).join(',') + '|' + sheets.join(',') + '|' + fonts + '|' + name(location.href);
+                    })()
+                    """
+                    let result = try? await web.evaluateJavaScript(script) as? String
+                    readerLog.notice("loadwatch: still loading \(second, privacy: .public) s after the page showed: readyState|images|pending images|pending sheets|fonts|file = \(result ?? "no answer", privacy: .public); counters \(LaunchOptions.counters ?? Self.counters, privacy: .public)")
+                }
+                try? await Task.sleep(for: .milliseconds(250))
+            }
+            readerLog.notice("loadwatch: the page in view was still loading 120 s after it showed")
+        }
+    }
+    private var pageLoadWatch: Task<Void, Never>?
+
+    /// The web view showing the page, the one that covers most of the navigator's view.
+    private func webViewInView() -> WKWebView? {
+        let host = navigator.view!
+        var best: (WKWebView, CGFloat)?
+        func walk(_ v: UIView) {
+            if let w = v as? WKWebView {
+                let f = w.convert(w.bounds, to: host).intersection(host.bounds)
+                let area = f.isNull ? 0 : f.width * f.height
+                if area > (best?.1 ?? 0) { best = (w, area) }
+                return
+            }
+            v.subviews.forEach(walk)
+        }
+        walk(host)
+        return best?.0
+    }
+
     var isLoadingPage: Bool {
         if heldLoadLooks > 0 {
             heldLoadLooks -= 1
