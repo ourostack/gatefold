@@ -195,7 +195,7 @@ final class TwoStepJumpPage: ReaderPage {
             app.library.book(ReaderSyncTests.frankenstein.fastHash)?.locatorJSON.flatMap { try? Locator(jsonString: $0) }
         }
         // Waited on as events: the owed record runs in its own task.
-        for _ in 0..<200 where model.placeOwed {
+        for _ in 0..<200 where savedPlace()?.locations.progression != target.locations.progression || model.placeOwed {
             try await Task.sleep(for: .milliseconds(25))
         }
         #expect(!model.placeOwed, "the reflow still owes a place")
