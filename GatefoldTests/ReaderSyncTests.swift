@@ -35,9 +35,12 @@ final class ScriptedPage: ReaderPage {
         if let words = locator.text.highlight {
             visibleText = showsWords(locator) ? "the lines above the place. " + words + " and on down the page" : "a page of something else entirely"
         }
-        if let model { Task { await model.locationDidChange(landed) } }
+        if reportsOnGo, let model { Task { await model.locationDidChange(landed) } }
         return true
     }
+
+    /// Readium reports where a jump took it on its own (off: a test sends the reports itself, in order).
+    var reportsOnGo = true
 
     func go(to link: ReadiumShared.Link) async {}
 
@@ -75,7 +78,21 @@ final class ScriptedPage: ReaderPage {
     /// How long reading the first words on screen takes (the web view answers in its own time).
     var anchorDelay: Duration = .zero
 
+    /// Reads of the first words on screen so far.
+    private(set) var anchorReads = 0
+    /// The next read waits until `releaseAnchor()`: two reports' reads can come back out of order.
+    var holdNextAnchor = false
+    private var heldAnchor: CheckedContinuation<Void, Never>?
+    /// A read is parked in `holdNextAnchor`.
+    var isHoldingAnchor: Bool { heldAnchor != nil }
+    func releaseAnchor() { heldAnchor?.resume(); heldAnchor = nil }
+
     func currentAnchor() async -> (ReadingAnchor, Locator)? {
+        anchorReads += 1
+        if holdNextAnchor {
+            holdNextAnchor = false
+            await withCheckedContinuation { heldAnchor = $0 }
+        }
         if anchorDelay > .zero { try? await Task.sleep(for: anchorDelay) }
         guard !withholdAnchor, let here = currentLocation else { return nil }
         let anchor = ReadingAnchor(href: here.href.string, progression: here.locations.progression ?? 0, text: nil)
@@ -278,6 +295,8 @@ final class ScriptedPage: ReaderPage {
     @Test func aSecondReportAfterAKeptJumpLeavesThePlace() async throws {
         let f = try await Self.make(remote: { _, _ in nil })
         await f.model.load()
+        // The test sends the jump's reports itself, so no third one races them.
+        f.page.reportsOnGo = false
         await f.model.go(toProgression: 0.5, rememberBack: false)
         let jumped = try #require(f.page.currentLocation)
         await f.model.locationDidChange(jumped)
@@ -296,16 +315,49 @@ final class ScriptedPage: ReaderPage {
     @Test func aReportDuringAJumpsWriteLeavesThePlace() async throws {
         let f = try await Self.make(remote: { _, _ in nil })
         await f.model.load()
+        // The test sends the jump's reports itself, so no third one races them.
+        f.page.reportsOnGo = false
         await f.model.go(toProgression: 0.5, rememberBack: false)
         let jumped = try #require(f.page.currentLocation)
-        // Both reports wait on the web view for his words, as they do on a device.
-        f.page.anchorDelay = .milliseconds(150)
-        async let first: Void = f.model.locationDidChange(jumped)
-        async let second: Void = f.model.locationDidChange(Self.boundary(of: jumped))
-        _ = await (first, second)
-        try await Task.sleep(for: .milliseconds(100))
+        // Both reports wait on the web view for his words, as they do on a device, and the boundary's read
+        // comes back first (a busy runner reordered them: #82 kept the boundary, progression 0). Ordered by
+        // the page's reads, not by time: the jump's report holds in its read until the boundary's is done.
+        f.page.holdNextAnchor = true
+        let reads = f.page.anchorReads
+        let first = Task { await f.model.locationDidChange(jumped) }
+        for _ in 0..<10_000 where !f.page.isHoldingAnchor { await Task.yield() }
+        try #require(f.page.isHoldingAnchor && f.page.anchorReads == reads + 1, "the jump's report isn't the read held")
+        await f.model.locationDidChange(Self.boundary(of: jumped))
+        f.page.releaseAnchor()
+        // A write is synchronous: once both reports have returned, the place is what was kept.
+        await first.value
         let saved = try #require(f.app.library.book(Self.frankenstein.fastHash)?.locatorJSON.flatMap { try? Locator(jsonString: $0) })
         #expect(saved.locations.progression == jumped.locations.progression, "a report during the jump's write moved the saved place")
+        f.model.close()
+    }
+
+    /// The other order: a two-step jump reports its file's start first, then (while that report is
+    /// still reading the page) the place itself. The place is what he sees, so it is kept, not the start.
+    @Test func aJumpsStartReportThenItsPlaceKeepsThePlace() async throws {
+        let f = try await Self.make(remote: { _, _ in nil })
+        await f.model.load()
+        f.page.reportsOnGo = false
+        await f.model.go(toProgression: 0.5, rememberBack: false)
+        let place = try #require(f.page.currentLocation)
+        let start = Self.boundary(of: place)
+        f.page.currentLocation = start
+        f.page.holdNextAnchor = true
+        let reads = f.page.anchorReads
+        let first = Task { await f.model.locationDidChange(start) }
+        for _ in 0..<10_000 where !f.page.isHoldingAnchor { await Task.yield() }
+        try #require(f.page.isHoldingAnchor && f.page.anchorReads == reads + 1, "the start's report isn't the read held")
+        // The page reaches the place and says so while the start's read is out.
+        f.page.currentLocation = place
+        await f.model.locationDidChange(place)
+        f.page.releaseAnchor()
+        await first.value
+        let saved = try #require(f.app.library.book(Self.frankenstein.fastHash)?.locatorJSON.flatMap { try? Locator(jsonString: $0) })
+        #expect(saved.locations.progression == place.locations.progression, "the jump's file start was kept, not the place it reached")
         f.model.close()
     }
 
