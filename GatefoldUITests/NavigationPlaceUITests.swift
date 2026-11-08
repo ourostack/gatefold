@@ -168,7 +168,7 @@ final class NavigationPlaceUITests: XCTestCase {
         if extra.contains("-GatefoldHoldOldPageLoad") {
             XCTAssertTrue(app.descendants(matching: .any)["reader.oldPageHeld"].exists, "the old page's held load armed")
         }
-        app.terminate()
+        app.quit()
         return (move ?? reads, back ?? reads)
     }
 
