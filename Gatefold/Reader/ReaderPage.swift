@@ -11,6 +11,8 @@ protocol ReaderPage: AnyObject {
     func go(to link: ReadiumShared.Link) async
     /// What's on screen now: the resource, its progression range and the visible text.
     func visibleRange() async -> VisibleRange?
+    /// The page on screen, start and end from one live read, in the document it names (a jump's landing).
+    func pageRange() async -> VisibleRange?
     /// Where `quote` is in the resource on screen, as a progression; nil when it isn't there.
     func progression(of quote: String) async -> Double?
     /// The first words on the page the reader is on.
@@ -37,6 +39,7 @@ extension ReaderPage {
     func dropStandby() {}
     func promoteStandby(for locator: Locator) async -> Bool { false }
     func screenGeometry() async -> (href: String, geometry: ScreenPageGeometry)? { nil }
+    func pageRange() async -> VisibleRange? { await visibleRange() }
     func countPages(_ hrefs: [String], record: @escaping @MainActor (String, Int) -> Void, finished: @escaping @MainActor () -> Void) {}
     func stopCounting() {}
 }

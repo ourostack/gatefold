@@ -60,13 +60,29 @@ private final class ColdPage {
     }
 
     /// Run 42418233954: a jump to 0.31 counted the chapter's file start, 0.3003, as landed, within the
-    /// old 0.015 of the book. Here the file start is six pages short of the target's page.
-    @Test func aFileStartJustShortOfTheTargetIsNotALanding() async {
+    /// old 0.015 of the book. Here the target is just past the file's first page, so the file start is
+    /// the page right before it, and it is sent again until its own page is up.
+    @Test func aFileStartJustShortOfTheTargetIsSentAgain() async {
         let page = ColdPage(loadsAfterReads: 60)
-        let landed = await JumpLanding.land(target: page.place(0.31), go: { page.go(0.31) }, visible: { page.visible() }, beat: {})
+        let landed = await JumpLanding.land(target: page.place(0.051), go: { page.go(0.051) }, visible: { page.visible() }, beat: {})
         #expect(landed)
-        #expect(page.start == page.pageStart(0.31))
+        #expect(page.start == page.pageStart(0.051))
         #expect(page.jumps > 1)
+    }
+
+    /// A target at exactly the file start page's end is the next page's, not the file start's.
+    @Test func aTargetAtAPagesEndIsTheNextPages() async {
+        let page = ColdPage(loadsAfterReads: nil)
+        let landed = await JumpLanding.land(target: page.place(0.05), go: { page.go(0.05) }, visible: { page.visible() }, beat: {})
+        #expect(!landed)
+    }
+
+    /// A page that can't say where it is (still loading) is never a landing.
+    @Test func aPageWithNoRangeIsNotALanding() async {
+        let page = ColdPage(loadsAfterReads: 0)
+        let landed = await JumpLanding.land(target: page.place(0.02), go: { page.go(0.02) }, visible: { page.reads += 1; return nil }, beat: {})
+        #expect(!landed)
+        #expect(page.reads == JumpLanding.reads)
     }
 
     /// A target on its file's first page is on screen at the file's start: it lands at once, even on a

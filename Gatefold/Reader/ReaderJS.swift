@@ -125,6 +125,23 @@ enum ReaderJS {
           if (!norm(highlight)) { return null; }
           return { highlight: highlight, before: text.substr(Math.max(0, start - 32), Math.min(32, start)), heading: headingBefore(node), contents: contentsBefore(node, ids) };
         },
+        // The page on screen as one read of the web view, for a jump's landing (`JumpLanding`): where it
+        // starts and ends in its document, as progressions, and which document that is. The start sits
+        // two pixels early, since Readium snaps a jump one pixel past its place. Right-to-left scrolls
+        // count from the right, so the offset is taken whole. Null until the document has loaded.
+        pageRange: function () {
+          if (document.readyState !== "complete") { return null; }
+          const se = document.scrollingElement;
+          var s = 0, e = 1;
+          if (se.scrollWidth > window.innerWidth + 1) {
+            const l = Math.abs(se.scrollLeft);
+            s = Math.max(0, (l - 2) / se.scrollWidth); e = Math.min(1, (l + window.innerWidth) / se.scrollWidth);
+          } else if (se.scrollHeight > window.innerHeight + 1) {
+            const t = se.scrollTop;
+            s = Math.max(0, (t - 2) / se.scrollHeight); e = Math.min(1, (t + window.innerHeight) / se.scrollHeight);
+          }
+          return JSON.stringify({ s: s, e: e, doc: location.pathname });
+        },
         // Where the page ends in the resource, as a progression (paginated and scrolled).
         pageEnd: function () {
           const se = document.scrollingElement;
@@ -280,6 +297,7 @@ enum ReaderJS {
     }
 
     static let pageEnd = "window.gatefold ? window.gatefold.pageEnd() : null"
+    static let pageRange = "window.gatefold ? window.gatefold.pageRange() : null"
     static let geometry = "window.gatefold ? window.gatefold.geometry() : null"
 
     static func sideOf(_ quote: String) -> String {
