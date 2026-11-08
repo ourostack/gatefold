@@ -205,4 +205,64 @@ final class TwoStepJumpPage: ReaderPage {
                 "kept at \(saved.locations.progression ?? -1) in its file, not the place he was sent to")
         model.close()
     }
+
+    /// The jump that never lands, owed by a reflow, with a touch before the reflow ends. `slide`: the
+    /// touch brought a report (a slide or a scroll, his own move); otherwise it only showed the controls.
+    private func owedJumpAfterATouch(slide: Bool) async throws -> (saved: Locator, target: Locator, readium: Locator) {
+        let sync = StubSync()
+        await sync.setLibrary(.success([ReaderSyncTests.frankenstein]))
+        await sync.setRemote(nil)
+        let app = AppModel(sync: sync, libraryRoot: URL.temporaryDirectory.appending(path: "launch-jump-touch-\(UUID().uuidString)"))
+        await app.library.refresh()
+        let publication = try await ReaderSyncTests.publication()
+        let book = try #require(app.library.book(ReaderSyncTests.frankenstein.fastHash))
+        let first = publication.readingOrder[0].url().string
+        let opening = Locator(href: try #require(AnyURL(string: first)), mediaType: .xhtml,
+                              locations: .init(progression: 0, totalProgression: 0))
+        let page = TwoStepJumpPage(at: opening, readsToLand: 2)
+        page.readiumCatchesUp = false
+        let model = ReaderModel(book: book, publication: publication, app: app, page: page, goTo: 0.31,
+                                jumpBeat: { await Task.yield() })
+        page.model = model
+        model.keeper.reflowWillBegin(.rotation)
+        model.reflowDidBegin()
+        let target = try #require(await ReaderSyncTests.locate(publication, 0.31))
+        await model.load()
+        #expect(model.placeOwed, "the reflow under way owes the jump's place")
+        let readium = try #require(page.currentLocation)
+        model.noteInteraction()
+        if slide {
+            await model.locationDidChange(readium)
+        } else {
+            model.controlsTapped(visible: true)
+        }
+        model.keeper.restoreDidComplete()
+        model.reflowDidFinish(visible: await page.visibleRange())
+        func savedPlace() -> Locator? {
+            app.library.book(ReaderSyncTests.frankenstein.fastHash)?.locatorJSON.flatMap { try? Locator(jsonString: $0) }
+        }
+        let want = slide ? readium : target
+        for _ in 0..<200 where savedPlace()?.locations.progression != want.locations.progression || model.placeOwed {
+            try await Task.sleep(for: .milliseconds(25))
+        }
+        let saved = try #require(savedPlace(), "the owed place was never kept")
+        model.close()
+        return (saved, target, readium)
+    }
+
+    /// A tap that only shows the controls is no move: the reflow still pays where he was sent.
+    @Test func aControlsTapUnderAReflowKeepsTheUnreachedJumpsTarget() async throws {
+        let (saved, target, _) = try await owedJumpAfterATouch(slide: false)
+        #expect(saved.href.string == target.href.string)
+        #expect(saved.locations.progression == target.locations.progression,
+                "kept at \(saved.locations.progression ?? -1), not the jump's target (\(target.locations.progression ?? -1))")
+    }
+
+    /// A slide or scroll (a touch that brought a report) is his own move: his page is the place, not the target.
+    @Test func aSlideUnderAReflowKeepsHisPageNotTheTarget() async throws {
+        let (saved, target, readium) = try await owedJumpAfterATouch(slide: true)
+        #expect(saved.locations.progression == readium.locations.progression,
+                "kept at \(saved.locations.progression ?? -1), not his page (\(readium.locations.progression ?? -1))")
+        #expect(saved.locations.progression != target.locations.progression)
+    }
 }
