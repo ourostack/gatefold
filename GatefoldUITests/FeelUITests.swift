@@ -634,11 +634,7 @@ final class FeelUITests: XCTestCase {
                                        summary: gone ? "a tap beside Appearance put it away" : "Appearance stayed after a tap beside it",
                                        findings: gone ? [] : [FeelFinding(what: "a tap on the page above the Appearance panel did not put it away")],
                                        environment: feel.environment)
-            // A known failure, strict (seen on the folded Duo and the iPad), so the check goes red the moment a fix lands
-            // and the expectation must be restored.
-            XCTExpectFailure("gatefold#62: a tap beside the Appearance panel does not put it away", strict: true) {
-                check(dismissal, name: "appearance-tap-beside")
-            }
+            check(dismissal, name: "appearance-tap-beside")
             if !gone { close() }
             hideChrome()
         }

@@ -116,8 +116,16 @@ struct ReaderScreen: View {
                 .frame(width: proxy.size.width, height: layout.deck == nil ? proxy.size.height : layout.pageFrame.height)
 
                 if showAppearance {
+                    // A tap anywhere beside the panel puts it away, as any overlay does, and never reaches the page
+                    // (no turn, no controls toggled) (gatefold#62). VoiceOver's escape does the same, on the panel.
+                    Color.clear
+                        .contentShape(.rect)
+                        .onTapGesture { showAppearance = false }
+                        .accessibilityHidden(true)
+                        .zIndex(4.5)
                     // Low over the page (or the spread), inside the safe area, the top of the page in view.
                     SettingsPanel(model: model, width: proxy.size.width) { showAppearance = false }
+                        .accessibilityAction(.escape) { showAppearance = false }
                         .frame(maxWidth: 560)
                         // A height cap takes all the room it's offered, so its own alignment decides
                         // where the panel sits in it: the foot (build 14 centred it, mid-screen on the
