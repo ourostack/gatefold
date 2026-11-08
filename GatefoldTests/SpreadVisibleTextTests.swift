@@ -105,8 +105,8 @@ struct SpreadVisibleTextTests {
             let html = Self.html(columns: 1, picture: false, words: 30)
                 .replacingOccurrences(of: "column-width: 100vw;", with: style + ";")
             let (window, web) = try await load(html, columns: nil)
+            defer { window.isHidden = true }
             #expect(await eval(web, "window.gatefold.pages()") as? Int == pages, "\(style) read as \(pages == 1 ? "two pages" : "one page")")
-            window.isHidden = true
         }
     }
 
