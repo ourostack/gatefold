@@ -1006,6 +1006,15 @@ final class ReaderModel {
 
     /// A jump keeps the old page on screen, dimmed, until the new one has painted, then cross-fades.
     private func veiled(riffle: Bool = false, forward: Bool = true, _ body: @escaping () async -> Void) async {
+        jumpsMade += 1
+        let jump = jumpsMade
+        jumpsInFlight += 1
+        defer {
+            jumpsInFlight -= 1
+            // Where the newest jump left the page: a jump overtaken meanwhile (a Back freed by its
+            // count) that lands late is put back here.
+            if jump == jumpsMade { lastLanded = page?.currentLocation }
+        }
         // Behind the cover placeholder there's nothing to veil.
         if let host, pageReady {
             await host.veiledJump(riffle: riffle && !reduceMotion && pageTurn == .curl, forward: forward, body)
@@ -1013,6 +1022,9 @@ final class ReaderModel {
             await body()
         }
     }
+    @ObservationIgnored private var jumpsMade = 0
+    @ObservationIgnored private var jumpsInFlight = 0
+    @ObservationIgnored private var lastLanded: Locator?
 
     /// Goes to another device's place: the exact spot when its CFI resolved, else its percent.
     /// Records the place once, when the page has settled, and never earlier than `target`.
@@ -1666,7 +1678,10 @@ final class ReaderModel {
         // A trip that came back after its reads ran out, with another move made since, takes no words:
         // the page is that move's now.
         guard moves == move else {
-            readerLog.notice("back: trip \(trip, privacy: .public) came back after another move; its words not taken")
+            // Readium has moved the page to this trip's place by now. With no newer jump still on its
+            // way (that one lands after and wins), the page goes back to where the newest left it.
+            readerLog.notice("back: trip \(trip, privacy: .public) came back after another move; page put back, its words not taken")
+            if jumpsInFlight == 0, !isClosed, let newest = lastLanded { _ = await page?.go(to: newest) }
             return
         }
         await captureAnchor()

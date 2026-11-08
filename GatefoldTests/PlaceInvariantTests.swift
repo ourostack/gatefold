@@ -209,4 +209,28 @@ import Testing
         #expect(!f.model.isGoingBack)
         f.model.close()
     }
+
+    /// A Back freed by its count, then a jump somewhere else, then the hung Back landing at last: the
+    /// page ends where the newer jump took it, not on the stale Back's place.
+    @Test func aBackThatLandsLateAfterAnotherJumpLeavesThatJumpsPage() async throws {
+        let f = try await S.make(remote: { _, _ in nil }, startAt: 0.05)
+        await f.model.load()
+        await f.model.locationDidChange(try #require(f.page.currentLocation))
+        await f.model.go(toProgression: 0.7, rememberBack: true)
+        f.model.backBeat = { await Task.yield() }
+        f.page.holdsJumps = true
+        let hung = Task { await f.model.goBack() }
+        for _ in 0..<(JumpLanding.reads * 4) where !f.model.isGoingBack { await Task.yield() }
+        for _ in 0..<(JumpLanding.reads * 4) where f.model.isGoingBack { await Task.yield() }
+        #expect(!f.model.isGoingBack, "the hung Back was never freed")
+        f.page.holdsJumps = false
+        // He jumps somewhere else meanwhile (Back would go to the same place as the hung one).
+        await f.model.go(toProgression: 0.4, rememberBack: true)
+        let chosen = try #require(f.page.currentLocation)
+        f.page.releaseJumps()
+        await hung.value
+        let at = f.page.currentLocation?.locations.totalProgression ?? -1
+        #expect(abs(at - (chosen.locations.totalProgression ?? 0)) < 0.001, "the late Back left the page on its own place")
+        f.model.close()
+    }
 }

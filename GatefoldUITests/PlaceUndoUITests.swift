@@ -59,9 +59,13 @@ final class PlaceUndoUITests: XCTestCase {
     private func showChrome() {
         // A tap under a jump's veil is swallowed (the veil is the page changing), so wait it out.
         XCTAssertTrue(el("reader.veil").waitForNonExistence(timeout: 60), "the veil lifts")
-        // Already up (a jump made from them leaves them up): a tap now would put them down.
+        // Already up (a jump made from them leaves them up), or still fading in: a tap now would put
+        // them down.
         let contents = app.buttons["reader.contents"]
-        if contents.exists && contents.isHittable { return }
+        if contents.exists {
+            let hittable = expectation(for: NSPredicate(format: "isHittable == true"), evaluatedWith: contents)
+            if XCTWaiter.wait(for: [hittable], timeout: 2) == .completed { return }
+        }
         el("reader.page").coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
         XCTAssertTrue(app.buttons["reader.contents"].waitForExistence(timeout: 5))
     }
@@ -141,6 +145,14 @@ final class PlaceUndoUITests: XCTestCase {
         let back = waitForWords(changingFrom: ahead, timeout: 15)
         XCTAssertEqual(opening(back), opening(first), "a tap at x 0.07 on the spread didn't turn back")
         XCTAssertFalse(app.buttons["reader.contents"].exists, "the tap showed the controls instead of turning")
+        // Again a little higher, where the old switches sat on a tall iPad (0.45 of the page down): the
+        // strip is gone at every height, not only at mid-height on a short one.
+        window.coordinate(withNormalizedOffset: CGVector(dx: 0.97, dy: 0.5)).tap()
+        let ahead2 = waitForWords(changingFrom: back, timeout: 15)
+        XCTAssertNotEqual(opening(ahead2), opening(back), "the second forward turn didn't happen")
+        window.coordinate(withNormalizedOffset: CGVector(dx: 0.07, dy: 0.47)).tap()
+        let back2 = waitForWords(changingFrom: ahead2, timeout: 15)
+        XCTAssertEqual(opening(back2), opening(first), "a tap at x 0.07, 0.47 down, on the spread didn't turn back")
     }
 
     /// A tap on the turn zone while a jump's veil is up is not a turn: the page lands where he chose.
