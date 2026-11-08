@@ -68,7 +68,7 @@ def start(name, prefix):
     print(f"Booting {kind} on {runtime} (simulator SDK {sdk})")
     d = state_dir()
     (d / f"{name}.started").write_text(f"{time.time()}\n")
-    (d / f"{name}.plan").write_text(f"{kind} {runtime}\n")
+    (d / f"{name}.plan").write_text(json.dumps({"kind": kind, "runtime": runtime, "prefix": prefix, "sdk": sdk}))
     # Detached, so it outlives this step: the UDID goes to <name>.udid, boot-sim.sh's exit code to <name>.status.
     subprocess.Popen(
         ["sh", "-c", '"$1" "$2" "$3" "$4" > "$5.udid"; echo $? > "$5.status"', "boot",
@@ -103,7 +103,10 @@ def unready(udid, runtimes, devices):
     runtime = next((rt for rt, ds in devices.items() for d in ds if d.get("udid") == udid), None)
     if runtime is None:
         return f"{udid} is no longer listed"
-    state = next(d.get("state") for d in devices[runtime] if d.get("udid") == udid)
+    device = next(d for d in devices[runtime] if d.get("udid") == udid)
+    state = device.get("state")
+    if device.get("isAvailable") is False:
+        return f"{udid} is unavailable ({device.get('availabilityError', 'no reason given')})"
     if state != "Booted":
         return f"{udid} is {state}, not Booted"
     if not any(r.get("identifier") == runtime and r.get("isAvailable") for r in runtimes):
@@ -117,7 +120,7 @@ def check(udid):
                                              text=True, timeout=120).stdout)["runtimes"]
         devices = json.loads(subprocess.run(["xcrun", "simctl", "list", "devices", "-j"], capture_output=True,
                                             text=True, timeout=120).stdout)["devices"]
-    except (subprocess.SubprocessError, ValueError, KeyError) as e:
+    except (OSError, subprocess.SubprocessError, ValueError, KeyError) as e:
         return f"simctl could not list the simulators ({e!r})"
     return unready(udid, runtimes, devices)
 
@@ -129,19 +132,45 @@ def export(udid):
             f.write(f"UDID={udid}\nDESTINATION=platform=iOS Simulator,arch={platform.machine()},id={udid}\n")
 
 
-def again(name, limit):
-    """Run boot-sim.sh once more, in the foreground, with the device and runtime `start` chose. (udid, outcome)"""
-    plan = state_dir() / f"{name}.plan"
-    if not plan.exists():
-        return "", "no record of what `start` booted"
-    kind, runtime = plan.read_text().split()
+RETRY_RESERVE = 300  # seconds of the wait kept back for one fresh device (gatefold#71)
+
+
+def quietly(*args):
     try:
-        out = subprocess.run([str(BOOT_SIM), f"{name}-2", kind, runtime], capture_output=True, text=True,
-                             timeout=limit)
+        subprocess.run(["xcrun", "simctl", *args], capture_output=True, timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        pass
+
+
+def again(name, limit):
+    """Run boot-sim.sh once more, in the foreground, for a fresh device. (udid, outcome)
+
+    It picks the runtime afresh, so a runtime that has gone is passed over for the newest one still available. Its
+    stderr goes to the log file, not a pipe: boot-sim.sh's watchdog `sleep` can outlive it holding stderr open, and
+    reading a pipe would wait for that sleep."""
+    d = state_dir()
+    plan_file = d / f"{name}.plan"
+    if not plan_file.exists():
+        return "", "no record of what `start` booted"
+    plan = json.loads(plan_file.read_text())
+    kind, runtime = plan["kind"], plan["runtime"]
+    try:
+        listing = subprocess.run(["xcrun", "simctl", "list", "runtimes", "-j"], capture_output=True, text=True,
+                                 timeout=120).stdout
+        runtime, kind = pick(json.loads(listing)["runtimes"], plan["prefix"], plan["sdk"])
+    except (SystemExit, OSError, subprocess.SubprocessError, ValueError, KeyError) as e:
+        print(f"Could not pick a runtime afresh ({e}); trying {runtime} again.")
+    print(f"Booting a fresh {kind} on {runtime}")
+    log = d / f"{name}-2.log"
+    try:
+        with open(log, "ab") as err:
+            out = subprocess.run([str(BOOT_SIM), f"{name}-2", kind, runtime], stdout=subprocess.PIPE, stderr=err,
+                                 stdin=subprocess.DEVNULL, timeout=limit)
     except subprocess.TimeoutExpired:
+        print(log.read_text(errors="replace")[-4000:] if log.exists() else "")
         return "", f"the fresh device did not boot within {int(limit)} s"
-    print(out.stderr[-4000:])
-    udid = out.stdout.strip()
+    print(log.read_text(errors="replace")[-4000:] if log.exists() else "")
+    udid = out.stdout.decode(errors="replace").strip()
     return udid, outcome(out.returncode, udid, limit)
 
 
@@ -159,7 +188,8 @@ def main(argv):
         return 0
     if len(argv) >= 3 and argv[0] == "wait":
         name, limit = argv[1], int(argv[3]) if len(argv) > 3 else 1200
-        code = wait_boot(name, limit)
+        # The first boot gets the limit less a reserve, so a fresh device always has time (gatefold#71).
+        code = wait_boot(name, max(limit - RETRY_RESERVE, 60))
         udid_file = state_dir() / f"{name}.udid"
         udid = udid_file.read_text().strip() if udid_file.exists() else ""
         said = outcome(code, udid, limit)
@@ -175,7 +205,9 @@ def main(argv):
             print(f"::warning title=Infrastructure retry::Booted, but {problem}. Booting a fresh device.")
             started = state_dir() / f"{name}.started"
             left = (float(started.read_text()) if started.exists() else time.time()) + limit - time.time()
-            udid, said = again(name, max(left, 60))
+            quietly("shutdown", udid)
+            quietly("delete", udid)
+            udid, said = again(name, max(left, RETRY_RESERVE))
             if said == "booted":
                 problem = check(udid)
                 if problem is None:
@@ -232,6 +264,8 @@ def selftest():
     assert unready("a", [{"identifier": "iOS-27-2", "isAvailable": False}], devs) == \
         "its runtime iOS-27-2 is no longer available", "gatefold#71: booted, then the runtime went"
     assert unready("a", [], devs) == "its runtime iOS-27-2 is no longer available"
+    gone = {"iOS-27-2": [{"udid": "a", "state": "Booted", "isAvailable": False, "availabilityError": "runtime profile not found"}]}
+    assert unready("a", rts, gone) == "a is unavailable (runtime profile not found)"
     print("ci-simulator: selftest passed")
     return 0
 

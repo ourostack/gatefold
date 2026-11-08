@@ -18,6 +18,8 @@ try_boot() {
   ( sleep 420; echo "bootstatus for $1 hung past 7 min" >&2; xcrun simctl shutdown "$1" >/dev/null 2>&1 ) >/dev/null &
   local watchdog=$!
   status="$(xcrun simctl bootstatus "$1" -b 2>&1)" || true
+  # The subshell's sleep too, so nothing outlives this script holding its stderr open.
+  pkill -P "$watchdog" 2>/dev/null || true
   kill "$watchdog" 2>/dev/null || true
   echo "$status" | tail -3 >&2
   [[ "$(booted "$1")" == "True" ]] && ! grep -q "Failed" <<<"$status"
