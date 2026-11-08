@@ -15,13 +15,14 @@ final class Probe118UITests: XCTestCase {
         "-GatefoldSignedIn", "YES", "-GatefoldAllowReopen", "YES",
     ]
 
-    private var done: XCUIElement { app.buttons.matching(NSPredicate(format: "label == 'Done' OR label == 'Close'")).firstMatch }
+    // Contents' own Done (an xmark); the reader's Close also reads "Close", so not matched by label.
+    private var done: XCUIElement { app.navigationBars.buttons["xmark"].firstMatch }
 
     private func openContents() -> Bool {
         app.descendants(matching: .any)["reader.page"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
         guard app.buttons["reader.contents"].waitForExistence(timeout: 5) else { return false }
         app.buttons["reader.contents"].tap()
-        guard done.waitForExistence(timeout: 15) else { return false }
+        guard done.waitForExistence(timeout: 15) else { print("PROBE118 no Done: bars \(app.navigationBars.count)"); return false }
         // Landed: Done's frame the same for ten reads in a row.
         var last = CGRect.null, same = 0
         for _ in 0..<200 where same < 10 {
