@@ -67,6 +67,8 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     private var panForward = true
     /// Set when the pan ends before the turn is ready; the preparing task finishes with it.
     private var panEnded: Bool?
+    /// When the finger last moved during a curl drag (media time): a finger that stopped before lifting isn't a flick.
+    private var panMovedAt: CFTimeInterval = 0
     private var columns = 1
 
     init(model: ReaderModel, publication: Publication, initialLocation: Locator?, preferences: EPUBPreferences) throws {
@@ -1427,6 +1429,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             let v = pan.velocity(in: view)
             panForward = v.x < 0
             panStart = point
+            panMovedAt = CACurrentMediaTime()
             if model.chromeVisible { model.setChrome(false) }
             panEnded = nil
             Task {
@@ -1437,18 +1440,12 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             }
         case .changed:
             updateFinger(point)
+            panMovedAt = CACurrentMediaTime()
         case .ended, .cancelled:
             let v = pan.velocity(in: view).x
-            let dx = point.x - panStart.x
-            let width = view.bounds.width
-            let complete: Bool
-            if pan.state == .cancelled {
-                complete = false
-            } else if panForward {
-                complete = v < -250 || (v < 250 && dx < -width * 0.25)
-            } else {
-                complete = v > 250 || (v > -250 && dx > width * 0.25)
-            }
+            let complete = pan.state != .cancelled
+                && CurlRelease.completes(forward: panForward, dx: point.x - panStart.x, width: view.bounds.width,
+                                         velocity: v, stillFor: CACurrentMediaTime() - panMovedAt)
             guard curl.isActive, curl.top != nil, curl.beneath != nil else {
                 panEnded = complete
                 return
