@@ -1569,6 +1569,8 @@ final class ReaderModel {
         // A touch that brought a report under the reflow was a slide or scroll, his own move: his page is
         // the place now, not an unreached jump's target. The report is dropped below and its touch stays
         // pending, so a tap for the controls before the reflow ends would otherwise bring the target back.
+        // A layout report between a tap's touch-down and its recognition looks the same and drops the
+        // target too: the rule outside reflows ("a report after a touch is his") errs the same way.
         if keeper.reflowing != nil, !leaving, touchedSinceLocation { owedJumpTarget = nil }
         guard keeper.reflowing == nil || leaving, !duringTurn else { return }
         // A reader still open keeps the debt for its reflow's end (`keepOwedPlace`).
