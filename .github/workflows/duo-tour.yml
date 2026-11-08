@@ -17,8 +17,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: duo-tour-${{ github.ref }}
-  cancel-in-progress: true
+  group: duo-tour-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   duo-tour:

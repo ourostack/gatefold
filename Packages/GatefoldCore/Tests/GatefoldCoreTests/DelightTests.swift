@@ -119,6 +119,13 @@ struct DisplayTitleTests {
 
 @Suite("The sync slip")
 struct SyncSlipTests {
+    @Test func hisOwnPlaceSaysWhichWayAndHowFar() {
+        #expect(SyncSlip.ownPlace(pagesAway: 3, passage: nil).detail == "3 pages on")
+        #expect(SyncSlip.ownPlace(pagesAway: -1, passage: nil).detail == "1 page back")
+        #expect(SyncSlip.ownPlace(pagesAway: nil, passage: nil).detail == "Jump back to it")
+        #expect(SyncSlip.ownPlace(pagesAway: 2, passage: nil).title == "Where you stopped reading")
+    }
+
     let now = Date(timeIntervalSince1970: 1_800_000_000)
 
     @Test func agesReadLikeSpeech() {
