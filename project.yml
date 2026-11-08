@@ -24,7 +24,7 @@ packages:
   # Ouro Feel, for the UI tests only (FeelUITests): the app never links it, nor its recorder. Exact, so a check never changes under us.
   OuroUIApple:
     url: https://github.com/ourostack/ouro-ui-apple
-    exactVersion: 0.3.6
+    exactVersion: 0.4.1
   GatefoldCloud:
     path: Packages/GatefoldCloud
 targets:
