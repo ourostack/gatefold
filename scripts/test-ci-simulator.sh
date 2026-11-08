@@ -18,7 +18,7 @@ case "$*" in
   "simctl list devices -j")
     list=""; for u in $(cat "$FAKE/udids" 2>/dev/null); do list="$list${list:+,}{\"udid\":\"$u\",\"state\":\"Booted\"}"; done
     echo "{\"devices\":{\"iOS-27-1\":[$list]}}" ;;
-  "simctl shutdown "*|"simctl delete "*) echo "$*" >> "$FAKE/cleaned" ;;
+  "simctl shutdown "*|"simctl delete "*|"simctl erase "*|"simctl boot "*|"simctl bootstatus "*) echo "$*" >> "$FAKE/simctl" ;;
   *) echo "fake xcrun: unexpected $*" >&2; exit 64 ;;
 esac
 FAKE
@@ -57,21 +57,24 @@ check "booted and its runtime is there" "" 0 0 dev1 "booted, and its runtime is 
 check "the runtime goes after the boot, a fresh device has it (gatefold#71)" "2" 0 0 dev2 "Booted, but its runtime iOS-27-1 is no longer available"
 check "the runtime stays gone" "2 3 4" 0 1 - "booted again, but its runtime iOS-27-1 is no longer available"
 check "the boot fails" "" 3 1 - "boot-sim.sh exited 3"
-# `ready`, after a step's own re-boot: runtime listing 1 is the check; 2 is the fresh device's pick; 3 its check.
-ready() {
-  local case_dir="$work/ready-$1"; mkdir -p "$case_dir/fake" "$case_dir/tmp"; : > "$case_dir/env"
+# `erase`, the cold step's erase: runtime listing 1 is the check; 2 is the fresh device's pick; 3 its check.
+erase_case() {
+  local case_dir="$work/erase-$1"; mkdir -p "$case_dir/fake" "$case_dir/tmp"; : > "$case_dir/env"
   echo "dev0" > "$case_dir/fake/udids"
   printf '{"kind": "iPad-Pro-13", "runtime": "iOS-27-1", "prefix": "iPad Pro 13-inch", "sdk": "27.1"}' > "$case_dir/tmp/plan.json"
   mkdir -p "$case_dir/tmp/ci-simulator"; cp "$case_dir/tmp/plan.json" "$case_dir/tmp/ci-simulator/gatefold-ipad.plan"
   local got code
   got="$(PATH="$work/bin:$PATH" FAKE="$case_dir/fake" FAKE_UNAVAIL_CALLS="$2" FAKE_BOOT_EXIT=0 \
     CI_SIMULATOR_BOOT_SIM="$work/boot-sim.sh" RUNNER_TEMP="$case_dir/tmp" GITHUB_ENV="$case_dir/env" \
-    python3 -I "$here/ci-simulator.py" ready gatefold-ipad dev0 2>"$case_dir/err")"; code=$?
-  if [ "$code" = "$3" ] && [ "${got:--}" = "$4" ]; then echo "ok   ready: $1"; else
-    echo "FAIL ready: $1: exit $code (want $3), printed '${got}' (want $4)"; tail -5 "$case_dir/err"; fails=$((fails + 1)); fi
+    python3 -I "$here/ci-simulator.py" erase gatefold-ipad dev0 2>"$case_dir/err")"; code=$?
+  if [ "$code" = "$3" ] && [ "${got:--}" = "$4" ]; then echo "ok   erase: $1"; else
+    echo "FAIL erase: $1: exit $code (want $3), printed '${got}' (want $4)"; tail -5 "$case_dir/err"; fails=$((fails + 1)); fi
+  # Whatever device it ends on was erased (never a fresh one tested unerased).
+  if [ "$3" = 0 ] && ! grep -qx "simctl erase $4" "$case_dir/fake/simctl"; then
+    echo "FAIL erase: $1: $4 was never erased"; fails=$((fails + 1)); fi
 }
-ready "the erased device is fine" "" 0 dev0
-ready "the runtime went during the erase (gatefold#71)" "1" 0 dev1
-ready "it stays gone" "1 2 3" 1 -
+erase_case "the erased device is fine" "" 0 dev0
+erase_case "the runtime went during the erase (gatefold#71)" "1" 0 dev1
+erase_case "it stays gone" "1 2 3" 1 -
 echo "$fails failed"
 [ "$fails" = 0 ]

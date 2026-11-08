@@ -18,8 +18,8 @@ bounds each bootstatus at 7 min so a hang falls through to its next attempt; the
 Before it passes, `wait` checks that the device is still Booted and its runtime is still listed as available: a
 runtime that fails to mount ("Malformed bundle") can vanish after the boot, and the test launch then fails with
 "runtime path not found" (gatefold#71). If not, it runs boot-sim.sh once more for a fresh device, on the time left.
-`ready <name> <udid>` runs the same check after a step re-boots the device itself (the cold step's erase), and
-prints the UDID to test on: that one, or one fresh device.
+`erase <name> <udid>` is the cold step's erase: shutdown, erase, boot and bootstatus, each bounded, then the same
+check; if the runtime went, one fresh device erased the same way. It prints the UDID to test on.
 Offline test: bash scripts/test-ci-simulator.sh (a fake xcrun and boot-sim.sh; no simulator).
 
 A prefix that is a whole device name ("iPhone Duo") picks that device only, never a sibling such as "iPhone Duo Pro".
@@ -177,6 +177,25 @@ def again(name, limit):
     return udid, outcome(out.returncode, udid, limit)
 
 
+ERASE_STEPS = [(("shutdown",), 120), (("erase",), 300), (("boot",), 300), (("bootstatus", "-b"), 420)]
+
+
+def erase(udid, steps=ERASE_STEPS):
+    """Shut down, erase, boot and wait for the device, each call bounded (a runtime that won't mount hangs bootstatus,
+    #57), then check it. "ready", or why not."""
+    for args, limit in steps:
+        cmd = (args[0], udid, *args[1:])
+        try:
+            out = subprocess.run(["xcrun", "simctl", *cmd], capture_output=True, text=True, timeout=limit)
+            print(f"simctl {' '.join(cmd)}: exit {out.returncode} {out.stderr.strip()[-300:]}")
+        except subprocess.TimeoutExpired:
+            print(f"simctl {' '.join(cmd)} hung past {limit} s")
+        except OSError as e:
+            return f"simctl could not run ({e!r})"
+    problem = check(udid)
+    return "ready" if problem is None else problem
+
+
 def main(argv):
     if argv == ["--selftest"]:
         return selftest()
@@ -189,24 +208,21 @@ def main(argv):
             (d / f"{argv[1]}.log").open("a").write(f"ci-simulator start failed: {e!r}\n")
             (d / f"{argv[1]}.status").write_text("97\n")
         return 0
-    if len(argv) == 3 and argv[0] == "ready":
-        # After a step re-boots the device itself (the cold step's erase), the same check: print the UDID to test on,
-        # this one or one fresh device (also written to $GITHUB_ENV for later steps), or fail (gatefold#71).
+    if len(argv) == 3 and argv[0] == "erase":
+        # The cold step: erase the booted device and boot it again, each simctl call bounded, then the same check.
+        # If its runtime went (gatefold#71), one fresh device, erased the same way, so the test still runs on an
+        # erased iPad (the bug showed after an erase, never on a new simulator). Prints the UDID; fails otherwise.
         name, udid = argv[1], argv[2]
-        problem = check(udid)
-        if problem is None:
-            print(udid)
-            return 0
-        print(f"::warning title=Infrastructure retry::After its re-boot, {problem}. Booting a fresh device.",
-              file=sys.stderr)
-        quietly("shutdown", udid)
-        quietly("delete", udid)
         with redirect_stdout(sys.stderr):
-            udid, said = again(name, 600)
-            if said == "booted":
-                problem = check(udid)
-                said = "booted" if problem is None else f"booted again, but {problem}"
-        if said == "booted":
+            said = erase(udid)
+            if said != "ready":
+                print(f"::warning title=Infrastructure retry::After the erase, {said}. Erasing a fresh device.")
+                quietly("shutdown", udid)
+                quietly("delete", udid)
+                udid, said = again(name, 600)
+                if said == "booted":
+                    said = erase(udid)
+        if said == "ready":
             export(udid)
             print(udid)
             return 0
