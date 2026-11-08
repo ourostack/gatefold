@@ -18,6 +18,9 @@ final class Probe118UITests: XCTestCase {
     // Contents' own Done (an xmark); the reader's Close also reads "Close", so not matched by label.
     private var done: XCUIElement { app.buttons["xmark"].firstMatch }
 
+    /// Reads of Done's frame between the sheet's bar appearing and the pull.
+    private var upReads = 0
+
     private func openContents() -> Bool {
         // The controls may already be up (a tap would put them down): tap only until Contents' button shows.
         for _ in 0..<4 where !app.buttons["reader.contents"].waitForExistence(timeout: 3) {
@@ -29,7 +32,9 @@ final class Probe118UITests: XCTestCase {
         guard done.waitForExistence(timeout: 15) else { print("PROBE118 no Done: bars \(app.navigationBars.count)"); return false }
         // Landed: Done's frame the same for ten reads in a row.
         var last = CGRect.null, same = 0
+        upReads = 0
         for _ in 0..<200 where same < 10 {
+            upReads += 1
             let f = done.frame
             same = f == last ? same + 1 : 0
             last = f
@@ -47,7 +52,7 @@ final class Probe118UITests: XCTestCase {
         from.press(forDuration: 0.05, thenDragTo: from.withOffset(CGVector(dx: 0, dy: window.height * fraction)),
                    withVelocity: velocity, thenHoldForDuration: 0)
         let gone = app.navigationBars.firstMatch.waitForNonExistence(timeout: 10)
-        print("PROBE118 \(name): gone=\(gone) window=\(window) bars=\(bars) start=\(start)")
+        print("PROBE118 \(name): gone=\(gone) upReads=\(upReads) window=\(window) bars=\(bars) start=\(start)")
         if !gone { done.tap(); _ = app.navigationBars.firstMatch.waitForNonExistence(timeout: 10) }
     }
 
