@@ -18,6 +18,7 @@ case "$*" in
   "simctl list devices -j")
     list=""; for u in $(cat "$FAKE/udids" 2>/dev/null); do list="$list${list:+,}{\"udid\":\"$u\",\"state\":\"Booted\"}"; done
     echo "{\"devices\":{\"iOS-27-1\":[$list]}}" ;;
+  "simctl shutdown "*|"simctl delete "*) echo "$*" >> "$FAKE/cleaned" ;;
   *) echo "fake xcrun: unexpected $*" >&2; exit 64 ;;
 esac
 FAKE
@@ -26,6 +27,8 @@ cat > "$work/boot-sim.sh" <<'FAKE'
 # Fake boot-sim.sh: a new UDID each call; exits $FAKE_BOOT_EXIT.
 n=$(( $(cat "$FAKE/boots" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$FAKE/boots"
 echo "booting $1 ($2 on $3)" >&2
+# Like the real one's watchdog: a sleep that outlives this script holding stderr (only the subshell is killed).
+( sleep 20; echo "watchdog" >&2 ) >/dev/null & w=$!; sleep 1; kill "$w"
 [ "${FAKE_BOOT_EXIT:-0}" = 0 ] || exit "$FAKE_BOOT_EXIT"
 echo "dev$n" >> "$FAKE/udids"; echo "dev$n"
 FAKE
@@ -35,21 +38,24 @@ fails=0
 # check <name> <unavailable listing calls> <boot exit> <expected exit> <expected UDID or -> <expected text>
 check() {
   local case_dir="$work/$1"; mkdir -p "$case_dir/fake" "$case_dir/tmp"
+  local began; began=$(date +%s)
   : > "$case_dir/env"
   out="$(PATH="$work/bin:$PATH" FAKE="$case_dir/fake" FAKE_UNAVAIL_CALLS="$2" FAKE_BOOT_EXIT="$3" \
     CI_SIMULATOR_BOOT_SIM="$work/boot-sim.sh" RUNNER_TEMP="$case_dir/tmp" GITHUB_ENV="$case_dir/env" \
     bash -c 'python3 -I "$0/ci-simulator.py" start gatefold-ipad "iPad Pro 13-inch" && python3 -I "$0/ci-simulator.py" wait gatefold-ipad "iPad Pro 13-inch" 30' "$here" 2>&1)"
   local code=$?
+  local took=$(( $(date +%s) - began ))
   local got; got="$(sed -n 's/^UDID=//p' "$case_dir/env")"
-  if [ "$code" = "$4" ] && [ "${got:--}" = "$5" ] && grep -qF -- "$6" <<<"$out"; then
+  # Well under the fake watchdog's 20 s: nothing waits on a process boot-sim.sh left behind.
+  if [ "$code" = "$4" ] && [ "${got:--}" = "$5" ] && grep -qF -- "$6" <<<"$out" && [ "$took" -lt 15 ]; then
     echo "ok   $1"
   else
-    echo "FAIL $1: exit $code (want $4), UDID ${got:--} (want $5), text '$6'"; echo "$out" | tail -15; fails=$((fails + 1))
+    echo "FAIL $1: exit $code (want $4), UDID ${got:--} (want $5), text '$6', took ${took}s (want under 15)"; echo "$out" | tail -15; fails=$((fails + 1))
   fi
 }
 check "booted and its runtime is there" "" 0 0 dev1 "booted, and its runtime is available"
 check "the runtime goes after the boot, a fresh device has it (gatefold#71)" "2" 0 0 dev2 "Booted, but its runtime iOS-27-1 is no longer available"
-check "the runtime stays gone" "2 3" 0 1 - "booted again, but its runtime iOS-27-1 is no longer available"
+check "the runtime stays gone" "2 3 4" 0 1 - "booted again, but its runtime iOS-27-1 is no longer available"
 check "the boot fails" "" 3 1 - "boot-sim.sh exited 3"
 echo "$fails failed"
 [ "$fails" = 0 ]
