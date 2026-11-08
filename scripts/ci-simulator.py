@@ -18,6 +18,8 @@ bounds each bootstatus at 7 min so a hang falls through to its next attempt; the
 Before it passes, `wait` checks that the device is still Booted and its runtime is still listed as available: a
 runtime that fails to mount ("Malformed bundle") can vanish after the boot, and the test launch then fails with
 "runtime path not found" (gatefold#71). If not, it runs boot-sim.sh once more for a fresh device, on the time left.
+`ready <name> <udid>` runs the same check after a step re-boots the device itself (the cold step's erase), and
+prints the UDID to test on: that one, or one fresh device.
 Offline test: bash scripts/test-ci-simulator.sh (a fake xcrun and boot-sim.sh; no simulator).
 
 A prefix that is a whole device name ("iPhone Duo") picks that device only, never a sibling such as "iPhone Duo Pro".
@@ -29,6 +31,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from contextlib import redirect_stdout
 from pathlib import Path
 
 BOOT_SIM = Path(os.environ.get("CI_SIMULATOR_BOOT_SIM")
@@ -186,6 +189,29 @@ def main(argv):
             (d / f"{argv[1]}.log").open("a").write(f"ci-simulator start failed: {e!r}\n")
             (d / f"{argv[1]}.status").write_text("97\n")
         return 0
+    if len(argv) == 3 and argv[0] == "ready":
+        # After a step re-boots the device itself (the cold step's erase), the same check: print the UDID to test on,
+        # this one or one fresh device (also written to $GITHUB_ENV for later steps), or fail (gatefold#71).
+        name, udid = argv[1], argv[2]
+        problem = check(udid)
+        if problem is None:
+            print(udid)
+            return 0
+        print(f"::warning title=Infrastructure retry::After its re-boot, {problem}. Booting a fresh device.",
+              file=sys.stderr)
+        quietly("shutdown", udid)
+        quietly("delete", udid)
+        with redirect_stdout(sys.stderr):
+            udid, said = again(name, 600)
+            if said == "booted":
+                problem = check(udid)
+                said = "booted" if problem is None else f"booted again, but {problem}"
+        if said == "booted":
+            export(udid)
+            print(udid)
+            return 0
+        print(f"::error title=Simulator did not boot::{said}. No app code ran.", file=sys.stderr)
+        return 1
     if len(argv) >= 3 and argv[0] == "wait":
         name, limit = argv[1], int(argv[3]) if len(argv) > 3 else 1200
         code = wait_boot(name, limit)
