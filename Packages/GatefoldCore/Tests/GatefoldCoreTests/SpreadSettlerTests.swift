@@ -242,6 +242,41 @@ struct SpreadSettlerTests {
     }
 }
 
+/// A jump he chose (Contents, a link, Back, the Cloud's offer) lands where the navigator puts the place's
+/// progression, and the place written is the words it shows. Every reopen of that place at the same size
+/// settles it (`keepOnLeft`, a restore). Build 21 (#46): the jump's spread was left as it landed, so with his
+/// words on its right page the reopen came back one side over, on a spread he never saw.
+@MainActor
+struct LandingSettleTests {
+    /// The spread a reopen of `wordsColumn` at this size lands on: a fresh layout, a restore.
+    private func reopened(columns: Int, wordsColumn: Int, pinnable: Bool) async -> String {
+        let page = FakeSpreads(columns: columns, wordsColumn: wordsColumn, pinnable: pinnable, startSpread: 0, relayoutAt: nil)
+        await page.goToSavedPlace()
+        _ = await SpreadSettler.keepOnLeft(page, current: { true }, purpose: .restore)
+        return "\(page.spread)|\(page.columns)"
+    }
+
+    @Test func aJumpSettledLikeARestoreIsTheSpreadEveryReopenShows() async {
+        var differ: [String] = []
+        var rawDiffer = 0
+        for wordsColumn in 40...47 {
+            for pinnable in [false, true] {
+                let landing = FakeSpreads(columns: 52, wordsColumn: wordsColumn, pinnable: pinnable, startSpread: 0, relayoutAt: nil)
+                await landing.goToSavedPlace()
+                let raw = "\(landing.spread)|\(landing.columns)"
+                // Behind the jump's veil, the landing is settled the way a restore is.
+                _ = await SpreadSettler.keepOnLeft(landing, current: { true }, purpose: .restore)
+                let settled = "\(landing.spread)|\(landing.columns)"
+                let back = await reopened(columns: 52, wordsColumn: wordsColumn, pinnable: pinnable)
+                if raw != back { rawDiffer += 1 }
+                if settled != back { differ.append("words \(wordsColumn) pinnable \(pinnable): saw \(settled), reopened \(back)") }
+            }
+        }
+        #expect(rawDiffer > 0, "an unsettled landing would already match every reopen")
+        #expect(differ.isEmpty, "\(differ.count) jumps reopened on another spread; first: \(differ.first ?? "")")
+    }
+}
+
 @MainActor
 private final class RestlessPage: SpreadSurface {
     var stillnessReads = 0
