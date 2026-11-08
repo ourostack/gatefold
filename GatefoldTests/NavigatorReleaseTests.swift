@@ -146,7 +146,7 @@ import WebKit
             host.removeFromParent()
             // Retired by the close itself, not by the model going away.
             #expect(host.navigator.parent == nil, "the closed reader's navigator is retired")
-            #expect(host.navigator.viewIfLoaded?.subviews.isEmpty ?? true, "and its pages are out")
+            #expect(host.navigator.viewIfLoaded?.subviews.isEmpty ?? true, "and its pagination view is out of it (not proof that no page is made later: #116)")
             models.append(model)
             model = nil
         }
