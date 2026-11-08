@@ -499,6 +499,11 @@ final class FeelUITests: XCTestCase {
         }
         expectGesture("Contents opened and pulled down", .stay) {
             XCTAssertTrue(openContents(), "Contents opened")
+            // Pull once Contents has come to rest, as a person does: UIKit ignores a pull while the sheet is still
+            // travelling in, and on CI's starved runners it took 1.7-2.2 s to land (contents-settles), so a pull the
+            // moment Done exists sometimes came too early (gatefold#68's Duo, run 42502541231). The film ends once Done
+            // has held still for half a second.
+            _ = feel.recordedFilm(["Done"]) {}
             // From the sheet's bar, so the pull moves the sheet rather than scrolling its list.
             let bar = app.navigationBars.firstMatch
             let from = bar.coordinate(withNormalizedOffset: CGVector(dx: 0.05, dy: 0.5))
