@@ -128,7 +128,13 @@ final class PositionUITests: XCTestCase {
     }
 
     func testFontChangeKeepsThePlace() {
-        launch(["-GatefoldSheet", "appearance"])
+        // Appearance opened after the launch's turn: open from the start, it would take that tap (a tap beside the
+        // panel puts it away, gatefold#62).
+        launch()
+        for _ in 0..<4 where !app.buttons["reader.appearance"].waitForExistence(timeout: 5) {
+            app.descendants(matching: .any)["reader.page"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        }
+        app.buttons["reader.appearance"].tap()
         let larger = app.buttons["appearance.larger"]
         XCTAssertTrue(larger.waitForExistence(timeout: 10))
         expectAnchorKept("larger text") { larger.tap() }
