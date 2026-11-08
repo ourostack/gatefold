@@ -192,9 +192,15 @@ final class RotationRepro: XCTestCase {
         _ = settle(60)
         sleep(4)
         let afterTurns = settle(10)
-        let turnedSame = !turned.isEmpty && head(afterTurns) == head(turned)
+        // His place is the page's first whole word (`ReaderJS.anchor`): a spread that opens on the end of a
+        // word hyphenated across the turn reopens on the word after it, the fragment left on the page before.
+        let turnedWhole = String(turned.trimmingCharacters(in: .whitespacesAndNewlines)
+            .drop(while: { !$0.isWhitespace }).drop(while: \.isWhitespace))
+        let exact = head(afterTurns) == head(turned)
+        let fromWholeWord = !exact && !turnedWhole.isEmpty && head(afterTurns) == head(turnedWhole)
+        let turnedSame = !turned.isEmpty && (exact || fromWholeWord)
         let turnedAt = afterTurns.range(of: head(turned)).map { afterTurns.distance(from: afterTurns.startIndex, to: $0.lowerBound) } ?? -1
-        note("round turned \(turnedSame ? "GREEN" : "RED") startsSame=\(turnedSame) hisStartAt=\(turnedAt) turnedHead=\(hash(head(turned))) reopenedHead=\(hash(head(afterTurns)))")
+        note("round turned \(turnedSame ? "GREEN" : "RED") startsSame=\(turnedSame) fromWholeWord=\(fromWholeWord) hisStartAt=\(turnedAt) turnedHead=\(hash(head(turned))) wholeHead=\(hash(head(turnedWhole))) reopenedHead=\(hash(head(afterTurns)))")
         XCTAssertTrue(turnedSame, "after two turns: reopened on the spread he turned to")
         assertNoVisibleSettleMove("after two turns")
         // Ended here, not by XCTest at teardown, where #44 recorded "Failed to terminate" (gatefold#76).
