@@ -145,9 +145,13 @@ final class FeelUITests: XCTestCase {
         return FeelPlace.compare(start: start, after: after)
     }
 
-    // TODO(ouro-ui-apple 0.3.6): when it is tagged, judge the `.stay` gestures with `feel.placeHeld(across:read:)`, the
-    // `.moveOnce` turns and jumps with `feel.placeFights(_:read:)` (a late restore or a re-sent jump after his own move),
-    // and the turns' films with `film.flickers(of:)`, keeping `judgeGesture` only for what those do not cover.
+    // Ouro Feel 0.3.6's place trails (`placeHeld`, `placeFights`) judge stray input and his own moves in
+    // ``testStrayInputKeepsThePlaceAndMovesHold``; `judgeGesture` stays for what they do not cover: a turn that must
+    // move exactly once (a spazz), and a turn that comes late. Screen-pixel flicker (`screenFilm`) needs an app clock
+    // Gatefold does not have, and its pictures are of the page, so it is not used.
+
+    /// For a place trail's `between`: each read waits for the words to settle (counted reads, ``watch()``), never a pause.
+    private func settleRead() { _ = watch() }
 
     /// Refreshes in a row an element must hold still (within half a point) to count as landed: counted in the app's own
     /// drawn frames, never in time, so a starved runner that draws less often still judges the same way.
@@ -420,6 +424,46 @@ final class FeelUITests: XCTestCase {
         check(feel.overlays([.button("library.account", overlay: "Sign Out")]), name: "account-menu-dismissal")
     }
 
+    // MARK: Place trails (Ouro Feel 0.3.6)
+
+    /// Stray input never moves his place, even for one read (`placeHeld`): a tap in the middle (controls shown, then
+    /// hidden), nothing at all (a late restore or sync), the Home Screen and back, Contents opened and put away. His own
+    /// moves land and hold (`placeFights`): no late restore, re-sent jump or sync landing moves them after. Inside a
+    /// chapter (0.31), so no move crosses one (gatefold#61 has its own expectation in the turns test).
+    func testStrayInputKeepsThePlaceAndMovesHold() {
+        launch(open: true, ["-GatefoldGoTo", "0.31", "-GatefoldPageTurn", "curl"])
+        hideChrome()
+        let done = app.buttons.matching(NSPredicate(format: "label == 'Done' OR label == 'Close'")).firstMatch
+        let contentsAway = FeelPlaceStep("Contents opened and put away") { _ in
+            self.showChrome()
+            self.app.buttons["reader.contents"].tap()
+            guard done.waitForExistence(timeout: 15) else { return }
+            done.tap()
+            _ = done.waitForNonExistence(timeout: 10)
+            self.hideChrome()
+        }
+        check(feel.placeHeld(across: [.strayTap(), .strayTap(), .noInput, .background, contentsAway],
+                             reads: 4, between: settleRead, read: { self.words }), name: "stray-input-place-held")
+
+        let turn = FeelPlaceStep("a tap at the right edge") { _ in self.page(0.92, 0.5).tap() }
+        let swipe = FeelPlaceStep("a swipe left") { _ in self.el("reader.page").swipeLeft() }
+        let curl = FeelPlaceStep("a curl dragged across") { _ in
+            self.page(0.9, 0.6).press(forDuration: 0.05, thenDragTo: self.page(0.1, 0.55), withVelocity: .slow, thenHoldForDuration: 0)
+        }
+        let jump = FeelPlaceStep("a Contents jump") { _ in
+            self.showChrome()
+            self.app.buttons["reader.contents"].tap()
+            guard done.waitForExistence(timeout: 15) else { return }
+            let row = self.app.buttons.matching(NSPredicate(format: "label CONTAINS[c] %@", "Chapter XL")).firstMatch
+            for _ in 0..<24 where !(row.exists && row.isHittable) { self.app.swipeUp(velocity: .slow) }
+            if row.exists && row.isHittable { row.tap() } else { done.tap() }
+            _ = done.waitForNonExistence(timeout: 10)
+            self.hideChrome()
+        }
+        check(feel.placeFights([turn, swipe, curl, jump], reads: 6, between: settleRead, read: { self.words }),
+              name: "moves-land-and-hold")
+    }
+
     // MARK: Turns
 
     /// Every turn moves the page once and holds: a tap at either edge, a swipe each way, a curl dragged across; a drag
@@ -523,6 +567,7 @@ final class FeelUITests: XCTestCase {
         let film = feel.recordedFilm(["Done"]) { contents.tap() }
         judgeSeen(film.snaps(of: "Done", appearing: true), name: "contents-snaps", film: film)
         judgeSeen(film.jumps(of: "Done"), name: "contents-jumps", film: film)
+        judgeSeen(film.flickers(of: ["Done"]), name: "contents-flickers", film: film)
         record(film.settles("Done", within: 1.0), name: "contents-settles")
         // The same landing in refreshes. Recorded, not judged, until a run on a quiet runner (after the web view leak fix)
         // says whether CI's 1.7-2.2 s landings are the app or the runner.
@@ -645,6 +690,7 @@ final class FeelUITests: XCTestCase {
             }
         }
         judgeSeen(film.jumps(of: "appearance.panel"), name: "appearance-jumps", film: film)
+        judgeSeen(film.flickers(of: ["appearance.panel"]), name: "appearance-flickers", film: film)
         record(film.settles("appearance.panel", within: 1.0), name: "appearance-settles")
         close()
         expectGesture("Appearance opened and closed", .stay) {
