@@ -84,4 +84,23 @@ import Testing
         #expect(tried)
         #expect(book.location == Book.locator(1, 2))
     }
+
+    /// The jump back lands on the page it was read from, through Readium's rounding: the read starts two pixels
+    /// early, and a jump adds a pixel and rounds down to its page (`snapOffset`). The read's start would land a
+    /// page early.
+    @Test func theJumpBackLandsOnThePageReadThroughReadiumsRounding() {
+        let width = 466.0, pages = 37.0, scroll = width * pages
+        func read(_ k: Double) -> (s: Double, e: Double) {
+            let l = k * width
+            return (max(0, (l - 2) / scroll), min(1, (l + width) / scroll))
+        }
+        func landing(_ progression: Double) -> Double { ((progression * scroll + 1) / width).rounded(.down) }
+        for k in [1.0, 2, 18, 35, 36] {
+            let r = read(k)
+            #expect(landing(CurlRelease.jumpTarget(start: r.s, end: r.e)) == k, "page \(k)")
+            #expect(CurlRelease.isOn(CurlRelease.jumpTarget(start: r.s, end: r.e), page: r.s...r.e))
+            #expect(!CurlRelease.isOn(CurlRelease.jumpTarget(start: r.s, end: r.e), page: read(k - 1).s...read(k - 1).e))
+        }
+        #expect(landing(read(18).s) == 17, "the read's own start lands a page early")
+    }
 }
