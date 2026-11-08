@@ -1807,6 +1807,27 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         heldLoadMarker = marker
     }
 
+    /// #84 probe (from #94's): logs each time the main thread doesn't answer for over 250 ms.
+    nonisolated static func watchMain(for seconds: Double, label: String) {
+        let start = Date()
+        Thread.detachNewThread {
+            var total = 0.0
+            while Date().timeIntervalSince(start) < seconds {
+                let sent = Date()
+                let answered = DispatchSemaphore(value: 0)
+                DispatchQueue.main.async { answered.signal() }
+                answered.wait()
+                let late = Date().timeIntervalSince(sent)
+                if late > 0.25 {
+                    total += late
+                    readerLog.notice("mainwatch \(label, privacy: .public): main busy \(Int(late * 1000), privacy: .public) ms from \(sent.timeIntervalSince(start), privacy: .public) s")
+                }
+                Thread.sleep(forTimeInterval: 0.05)
+            }
+            readerLog.notice("mainwatch \(label, privacy: .public): main busy \(Int(total * 1000), privacy: .public) ms in all over \(Int(seconds), privacy: .public) s")
+        }
+    }
+
     /// Readium's own loading spinner is showing: the page in view hasn't loaded yet.
     var isLoadingPage: Bool {
         if heldLoadLooks > 0 {

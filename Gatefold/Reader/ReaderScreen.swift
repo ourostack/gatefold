@@ -114,6 +114,8 @@ struct ReaderScreen: View {
                     showSearch: $showSearch
                 )
                 .frame(width: proxy.size.width, height: layout.deck == nil ? proxy.size.height : layout.pageFrame.height)
+                // #84 probe: how long the main thread is held as Appearance opens.
+                .onChange(of: showAppearance) { _, on in if on { ReaderHostController.watchMain(for: 5, label: "appearance") } }
 
                 if showAppearance {
                     // Low over the page (or the spread), inside the safe area, the top of the page in view.
