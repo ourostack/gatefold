@@ -164,7 +164,7 @@ jobs:
             pr_tests: >-
               ReviewerChecksUITests/testTheLastPagesNumberIsTheCount WindowFitUITests
     needs: [changes, build]
-    if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
+    if: false  # probe #110: Duo leg only, iPad runners kept free
     runs-on: xcode-27
     timeout-minutes: ${{ matrix.timeout }}
     steps:
@@ -287,7 +287,7 @@ jobs:
     # only Xcode 26, so this job cannot move there.
     # ~55 min in build 19: 85 keeps 30% headroom.
     needs: [changes, build]
-    if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
+    if: false  # probe #110: Duo leg only, iPad runners kept free
     runs-on: xcode-27
     timeout-minutes: 85
     steps:
@@ -426,7 +426,8 @@ jobs:
           pkill -f "log stream --style compact" || true
           wc -l < "$RUNNER_TEMP/place.log" || true
       - uses: actions/upload-artifact@v4
-        if: failure() || cancelled()
+        # Probe #110 (not for merge): the place log always, for the spring-back proof.
+        if: always()
         with:
           name: duo-reviewer-results
           path: |
