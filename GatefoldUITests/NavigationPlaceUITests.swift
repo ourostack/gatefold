@@ -295,10 +295,17 @@ final class NavigationPlaceUITests: XCTestCase {
     func testScrolledAfterTheLaunchReflowThenLeftKeepsWhereHeScrolled() {
         var first = openFresh()
         // A fresh install offers the Cloud's place and never lands on it (#46): the book opens on its
-        // cover, which has no words to scroll through. He takes the offer, as he would.
-        let offer = app.buttons["banner.jump"]
-        if first.isEmpty, offer.waitForExistence(timeout: 30) {
-            offer.tap()
+        // cover, which has no words to scroll through. He takes the offer, as he would. Unanswered for
+        // 10 s the offer folds into its tab, so by now it may be the tab: opened again, then taken.
+        if first.isEmpty {
+            let offer = app.buttons["banner.jump"], tab = app.descendants(matching: .any)["banner.tab"].firstMatch
+            let up = Date().addingTimeInterval(30)
+            while !offer.exists, Date() < up {
+                if tab.exists, tab.isHittable { tab.tap() }
+                RunLoop.current.run(until: Date().addingTimeInterval(0.5))
+            }
+            XCTAssertTrue(offer.exists, "a fresh install on the cover offers the Cloud's place")
+            if offer.exists { offer.tap() }
             first = waitForWords(changingFrom: first)
         }
         XCTAssertFalse(first.isEmpty, "the page he scrolls from shows words")

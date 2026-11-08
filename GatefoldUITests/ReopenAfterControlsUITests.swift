@@ -46,9 +46,13 @@ final class ReopenAfterControlsUITests: XCTestCase {
     /// A fresh install offers the Cloud's place and never lands on it (#46): the book opens on its
     /// cover, which has no words. He takes the offer, as he would, so the round has words to keep.
     private func takeTheOffer() {
-        let offer = app.buttons["banner.jump"]
+        let offer = app.buttons["banner.jump"], tab = el("banner.tab")
         let up0 = Date().addingTimeInterval(60)
-        while words.isEmpty, !offer.exists, Date() < up0 { RunLoop.current.run(until: Date().addingTimeInterval(0.3)) }
+        // Unanswered for 10 s the offer folds into its tab: the tab opens it again.
+        while words.isEmpty, !offer.exists, Date() < up0 {
+            if tab.exists, tab.isHittable { tab.tap() }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+        }
         guard offer.exists, words.isEmpty else { return }
         offer.tap()
         let up = Date().addingTimeInterval(60)
