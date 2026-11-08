@@ -1372,7 +1372,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         curl.reset()
         isTurning = false
         if complete, Self.probesLanding { let drawn = beneathFrames; Task { await reportLanding(drawn: drawn, image: uncovered) } }
-        if let settle { Task { try? await Task.sleep(for: .milliseconds(500)); settle.stop = true } }
+        settle?.landed = .now
         // Record the place once the turn has landed, not while the overlay hid it. A turn that sprang
         // back is no move: just take the anchor again from the page that's showing.
         if complete {
@@ -1912,13 +1912,17 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         #endif
     }()
 
-    /// One spread turn's settle watch: the outer page's text edge in each frame drawn.
-    private final class SettleWatch { var stop = false }
+    /// One spread turn's settle watch: the outer page's text edge in each frame drawn. `landed` is
+    /// set when the leaf lands; the watch then runs on for at least `samplesAfterLanding` samples and
+    /// no less than half a second, so a slow device still gets enough frames to judge (#52).
+    private final class SettleWatch { var landed: ContinuousClock.Instant? }
+    private static let samplesAfterLanding = 6
     private var settledTurns = 0
 
     /// Debug builds and UI tests: watches the outer page of a spread (the left one turning forward,
-    /// the right one turning back) in every frame it can draw, from the turn's last leg until 0.5 s
-    /// after the leaf has landed, and reports how far its words ever started from where they rest.
+    /// the right one turning back) in every frame it can draw, from the turn's last leg until at
+    /// least six samples and 0.5 s after the leaf has landed, and reports how far its words ever
+    /// started from where they rest.
     /// The landing report measures only once the overlay has lifted, so it can't see a leaf that
     /// lands beside the page and is then replaced by the live one (build 14 on the iPad spread).
     private func watchSettle(forward: Bool) -> SettleWatch {
@@ -1930,7 +1934,14 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         Task { [weak self] in
             var edges: [CGFloat] = []
             var frame = 0
-            while !watch.stop, let self {
+            var afterLanding = 0
+            while let self {
+                if let landed = watch.landed {
+                    let since = ContinuousClock.now - landed
+                    if afterLanding >= Self.samplesAfterLanding, since >= .milliseconds(500) { break }
+                    // The page left the window (no samples can be drawn): stop rather than spin.
+                    if since >= .seconds(5) { break }
+                }
                 if let (image, edge) = self.settleSample(forward: forward, paper: paper) {
                     if let edge { edges.append(edge) }
                     if dump {
@@ -1938,6 +1949,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
                         try? image.pngData()?.write(to: url)
                     }
                     frame += 1
+                    if watch.landed != nil { afterLanding += 1 }
                 }
                 try? await Task.sleep(for: .milliseconds(10))
             }
