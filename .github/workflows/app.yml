@@ -164,7 +164,7 @@ jobs:
             pr_tests: >-
               ReviewerChecksUITests/testTheLastPagesNumberIsTheCount WindowFitUITests
     needs: [changes, build]
-    if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
+    if: false  # probe for gatefold#84 runs only the Duo's Appearance test
     runs-on: xcode-27
     timeout-minutes: ${{ matrix.timeout }}
     steps:
@@ -283,7 +283,7 @@ jobs:
     # only Xcode 26, so this job cannot move there.
     # ~55 min in build 19: 85 keeps 30% headroom.
     needs: [changes, build]
-    if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
+    if: false  # probe for gatefold#84 runs only the Duo's Appearance test
     runs-on: xcode-27
     timeout-minutes: 85
     steps:
@@ -389,6 +389,15 @@ jobs:
           nohup sh -c 'xcrun simctl spawn "$0" log stream --style compact --predicate "subsystem == \"bot.ouro.gatefold\"" 2>/dev/null \
             | grep --line-buffered -E "place (read|write)|place:|location |reflow|landing|landed|reopen|tapped|warm:|open:|first page|pages:|turn:|spread:|veil:|settle [0-9]" \
             | grep --line-buffered -v -E "text:|\] visible|anchor" >> "$1"' "$UDID" "$RUNNER_TEMP/place.log" >/dev/null 2>&1 &
+      - name: "Probe (gatefold#84, not for merge): sample the app's main thread while Appearance opens"
+        run: |
+          mkdir -p "$RUNNER_TEMP/samples"
+          nohup sh -c '
+            n=0
+            while [ $n -lt 400 ]; do
+              pid=$(pgrep -f "Gatefold.app/Gatefold$" | head -1)
+              if [ -n "$pid" ]; then n=$((n+1)); sample "$pid" 2 1 -mayDie -file "$0/s-$(date +%s)-$n.txt" >/dev/null 2>&1; else sleep 1; fi
+            done' "$RUNNER_TEMP/samples" >/dev/null 2>&1 &
       - name: The reviewers' checks on the Duo; every screen and gesture feels right (Ouro Feel)
         env:
           FULL: ${{ needs.changes.outputs.full }}
@@ -397,11 +406,9 @@ jobs:
         run: |
           set -o pipefail
           mkdir -p "$RUNNER_TEMP/feel-reports"
-          only=(-only-testing:GatefoldUITests/PageNumberUITests/testEveryTurnMovesOnAPageAndAReopenKeepsTheNumbers
-                -only-testing:GatefoldUITests/FeelUITests)
-          if [ "$FULL" != false ]; then only+=(-only-testing:GatefoldUITests/ReviewerChecksUITests); fi
+          only=(-only-testing:GatefoldUITests/FeelUITests/testAppearanceAndFineTuneLeaveThePageAlone)
           xcodebuild test-without-building -xctestrun "$XCTESTRUN" \
-            -destination "$DESTINATION" "${only[@]}" \
+            -destination "$DESTINATION" "${only[@]}" -test-iterations 3 \
             -resultBundlePath "$RUNNER_TEMP/duo.xcresult" 2>&1 | tee "$RUNNER_TEMP/duo.log" \
             | grep --line-buffered -E "Test Case .*(started|passed|failed|skipped)|TEST (SUCCEEDED|FAILED)|REVIEWER|FEEL:|FEEL-NOTCHECKED|FEEL-LATE|\[ouro-feel\] FAIL|\.swift:[0-9]+: error" \
             | awk '{ if (match($0, /XCTAssert[A-Za-z]* failed/)) $0 = substr($0, 1, RSTART + RLENGTH - 1) " (text withheld)"; print; fflush() }'
@@ -428,6 +435,12 @@ jobs:
         with:
           name: feel-reports-duo
           path: ${{ runner.temp }}/feel-reports
+          if-no-files-found: ignore
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: probe-84-samples
+          path: ${{ runner.temp }}/samples
           if-no-files-found: ignore
 
   ipad-docs:
