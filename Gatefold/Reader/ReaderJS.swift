@@ -19,6 +19,16 @@ enum ReaderJS {
         if (el && el.closest("figure, figcaption, .caption, .figcenter, .figleft, .figright, .pagenum")) { return null; }
         return r;
       }
+      // Two pages on screen. The reader sets the count where it lays a page out, but a chapter's own web
+      // view (a turn or jump into it) can run before it has: then the layout says, from its columns.
+      function twoPages() {
+        if (window.gatefoldColumns) { return window.gatefoldColumns === 2; }
+        const cs = getComputedStyle(document.documentElement);
+        const count = parseInt(cs.columnCount, 10), width = parseFloat(cs.columnWidth);
+        // Readium sets the count (1 or 2); a width alone counts only when the count is left to it.
+        if (!isNaN(count)) { return count === 2; }
+        return width > 0 && width <= window.innerWidth / 2 + 1;
+      }
       // Scan a column from its top-left for the first character.
       function first(x0, x1) {
         const h = window.innerHeight;
@@ -72,7 +82,7 @@ enum ReaderJS {
         // contents anchor (of `ids`) above them.
         anchor: function (fx, ids) {
           const w = window.innerWidth;
-          const two = window.gatefoldColumns === 2;
+          const two = twoPages();
           const r = fx ? first(w / 2, w) : first(0, two ? w / 2 : w);
           if (!r) { return null; }
           const node = r.startContainer, text = node.textContent;
@@ -232,10 +242,17 @@ enum ReaderJS {
           }
           return null;
         },
-        // All the text on screen, whitespace collapsed.
+        // How many pages the script reads the screen as.
+        pages: function () { return twoPages() ? 2 : 1; },
+        // All the text on screen, whitespace collapsed. A spread is read page by page: from the left
+        // page's first words to the right page's last. Scanned across both pages at once, a left page
+        // opening with a picture (whose caption is never a place) started at the right page's first
+        // line, and his words on the left page read as off screen (Real unfold, #58).
         visibleText: function () {
           const w = window.innerWidth;
-          const a = first(0, w), b = last(0, w);
+          const two = twoPages();
+          const a = two ? (first(0, w / 2) || first(w / 2, w)) : first(0, w);
+          const b = two ? (last(w / 2, w) || last(0, w / 2)) : last(0, w);
           if (!a || !b) { return null; }
           const range = document.createRange();
           try {
