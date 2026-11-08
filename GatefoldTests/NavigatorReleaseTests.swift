@@ -16,6 +16,45 @@ import WebKit
         init(_ web: WKWebView) { self.web = web }
     }
 
+    /// Rides on a web view as an associated object, and signals as the web view is freed.
+    private final class Gone {
+        let signal: AsyncStream<Void>.Continuation
+        init(_ signal: AsyncStream<Void>.Continuation) { self.signal = signal }
+        deinit { signal.yield() }
+    }
+
+    /// Watches web views and waits for each one's release: the event itself, not a span of wall time,
+    /// so a slow runner only makes the wait longer, never the verdict different.
+    @MainActor private final class Releases {
+        nonisolated(unsafe) private static let key = UnsafeMutableRawPointer.allocate(byteCount: 1, alignment: 1)
+        private(set) let releases = Releases()
+        private let events: AsyncStream<Void>
+        private let signal: AsyncStream<Void>.Continuation
+
+        init() { (events, signal) = AsyncStream<Void>.makeStream() }
+
+        func watch(_ webs: [WKWebView]) {
+            for web in webs {
+                held.append(Held(web))
+                objc_setAssociatedObject(web, Self.key, Gone(signal), .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+            }
+        }
+
+        /// How many watched web views are still alive once every one has been freed, or once `hangGuard`
+        /// has passed with some still held (only so a leak fails rather than hangs).
+        func alive(hangGuard: Duration = .seconds(120)) async -> Int {
+            let signal = self.signal
+            let guardTask = Task { try? await Task.sleep(for: hangGuard); signal.finish() }
+            defer { guardTask.cancel() }
+            var gone = 0
+            for await _ in events {
+                gone += 1
+                if gone >= held.count { break }
+            }
+            return held.filter { $0.web != nil }.count
+        }
+    }
+
     private static func webViews(in view: UIView) -> [WKWebView] {
         if let web = view as? WKWebView { return [web] }
         return view.subviews.flatMap(webViews)
@@ -25,8 +64,7 @@ import WebKit
     /// it guards the plain path; the mid-load case below is the one that leaked.
     @Test func retiredNavigatorsLetGoOfTheirWebViews() async throws {
         let publication = try await HighlightTests.publication()
-        // In the app's scene, as the reader's window is: a window outside any scene may never send the
-        // appearance calls a closed reader waits for.
+        // In the app's scene, as the reader's window is.
         let scene = try #require(UIApplication.shared.connectedScenes.first as? UIWindowScene)
         let window = UIWindow(windowScene: scene)
         window.frame = CGRect(x: 0, y: 0, width: 820, height: 1180)
@@ -34,7 +72,7 @@ import WebKit
         window.rootViewController = host
         window.isHidden = false
         defer { window.isHidden = true }
-        var held: [Held] = []
+        let releases = Releases()
         // Three rounds, as three reflows each retire the counters they started.
         for _ in 0..<3 {
             let navigator = try ReaderHostController.makeNavigator(publication: publication, at: nil, preferences: EPUBPreferences())
@@ -43,19 +81,16 @@ import WebKit
             host.view.addSubview(navigator.view)
             navigator.didMove(toParent: host)
             var webs: [WKWebView] = []
-            for _ in 0..<100 where webs.isEmpty {
+            for _ in 0..<1200 where webs.isEmpty { // until it has one; 2 min is only a hang guard
                 try await Task.sleep(for: .milliseconds(100))
                 webs = Self.webViews(in: navigator.view)
             }
             try #require(!webs.isEmpty, "the navigator made a web view")
-            held += webs.map(Held.init)
+            releases.watch(webs)
             ReaderHostController.retire(navigator)
         }
-        for _ in 0..<50 where held.contains(where: { $0.web != nil }) {
-            try await Task.sleep(for: .milliseconds(100))
-        }
-        let alive = held.filter { $0.web != nil }.count
-        #expect(alive == 0, "\(alive) of \(held.count) retired web views are still alive")
+        let alive = await releases.alive()
+        #expect(alive == 0, "\(alive) of \(releases.held.count) retired web views are still alive")
     }
 
     private final class Flag { var done = false }
@@ -71,7 +106,7 @@ import WebKit
         window.rootViewController = host
         window.isHidden = false
         defer { window.isHidden = true }
-        var held: [Held] = []
+        let releases = Releases()
         var waited = 0
         for _ in 0..<3 {
             let navigator = try ReaderHostController.makeNavigator(publication: publication, at: nil, preferences: EPUBPreferences())
@@ -80,12 +115,12 @@ import WebKit
             host.view.addSubview(navigator.view)
             navigator.didMove(toParent: host)
             var webs: [WKWebView] = []
-            for _ in 0..<400 where webs.isEmpty {
+            for _ in 0..<24000 where webs.isEmpty { // until it has one; 2 min is only a hang guard
                 try await Task.sleep(for: .milliseconds(5))
                 webs = Self.webViews(in: navigator.view)
             }
             try #require(!webs.isEmpty, "the navigator made a web view")
-            held += webs.map(Held.init)
+            releases.watch(webs)
             let flag = Flag()
             Task { @MainActor in
                 _ = await navigator.evaluateJavaScript("1")
@@ -97,19 +132,15 @@ import WebKit
         }
         // A page that loaded before its script asked proves nothing about the waiter.
         try #require(waited > 0, "no script was left waiting on a page still loading")
-        for _ in 0..<50 where held.contains(where: { $0.web != nil }) {
-            try await Task.sleep(for: .milliseconds(100))
-        }
-        let alive = held.filter { $0.web != nil }.count
-        #expect(alive == 0, "\(alive) of \(held.count) web views retired mid-load are still alive (\(waited) waited)")
+        let alive = await releases.alive()
+        #expect(alive == 0, "\(alive) of \(releases.held.count) web views retired mid-load are still alive (\(waited) waited)")
     }
 
-    /// Open a book, close it, and its page's web views go once the reader is off screen: three times over,
-    /// as he opens and closes books in a session.
+    /// Open a book, close it, and the close itself retires its page, so the page's web views go: three times
+    /// over, as he opens and closes books in a session.
     @Test func aClosedReaderLetsGoOfItsWebViews() async throws {
         let publication = try await HighlightTests.publication()
-        // In the app's scene, as the reader's window is: a window outside any scene may never send the
-        // appearance calls a closed reader waits for.
+        // In the app's scene, as the reader's window is.
         let scene = try #require(UIApplication.shared.connectedScenes.first as? UIWindowScene)
         let window = UIWindow(windowScene: scene)
         window.frame = CGRect(x: 0, y: 0, width: 820, height: 1180)
@@ -117,7 +148,7 @@ import WebKit
         window.rootViewController = root
         window.isHidden = false
         defer { window.isHidden = true }
-        var held: [Held] = []
+        let releases = Releases()
         // Kept alive to the end, so the web views go because the close retired them, not because the model did.
         var models: [ReaderModel?] = []
         for round in 0..<3 {
@@ -133,32 +164,26 @@ import WebKit
             root.view.addSubview(host.view)
             host.didMove(toParent: root)
             var webs: [WKWebView] = []
-            for _ in 0..<100 where webs.isEmpty {
+            for _ in 0..<1200 where webs.isEmpty { // until it has one; 2 min is only a hang guard
                 try await Task.sleep(for: .milliseconds(100))
                 webs = Self.webViews(in: host.view)
             }
             try #require(!webs.isEmpty, "the reader made a web view")
-            held += webs.map(Held.init)
+            releases.watch(webs)
             // As the app closes it: the model first, then SwiftUI takes the reader off screen.
             model?.close()
+            // Retired by the close itself, at once and with the reader still on screen: not by a view
+            // lifecycle call (which came after the removal in CI run 42513920212), nor by the model going away.
+            #expect(host.navigator.parent == nil, "the closed reader's navigator is retired")
+            #expect(host.navigator.viewIfLoaded?.subviews.isEmpty ?? true, "and its pagination view is out of it (not proof that no page is made later: #116)")
             host.willMove(toParent: nil)
             host.view.removeFromSuperview()
             host.removeFromParent()
-            // Retired by the close itself, not by the model going away. UIKit sends viewDidDisappear
-            // after the removal, not inside it (CI run 42513920212), so wait for it as for the web views.
-            for _ in 0..<50 where host.navigator.parent != nil {
-                try await Task.sleep(for: .milliseconds(100))
-            }
-            #expect(host.navigator.parent == nil, "the closed reader's navigator is retired")
-            #expect(host.navigator.viewIfLoaded?.subviews.isEmpty ?? true, "and its pagination view is out of it (not proof that no page is made later: #116)")
             models.append(model)
             model = nil
         }
-        for _ in 0..<50 where held.contains(where: { $0.web != nil }) {
-            try await Task.sleep(for: .milliseconds(100))
-        }
-        let alive = held.filter { $0.web != nil }.count
-        #expect(alive == 0, "\(alive) of \(held.count) closed readers' web views are still alive")
+        let alive = await releases.alive()
+        #expect(alive == 0, "\(alive) of \(releases.held.count) closed readers' web views are still alive")
         withExtendedLifetime(models) {}
     }
 }

@@ -218,25 +218,22 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         readerLog.notice("warm: stopped loading \(self.weakModel?.bookID ?? "?", privacy: .public)")
     }
 
-    /// Set by `close()`: the book is closed, and its page goes once it is off screen.
+    /// Set by `close()`: the book is closed, and nothing starts a page again.
     private var closed = false
 
     /// The book closed (#109): retire the page's own navigator as well as its counters and standby, so its
-    /// web views go. Off screen already (a warm reader never shown) it goes now; on screen it stays drawn
-    /// through the close, and goes when the reader leaves the screen.
+    /// web views go, here and now, not on a view lifecycle call that may come late or not at all. On screen,
+    /// a still picture of the page takes its place, so the reader stays drawn as it leaves.
     func close() {
         closed = true
         stopCounting()
         dropStandby()
-        if viewIfLoaded?.window == nil { retireOwnNavigator() }
-    }
-
-    override func viewDidDisappear(_ animated: Bool) {
-        super.viewDidDisappear(animated)
-        if closed { retireOwnNavigator() }
-    }
-
-    private func retireOwnNavigator() {
+        if let view = viewIfLoaded, view.window != nil, let page = navigator.viewIfLoaded,
+           let picture = page.snapshotView(afterScreenUpdates: false) {
+            picture.frame = page.frame
+            picture.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+            view.addSubview(picture)
+        }
         Self.retire(navigator)
     }
 
