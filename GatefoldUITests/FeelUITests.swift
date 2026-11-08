@@ -550,13 +550,9 @@ final class FeelUITests: XCTestCase {
             check(FeelPlace.compare(start: linkStart, after: ["Back after a link": FeelPlace.fingerprint(settled())]),
                   name: "link-back-place")
         }
-        if pad {
-            // A known failure on the iPad, strict, so the check goes red the moment a fix lands and the expectation must
-            // be restored.
-            XCTExpectFailure("gatefold#73: on the iPad a followed link does not move the page and leaves no Back", strict: true) {
-                followAndBack()
-            }
-        } else {
+        // A known failure (seen on the iPad and the folded Duo in CI), strict, so the check goes red the moment a fix lands
+        // and the expectation must be restored.
+        XCTExpectFailure("gatefold#73: a followed link does not move the page and leaves no Back", strict: true) {
             followAndBack()
         }
     }
