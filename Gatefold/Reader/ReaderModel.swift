@@ -491,6 +491,15 @@ final class ReaderModel {
     func load() async {
         guard !loadStarted else { activate(); return }
         loadStarted = true
+        // Every open has the same bound on its cover, the placeholder's or a reopen's picture (which
+        // has no placeholder behind it): a page that hasn't shown by then is forced, counted in looks.
+        Task { [weak self] in
+            for _ in 0..<Self.coverLooks {
+                guard let self, !self.pageReady, !self.isClosed else { return }
+                try? await Task.sleep(for: .milliseconds(50))
+            }
+            self?.forceReady()
+        }
         let positions = (try? await publication.positionsByReadingOrder().get()) ?? []
         let count = positions.reduce(0) { $0 + $1.count }
         readerLog.notice("open: positions after \(Date().timeIntervalSince(self.openedAt), privacy: .public) s; location \(self.page?.currentLocation != nil, privacy: .public)")
@@ -629,6 +638,9 @@ final class ReaderModel {
     /// anyway: 60, about 3 s. The settle itself is bounded at 4 rounds of two page reads; this only
     /// bounds a page whose reads never come back.
     static let revealLooks = 60
+    /// Looks (one every 50 ms) any open keeps its cover before the page is forced: 230, about 11.5 s,
+    /// the placeholder's own timeout.
+    static let coverLooks = 230
 
     /// The cover gives way to the page. A reopen's picture of the page stays over it a moment longer,
     /// while the running head and footer come up beneath, then goes at once: the two are the same
