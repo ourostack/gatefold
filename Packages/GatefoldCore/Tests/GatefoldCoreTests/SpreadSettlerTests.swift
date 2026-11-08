@@ -174,13 +174,13 @@ struct SpreadSettlerTests {
         #expect(early.spread == 23)
 
         let page = FakeSpreads(columns: 52, wordsColumn: 44, pinnable: false, startSpread: 24, relayoutAt: nil)
-        _ = await SpreadSettler.keepOnLeft(page, current: { true })
+        _ = await SpreadSettler.keepOnLeft(page, current: { true }, purpose: .restore)
         #expect(page.landed)
     }
 
     @Test func aLateRelayoutDoesNotLeaveTheWordsBeside() async {
         let page = FakeSpreads(columns: 52, wordsColumn: 45, pinnable: false, startSpread: 22, relayoutAt: 8)
-        _ = await SpreadSettler.keepOnLeft(page, current: { true })
+        _ = await SpreadSettler.keepOnLeft(page, current: { true }, purpose: .restore)
         page.finish()
         #expect(page.landed)
     }
@@ -189,7 +189,7 @@ struct SpreadSettlerTests {
         var missed: [Case] = []
         for c in cases {
             let page = fake(c)
-            _ = await SpreadSettler.keepOnLeft(page, current: { true })
+            _ = await SpreadSettler.keepOnLeft(page, current: { true }, purpose: .restore)
             page.finish()
             if !page.landed { missed.append(c) }
         }
@@ -215,21 +215,21 @@ struct SpreadSettlerTests {
 
     @Test func theVersoGoesInOnceForWordsOnTheRightPage() async {
         let page = FakeSpreads(columns: 52, wordsColumn: 45, pinnable: false, startSpread: 22, relayoutAt: nil)
-        _ = await SpreadSettler.keepOnLeft(page, current: { true })
+        _ = await SpreadSettler.keepOnLeft(page, current: { true }, purpose: .restore)
         #expect(page.landed)
         #expect(page.versoToggles == 1)
     }
 
     @Test func wordsAlreadyOnTheLeftAreLeftAlone() async {
         let page = FakeSpreads(columns: 52, wordsColumn: 44, pinnable: false, startSpread: 22, relayoutAt: nil)
-        let moved = await SpreadSettler.keepOnLeft(page, current: { true })
+        let moved = await SpreadSettler.keepOnLeft(page, current: { true }, purpose: .restore)
         #expect(moved == nil)
         #expect(page.versoToggles == 0 && !page.pinned)
     }
 
     @Test func aRestoreThatHasBeenReplacedStopsTouchingThePage() async {
         let page = FakeSpreads(columns: 52, wordsColumn: 45, pinnable: false, startSpread: 22, relayoutAt: nil)
-        _ = await SpreadSettler.keepOnLeft(page, current: { false })
+        _ = await SpreadSettler.keepOnLeft(page, current: { false }, purpose: .restore)
         #expect(page.versoToggles == 0)
     }
     /// A page that never stands still (a busy device, a layout that keeps shifting): the settler ends
@@ -237,7 +237,7 @@ struct SpreadSettlerTests {
     /// 12 s watchdog, which started the restore again, and the settler again, three times an open.
     @Test func aPageThatNeverStandsStillEndsTheSettlerWithinItsReads() async {
         let page = RestlessPage()
-        _ = await SpreadSettler.keepOnLeft(page, current: { true })
+        _ = await SpreadSettler.keepOnLeft(page, current: { true }, purpose: .restore)
         #expect(page.stillnessReads <= SpreadSettler.readBudget)
     }
 }
@@ -336,7 +336,7 @@ struct VisibleSettleTests {
         let fake = FakeSpreads(columns: 52, wordsColumn: 45, pinnable: false, startSpread: 21, relayoutAt: nil)
         let page = VisibleSpreads(fake)
         page.coveredForMoves = 1
-        _ = await SpreadSettler.keepOnLeft(page, current: { true })
+        _ = await SpreadSettler.keepOnLeft(page, current: { true }, purpose: .restore)
         #expect(fake.landed)
         // The spread he had, the one the cover lifted onto, then his words: never the verso's
         // in-between spread as well.
@@ -358,7 +358,7 @@ struct VisibleSettleTests {
                                        startSpread: wordsColumn / 2, relayoutAt: nil)
                 let page = VisibleSpreads(fake)
                 page.coveredForMoves = covered ? 99 : 0
-                _ = await SpreadSettler.keepOnLeft(page, current: { true })
+                _ = await SpreadSettler.keepOnLeft(page, current: { true }, purpose: .restore)
                 #expect(fake.landed, "words \(wordsColumn) covered \(covered): not on the left page")
                 if !covered { #expect(page.shown.count <= 2, "words \(wordsColumn): he saw \(page.shown)") }
                 landings.append("\(fake.spread)|\(fake.columns)")
@@ -373,7 +373,7 @@ struct VisibleSettleTests {
     @Test func anOvertakenCorrectionDropsItsPictureAtOnce() async {
         let fake = FakeSpreads(columns: 52, wordsColumn: 45, pinnable: false, startSpread: 22, relayoutAt: nil)
         let page = VisibleSpreads(fake)
-        _ = await SpreadSettler.keepOnLeft(page, current: { page.moves == 0 })
+        _ = await SpreadSettler.keepOnLeft(page, current: { page.moves == 0 }, purpose: .restore)
         #expect(page.releases == [false])
     }
 }
