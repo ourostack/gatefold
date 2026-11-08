@@ -1230,6 +1230,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         curl.isActive = true
         await nextFrame()
 
+        let chapterBefore = navigator.currentLocation?.href.string.split(separator: "#").first
         let moved = forward
             ? await navigator.goForward(options: .init(animated: false))
             : await navigator.goBackward(options: .init(animated: false))
@@ -1248,9 +1249,11 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         curl.beneath = await renderedSnapshot(afterChange: true)
         beneathFrames = lastSnapshotFrames
         // Counted from the tap, not after it: a test's tap waits for the app to go idle, which hides the wait.
+        // Judged once the page beneath has painted, when the navigator reports the chapter it shows.
+        let crossed = navigator.currentLocation?.href.string.split(separator: "#").first != chapterBefore
         turnsPictured += 1
-        readerLog.notice("turn: \(self.turnsPictured, privacy: .public) waited \(self.lastSnapshotLooks, privacy: .public) looks for the page beneath")
-        if LaunchOptions.isUITest { weakModel?.turnWaitProbe = "\(turnsPictured) \(lastSnapshotLooks)" }
+        readerLog.notice("turn: \(self.turnsPictured, privacy: .public) waited \(self.lastSnapshotLooks, privacy: .public) looks for the page beneath, \(crossed ? "into another chapter" : "within the chapter", privacy: .public)")
+        if LaunchOptions.isUITest { weakModel?.turnWaitProbe = "\(turnsPictured) \(lastSnapshotLooks) \(crossed ? 1 : 0)" }
         #if DEBUG
         if ProcessInfo.processInfo.environment["GATEFOLD_DUMP_SNAPSHOTS"] != nil || UserDefaults.standard.bool(forKey: "GatefoldDumpSnapshots") {
             let dir = URL.temporaryDirectory

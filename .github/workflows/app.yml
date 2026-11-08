@@ -241,10 +241,13 @@ jobs:
   duo-reviewer:
     name: Duo (the reviewers' checks)
     # The reviewers' standing checks on the Duo: reopen by hash, true numbers and reader-wide toggles
-    # (density is the iPad's), and a page a turn with a reopen keeping its numbers.
+    # (density is the iPad's), and a page a turn with a reopen keeping its numbers. Then the folded
+    # Duo's turn checks (#61): a tap at either edge turns within 12 reads and 24 looks, at a chapter's
+    # edge and within one, with a TURNWAIT line of counts for each.
     runs-on: xcode-27
-    # 45 min measured (build 20): 65 keeps 30% headroom.
-    timeout-minutes: 65
+    # 45 min measured (build 20), plus about 15 for the three turn checks: 85 keeps 30% headroom.
+    # feel-ci sets this job longer (gatefold#65 tracks the overrun): at a merge, the larger value wins.
+    timeout-minutes: 85
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/select-xcode
@@ -274,8 +277,11 @@ jobs:
             -destination "${{ steps.sim.outputs.destination }}" \
             -only-testing:GatefoldUITests/ReviewerChecksUITests \
             -only-testing:GatefoldUITests/PageNumberUITests/testEveryTurnMovesOnAPageAndAReopenKeepsTheNumbers \
+            -only-testing:GatefoldUITests/PlaceUndoUITests/testATapAtTheLeftEdgeTurnsBackPromptly \
+            -only-testing:GatefoldUITests/PlaceUndoUITests/testATapAtTheLeftEdgeTurnsBackPromptlyAsFeelOpensIt \
+            -only-testing:GatefoldUITests/PlaceUndoUITests/testATapAtTheLeftEdgeTurnsBackPromptlyWithinAChapter \
             -resultBundlePath "$RUNNER_TEMP/duo.xcresult" 2>&1 | tee "$RUNNER_TEMP/duo.log" \
-            | grep --line-buffered -E "Test Case .*(started|passed|failed|skipped)|TEST (SUCCEEDED|FAILED)|REVIEWER|\.swift:[0-9]+: error" \
+            | grep --line-buffered -E "Test Case .*(started|passed|failed|skipped)|TEST (SUCCEEDED|FAILED)|REVIEWER|TURNWAIT|\.swift:[0-9]+: error" \
             | awk '{ if (match($0, /XCTAssert[A-Za-z]* failed/)) $0 = substr($0, 1, RSTART + RLENGTH - 1) " (text withheld)"; print; fflush() }'
           exit ${PIPESTATUS[0]}
       - name: The app's place log, for a miss (file and progression only, never the book's words)
