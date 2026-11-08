@@ -2,7 +2,7 @@
 """CI only: a simulator that boots while the job does other work.
 
     python3 -I scripts/ci-simulator.py start <name> "<device name prefix>"   # e.g. "iPad Pro 13-inch", "iPhone Duo"
-    python3 -I scripts/ci-simulator.py wait <name> "<device name prefix>" [s] # wait for it (default 600 s)
+    python3 -I scripts/ci-simulator.py wait <name> "<device name prefix>" [s] # wait for it (default 1200 s)
     python3 -I scripts/ci-simulator.py --selftest
 
 `start` picks the newest iOS runtime the image already has that offers that device and is no newer than the selected
@@ -11,8 +11,11 @@ Xcode's simulator SDK (an iPhone on iOS 27.2 beside Xcode 27.1 hung booting twic
 returns at once, so the job downloads the build while the simulator boots.
 
 `wait` waits for boot-sim.sh with its own limit, writes UDID and DESTINATION to $GITHUB_ENV, and fails with
-boot-sim.sh's log, as "Simulator did not boot", when it failed or did not finish. boot-sim.sh's three attempts with
-their service restarts fit in 600 s; the wait step's own timeout is a little longer.
+boot-sim.sh's log, as "Simulator did not boot", when it failed or did not finish. The limit counts from `start`, so
+the time spent downloading meanwhile counts toward it. A boot has taken 10 min on a hosted runner, and boot-sim.sh
+bounds each bootstatus at 7 min so a hang falls through to its next attempt; the wait step's own timeout is longer.
+
+A prefix that is a whole device name ("iPhone Duo") picks that device only, never a sibling such as "iPhone Duo Pro".
 """
 import json
 import os
@@ -45,7 +48,9 @@ def pick(runtimes, prefix, sdk):
     if not fits:
         raise SystemExit(f"ci-simulator: no available iOS runtime at or below the iOS {sdk} SDK offers {prefix!r}")
     r = max(fits, key=lambda r: version(r["version"]))
-    return r["identifier"], sorted(d["identifier"] for d in r["supportedDeviceTypes"] if d["name"].startswith(prefix))[-1]
+    kinds = [d for d in r["supportedDeviceTypes"] if d["name"].startswith(prefix)]
+    exact = [d for d in kinds if d["name"] == prefix]
+    return r["identifier"], sorted(d["identifier"] for d in (exact or kinds))[-1]
 
 
 def start(name, prefix):
@@ -56,6 +61,7 @@ def start(name, prefix):
     runtime, kind = pick(json.loads(listing)["runtimes"], prefix, sdk)
     print(f"Booting {kind} on {runtime} (simulator SDK {sdk})")
     d = state_dir()
+    (d / f"{name}.started").write_text(f"{time.time()}\n")
     # Detached, so it outlives this step: the UDID goes to <name>.udid, boot-sim.sh's exit code to <name>.status.
     subprocess.Popen(
         ["sh", "-c", '"$1" "$2" "$3" "$4" > "$5.udid"; echo $? > "$5.status"', "boot",
@@ -64,10 +70,11 @@ def start(name, prefix):
         start_new_session=True)
 
 
-def wait_boot(name, limit, clock=time.monotonic, nap=time.sleep):
-    """boot-sim.sh's exit code, or None if it has not finished within the limit."""
+def wait_boot(name, limit, clock=time.time, nap=time.sleep):
+    """boot-sim.sh's exit code, or None if it has not finished within the limit, counted from `start`."""
     status = state_dir() / f"{name}.status"
-    end = clock() + limit
+    started = state_dir() / f"{name}.started"
+    end = (float(started.read_text()) if started.exists() else clock()) + limit
     while clock() < end:
         if status.exists() and status.read_text().strip():
             return int(status.read_text().strip())
@@ -96,14 +103,14 @@ def main(argv):
     if len(argv) >= 3 and argv[0] == "start":
         try:
             start(argv[1], argv[2])
-        except (SystemExit, subprocess.SubprocessError, ValueError, KeyError) as e:
+        except (SystemExit, OSError, subprocess.SubprocessError, ValueError, KeyError) as e:
             # The wait step reports it, with the log; the job goes on downloading meanwhile.
             d = state_dir()
             (d / f"{argv[1]}.log").open("a").write(f"ci-simulator start failed: {e!r}\n")
             (d / f"{argv[1]}.status").write_text("97\n")
         return 0
     if len(argv) >= 3 and argv[0] == "wait":
-        name, limit = argv[1], int(argv[3]) if len(argv) > 3 else 600
+        name, limit = argv[1], int(argv[3]) if len(argv) > 3 else 1200
         code = wait_boot(name, limit)
         udid_file = state_dir() / f"{name}.udid"
         udid = udid_file.read_text().strip() if udid_file.exists() else ""
@@ -132,6 +139,9 @@ def selftest():
     assert pick(runtimes, "iPhone Duo", "27.1") == ("iOS-27-1", "iPhone-Duo"), "never newer than the SDK"
     assert pick(runtimes, "iPad Pro 13-inch", "27.2.1") == ("iOS-27-2", "iPad-Pro-13-M5")
     assert pick(runtimes, "iPhone Duo", "27.4") == ("iOS-27-2", "iPhone-Duo"), "only available runtimes"
+    pro = {"name": "iPhone Duo Pro", "identifier": "iPhone-Duo-Pro"}
+    sib = [dict(runtimes[1], supportedDeviceTypes=[duo, pro])]
+    assert pick(sib, "iPhone Duo", "27.1") == ("iOS-27-1", "iPhone-Duo"), "a whole name never picks a sibling"
     try:
         pick(runtimes, "iPhone Duo", "27.0")
         raise AssertionError("no runtime offering the device must fail")
@@ -143,6 +153,10 @@ def selftest():
     assert wait_boot("hung", 10, clock, nap) is None, "a hang times out"
     (state_dir() / "ok.status").write_text("0\n")
     assert wait_boot("ok", 10, clock, nap) == 0
+    (state_dir() / "late.started").write_text("-100\n")
+    now[0] = 0.0
+    assert wait_boot("late", 50, clock, nap) is None, "the limit counts from start"
+    assert now[0] == 0.0, "no waiting once the limit has passed"
     assert outcome(0, "ABC", 600) == "booted"
     assert outcome(0, "", 600) == "boot-sim.sh printed no UDID"
     assert outcome(1, "", 600) == "boot-sim.sh exited 1"

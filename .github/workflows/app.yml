@@ -10,8 +10,10 @@ name: App
 #
 # A pull request that changes only Markdown still gets every required check: `changes` says so, the jobs below skip,
 # and `ipad-docs` reports the three iPad checks (a skipped matrix job reports under its unexpanded name; gatefold#42).
-# The jobs run unless `changes` said "only Markdown", so a failed `changes` or `build` turns them red instead of
-# letting them skip, which would count as a pass.
+# The jobs run unless `changes` said "only Markdown", and a failed `build` turns them red at the download instead of
+# letting them skip, which would count as a pass. A failed `changes` leaves `full` empty, which runs the full lists.
+#
+# A pull request that edits a test in the full lists, or the CI that runs them, runs the full lists too.
 
 on:
   pull_request:
@@ -47,9 +49,14 @@ jobs:
         run: |
           set -eu
           if [ "$EVENT" != pull_request ]; then printf 'app=true\nfull=true\n' >> "$GITHUB_OUTPUT"; exit 0; fi
-          echo "full=false" >> "$GITHUB_OUTPUT"
           git diff --name-only "$BASE...$HEAD" > changed.txt
           cat changed.txt
+          if grep -qE '^(GatefoldUITests/(ReviewerChecks|PageNumber|SpreadTurnSettle|ReopenAfterControls|WindowFit)UITests\.swift|\.github/(workflows/app\.yml|scripts/boot-sim\.sh|actions/)|scripts/ci-simulator\.py)$|^\.github/actions/' changed.txt; then
+            echo "::notice::This change edits a full-list test or the CI that runs it: the full lists run."
+            echo "full=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "full=false" >> "$GITHUB_OUTPUT"
+          fi
           if grep -qv '\.md$' changed.txt; then echo "app=true" >> "$GITHUB_OUTPUT"; else
             echo "::notice::Only Markdown changed: the app checks report success without running."
             echo "app=false" >> "$GITHUB_OUTPUT"
@@ -89,7 +96,8 @@ jobs:
         with:
           name: ${{ steps.name.outputs.artifact }}
           path: ${{ runner.temp }}/products.tgz
-          retention-days: 2
+          # Long enough for "Re-run failed jobs" a few days later.
+          retention-days: 5
           compression-level: 0
           overwrite: true
       - uses: actions/upload-artifact@v4
@@ -180,8 +188,8 @@ jobs:
           echo "XCTESTRUN=$(ls "$RUNNER_TEMP"/dd/Build/Products/*.xctestrun | head -1)" >> "$GITHUB_ENV"
       - name: The iPad finished booting
         # boot-sim.sh retries a boot that fails or hangs (#57); this step waits for it with a limit.
-        timeout-minutes: 12
-        run: python3 -I scripts/ci-simulator.py wait gatefold-ipad "iPad Pro 13-inch" 600
+        timeout-minutes: 22
+        run: python3 -I scripts/ci-simulator.py wait gatefold-ipad "iPad Pro 13-inch" 1200
       - name: Keep the app's place log as it runs (file and progression only, never the book's words)
         run: |
           nohup sh -c 'xcrun simctl spawn "$0" log stream --style compact --predicate "subsystem == \"bot.ouro.gatefold\"" 2>/dev/null \
@@ -223,7 +231,7 @@ jobs:
           exit $status
       - name: ${{ matrix.title }}
         env:
-          TESTS: ${{ needs.changes.outputs.full == 'true' && matrix.tests || matrix.pr_tests || matrix.tests }}
+          TESTS: ${{ needs.changes.outputs.full != 'false' && matrix.tests || matrix.pr_tests || matrix.tests }}
           # Five rounds of the controls-then-numbers reopen (about 2 min each); 30 locally.
           TEST_RUNNER_GATEFOLD_REOPEN_ROUNDS: "5"
         run: |
@@ -272,7 +280,8 @@ jobs:
       - uses: ./.github/actions/select-xcode
       - name: Start an iPhone Duo booting
         run: python3 -I scripts/ci-simulator.py start gatefold-duo "iPhone Duo"
-      # The device build runs while the Duo boots.
+      # The device build runs while the Duo boots. A boot retry restarts CoreSimulatorService, which this generic
+      # device build does not use for a destination; retries are rare (#57), so the overlap is worth it.
       - name: Install the Metal toolchain (the page curl is a Metal shader)
         run: xcodebuild -downloadComponent MetalToolchain
       - name: Generate the Xcode project from project.yml
@@ -300,8 +309,8 @@ jobs:
           [ "$want" = "$ARTIFACT" ] || { echo "::error::Built as $ARTIFACT, but this job's Xcode makes $want"; exit 1; }
           echo "XCTESTRUN=$(ls "$RUNNER_TEMP"/dd/Build/Products/*.xctestrun | head -1)" >> "$GITHUB_ENV"
       - name: The iPhone Duo finished booting
-        timeout-minutes: 12
-        run: python3 -I scripts/ci-simulator.py wait gatefold-duo "iPhone Duo" 600
+        timeout-minutes: 22
+        run: python3 -I scripts/ci-simulator.py wait gatefold-duo "iPhone Duo" 1200
       - name: Unit tests
         run: |
           set -o pipefail
@@ -361,8 +370,8 @@ jobs:
           [ "$want" = "$ARTIFACT" ] || { echo "::error::Built as $ARTIFACT, but this job's Xcode makes $want"; exit 1; }
           echo "XCTESTRUN=$(ls "$RUNNER_TEMP"/dd/Build/Products/*.xctestrun | head -1)" >> "$GITHUB_ENV"
       - name: The iPhone Duo finished booting
-        timeout-minutes: 12
-        run: python3 -I scripts/ci-simulator.py wait gatefold-duo "iPhone Duo" 600
+        timeout-minutes: 22
+        run: python3 -I scripts/ci-simulator.py wait gatefold-duo "iPhone Duo" 1200
       - name: Keep the app's place log as it runs (file and progression only, never the book's words)
         run: |
           nohup sh -c 'xcrun simctl spawn "$0" log stream --style compact --predicate "subsystem == \"bot.ouro.gatefold\"" 2>/dev/null \
@@ -374,7 +383,7 @@ jobs:
         run: |
           set -o pipefail
           only=(-only-testing:GatefoldUITests/PageNumberUITests/testEveryTurnMovesOnAPageAndAReopenKeepsTheNumbers)
-          if [ "$FULL" = true ]; then only+=(-only-testing:GatefoldUITests/ReviewerChecksUITests); fi
+          if [ "$FULL" != false ]; then only+=(-only-testing:GatefoldUITests/ReviewerChecksUITests); fi
           xcodebuild test-without-building -xctestrun "$XCTESTRUN" \
             -destination "$DESTINATION" "${only[@]}" \
             -resultBundlePath "$RUNNER_TEMP/duo.xcresult" 2>&1 | tee "$RUNNER_TEMP/duo.log" \
