@@ -1687,6 +1687,7 @@ final class ReaderModel {
         defer { if goingBack == trip { goingBack = nil } }
         hasMoved = true
         moves += 1
+        let move = moves
         // Its own step, apart from the move's: a newer step of any kind means another move came since.
         let jump = takeStep()
         Task { [weak self] in
@@ -1719,9 +1720,12 @@ final class ReaderModel {
             touchesSinceLocation = 0
             layoutOnly = false
         }
-        // A trip that came back after its reads ran out, with another move made since (a jump, a turn,
-        // a swipe), takes no words: the page is that move's now.
-        guard steps == jump else {
+        // Overtaken by another move, a Back takes no words: the page is that move's now. One that came
+        // back in time is overtaken only by a jump or turn of his (`moves`) and simply stops there. A
+        // freed one, back after its reads ran out, is overtaken by any newer step (a swipe too) and the
+        // page is put back where that move left it.
+        guard freed ? steps == jump : moves == move else {
+            guard freed else { return }
             // Readium has moved the page to this trip's place by now. With the newest move landed (one
             // still on its way, a jump or a turn, lands after and wins), the page goes back to where it
             // left it, and that place is kept again: a report meanwhile may have kept this trip's.
