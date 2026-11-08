@@ -493,9 +493,13 @@ final class ReaderModel {
         loadStarted = true
         // Every open has the same bound on its cover, the placeholder's or a reopen's picture (which
         // has no placeholder behind it): a page that hasn't shown by then is forced, counted in looks.
+        // Only looks while he has the book open count: a book warming behind the shelf has no cover he
+        // can see, and forcing it there would show him its unsettled page when he taps it.
         Task { [weak self] in
-            for _ in 0..<Self.coverLooks {
+            var looks = 0
+            while looks < Self.coverLooks {
                 guard let self, !self.pageReady, !self.isClosed else { return }
+                if !self.isWarming { looks += 1 }
                 try? await Task.sleep(for: .milliseconds(50))
             }
             self?.forceReady()
