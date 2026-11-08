@@ -1,7 +1,8 @@
 """Prints why each failed test failed, from the result bundles, so a red job names its cause in its log.
 
 The jobs' live logs keep only some lines, so a failure could be visible only in the .xcresult (gatefold#85).
-An assertion's own text can quote the book, so it is withheld after "XCTAssert... failed", as in the live log.
+A message can quote the book (an assertion's values, an element's label), so everything from "XCTAssert... failed",
+or from the first quote, arrow or element attribute, is withheld. A test's own XCTFail text must never hold page words.
 
     python3 -I scripts/ci-failures.py <bundle.xcresult>...   (bundles that do not exist are skipped)
 """
