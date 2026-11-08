@@ -588,6 +588,9 @@ final class ReaderModel {
                     target: ReadingAnchor(href: locator.href.string, progression: inFile, text: nil),
                     go: { [weak self] in await self?.page?.go(to: locator) == true },
                     visible: { [weak self] in await self?.page?.pageRange() },
+                    reported: { [weak self] in
+                        self?.page?.currentLocation.map { ReadingAnchor(href: $0.href.string, progression: $0.locations.progression ?? 0, text: nil) }
+                    },
                     beat: { try? await Task.sleep(for: .milliseconds(200)) })
             } else {
                 await page?.go(to: locator)
@@ -595,6 +598,9 @@ final class ReaderModel {
             }
             readerLog.notice("open: the launch jump to \(target, privacy: .public) \(landed ? "landed" : locator.locations.progression == nil ? "was sent once (no place in its file to check)" : "ran out of reads", privacy: .public) at \(self.page?.currentLocation?.locations.totalProgression ?? -1, privacy: .public)")
             launchJumpInFlight = false
+            // The jump is one move, kept where it ended: Readium's reports on the way (its file's first page)
+            // were not places, and a report can't be counted on after it (gatefold#83).
+            if let here = page?.currentLocation { await locationDidChange(here) }
         }
         // A book about to land on the InkPad's place takes its first place there, not on the cover.
         if !awaitingLanding {
@@ -1456,8 +1462,10 @@ final class ReaderModel {
         if !pageReady, launchGoTo == nil { markReady() }
         Task { await refreshScreenNumbers() }
         if !duringTurn, hasMoved, isPastStory(locator) { reachedEnd() }
-        // A landing records its place once it has settled; the steps on the way are not places.
-        guard !landing else { return }
+        // A landing records its place once it has settled; the steps on the way are not places. So does a
+        // test's launch jump: a report on its way (its file's first page) could finish after the landing and
+        // be kept as his move, and Back then went there (gatefold#83). `load()` reports where it ended.
+        guard !landing, !launchJumpInFlight else { return }
         // Mid-turn the navigator has moved under the overlay; the turn records the place when it lands.
         // A move reported mid-reflow (a turn or a jump while an iPad's first layout is still settling)
         // is owed: the reflow's end records it, or the place he went to is never kept (build 17 reopened
