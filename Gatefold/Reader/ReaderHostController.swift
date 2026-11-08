@@ -486,8 +486,12 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
 
     private func beginReflow(_ reason: ReflowReason) {
         readerLog.notice("reflow begins: \(String(describing: reason), privacy: .public)")
-        // A late correction's picture is of the old layout: the reflow's own cover takes over.
-        dropSettlePicture()
+        // A late correction's picture is the spread he was reading (the page beneath may be half moved):
+        // it becomes the reflow's cover.
+        if let picture = settlePicture {
+            settlePicture = nil
+            if reflowCover == nil { reflowCover = picture } else { picture.removeFromSuperview() }
+        }
         dropStandby()
         stopCounting()
         model.keeper.reflowWillBegin(reason)
@@ -857,7 +861,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         func beat() async { try? await Task.sleep(for: .milliseconds(120)) }
 
         var isCovered: Bool {
-            host.reflowCover != nil || host.veil != nil || host.curl.isActive || host.navigator.view.alpha < 0.5
+            host.reflowCover != nil || host.veil != nil || host.navigator.view.alpha < 0.5
                 || host.weakModel?.reopenPicture != nil
         }
 

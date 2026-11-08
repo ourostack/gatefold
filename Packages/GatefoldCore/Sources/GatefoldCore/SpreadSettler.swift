@@ -25,8 +25,8 @@ public protocol SpreadSurface: AnyObject {
     func stillness() async -> String?
     /// One short wait.
     func beat() async
-    /// True while something stands over the page (a reflow's cover, the reopen picture, a jump's veil,
-    /// a turn's leaf), so a move is not seen. False on a spread the reader is reading. Asked before
+    /// True while something stands over the page (a reflow's cover, the reopen picture, a jump's veil),
+    /// so a move is not seen. False on a spread the reader is reading. Asked before
     /// every move, since a cover can lift while the settle runs.
     var isCovered: Bool { get }
     /// Puts a picture of the page as it is over it, so the moves that follow are not seen one by one;
@@ -115,6 +115,7 @@ public enum SpreadSettler {
                     pinTried = true
                     // Only out of sight: on a page he is reading, words on the left page stay put.
                     if s.isCovered, await s.pinWords() {
+                        await beforeMove()
                         await s.goToWords()
                         moved = true
                         confirmed = false
@@ -128,6 +129,7 @@ public enum SpreadSettler {
                 }
                 await beforeMove()
                 await s.toggleVerso()
+                await beforeMove()
                 await s.goToWords()
             }
             moved = true
