@@ -2146,7 +2146,13 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         let final = await snapshot()
         // A page pictured as it is never shows black under a jump's veil: an empty picture lets the
         // veil's paper show instead.
-        if !waitsForLoad, let signature = PageSignature(final), signature.isBlack(paper: paper) { return UIImage() }
+        if !waitsForLoad, let signature = PageSignature(final), signature.isBlack(paper: paper) {
+            let color = weakModel?.theme.uiBackground ?? .white
+            return UIGraphicsImageRenderer(size: CGSize(width: 1, height: 1)).image { context in
+                color.setFill()
+                context.fill(CGRect(x: 0, y: 0, width: 1, height: 1))
+            }
+        }
         return final
     }
 
