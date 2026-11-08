@@ -503,6 +503,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         stopCounting()
         model.keeper.reflowWillBegin(reason)
         model.reflowDidBegin()
+        watchReflowLoad()
         if !curl.isActive {
             let page = navigator.view!
             if reflowCover == nil, page.alpha > 0.5, let container = page.superview,
@@ -1845,6 +1846,45 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         }
     }
     private var pageLoadWatch: Task<Void, Never>?
+
+    /// #94 probe: from a reflow's start (a rotation), whether the page in view's web view loads again and
+    /// for how long, with what it waits on at 1/3/6/10/15/20/30/60 s (file names only). `reader.reflowLoading`
+    /// reads "loading", then "done <ms>", or "never" when no load starts within 5 s.
+    func watchReflowLoad() {
+        reflowLoadWatch?.cancel()
+        reflowLoadWatch = Task { @MainActor [weak self] in
+            let started = ContinuousClock.now
+            var saw = false
+            var reported = Set<Int>()
+            for _ in 0..<1200 {
+                guard let self, !Task.isCancelled else { return }
+                let loading = self.webViewInView()?.isLoading ?? false
+                let ms = ReaderModel.ms(since: started)
+                if loading, !saw { saw = true; readerLog.notice("loadwatch: rotation reflow, the page in view started loading \(ms, privacy: .public) ms in") }
+                if saw, !loading {
+                    readerLog.notice("loadwatch: rotation reflow, the page in view finished loading \(ms, privacy: .public) ms in, counters \(LaunchOptions.counters ?? Self.counters, privacy: .public)")
+                    if LaunchOptions.isUITest { self.weakModel?.reflowLoadingProbe = "done \(ms)" }
+                    return
+                }
+                if !saw, ms > 5000 {
+                    readerLog.notice("loadwatch: rotation reflow, no load of the page in view within 5 s")
+                    if LaunchOptions.isUITest { self.weakModel?.reflowLoadingProbe = "never" }
+                    return
+                }
+                if LaunchOptions.isUITest, saw { self.weakModel?.reflowLoadingProbe = "loading" }
+                let second = ms / 1000
+                if saw, [1, 3, 6, 10, 15, 20, 30, 60].contains(second), !reported.contains(second), let web = self.webViewInView() {
+                    reported.insert(second)
+                    let result = await Self.pendingLoads(in: web)
+                    readerLog.notice("loadwatch: rotation reflow, still loading \(second, privacy: .public) s in: readyState|images|pending images|pending sheets|fonts|file|resources = \(result, privacy: .public)")
+                }
+                try? await Task.sleep(for: .milliseconds(100))
+            }
+            readerLog.notice("loadwatch: rotation reflow, the page in view still loading 120 s in")
+            if LaunchOptions.isUITest { self?.weakModel?.reflowLoadingProbe = "stuck" }
+        }
+    }
+    private var reflowLoadWatch: Task<Void, Never>?
 
     /// File names only, never the book's words: what a page's `load` is still waiting on.
     static func pendingLoads(in web: WKWebView) async -> String {

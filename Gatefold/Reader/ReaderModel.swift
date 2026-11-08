@@ -174,6 +174,7 @@ final class ReaderModel {
     /// UI tests (#94): "1" while the web view of the page in view is still loading after the page
     /// showed, "0" once it has finished, "" before the page shows.
     var pageLoadingProbe = ""
+    var reflowLoadingProbe = ""
     /// For UI tests: how far a spread's outer page ever strayed from its rest, frame by frame, from the
     /// turn's last leg until 0.5 s after it landed: "settle <n> frames <k> worst <pt> pt".
     var turnSettle = "none"

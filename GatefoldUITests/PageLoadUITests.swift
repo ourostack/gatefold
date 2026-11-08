@@ -47,7 +47,43 @@ final class PageLoadUITests: XCTestCase {
         return (true, reads)
     }
 
-    func testThePageInViewFinishesLoadingWithAndWithoutCounters() throws {
+    /// RotationRepro's case: once the opened page has loaded, rotate, then read `reader.reflowLoading`
+    /// until the page in view's load after the reflow ends ("done <ms>"), never starts ("never") or
+    /// is still going 120 s in ("stuck"). Returns the final value and the reads it took.
+    private func rotationReload(_ extra: [String]) -> (value: String, reads: Int) {
+        XCUIDevice.shared.orientation = .portrait
+        sleep(1)
+        app.launchArguments = base + extra + ["-GatefoldReset", "YES", "-GatefoldDownloadAll", "YES",
+                                              "-GatefoldOpenBook", "gutenberg-pride-and-prejudice", "-GatefoldGoTo", "0.31"]
+        app.launch()
+        let loaded = app.descendants(matching: .any)["reader.pageLoading"]
+        let up = Date().addingTimeInterval(120)
+        while Date() < up, (loaded.value as? String) != "0" { RunLoop.current.run(until: Date().addingTimeInterval(0.2)) }
+        sleep(2)
+        XCUIDevice.shared.orientation = .landscapeLeft
+        let probe = app.descendants(matching: .any)["reader.reflowLoading"]
+        var value = "", reads = 0
+        while reads < Self.readLimit * 2 {
+            reads += 1
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+            value = (probe.value as? String) ?? ""
+            if value.hasPrefix("done") || value == "never" || value == "stuck" { break }
+        }
+        app.terminate()
+        XCUIDevice.shared.orientation = .portrait
+        return (value, reads)
+    }
+
+    func testThePageInViewAfterARotationFinishesLoadingWithAndWithoutCounters() throws {
+        try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .pad, "the iPad path where #94 was seen")
+        let on = rotationReload([])
+        let off = rotationReload(["-GatefoldCounters", "0"])
+        print("LOADWATCH rotation: counters on \(on.value) after \(on.reads) reads, off \(off.value) after \(off.reads) reads")
+        XCTAssertFalse(on.value.isEmpty || off.value.isEmpty, "the reflow watch reported each time")
+    }
+
+    /// Not run (no `test` prefix): answered on #94, the counters are not the open's delay.
+    func probeThePageInViewFinishesLoadingWithAndWithoutCounters() throws {
         try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .pad, "the iPad path where #94 was seen")
         let on = readsUntilLoaded([])
         let off = readsUntilLoaded(["-GatefoldCounters", "0"])
