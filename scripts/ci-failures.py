@@ -16,7 +16,7 @@ ASSERT = re.compile(r"XCTAssert[A-Za-z]* failed")
 
 
 # Where an element's words or a compared value can begin: a quote, Swift Testing's arrow, or an element attribute.
-VALUE = re.compile(r'["\u201c\u2192\n]|\b(label|value|title|placeholderValue|identifier)\b')
+VALUE = re.compile(r'["\u201c\u2192\n]|\b(label|value|title|placeholderValue|identifier)\b', re.I)
 
 
 def withhold(message):
