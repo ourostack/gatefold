@@ -11,9 +11,8 @@ import XCTest
 /// Place is the reader's `reader.visibleText`, compared only as a SHA-256 prefix: no book text is printed or kept.
 /// Reports go to the result bundle and, with `TEST_RUNNER_OURO_FEEL_REPORT_DIR`, to that folder (gatefold#37).
 ///
-/// TODO(ouro-ui-apple 0.3.5): once v0.3.5 is tagged, link `OuroFeelRecorderInjectable` into this target only, merge
-/// `OuroFeel.injectedRecorderEnvironment` into the launch environment, and film the turns and the Contents sheet frame
-/// by frame with `feel.recordedFilm` (snaps, settles, double draws). Release never links the recorder.
+/// Sheets and panels are filmed frame by frame by Ouro Feel's recorder, injected from this bundle on the simulator
+/// (`OuroFeelRecorderInjectable`), so Release never links it.
 @MainActor
 final class FeelUITests: XCTestCase {
     private var app: XCUIApplication!
@@ -41,9 +40,17 @@ final class FeelUITests: XCTestCase {
         app = XCUIApplication()
         app.launchArguments = Self.signedIn + ["-GatefoldReset", "YES", "-GatefoldDownloadAll", "YES"] + extra
             + (open ? ["-GatefoldOpenBook", Self.book] : [])
+        injectRecorder()
         app.launch()
         feel = OuroFeel(app)
         if open { waitForPage() }
+    }
+
+    /// Ouro Feel's recorder, loaded into the app from this test bundle, for films of a sheet or a panel frame by frame.
+    private func injectRecorder() {
+        let recorder = OuroFeel.injectedRecorderEnvironment
+        XCTAssertNotNil(recorder, "the UI test bundle carries OuroFeelRecorderInjectable")
+        app.launchEnvironment.merge(recorder ?? [:]) { _, new in new }
     }
 
     /// The arguments a reopen or relaunch uses: no reset, so the place he left is the place that comes back.
@@ -228,6 +235,7 @@ final class FeelUITests: XCTestCase {
     func testWelcomeAndSignInLandStillWithAWayBack() {
         app = XCUIApplication()
         app.launchArguments = ["-GatefoldUITest", "YES", "-GatefoldFakeCloud", "YES", "-GatefoldReset", "YES", "-GatefoldNoLatency", "YES"]
+        injectRecorder()
         app.launch()
         feel = OuroFeel(app)
         let start = app.buttons["welcome.signIn"]
@@ -396,6 +404,15 @@ final class FeelUITests: XCTestCase {
                              environment: feel.environment), name: "contents-dismissal-" + how.replacingOccurrences(of: " ", with: "-"))
             if !gone, done.exists { done.tap(); _ = done.waitForNonExistence(timeout: 10) }
         }
+        // Contents travels in (no snap) and holds still once up, filmed by the app frame by frame.
+        showChrome()
+        let film = feel.recordedFilm(["Done"]) { contents.tap() }
+        check(film.snaps(of: "Done", appearing: true), name: "contents-snaps", film: film)
+        check(film.jumps(of: "Done"), name: "contents-jumps", film: film)
+        feel.record(film.settles("Done", within: 1.0), name: "contents-settles")
+        done.tap()
+        _ = done.waitForNonExistence(timeout: 10)
+        hideChrome()
         expectGesture("Contents opened and closed with Done", .stay) {
             XCTAssertTrue(openContents(), "Contents opened, with a visible way back")
             done.tap()
@@ -474,6 +491,13 @@ final class FeelUITests: XCTestCase {
             _ = el("appearance.panel").waitForNonExistence(timeout: 10)
             hideChrome()
         }
+        // The panel grows out of its pill (no snap) and holds still once up, filmed by the app frame by frame.
+        showChrome()
+        let film = feel.recordedFilm(["appearance.panel"]) { self.app.buttons["reader.appearance"].tap() }
+        check(film.snaps(of: "appearance.panel", appearing: true), name: "appearance-snaps", film: film)
+        check(film.jumps(of: "appearance.panel"), name: "appearance-jumps", film: film)
+        feel.record(film.settles("appearance.panel", within: 1.0), name: "appearance-settles")
+        close()
         expectGesture("Appearance opened and closed", .stay) {
             openAppearance()
             check(feel.insideWindow(poses: [.current]), name: "appearance-inside-window")
