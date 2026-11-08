@@ -427,10 +427,10 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     }
 
     /// Takes a navigator that is done (a counter, a standby page, the page a swap replaced) out of the reader,
-    /// and lets go of its web views (#109). Readium breaks each page's cycle (the web view's script handlers
-    /// hold the spread view, which holds the web view) only when its pagination view leaves its superview,
-    /// and UIKit tells only the view that left. Removing just the navigator's view kept every web view and
-    /// its web content process alive: 187 of them after one Fine-Tune test.
+    /// and lets go of its web views (#109). Readium clears its pages (stops them loading, resumes whatever
+    /// waits on them) only when its pagination view leaves its superview, and UIKit tells only the view that
+    /// left, so the pagination view comes out first. A page stopped mid-load held its web view, and its web
+    /// content process, for good while a script waited on it: 187 of them after one Fine-Tune test.
     static func retire(_ navigator: EPUBNavigatorViewController) {
         navigator.willMove(toParent: nil)
         if let view = navigator.viewIfLoaded {
@@ -493,6 +493,8 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     // MARK: Preferences
 
     func apply(_ preferences: EPUBPreferences, columns: Int, reflow: Bool) {
+        // A closed reader's page is retired: new preferences would only load pages nobody sees (#109).
+        guard !closed else { return }
         // One page becoming two is the unfold: the right page swings open once it has laid out.
         unfolding = reflow && self.columns == 1 && columns == 2
         self.columns = columns
