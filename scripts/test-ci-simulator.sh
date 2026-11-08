@@ -18,7 +18,11 @@ case "$*" in
   "simctl list devices -j")
     list=""; for u in $(cat "$FAKE/udids" 2>/dev/null); do list="$list${list:+,}{\"udid\":\"$u\",\"state\":\"Booted\"}"; done
     echo "{\"devices\":{\"iOS-27-1\":[$list]}}" ;;
-  "simctl shutdown "*|"simctl delete "*|"simctl erase "*|"simctl boot "*|"simctl bootstatus "*) echo "$*" >> "$FAKE/simctl" ;;
+  "simctl bootstatus "*)
+    echo "$*" >> "$FAKE/simctl"
+    n=$(( $(cat "$FAKE/bootstatus-calls" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$FAKE/bootstatus-calls"
+    for u in ${FAKE_BOOTSTATUS_FAILED_CALLS:-}; do [ "$u" = "$n" ] && { echo "Data Migration Failed"; exit 0; }; done; true ;;
+  "simctl shutdown "*|"simctl delete "*|"simctl erase "*|"simctl boot "*) echo "$*" >> "$FAKE/simctl" ;;
   *) echo "fake xcrun: unexpected $*" >&2; exit 64 ;;
 esac
 FAKE
@@ -64,7 +68,7 @@ erase_case() {
   printf '{"kind": "iPad-Pro-13", "runtime": "iOS-27-1", "prefix": "iPad Pro 13-inch", "sdk": "27.1"}' > "$case_dir/tmp/plan.json"
   mkdir -p "$case_dir/tmp/ci-simulator"; cp "$case_dir/tmp/plan.json" "$case_dir/tmp/ci-simulator/gatefold-ipad.plan"
   local got code
-  got="$(PATH="$work/bin:$PATH" FAKE="$case_dir/fake" FAKE_UNAVAIL_CALLS="$2" FAKE_BOOT_EXIT=0 \
+  got="$(PATH="$work/bin:$PATH" FAKE="$case_dir/fake" FAKE_UNAVAIL_CALLS="$2" FAKE_BOOT_EXIT=0 FAKE_BOOTSTATUS_FAILED_CALLS="${5:-}" \
     CI_SIMULATOR_BOOT_SIM="$work/boot-sim.sh" RUNNER_TEMP="$case_dir/tmp" GITHUB_ENV="$case_dir/env" \
     python3 -I "$here/ci-simulator.py" erase gatefold-ipad dev0 2>"$case_dir/err")"; code=$?
   if [ "$code" = "$3" ] && [ "${got:--}" = "$4" ]; then echo "ok   erase: $1"; else
@@ -76,5 +80,7 @@ erase_case() {
 erase_case "the erased device is fine" "" 0 dev0
 erase_case "the runtime went during the erase (gatefold#71)" "1" 0 dev1
 erase_case "it stays gone" "1 2 3" 1 -
+erase_case "bootstatus says Failed, yet the device is Booted (#57)" "" 0 dev1 "1"
+erase_case "bootstatus fails on the fresh device too" "" 1 - "1 2"
 echo "$fails failed"
 [ "$fails" = 0 ]

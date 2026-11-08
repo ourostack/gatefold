@@ -190,8 +190,14 @@ def erase(udid, steps=ERASE_STEPS):
             print(f"simctl {' '.join(cmd)}: exit {out.returncode} {out.stderr.strip()[-300:]}")
         except subprocess.TimeoutExpired:
             print(f"simctl {' '.join(cmd)} hung past {limit} s")
+            if args[0] == "bootstatus":
+                return f"bootstatus hung past {limit} s"
+            continue
         except OSError as e:
             return f"simctl could not run ({e!r})"
+        # As boot-sim.sh: a boot whose bootstatus failed is a failed boot, even if the device is listed Booted.
+        if args[0] == "bootstatus" and (out.returncode != 0 or "Failed" in out.stdout + out.stderr):
+            return f"bootstatus exited {out.returncode}" + (" and said Failed" if "Failed" in out.stdout + out.stderr else "")
     problem = check(udid)
     return "ready" if problem is None else problem
 
