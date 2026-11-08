@@ -27,4 +27,18 @@ struct CurlReleaseTests {
         #expect(!CurlRelease.completes(forward: true, dx: -60, width: width, velocity: -600, stillFor: 0.2))
         #expect(!CurlRelease.completes(forward: false, dx: 60, width: width, velocity: 600, stillFor: 0.2))
     }
+
+    @Test func theStopIsJudgedAtEightyMilliseconds() {
+        #expect(CurlRelease.completes(forward: true, dx: -40, width: width, velocity: -900, stillFor: 0.079))
+        #expect(!CurlRelease.completes(forward: true, dx: -40, width: width, velocity: -900, stillFor: 0.081))
+    }
+
+    /// Stillness is the touches' own time between the last move and the lift, so a main thread held between them
+    /// changes nothing.
+    @Test func stillnessComesFromTheTouchTimes() {
+        #expect(abs(CurlRelease.still(lastMove: 100.000, lift: 100.012) - 0.012) < 1e-9)
+        #expect(abs(CurlRelease.still(lastMove: 100.0, lift: 100.2) - 0.2) < 1e-9)
+        #expect(CurlRelease.still(lastMove: nil, lift: 100.2) == 0)
+        #expect(CurlRelease.still(lastMove: 100.3, lift: 100.2) == 0)
+    }
 }
