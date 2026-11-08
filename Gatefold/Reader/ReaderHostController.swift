@@ -1818,7 +1818,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
                 DispatchQueue.main.async { answered.signal() }
                 answered.wait()
                 let late = Date().timeIntervalSince(sent)
-                if late > 0.25 {
+                if late > 0.05 {
                     total += late
                     readerLog.notice("mainwatch \(label, privacy: .public): main busy \(Int(late * 1000), privacy: .public) ms from \(sent.timeIntervalSince(start), privacy: .public) s")
                 }
