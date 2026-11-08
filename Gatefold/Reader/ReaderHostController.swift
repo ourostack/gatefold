@@ -747,7 +747,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         if case let .jump(anchor) = action { target = anchor }
         if columns == 2, let target {
             placingGeneration = generation
-            let moved = await keepOnLeft(target, current: current)
+            let moved = await keepOnLeft(target, purpose: .restore, current: current)
             if placingGeneration == generation { placingGeneration = -1 }
             if let moved { after = moved }
         }
@@ -797,10 +797,11 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     /// Moves the spread so `anchor`'s words start its left page: a blank verso before the file's first
     /// page shifts every page one side over. Returns what's on screen after a move, nil when none was needed.
     /// The moves are `SpreadSettler`'s: each is judged by measuring the page again once it stands still.
-    private func keepOnLeft(_ anchor: ReadingAnchor, current: () -> Bool) async -> VisibleRange? {
+    private func keepOnLeft(_ anchor: ReadingAnchor, purpose: SpreadSettler.Purpose,
+                            current: () -> Bool) async -> VisibleRange? {
         guard let text = anchor.text?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else { return nil }
         let surface = WebSpread(host: self, anchor: anchor, text: text)
-        guard await SpreadSettler.keepOnLeft(surface, current: current) == true, current() else { return nil }
+        guard await SpreadSettler.keepOnLeft(surface, current: current, purpose: purpose) == true, current() else { return nil }
         let visible = await visibleRange()
         readerLog.notice("spread: words placed on the left page; \(surface.moves, privacy: .public) moves")
         return visible
@@ -812,7 +813,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         guard columns == 2, stillWanted(), !lateSettling, placingGeneration == -1 else { return }
         lateSettling = true
         defer { lateSettling = false }
-        if await keepOnLeft(anchor, current: stillWanted) != nil {
+        if await keepOnLeft(anchor, purpose: .recheck, current: stillWanted) != nil {
             readerLog.notice("spread: a late layout had moved his words; put back on the left page")
         }
     }

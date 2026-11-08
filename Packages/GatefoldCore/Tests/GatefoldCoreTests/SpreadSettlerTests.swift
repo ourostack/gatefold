@@ -303,7 +303,7 @@ struct VisibleSettleTests {
         for pinnable in [false, true] {
             let fake = FakeSpreads(columns: 52, wordsColumn: 44, pinnable: pinnable, startSpread: 22, relayoutAt: nil)
             let page = VisibleSpreads(fake)
-            _ = await SpreadSettler.keepOnLeft(page, current: { true })
+            _ = await SpreadSettler.keepOnLeft(page, current: { true }, purpose: .recheck)
             #expect(page.moves == 0, "pinnable \(pinnable): \(page.moves) moves on a landed spread he is reading")
             #expect(page.shown.count == 1, "pinnable \(pinnable): he saw \(page.shown)")
         }
@@ -320,7 +320,7 @@ struct VisibleSettleTests {
                                        startSpread: wordsColumn / 2 + offset, relayoutAt: nil)
                 let start = fake.spread
                 let page = VisibleSpreads(fake)
-                _ = await SpreadSettler.keepOnLeft(page, current: { true })
+                _ = await SpreadSettler.keepOnLeft(page, current: { true }, purpose: .recheck)
                 let landed = fake.landed
                 if !landed || page.shown.count > 2 {
                     spazzes.append("words \(wordsColumn) from spread \(start): saw \(page.shown.joined(separator: " → ")) landed \(landed)")

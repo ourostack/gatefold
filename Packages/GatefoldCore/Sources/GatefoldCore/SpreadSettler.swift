@@ -47,6 +47,14 @@ public extension SpreadSurface {
 /// measuring the page again once it has stopped moving, because the navigator's own relayout and the
 /// restore's edits to the page land in any order.
 public enum SpreadSettler {
+    /// Why the spread is being settled.
+    public enum Purpose: Sendable {
+        /// A reflow or an open placing his place in a layout: may put a column break in at his words.
+        case restore
+        /// Another look at a spread he is already reading: never re-paginates it.
+        case recheck
+    }
+
     /// How many reads of `stillness` one settle may make, across all its passes. Counted in reads, not
     /// seconds: each read is a script on the page, and on a busy device eight passes of twelve reads ran
     /// past the reflow's 12 s watchdog, which started the restore (and this) again, three times an open.
@@ -79,14 +87,19 @@ public enum SpreadSettler {
     /// was before the move, or from the progression the place was saved with (that is the old
     /// layout's, and means another page once a verso or a column break has gone in).
     ///
-    /// On a spread he is reading (`isCovered` false) it never puts a column break in: his words already
-    /// on the left page stay where he is reading them. Any moves it does make there are held behind a
-    /// picture of the page and shown as one change (build 20: a late look for his words moved the
-    /// spread under his eyes, the verso's in-between spread and then his own).
+    /// Whether a column break goes in at his words depends only on `purpose`, never on whether a cover
+    /// happens to still be up: a `.restore` (a reflow or an open placing his place in a layout) may put
+    /// one in, a `.recheck` of a spread he is already reading never does, so his words already on the
+    /// left page stay where he is reading them (gatefold#108: the break went in only while covered, so
+    /// one place at one size paginated two ways, and a reopen came back part of a page past his spread).
+    /// Any moves made on a page he can see are held behind a picture of it and shown as one change
+    /// (build 20: a late look for his words moved the spread under his eyes, the verso's in-between
+    /// spread and then his own).
     @MainActor
-    public static func keepOnLeft(_ s: SpreadSurface, current: () -> Bool, maxPasses: Int = 8) async -> Bool? {
+    public static func keepOnLeft(_ s: SpreadSurface, current: () -> Bool, maxPasses: Int = 8,
+                                  purpose: Purpose = .restore) async -> Bool? {
         var held = false
-        let result = await settle(s, current: current, maxPasses: maxPasses) {
+        let result = await settle(s, current: current, maxPasses: maxPasses, breaksColumns: purpose == .restore) {
             // Before every move: a cover that was up when the settle began may have lifted since.
             guard !held, !s.isCovered else { return }
             held = await s.hold()
@@ -96,7 +109,7 @@ public enum SpreadSettler {
     }
 
     @MainActor
-    private static func settle(_ s: SpreadSurface, current: () -> Bool, maxPasses: Int,
+    private static func settle(_ s: SpreadSurface, current: () -> Bool, maxPasses: Int, breaksColumns: Bool,
                                beforeMove: () async -> Void) async -> Bool? {
         var moved = false
         var pinTried = false
@@ -113,8 +126,11 @@ public enum SpreadSettler {
             case .left, .right:
                 if !pinTried {
                     pinTried = true
-                    // Only out of sight: on a page he is reading, words on the left page stay put.
-                    if s.isCovered, await s.pinWords() {
+                    // A break moves the page: on one he can see, it is held behind a picture first.
+                    if breaksColumns {
+                        await beforeMove()
+                    }
+                    if breaksColumns, await s.pinWords() {
                         await beforeMove()
                         await s.goToWords()
                         moved = true

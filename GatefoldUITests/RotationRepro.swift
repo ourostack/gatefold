@@ -83,11 +83,23 @@ final class RotationRepro: XCTestCase {
     }
 
     func testRotateThenLeaveWithoutTurning() throws {
+        try rotateThenLeave()
+    }
+
+    /// The same path with every reflow stalled behind its cover (`-GatefoldStallReflow`), so the 12 s
+    /// watchdog shows the page as it is and the restore runs again on a page with no cover up: the slow
+    /// path, forced. gatefold#108: the rotation took that path and the reopens the quick one, and the
+    /// two paginated his place differently (the column break at his words went in only while covered).
+    func testRotateThenLeaveWithoutTurningAfterStalledReflows() throws {
+        try rotateThenLeave(extra: ["-GatefoldStallReflow", "YES"])
+    }
+
+    private func rotateThenLeave(extra: [String] = []) throws {
         try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .pad, "a spread on rotation is an iPad path")
         // 1. Portrait, fresh install, open, wait for the count.
         XCUIDevice.shared.orientation = .portrait
         sleep(1)
-        app.launchArguments = base + ["-GatefoldReset", "YES", "-GatefoldDownloadAll", "YES",
+        app.launchArguments = base + extra + ["-GatefoldReset", "YES", "-GatefoldDownloadAll", "YES",
                                       "-GatefoldOpenBook", "gutenberg-pride-and-prejudice", "-GatefoldGoTo", "0.31"]
         app.launch()
         let counted = waitCounted()
@@ -140,7 +152,7 @@ final class RotationRepro: XCTestCase {
             XCUIDevice.shared.press(.home)
             sleep(3)
             app.quit()
-            app.launchArguments = base
+            app.launchArguments = base + extra
             app.relaunch()
             XCUIDevice.shared.orientation = .landscapeLeft
             sleep(2)
