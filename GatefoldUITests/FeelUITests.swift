@@ -66,12 +66,13 @@ final class FeelUITests: XCTestCase {
 
     private func el(_ id: String) -> XCUIElement { app.descendants(matching: .any)[id].firstMatch }
     private var words: String { (el("reader.visibleText").value as? String) ?? "" }
-    /// The reader's own word that its page is laid out and showing (`reader.pageReady`).
-    /// The chapter's running head, as a hash only (it is the book's chapter title): a turn whose head changes crossed a chapter.
-    private var chapter: String {
+    /// The running head (the contents entry he is in), as a hash only since it is the book's own title; nil when the
+    /// head is not in the tree. A turn whose head changes crossed into another contents entry.
+    private var chapter: String? {
         let head = el("reader.runningHead")
-        return FeelPlace.fingerprint(head.exists ? head.label : "")
+        return head.exists ? FeelPlace.fingerprint(head.label) : nil
     }
+    /// The reader's own word that its page is laid out and showing (`reader.pageReady`).
     private var ready: Bool { (el("reader.pageReady").value as? String) == "1" }
     private func page(_ x: Double, _ y: Double) -> XCUICoordinate {
         el("reader.page").coordinate(withNormalizedOffset: CGVector(dx: x, dy: y))
@@ -245,7 +246,8 @@ final class FeelUITests: XCTestCase {
             // One line per turn for the per-turn table: reads from the gesture to the first new words, and whether the
             // turn crossed a chapter (its running head changed). The probe trails the screen by about 3 reads
             // (gatefold#77), so this is an upper bound on how slow the page was, read on this machine's clock.
-            let crossed = chapter != chapterBefore
+            let chapterAfter = chapter
+            let crossed = chapterBefore.flatMap { b in chapterAfter.map { "\(b != $0)" } } ?? "unknown"
             print("FEEL-TURN \(name) crossed=\(crossed) firstChangeRead=\(firstChange.map { "\($0)" } ?? "none") reads=\(seen.reads)")
         }
         if expect == .moveOnce, changes > 0, lateBy > 0 {
@@ -465,7 +467,7 @@ final class FeelUITests: XCTestCase {
             self.hideChrome()
         }
         check(feel.placeHeld(across: [.strayTap(), .strayTap(), .noInput, .background, contentsAway],
-                             reads: 4, between: settleRead, read: { self.words }), name: "stray-input-place-held")
+                             reads: 4, between: { self.settleRead() }, read: { self.words }), name: "stray-input-place-held")
 
         let turn = FeelPlaceStep("a tap at the right edge") { _ in self.page(0.92, 0.5).tap() }
         let swipe = FeelPlaceStep("a swipe left") { _ in self.el("reader.page").swipeLeft() }
@@ -482,7 +484,7 @@ final class FeelUITests: XCTestCase {
             _ = done.waitForNonExistence(timeout: 10)
             self.hideChrome()
         }
-        check(feel.placeFights([turn, swipe, curl, jump], reads: 6, between: settleRead, read: { self.words }),
+        check(feel.placeFights([turn, swipe, curl, jump], reads: 6, between: { self.settleRead() }, read: { self.words }),
               name: "moves-land-and-hold")
     }
 
