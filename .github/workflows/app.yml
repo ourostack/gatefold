@@ -394,9 +394,9 @@ jobs:
           mkdir -p "$RUNNER_TEMP/samples"
           nohup sh -c '
             n=0
-            while [ $n -lt 400 ]; do
-              pid=$(pgrep -f "Gatefold.app/Gatefold$" | head -1)
-              if [ -n "$pid" ]; then n=$((n+1)); sample "$pid" 2 1 -mayDie -file "$0/s-$(date +%s)-$n.txt" >/dev/null 2>&1; else sleep 1; fi
+            while [ $n -lt 900 ]; do
+              pid=$(pgrep -x Gatefold | head -1)
+              if [ -n "$pid" ]; then n=$((n+1)); sample "$pid" 2 1 -mayDie -file "$0/s-$(date +%s)-$n.txt" >>"$0/sampler.log" 2>&1; else sleep 1; fi
             done' "$RUNNER_TEMP/samples" >/dev/null 2>&1 &
       - name: The reviewers' checks on the Duo; every screen and gesture feels right (Ouro Feel)
         env:
