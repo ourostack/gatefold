@@ -1525,6 +1525,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         await nextFrame()
 
         let chapterBefore = navigator.currentLocation?.href.string.split(separator: "#").first
+        turnFrom = navigator.currentLocation
         let moved = forward
             ? await navigator.goForward(options: .init(animated: false))
             : await navigator.goBackward(options: .init(animated: false))
@@ -1586,10 +1587,14 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         }
         if !complete {
             // Put the navigator back where it was before lifting the overlay.
-            _ = curl.mirrored
-                ? await navigator.goForward(options: .init(animated: false))
-                : await navigator.goBackward(options: .init(animated: false))
+            let navigator = navigator
+            await CurlRelease.springBack(to: turnFrom, mirrored: curl.mirrored,
+                                         go: { await navigator.go(to: $0, options: .init(animated: false)) },
+                                         step: { $0 ? await navigator.goForward(options: .init(animated: false))
+                                                    : await navigator.goBackward(options: .init(animated: false)) })
             try? await Task.sleep(for: .milliseconds(120))
+            let back = navigator.currentLocation
+            readerLog.notice("turn: sprang back to \(back?.href.string ?? "-", privacy: .public) @\(back?.locations.progression ?? -1, privacy: .public)")
         }
         let uncovered = curl.beneath
         curl.reset()
@@ -1633,6 +1638,8 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     }
 
     private var beneathFrames: [CGRect] = []
+    /// Where a curl turn started, to put the page back if it springs back.
+    private var turnFrom: Locator?
 
     private func turnedTarget() -> CGPoint {
         let t = curl.turnedFinger
