@@ -1,6 +1,7 @@
 import CryptoKit
 import UIKit
 import XCTest
+import GatefoldCore
 
 /// Kept as CI's guard on the rotation path (red on build 17, 3 of 12 rounds green; green on PR #23).
 /// Reviewer 2's rotation repro for build 17 (review-aris-words-lens.md, "The regression").
@@ -182,6 +183,7 @@ final class RotationRepro: XCTestCase {
         turnForward()
         sleep(3)
         let turned = settle(20)
+        let savedAtTurn = (el("reader.savedWords").value as? String) ?? ""
         XCUIDevice.shared.press(.home)
         sleep(3)
         app.quit()
@@ -193,14 +195,12 @@ final class RotationRepro: XCTestCase {
         sleep(4)
         let afterTurns = settle(10)
         // His place is the page's first whole word (`ReaderJS.anchor`): a spread that opens on the end of a
-        // word hyphenated across the turn reopens on the word after it, the fragment left on the page before.
-        let turnedWhole = String(turned.trimmingCharacters(in: .whitespacesAndNewlines)
-            .drop(while: { !$0.isWhitespace }).drop(while: \.isWhitespace))
-        let exact = head(afterTurns) == head(turned)
-        let fromWholeWord = !exact && !turnedWhole.isEmpty && head(afterTurns) == head(turnedWhole)
-        let turnedSame = !turned.isEmpty && (exact || fromWholeWord)
+        // word hyphenated across the turn reopens on the word after it. That counts only when the place the
+        // app saved proves the dropped token was a word's tail (`ReopenMatch`); otherwise exact or red.
+        let match = ReopenMatch.compare(left: turned, reopened: afterTurns, saved: savedAtTurn)
+        let turnedSame = !turned.isEmpty && match != .different
         let turnedAt = afterTurns.range(of: head(turned)).map { afterTurns.distance(from: afterTurns.startIndex, to: $0.lowerBound) } ?? -1
-        note("round turned \(turnedSame ? "GREEN" : "RED") startsSame=\(turnedSame) fromWholeWord=\(fromWholeWord) hisStartAt=\(turnedAt) turnedHead=\(hash(head(turned))) wholeHead=\(hash(head(turnedWhole))) reopenedHead=\(hash(head(afterTurns)))")
+        note("round turned \(turnedSame ? "GREEN" : "RED") startsSame=\(turnedSame) match=\(match.rawValue) hisStartAt=\(turnedAt) turnedHead=\(hash(head(turned))) savedHead=\(hash(head(savedAtTurn))) reopenedHead=\(hash(head(afterTurns)))")
         XCTAssertTrue(turnedSame, "after two turns: reopened on the spread he turned to")
         assertNoVisibleSettleMove("after two turns")
         // Ended here, not by XCTest at teardown, where #44 recorded "Failed to terminate" (gatefold#76).
