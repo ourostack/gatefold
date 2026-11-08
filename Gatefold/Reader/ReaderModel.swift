@@ -1566,6 +1566,10 @@ final class ReaderModel {
             if !placeOwed { readerLog.notice("place: owed by a reflow, at \(locator.locations.totalProgression ?? -1, privacy: .public) moves \(self.moves, privacy: .public) recorded \(self.recordedMoves, privacy: .public)") }
             placeOwed = true
         }
+        // A touch that brought a report under the reflow was a slide or scroll, his own move: his page is
+        // the place now, not an unreached jump's target. The report is dropped below and its touch stays
+        // pending, so a tap for the controls before the reflow ends would otherwise bring the target back.
+        if keeper.reflowing != nil, !leaving, touchedSinceLocation { owedJumpTarget = nil }
         guard keeper.reflowing == nil || leaving, !duringTurn else { return }
         // A reader still open keeps the debt for its reflow's end (`keepOwedPlace`).
         if !leaving || isClosed { placeOwed = false }
@@ -1795,7 +1799,8 @@ final class ReaderModel {
         // Every touch since the last report, not only this tap's: a counter that took off one touch per
         // tap kept a tap Readium never passed on (one whose touch began but whose tap went nowhere) as
         // a move of his, and the next layout report moved his place (2 in 20 reopens). A swipe that a
-        // tap follows before Readium reports it is the rarer case and is left to that report.
+        // tap follows before Readium reports it is the rarer case and is left to that report. A swipe
+        // reported under a reflow has already dropped the jump's target (`locationDidChange`).
         touchesSinceLocation = 0
         setChrome(visible)
     }
