@@ -98,7 +98,7 @@ struct ReaderChrome: View {
         HStack(alignment: .bottom, spacing: 12) {
             VStack(spacing: 8) {
                 // After a Jump the way back stays up for a while, with or without the controls.
-                if let back = model.backLocator, model.chromeVisible || model.showJumpBack {
+                if model.backLocator != nil, model.chromeVisible || model.showJumpBack {
                     Button {
                         Task { await model.goBack() }
                     } label: {
@@ -110,7 +110,8 @@ struct ReaderChrome: View {
                     .frame(minHeight: 44)
                     .buttonStyle(.glass(.regular.tint(model.theme.background.opacity(0.7))))
                     .accessibilityIdentifier("reader.back")
-                    .id(back.locations.totalProgression)
+                    // One pill for every way back (no identity per place): Back leaves a way back of
+                    // its own, and a new identity tore the tapped pill out from under his finger.
                     .transition(.scale.combined(with: .opacity))
                 }
                 if model.chromeVisible && !showAppearance {

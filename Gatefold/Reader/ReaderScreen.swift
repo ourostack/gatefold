@@ -116,6 +116,13 @@ struct ReaderScreen: View {
                 .frame(width: proxy.size.width, height: layout.deck == nil ? proxy.size.height : layout.pageFrame.height)
 
                 if showAppearance {
+                    // A tap anywhere off the panel closes it, and nothing else: it never reaches the page,
+                    // where a tap in a margin would turn it (the M4 iPad review's tap above the panel).
+                    Color.clear
+                        .contentShape(.rect)
+                        .onTapGesture { showAppearance = false }
+                        .accessibilityHidden(true)
+                        .zIndex(4)
                     // Low over the page (or the spread), inside the safe area, the top of the page in view.
                     SettingsPanel(model: model, width: proxy.size.width) { showAppearance = false }
                         .frame(maxWidth: 560)
