@@ -14,21 +14,37 @@ import sys
 ASSERT = re.compile(r"XCTAssert[A-Za-z]* failed")
 
 
+# Where an element's words or a compared value can begin: a quote, Swift Testing's arrow, or an element attribute.
+VALUE = re.compile(r'["\u201c\u2192\n]|\b(label|value|title|placeholderValue|identifier)\b')
+
+
 def withhold(message):
     m = ASSERT.search(message)
     if m:
         return message[: m.end()] + " (text withheld)"
+    m = VALUE.search(message)
+    if m:
+        return message[: m.start()].rstrip() + " (text withheld)"
     return message[:300]
 
 
+def escape(text, title=False):
+    text = text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+    return text.replace(":", "%3A").replace(",", "%2C") if title else text
+
+
 def failures(node, path=()):
-    """Yields (test, message) for every failure message under a failed test case."""
+    """Yields (test, message) for every failure message under a failed test case, and for every one outside any
+    test case (a runner that crashed or lost its connection records its failure on the bundle or the plan)."""
     here = path + (node.get("name", ""),)
-    if node.get("nodeType") == "Test Case" and node.get("result") == "Failed":
-        messages = [c.get("name", "") for c in walk(node) if c.get("nodeType") == "Failure Message"]
-        test = "/".join(here[-2:])
-        for message in messages or ["(no failure message recorded)"]:
-            yield test, message
+    if node.get("nodeType") == "Test Case":
+        if node.get("result") == "Failed":
+            messages = [c.get("name", "") for c in walk(node) if c.get("nodeType") == "Failure Message"]
+            for message in messages or ["(no failure message recorded)"]:
+                yield "/".join(here[-2:]), message
+        return
+    if node.get("nodeType") == "Failure Message":
+        yield path[-1] if path else "(test run)", node.get("name", "")
         return
     for child in node.get("children", []):
         yield from failures(child, here)
@@ -49,10 +65,15 @@ def main(paths):
         if out.returncode != 0:
             print(f"{os.path.basename(path)}: could not read the bundle ({out.stderr.strip()[:200]})")
             continue
-        found = [f for n in json.loads(out.stdout).get("testNodes", []) for f in failures(n)]
+        try:
+            nodes = json.loads(out.stdout).get("testNodes", [])
+        except ValueError:
+            print(f"{os.path.basename(path)}: the bundle's results are not readable (cut short?)")
+            continue
+        found = [f for n in nodes for f in failures(n)]
         print(f"{os.path.basename(path)}: {len(found)} failure(s)")
         for test, message in found:
-            print(f"::error title={test}::{withhold(message)}")
+            print(f"::error title={escape(test, title=True)}::{escape(withhold(message))}")
     return 0
 
 

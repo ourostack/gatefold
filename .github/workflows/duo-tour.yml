@@ -127,7 +127,7 @@ jobs:
           grep -E "error:|Test Case .*(passed|failed)|TEST (EXECUTE )?(SUCCEEDED|FAILED)" "$RUNNER_TEMP/duo/demo.log" | tail -30 || true
           exit $status
       - name: Why each failed test failed (from the result bundles, text withheld)
-        if: failure()
+        if: failure() || cancelled()
         timeout-minutes: 5
         run: python3 -I scripts/ci-failures.py "$RUNNER_TEMP"/duo/demo.xcresult
       - uses: actions/upload-artifact@v4
