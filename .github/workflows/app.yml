@@ -389,20 +389,6 @@ jobs:
           nohup sh -c 'xcrun simctl spawn "$0" log stream --style compact --predicate "subsystem == \"bot.ouro.gatefold\"" 2>/dev/null \
             | grep --line-buffered -E "place (read|write)|place:|location |reflow|landing|landed|reopen|tapped|warm:|open:|first page|pages:|turn:|spread:|veil:|settle [0-9]" \
             | grep --line-buffered -v -E "text:|\] visible|anchor" >> "$1"' "$UDID" "$RUNNER_TEMP/place.log" >/dev/null 2>&1 &
-      - name: "Probe (gatefold#84, not for merge): sample the app's main thread while Appearance opens"
-        run: |
-          mkdir -p "$RUNNER_TEMP/samples"
-          # The probe build logs "probe84: appearance opening" when Your Page is tapped and opens the
-          # panel 0.4 s later (inside the Feel film), so a 3 s sample, started on that line, spans the open.
-          nohup sh -c '
-            n=0
-            xcrun simctl spawn "$1" log stream --style compact --predicate "subsystem == \"bot.ouro.gatefold\" AND eventMessage CONTAINS \"probe84\"" 2>/dev/null \
-            | while read -r line; do
-                case "$line" in *"appearance opening"*) ;; *) continue ;; esac
-                pid=$(pgrep -x Gatefold | head -1); [ -n "$pid" ] || continue
-                n=$((n+1)); echo "open $n at $(date +%s) pid $pid" >>"$0/sampler.log"
-                sample "$pid" 3 1 -mayDie -file "$0/open-$n.txt" >>"$0/sampler.log" 2>&1 &
-              done' "$RUNNER_TEMP/samples" "$UDID" >/dev/null 2>&1 &
       - name: The reviewers' checks on the Duo; every screen and gesture feels right (Ouro Feel)
         env:
           FULL: ${{ needs.changes.outputs.full }}
