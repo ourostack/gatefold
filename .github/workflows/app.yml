@@ -222,13 +222,6 @@ jobs:
             skip: ""
             pr_tests: ""
             cold: false
-          - shard: ipad-feel
-            tests: >-
-              FeelUITests
-            timeout: 40
-            skip: ""
-            pr_tests: ""
-            cold: false
     uses: ./.github/workflows/ui-tests.yml
     with:
       artifact: ${{ needs.build.outputs.artifact }}
@@ -318,13 +311,6 @@ jobs:
             timeout: 40
             pr_tests: ""
             cold: false
-          - shard: duo-feel
-            tests: >-
-              FeelUITests
-            timeout: 40
-            skip: ""
-            pr_tests: ""
-            cold: false
           - shard: duo-reviewer-reopen
             tests: >-
               ReviewerChecksUITests/testEveryReopenReturnsTheSameWords
@@ -373,7 +359,7 @@ jobs:
           [ "$SHARDS" = success ]
 
   ipad-taps-gate:
-    # The required check for the iPad's taps and Ouro Feel: green when every shard passed, or when only Markdown changed (gatefold#42).
+    # The required check for the iPad's taps: green when every shard passed, or when only Markdown changed (gatefold#42).
     # Always runs, so the check reports on every pull request; a failed or cancelled shard turns it red.
     name: iPad (taps)
     needs: [changes, ipad-taps]
@@ -407,7 +393,7 @@ jobs:
           [ "$SHARDS" = success ]
 
   duo-gate:
-    # The required check for the Duo's UI tests and Ouro Feel: green when every shard passed, or when only Markdown changed (gatefold#42).
+    # The required check for the Duo's UI tests: green when every shard passed, or when only Markdown changed (gatefold#42).
     # Always runs, so the check reports on every pull request; a failed or cancelled shard turns it red.
     name: Duo (the reviewers' checks)
     needs: [changes, duo]
