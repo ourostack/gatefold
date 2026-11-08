@@ -17,7 +17,7 @@ final class ColdOpenPage: ReaderPage {
     /// Reads of the page before his words can be found in it.
     var unfindableReads: Int
     private var reads = 0
-    private var reported = false
+    var reported = false
     /// Reads made while the page was revealed on words other than his.
     private(set) var revealedOnOtherWords = 0
 
@@ -72,7 +72,18 @@ final class ColdOpenPage: ReaderPage {
 @MainActor @Suite(.serialized) struct OpenRevealTests {
     static let hisWords = "the sentence he was reading when he put the book down last night"
 
-    @Test func aColdOpenNeverShowsAPageBeforeHisWords() async throws {
+    /// Readium's report arriving while the settle is reading the page.
+    @Test func aReportDuringTheSettleDoesNotRevealThePage() async throws {
+        try await open(reportBeforeLoad: false)
+    }
+
+    /// The usual order on a device: Readium's report arrives while load() is still reading the book,
+    /// before the settle has begun.
+    @Test func aReportBeforeTheSettleDoesNotRevealThePage() async throws {
+        try await open(reportBeforeLoad: true)
+    }
+
+    private func open(reportBeforeLoad: Bool) async throws {
         let sync = StubSync()
         await sync.setLibrary(.success([ReaderSyncTests.frankenstein]))
         await sync.setRemote(nil)
@@ -90,6 +101,12 @@ final class ColdOpenPage: ReaderPage {
                                 hisWords: Self.hisWords, unfindableReads: 4)
         let model = ReaderModel(book: book, publication: publication, app: app, page: page)
         page.model = model
+        if reportBeforeLoad {
+            page.reported = true
+            await model.locationDidChange(guess)
+            // Whatever reveal that report started gets its turns before load() reads the page.
+            for _ in 0..<10 { await Task.yield() }
+        }
         await model.load()
         // The reveal runs on its own task once the open has settled: give it a few turns of the loop.
         for _ in 0..<40 where !model.pageReady { await Task.yield(); try? await Task.sleep(for: .milliseconds(10)) }

@@ -240,6 +240,9 @@ final class ReaderModel {
         self.highlights = HighlightStore(bookID: book.id, cloudBook: book.cloud, sync: app.sync)
         let initial = book.locatorJSON.flatMap { try? Locator(jsonString: $0) }
         self.initialLocator = initial
+        // From the first moment: Readium reports its first page while load() is still reading the
+        // book, before the settle has begun, and that report must not reveal the page either.
+        self.openSettling = initial != nil
         // A test's launch jump sets up the book it opens, once: a book he already has a place in (or
         // another book opened in the same launch) opens on its own place. Jumping every open re-made
         // the jump on a return and called the page it reached his (CI's page-numbers check).
@@ -546,10 +549,9 @@ final class ReaderModel {
             // The cover stays up until his words are on screen: Readium's first report can arrive
             // before this finds them, and showing it then showed another page and jumped to his about
             // 10 s later (a cold relaunch with no picture of his page, build 20).
-            openSettling = true
             await settle(on: initialLocator, move: moves)
-            openSettling = false
         }
+        openSettling = false
         readerLog.notice("open: settled after \(Date().timeIntervalSince(self.openedAt), privacy: .public) s")
         // A test's launch jump shows its page once, after the jump, not the book's start first.
         if launchGoTo == nil { markReady() }
@@ -613,14 +615,15 @@ final class ReaderModel {
             await host?.waitWhileLoading()
             readerLog.notice("open: Readium's loading held \(Date().timeIntervalSince(held), privacy: .public) s (asked \(Date().timeIntervalSince(self.askedAt), privacy: .public) s ago)")
             revealing = false
-            guard !pageReady else { return }
+            guard !pageReady, !isClosed else { return }
             Task { [weak self] in await self?.host?.logTypography() }
             readerLog.notice("first page ready after \(Date().timeIntervalSince(self.isWarming ? self.openedAt : self.askedAt), privacy: .public) s\(self.isWarming ? " (behind the shelf)" : "", privacy: .public)")
             showPage()
         }
     }
     private var revealing = false
-    /// load() is settling the page on his saved words: nothing reveals the page until it has.
+    /// A saved place not yet settled on: from init until load() has settled the page on his words,
+    /// nothing but the placeholder's bounded `forceReady` reveals the page.
     @ObservationIgnored private var openSettling = false
     /// Looks (one check every 50 ms) the reveal waits for the open's settle or a reflow before showing
     /// anyway: 60, about 3 s. The settle itself is bounded at 4 rounds of two page reads; this only
@@ -704,7 +707,7 @@ final class ReaderModel {
             }
             // A page still loading isn't forced into view: a blank page and a spinner is no first page.
             await host?.waitWhileLoading()
-            guard !pageReady else { return }
+            guard !pageReady, !isClosed else { return }
             readerLog.notice("first page forced ready after \(Date().timeIntervalSince(self.openedAt), privacy: .public) s")
             showPage()
         }
