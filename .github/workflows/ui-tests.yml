@@ -107,6 +107,8 @@ jobs:
           TESTS: ${{ inputs.tests }}
           SKIP: ${{ inputs.skip }}
         run: |
+          # An empty list would run the whole UI suite on the erased iPad.
+          [ -n "$TESTS" ] || { echo "::error::A cold shard needs a test list"; exit 1; }
           udid="$UDID"
           echo "$(date -u +%T) erasing $udid"
           # Each simctl call bounded, then the device checked; if its runtime went ("Malformed bundle"; gatefold#71),
