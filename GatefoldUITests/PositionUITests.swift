@@ -127,8 +127,13 @@ final class PositionUITests: XCTestCase {
         // Your Page opens after the turn that makes the place his: opened at launch, the turn's tap in
         // the page's margin would close it (a tap outside a panel closes it and turns nothing).
         launch()
-        app.descendants(matching: .any)["reader.page"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
-        XCTAssertTrue(app.buttons["reader.appearance"].waitForExistence(timeout: 5))
+        // A centre tap shows the controls; one that lands before the page takes taps is tried again.
+        let centre = app.descendants(matching: .any)["reader.page"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        for _ in 0..<3 where !app.buttons["reader.appearance"].exists {
+            centre.tap()
+            _ = app.buttons["reader.appearance"].waitForExistence(timeout: 4)
+        }
+        XCTAssertTrue(app.buttons["reader.appearance"].exists)
         app.buttons["reader.appearance"].tap()
         let larger = app.buttons["appearance.larger"]
         XCTAssertTrue(larger.waitForExistence(timeout: 10))

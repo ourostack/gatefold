@@ -224,14 +224,19 @@ jobs:
         run: |
           binary="$RUNNER_TEMP/release/Build/Products/Release-iphoneos/Gatefold.app/Gatefold"
           test -f "$binary"
-          # The check must be able to see the key: the Debug app built for the unit tests reads it, so
-          # it must turn up there, or a miss in Release proves nothing.
-          debug="$(ls -d ~/Library/Developer/Xcode/DerivedData/Gatefold-*/Build/Products/Debug-iphonesimulator/Gatefold.app | head -1)"
-          if ! cat "$debug/Gatefold" "$debug"/*.dylib 2>/dev/null | strings -a | grep -q "GatefoldGoTo"; then
-            echo "::error::The Debug app's launch jump key isn't visible to this check, so it can't vouch for Release"
+          # Swift keeps literals of 15 bytes or fewer inline, where strings can't see them, so the check
+          # looks for the launch jump's 34-byte marker (LaunchOptions.goToMarker), whose prefix is the key.
+          marker="GatefoldGoTo/test-only-launch-jump"
+          if ! grep -q "\"$marker\"" Gatefold/Design/Design.swift; then
+            echo "::error::LaunchOptions.goToMarker no longer reads $marker; update this check with it"
             exit 1
           fi
-          if strings -a "$binary" | grep -q "GatefoldGoTo"; then
+          # Canary: a launch key of 16 bytes that Release keeps must be visible, or a miss proves nothing.
+          if ! strings -a "$binary" | grep -q "GatefoldOpenBook"; then
+            echo "::error::This check can't see the Release app's launch keys, so it can't vouch for it"
+            exit 1
+          fi
+          if strings -a "$binary" | grep -q "$marker"; then
             echo "::error::The Release app reads -GatefoldGoTo: a launch jump could move his place"
             exit 1
           fi

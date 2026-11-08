@@ -124,12 +124,19 @@ enum LaunchOptions {
     }
     /// Tests: the first launch's type size, in place of the one Dynamic Type gives.
     static var fontScale: Double? { defaults.object(forKey: "GatefoldFontScale") == nil ? nil : defaults.double(forKey: "GatefoldFontScale") }
+    #if DEBUG
+    /// The launch jump's key is this marker's first 12 bytes (`-GatefoldGoTo`). Swift keeps literals of
+    /// 15 bytes or fewer inline, out of reach of `strings`, so the key alone can't be found in a binary;
+    /// app.yml's Release check looks for this marker instead.
+    private static let goToMarker = "GatefoldGoTo/test-only-launch-jump"
+    #endif
     /// Tests only: a launch jump. Compiled out of Release, so a shipped app can never move his place by itself.
     static var goTo: Double? {
         #if DEBUG
-        defaults.object(forKey: "GatefoldGoTo") == nil ? nil : defaults.double(forKey: "GatefoldGoTo")
+        let key = String(goToMarker.prefix(12))
+        return defaults.object(forKey: key) == nil ? nil : defaults.double(forKey: key)
         #else
-        nil
+        return nil
         #endif
     }
     static var forcedPosture: Posture? { defaults.string(forKey: "GatefoldForcePosture").flatMap(Posture.init(rawValue:)) }
