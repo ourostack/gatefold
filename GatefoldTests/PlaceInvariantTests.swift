@@ -181,4 +181,28 @@ import Testing
         #expect(f.model.showJumpBack && f.model.backLocator != nil)
         f.model.close()
     }
+
+    /// A Back whose jump never comes back (a load that hangs) frees Back after its reads run out:
+    /// the next tap goes back.
+    @Test func aBackThatNeverLandsLeavesBackWorking() async throws {
+        let f = try await S.make(remote: { _, _ in nil }, startAt: 0.05)
+        await f.model.load()
+        await f.model.locationDidChange(try #require(f.page.currentLocation))
+        await f.model.go(toProgression: 0.7, rememberBack: true)
+        f.model.backBeat = { await Task.yield() }
+        f.page.holdsJumps = true
+        let before = f.page.jumps.count
+        let hung = Task { await f.model.goBack() }
+        for _ in 0..<100 where f.page.jumps.count == before { await Task.yield() }
+        #expect(f.page.jumps.count == before + 1 && f.model.isGoingBack, "Back's jump never started")
+        for _ in 0..<(JumpLanding.reads * 4) where f.model.isGoingBack { await Task.yield() }
+        #expect(!f.model.isGoingBack, "a hung Back left Back dead")
+        f.page.holdsJumps = false
+        await f.model.goBack()
+        #expect(f.page.jumps.count == before + 2, "the next Back made no jump")
+        #expect(f.model.showJumpBack && f.model.backLocator != nil)
+        f.page.releaseJumps()
+        await hung.value
+        f.model.close()
+    }
 }

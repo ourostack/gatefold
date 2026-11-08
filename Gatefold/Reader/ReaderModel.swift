@@ -1457,7 +1457,7 @@ final class ReaderModel {
         }
         refreshBookmarkState(await page?.visibleRange())
         // Not while Back lands on it: that one's way back replaces it when the jump is done.
-        if !goingBack, let back = backLocator, abs((back.locations.totalProgression ?? 0) - totalProgression) < 0.0001 {
+        if goingBack == nil, let back = backLocator, abs((back.locations.totalProgression ?? 0) - totalProgression) < 0.0001 {
             readerLog.notice("back: on its own place, cleared")
             backLocator = nil
         }
@@ -1635,9 +1635,22 @@ final class ReaderModel {
     /// Back is a jump too: the page it leaves gets its own way back, so a stray tap on it is undone
     /// with one more.
     func goBack() async {
-        guard let back = backLocator, !goingBack else { return }
-        goingBack = true
-        defer { goingBack = false }
+        guard let back = backLocator, goingBack == nil else { return }
+        backTrips += 1
+        let trip = backTrips
+        goingBack = trip
+        // Released on every way out, and by the count if the jump never comes back (a load that hangs
+        // must not leave Back dead for the rest of the session).
+        defer { if goingBack == trip { goingBack = nil } }
+        Task { [weak self] in
+            for _ in 0..<JumpLanding.reads {
+                guard let self, self.goingBack == trip, !self.isClosed else { return }
+                await self.backBeat()
+            }
+            guard let self, self.goingBack == trip else { return }
+            readerLog.notice("back: trip \(trip, privacy: .public) ran out of reads; Back is free again")
+            self.goingBack = nil
+        }
         hasMoved = true
         moves += 1
         // The page on screen now: a Back tapped right after a jump comes before Readium's report of it.
@@ -1649,8 +1662,12 @@ final class ReaderModel {
         await veiled { _ = await self.page?.go(to: back) }
         await captureAnchor()
     }
-    /// Back is under way: a second tap meanwhile is not a second jump.
-    @ObservationIgnored private var goingBack = false
+    /// The Back trip under way: a second tap meanwhile is not a second jump.
+    @ObservationIgnored private var goingBack: Int?
+    @ObservationIgnored private var backTrips = 0
+    var isGoingBack: Bool { goingBack != nil }
+    /// One read of the page while Back is under way; `JumpLanding.reads` of them free Back again.
+    @ObservationIgnored var backBeat: () async -> Void = { try? await Task.sleep(for: .milliseconds(200)) }
 
     /// The place a jump leaves, held until the jump has moved the page: "Back to page" offered while
     /// the old page was still up (3.6 to 8.8 s on a cold Contents jump in build 19) read as a jump that

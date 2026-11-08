@@ -24,11 +24,16 @@ final class ScriptedPage: ReaderPage {
     var reportsJumps = true
     /// Called as each jump starts, so a test can see the reader mid-jump.
     var onGo: (() -> Void)?
+    /// Jumps that never come back until released (a load that hangs).
+    var holdsJumps = false
+    private var held: [CheckedContinuation<Void, Never>] = []
+    func releaseJumps() { let h = held; held = []; h.forEach { $0.resume() } }
 
     @discardableResult
     func go(to locator: Locator) async -> Bool {
         jumps.append(locator)
         onGo?()
+        if holdsJumps { await withCheckedContinuation { held.append($0) } }
         let before = pageStartsBefore
         let landed = locator.copy(
             locations: {
