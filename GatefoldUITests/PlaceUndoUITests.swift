@@ -59,6 +59,8 @@ final class PlaceUndoUITests: XCTestCase {
     private func showChrome() {
         // A tap under a jump's veil is swallowed (the veil is the page changing), so wait it out.
         XCTAssertTrue(el("reader.veil").waitForNonExistence(timeout: 60), "the veil lifts")
+        // Already up (a jump made from them leaves them up): a tap now would put them down.
+        if app.buttons["reader.contents"].exists { return }
         el("reader.page").coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
         XCTAssertTrue(app.buttons["reader.contents"].waitForExistence(timeout: 5))
     }
@@ -123,6 +125,21 @@ final class PlaceUndoUITests: XCTestCase {
         XCTAssertTrue(panel.waitForNonExistence(timeout: 5), "a tap above Your Page didn't close it")
         RunLoop.current.run(until: Date().addingTimeInterval(2))
         XCTAssertEqual(opening(settledWords()), opening(first), "closing Your Page moved the page")
+    }
+
+    /// On a spread, a tap near the window's left edge at mid-height turns back. The UI tests' posture
+    /// switches once sat in that strip and swallowed it (the iPad spread's x 0.07 did nothing).
+    func testATapNearTheLeftEdgeOfASpreadTurnsBack() throws {
+        let first = openFresh()
+        try XCTSkipUnless(el("reader.posture").label == "spread", "a spread only (the iPad, or the unfolded Duo)")
+        let window = app.windows.firstMatch
+        window.coordinate(withNormalizedOffset: CGVector(dx: 0.97, dy: 0.5)).tap()
+        let ahead = waitForWords(changingFrom: first, timeout: 15)
+        XCTAssertNotEqual(opening(ahead), opening(first), "the forward turn didn't happen")
+        window.coordinate(withNormalizedOffset: CGVector(dx: 0.07, dy: 0.5)).tap()
+        let back = waitForWords(changingFrom: ahead, timeout: 15)
+        XCTAssertEqual(opening(back), opening(first), "a tap at x 0.07 on the spread didn't turn back")
+        XCTAssertFalse(app.buttons["reader.contents"].exists, "the tap showed the controls instead of turning")
     }
 
     /// A tap on the turn zone while a jump's veil is up is not a turn: the page lands where he chose.
