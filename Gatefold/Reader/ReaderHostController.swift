@@ -516,7 +516,10 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             }
             // The unfold plays on a page he can see: behind the opening cover (a relaunch turning on its
             // side as it opens) a rising leaf only showed through the cover as it faded (#59).
-            if unfolding, pageShown { liftLeaf() }
+            // An unfold that begins covered stays a plain reflow even if the cover lifts before it lands:
+            // a swing then would play on a still picture of the old page.
+            if unfolding, !pageShown { unfolding = false }
+            if unfolding { liftLeaf() }
         }
         settleReflowSoon()
     }
@@ -759,7 +762,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         reflowCover = nil
         if unfolding, columns == 2, !pageShown {
             // Still behind the opening cover: the spread is simply there when the cover lifts.
-            readerLog.notice("unfold: behind the opening cover; no swing")
+            readerLog.notice("unfold: behind a cover (the opening one or a reopen picture); no swing")
             unfolding = false
             model.heldPicture = nil
             model.heldPage = nil
