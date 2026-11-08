@@ -1352,6 +1352,8 @@ final class ReaderModel {
     /// the page or records a place after the close has sent the last one.
     func close() {
         if isWarming, !pageReady { hostController?.halt() }
+        // A move a reflow still owes is his place: kept now, since that reflow will never end (gatefold#96).
+        let owed = owedPlaceOnLeaving()
         isClosed = true
         launchJumpDone()
         stallTimer?.cancel()
@@ -1367,6 +1369,34 @@ final class ReaderModel {
         suggestionLocator = nil
         suggestionRemote = nil
         suggestionCloud = nil
+        if let owed {
+            Task {
+                await keepOwedPlace(owed)
+                // Sent now: the close's own send may have gone before this write.
+                app.library.flushPushes()
+            }
+        }
+    }
+
+    /// What a reflow still owes as he leaves: an unreached jump's target, or the page he is on. Read
+    /// before the page goes, so a reflow that never settles (a slow device, a load stuck as in gatefold#94)
+    /// can't drop the move he made under it (gatefold#96).
+    func owedPlaceOnLeaving() -> Locator? {
+        guard placeOwed, !isClosed, !isWarming else { return nil }
+        return owedJumpTarget.flatMap { $0.1 == moves && !touchedSinceLocation ? $0.0 : nil } ?? page?.currentLocation
+    }
+
+    /// Writes the place a reflow owed, as he leaves: the reader may have closed, and the reflow may
+    /// still be under way. Only the place; nothing on screen changes. If he hasn't closed the book
+    /// (the app only went inactive), the debt stands: a reflow that settles later still records his
+    /// own words over this write, as it would have without it.
+    func keepOwedPlace(_ here: Locator) async {
+        guard placeOwed, !isWarming else { return }
+        if isClosed { owedJumpTarget = nil }
+        let recordedBefore = recordedMoves
+        readerLog.notice("place: recorded the move a reflow held, on leaving, at \(here.locations.totalProgression ?? -1, privacy: .public) moves \(self.moves, privacy: .public) recorded \(self.recordedMoves, privacy: .public)")
+        await locationDidChange(here, hisMove: true, placeOnly: true, leaving: true)
+        if !isClosed, placeOwed, recordedMoves == moves { recordedMoves = recordedBefore }
     }
 
     func dismissSuggestion() {
@@ -1505,8 +1535,11 @@ final class ReaderModel {
 
     /// `placeOnly`: keep `locator` as the place without naming it on screen (a launch jump that never
     /// landed: the page still shows what Readium names, so the running head and the end check stay there).
-    func locationDidChange(_ locator: Locator, duringTurn: Bool = false, hisMove: Bool = false, placeOnly: Bool = false) async {
-        guard !isClosed else { return }
+    /// `leaving`: the place a reflow owes, written as he leaves (`keepOwedPlace`), past a close and a reflow
+    /// still under way.
+    func locationDidChange(_ locator: Locator, duringTurn: Bool = false, hisMove: Bool = false, placeOnly: Bool = false,
+                           leaving: Bool = false) async {
+        guard !isClosed || leaving else { return }
         if !placeOnly {
             location = locator
             // The reader turning on: the other device's line has done its job.
@@ -1527,12 +1560,13 @@ final class ReaderModel {
         // is owed: the reflow's end records it, or the place he went to is never kept (build 17 reopened
         // a book jumped to during that reflow at its start, then landed on the Cloud's older place).
         // A reader warmed behind the shelf has no place of his to owe.
-        if keeper.reflowing != nil, hasMoved, moves != recordedMoves, !duringTurn, !isWarming {
+        if keeper.reflowing != nil, !leaving, hasMoved, moves != recordedMoves, !duringTurn, !isWarming {
             if !placeOwed { readerLog.notice("place: owed by a reflow, at \(locator.locations.totalProgression ?? -1, privacy: .public) moves \(self.moves, privacy: .public) recorded \(self.recordedMoves, privacy: .public)") }
             placeOwed = true
         }
-        guard keeper.reflowing == nil, !duringTurn else { return }
-        placeOwed = false
+        guard keeper.reflowing == nil || leaving, !duringTurn else { return }
+        // A reader still open keeps the debt for its reflow's end (`keepOwedPlace`).
+        if !leaving || isClosed { placeOwed = false }
         // Only he moves the place: a turn, a jump or a touch since the last report. A report after a
         // reflow, with none of them since, is the layout (a rotation, an unfold, a late report from the new spread), and it never
         // re-anchors or rewrites the saved place: a spread that slips a verso before his page starts a
