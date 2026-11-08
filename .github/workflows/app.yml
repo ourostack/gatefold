@@ -231,6 +231,11 @@ jobs:
             echo "::error::LaunchOptions.goToMarker no longer reads $marker; update this check with it"
             exit 1
           fi
+          # The key itself is too short for strings to see, so the app may only read it through the marker.
+          if git grep -n '"GatefoldGoTo"' -- Gatefold; then
+            echo "::error::The app reads GatefoldGoTo directly, where this check can't see it; read it through LaunchOptions.goToMarker"
+            exit 1
+          fi
           # Canary: a launch key of 16 bytes that Release keeps must be visible, or a miss proves nothing.
           if ! strings -a "$binary" | grep -q "GatefoldOpenBook"; then
             echo "::error::This check can't see the Release app's launch keys, so it can't vouch for it"
