@@ -26,6 +26,8 @@ final class ScriptedPage: ReaderPage {
     var onGo: (() -> Void)?
     /// Jumps that never come back until released (a load that hangs).
     var holdsJumps = false
+    /// Reports a jump's page before the jump returns, as Readium can.
+    var reportsBeforeReturn = false
     private var held: [CheckedContinuation<Void, Never>] = []
     func releaseJumps() { let h = held; held = []; h.forEach { $0.resume() } }
 
@@ -46,7 +48,9 @@ final class ScriptedPage: ReaderPage {
         if let words = locator.text.highlight {
             visibleText = showsWords(locator) ? "the lines above the place. " + words + " and on down the page" : "a page of something else entirely"
         }
-        if let model, reportsJumps { Task { await model.locationDidChange(landed) } }
+        if let model, reportsJumps {
+            if reportsBeforeReturn { await model.locationDidChange(landed) } else { Task { await model.locationDidChange(landed) } }
+        }
         return true
     }
 
