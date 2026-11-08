@@ -39,9 +39,12 @@ final class CountingPlaceholderUITests: XCTestCase {
         while !number.exists, Date() < deadline {
             samples += 1
             if counting.exists {
-                if !sawCounting {
+                // One snapshot for the label: the placeholder can go between `exists` and a second
+                // query (a starved runner takes seconds per query), and a query for an element that
+                // has gone fails the test (main at 379fda7: found at one read, gone at the next).
+                if !sawCounting, let snapshot = try? counting.snapshot() {
                     sawCounting = true
-                    XCTAssertEqual(counting.label, "Counting pages", "VoiceOver hears what the slot says")
+                    XCTAssertEqual(snapshot.label, "Counting pages", "VoiceOver hears what the slot says")
                     words = visibleText
                 }
             } else if !number.exists {
