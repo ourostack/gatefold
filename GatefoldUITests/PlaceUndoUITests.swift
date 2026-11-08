@@ -162,10 +162,11 @@ final class PlaceUndoUITests: XCTestCase {
     func testAChaptersFirstPageTurnsBackByTapAndBySwipe() {
         let first = openFresh()
         contentsJump(to: "Chapter XL")
-        let start = waitForWords(changingFrom: first, timeout: 30)
+        _ = waitForWords(changingFrom: first, timeout: 30)
         XCTAssertTrue(el("reader.veil").waitForNonExistence(timeout: 60), "the veil lifts")
         if app.buttons["reader.contents"].exists { el("reader.page").coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap() }
         XCTAssertTrue(app.buttons["reader.contents"].waitForNonExistence(timeout: 5), "the controls are hidden")
+        let start = settledWords()
         let page = el("reader.page")
         page.coordinate(withNormalizedOffset: CGVector(dx: 0.06, dy: 0.5)).tap()
         let before = waitForWords(changingFrom: start, timeout: 15)
