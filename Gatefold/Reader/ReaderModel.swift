@@ -205,6 +205,8 @@ final class ReaderModel {
     private let initialLocator: Locator?
     /// `-GatefoldGoTo`, if it applies to this open (see `init`).
     private let launchGoTo: Double?
+    /// The wait between a launch jump's reads of the page; tests pass a yield (counted in reads, either way).
+    private let jumpBeat: () async -> Void
     /// Counts every move of the page (a turn, a jump, a landing, the close). A settle or a landing
     /// that started before the latest move has been overtaken and must not move or record anything.
     private var moves = 0 { didSet { layoutOnly = false } }
@@ -226,7 +228,12 @@ final class ReaderModel {
     private static var made = 0
     let readerNumber: Int = { ReaderModel.made += 1; return ReaderModel.made }()
 
-    init(book: LibraryBook, publication: Publication, app: AppModel, page: (any ReaderPage)? = nil) {
+    /// `goTo`: tests name the launch jump here rather than through the shared `-GatefoldGoTo` default,
+    /// which another suite's reader running alongside would pick up too. `jumpBeat`: the wait between
+    /// the jump's reads of the page.
+    init(book: LibraryBook, publication: Publication, app: AppModel, page: (any ReaderPage)? = nil, goTo: Double? = nil,
+         jumpBeat: (() async -> Void)? = nil) {
+        self.jumpBeat = jumpBeat ?? { try? await Task.sleep(for: .milliseconds(200)) }
         self.bookID = book.id
         self.fullTitle = publication.metadata.title ?? book.title
         self.title = BookTitle.display(fullTitle)
@@ -247,7 +254,7 @@ final class ReaderModel {
         // A test's launch jump sets up the book it opens, once: a book he already has a place in (or
         // another book opened in the same launch) opens on its own place. Jumping every open re-made
         // the jump on a return and called the page it reached his (CI's page-numbers check).
-        self.launchGoTo = initial == nil && (LaunchOptions.openBook == nil || LaunchOptions.openBook == book.id) ? LaunchOptions.goTo : nil
+        self.launchGoTo = initial == nil && (LaunchOptions.openBook == nil || LaunchOptions.openBook == book.id) ? (goTo ?? LaunchOptions.goTo) : nil
         readerLog.notice("place read [r\(self.readerNumber, privacy: .public)]: \(book.id, privacy: .public) opening on \(initial.map(Self.placeTag) ?? "none", privacy: .public)")
         // His saved words are the place from the first frame. A reflow can start before the page has
         // shown any words (an iPad relaunched in landscape lays out in portrait first, then rotates);
@@ -588,7 +595,7 @@ final class ReaderModel {
                     target: ReadingAnchor(href: locator.href.string, progression: inFile, text: nil),
                     go: { [weak self] in await self?.page?.go(to: locator) == true },
                     visible: { [weak self] in await self?.page?.pageRange() },
-                    beat: { try? await Task.sleep(for: .milliseconds(200)) })
+                    beat: jumpBeat)
             } else {
                 await page?.go(to: locator)
                 landed = false

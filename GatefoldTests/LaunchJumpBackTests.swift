@@ -115,11 +115,6 @@ final class ColdLaunchPage: ReaderPage {
         }
         let place = try #require(target, "no launch place well inside its file")
 
-        let defaults = UserDefaults.standard
-        let savedGoTo = defaults.object(forKey: "GatefoldGoTo")
-        defaults.set(goTo, forKey: "GatefoldGoTo")
-        defer { if let savedGoTo { defaults.set(savedGoTo, forKey: "GatefoldGoTo") } else { defaults.removeObject(forKey: "GatefoldGoTo") } }
-
         let sync = StubSync()
         await sync.setLibrary(.success([ReaderSyncTests.frankenstein]))
         await sync.setRemote(nil)
@@ -130,7 +125,7 @@ final class ColdLaunchPage: ReaderPage {
                               locations: .init(progression: 0, totalProgression: 0))
         // A page is a twentieth of the file, so the place is at least four pages past the file start.
         let page = ColdLaunchPage(at: opening, span: 0.05, loadsAtRead: 4)
-        let model = ReaderModel(book: book, publication: publication, app: app, page: page)
+        let model = ReaderModel(book: book, publication: publication, app: app, page: page, goTo: goTo)
         page.model = model
 
         await model.load()
