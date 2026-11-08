@@ -72,6 +72,12 @@ final class RotationRepro: XCTestCase {
         while Date() < deadline, vtext == old || vtext.isEmpty { usleep(200_000) }
         _ = settle(20)
     }
+    /// Every move a settle made was behind a cover or a held picture: none on a page he could see.
+    private func assertNoVisibleSettleMove(_ when: String) {
+        let seen = el("reader.visibleSettleMove").exists
+        note("visibleSettleMove \(when)=\(seen)")
+        XCTAssertFalse(seen, "\(when): a settle moved the page with nothing over it")
+    }
     private func waitCounted(_ timeout: TimeInterval = 300) -> Bool {
         let count = el("reader.pageCount")
         let deadline = Date().addingTimeInterval(timeout)
@@ -83,11 +89,23 @@ final class RotationRepro: XCTestCase {
     }
 
     func testRotateThenLeaveWithoutTurning() throws {
+        try rotateThenLeave()
+    }
+
+    /// The same path with the rotation's reflows stalled behind their cover (`-GatefoldStallReflow`, first
+    /// launch only), so the 12 s watchdog shows the page as it is and the restore runs again with no cover
+    /// up, while the reopens take the quick, covered path: gatefold#108's pair, forced. The two paginated
+    /// his place differently (the column break at his words went in only while covered).
+    func testRotateThenLeaveWithoutTurningAfterStalledReflows() throws {
+        try rotateThenLeave(extra: ["-GatefoldStallReflow", "YES"])
+    }
+
+    private func rotateThenLeave(extra: [String] = []) throws {
         try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .pad, "a spread on rotation is an iPad path")
         // 1. Portrait, fresh install, open, wait for the count.
         XCUIDevice.shared.orientation = .portrait
         sleep(1)
-        app.launchArguments = base + ["-GatefoldReset", "YES", "-GatefoldDownloadAll", "YES",
+        app.launchArguments = base + extra + ["-GatefoldReset", "YES", "-GatefoldDownloadAll", "YES",
                                       "-GatefoldOpenBook", "gutenberg-pride-and-prejudice", "-GatefoldGoTo", "0.31"]
         app.launch()
         let counted = waitCounted()
@@ -133,6 +151,7 @@ final class RotationRepro: XCTestCase {
         let his = vtext
         XCTAssertFalse(his.isEmpty)
         note("setup counted=\(counted) contentsRows=\(rowCount) jumped=\(jumped) hisHead=\(hash(head(his)))")
+        assertNoVisibleSettleMove("the rotation")
 
         // 5. Leave without turning, three times.
         var green = 0
@@ -153,8 +172,31 @@ final class RotationRepro: XCTestCase {
             if startsSame { green += 1 }
             note("round \(round) \(startsSame ? "GREEN" : "RED") startsSame=\(startsSame) middleSame=\(middleSame) hisStartAt=\(at) reopenedHead=\(hash(head(back)))")
             XCTAssertTrue(startsSame, "round \(round): reopened on his page")
+            assertNoVisibleSettleMove("round \(round)")
         }
         note("SUMMARY green=\(green) of 3")
+
+        // 6. Two turns on the spread the restore laid out (a column break at his words, when it put one in), then
+        // leave: the reopen lands on the spread he turned to, not one the fresh layout's own columns make.
+        turnForward()
+        turnForward()
+        sleep(3)
+        let turned = settle(20)
+        XCUIDevice.shared.press(.home)
+        sleep(3)
+        app.quit()
+        app.launchArguments = base
+        app.relaunch()
+        XCUIDevice.shared.orientation = .landscapeLeft
+        sleep(2)
+        _ = settle(60)
+        sleep(4)
+        let afterTurns = settle(10)
+        let turnedSame = !turned.isEmpty && head(afterTurns) == head(turned)
+        let turnedAt = afterTurns.range(of: head(turned)).map { afterTurns.distance(from: afterTurns.startIndex, to: $0.lowerBound) } ?? -1
+        note("round turned \(turnedSame ? "GREEN" : "RED") startsSame=\(turnedSame) hisStartAt=\(turnedAt) turnedHead=\(hash(head(turned))) reopenedHead=\(hash(head(afterTurns)))")
+        XCTAssertTrue(turnedSame, "after two turns: reopened on the spread he turned to")
+        assertNoVisibleSettleMove("after two turns")
         // Ended here, not by XCTest at teardown, where #44 recorded "Failed to terminate" (gatefold#76).
         app.quit()
     }
