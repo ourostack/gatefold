@@ -8,8 +8,8 @@ name: App
 # commit and Xcode version; every simulator job boots its simulator while it downloads them and runs
 # test-without-building, so no job compiles the app again (gatefold#39: each job spent 10 to 16 min building).
 #
-# A pull request that changes only Markdown still gets every required check: `changes` says so, the jobs below skip,
-# and `ipad-docs` reports the three iPad checks (a skipped matrix job reports under its unexpanded name; gatefold#42).
+# A pull request that changes only Markdown still gets every required check: `changes` says so, the test shards skip,
+# and each gate job (`iPad (...)`, `Duo (the reviewers' checks)`) reports success (gatefold#42).
 # The jobs run unless `changes` said "only Markdown", and a failed `build` turns them red at the download instead of
 # letting them skip, which would count as a pass. A failed `changes` leaves `full` empty, which runs the full lists.
 #
@@ -51,7 +51,7 @@ jobs:
           if [ "$EVENT" != pull_request ]; then printf 'app=true\nfull=true\n' >> "$GITHUB_OUTPUT"; exit 0; fi
           git diff --name-only "$BASE...$HEAD" > changed.txt
           cat changed.txt
-          if grep -qE '^(GatefoldUITests/(ReviewerChecks|PageNumber|SpreadTurnSettle|ReopenAfterControls|WindowFit)UITests\.swift|\.github/(workflows/app\.yml|scripts/boot-sim\.sh|actions/)|scripts/ci-simulator\.py)$|^\.github/actions/' changed.txt; then
+          if grep -qE '^(GatefoldUITests/(ReviewerChecks|PageNumber|SpreadTurnSettle|ReopenAfterControls|WindowFit)UITests\.swift|\.github/(workflows/(app|ui-tests)\.yml|scripts/boot-sim\.sh|actions/)|scripts/ci-simulator\.py)$|^\.github/actions/' changed.txt; then
             echo "::notice::This change edits a full-list test or the CI that runs it: the full lists run."
             echo "full=true" >> "$GITHUB_OUTPUT"
           else
@@ -135,7 +135,7 @@ jobs:
   # 3 to 4 min to download and boot. Each required check is a gate job below, green only when every one of its shards
   # passed. Shards with `pr_tests: none` run on main and on full-list pull requests only.
   ipad-place:
-    name: iPad place shard
+    name: iPad place shard (${{ matrix.shard }})
     needs: [changes, build]
     if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
     strategy:
@@ -145,6 +145,8 @@ jobs:
           - shard: ipad-place-cold
             tests: ""
             cold: true
+            # Boot, erase and boot again, then 13 min of tests (run 42442880987; 20-23 min in builds 19 and 20), and
+            # 10 min more for one fresh device if the runtime goes (gatefold#71).
             timeout: 50
             skip: ""
             pr_tests: ""
@@ -184,7 +186,7 @@ jobs:
       timeout: ${{ matrix.timeout }}
 
   ipad-taps:
-    name: iPad taps shard
+    name: iPad taps shard (${{ matrix.shard }})
     needs: [changes, build]
     if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
     strategy:
@@ -241,7 +243,7 @@ jobs:
       timeout: ${{ matrix.timeout }}
 
   ipad-reviewer:
-    name: iPad reviewer shard
+    name: iPad reviewer shard (${{ matrix.shard }})
     needs: [changes, build]
     if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
     strategy:
@@ -287,7 +289,7 @@ jobs:
       timeout: ${{ matrix.timeout }}
 
   duo:
-    name: Duo shard
+    name: Duo shard (${{ matrix.shard }})
     needs: [changes, build]
     if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
     strategy:

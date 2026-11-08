@@ -48,6 +48,16 @@ on:
         default: 30
 
 jobs:
+  # A shard with nothing to run on this pull request still ends in one successful job, so its caller's result is
+  # success and the gate stays strict (a caller whose only job skipped has no documented result).
+  main-only:
+    name: Main only
+    if: ${{ !(inputs.cold || inputs.full != 'false' || inputs.pr_tests != 'none') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - run: echo "This shard runs on main and on full-list pull requests only."
+
   run:
     name: Tests
     if: ${{ inputs.cold || inputs.full != 'false' || inputs.pr_tests != 'none' }}
@@ -144,11 +154,15 @@ jobs:
             | grep --line-buffered -E "Test Case .*(started|passed|failed|skipped)|TEST (SUCCEEDED|FAILED)|REPRO (round|SUMMARY)|TAPRATE|PLACEHOLDER|REVIEWER|WINDOWFIT|REOPEN round [0-9]+:|probe says|probe timing|FEEL:|FEEL-NOTCHECKED|FEEL-LATE|\[ouro-feel\] FAIL|\.swift:[0-9]+: error" \
             | awk '{ if (match($0, /XCTAssert[A-Za-z]* failed/)) $0 = substr($0, 1, RSTART + RLENGTH - 1) " (text withheld)"; print; fflush() }'
           status=${PIPESTATUS[0]}
-          # Zero tests run means the list names nothing that exists: a red, never a quiet pass.
-          if [ "$status" = 0 ] && ! grep -qE "Test Case .*(passed|failed|skipped)" "$RUNNER_TEMP/ui.log"; then
-            echo "::error title=No tests ran::$list matched no test."
-            exit 1
-          fi
+          # Every entry must have run at least one test: a name that matches nothing is a red, never a quiet pass.
+          for t in $list; do
+            cls="${t%%/*}"; want="-[GatefoldUITests.$cls "
+            [ "$t" != "$cls" ] && want="-[GatefoldUITests.$cls ${t#*/}]"
+            if ! grep -qF -- "$want" "$RUNNER_TEMP/ui.log"; then
+              echo "::error title=No tests ran::$t matched no test."
+              status=1
+            fi
+          done
           exit $status
       - name: The app's place log, for a miss (file and progression only, never the book's words)
         if: failure() || cancelled()
@@ -162,6 +176,7 @@ jobs:
         if: failure() || cancelled()
         with:
           name: ${{ inputs.shard }}-results
+          overwrite: true
           path: |
             ${{ runner.temp }}/place.log
             ${{ runner.temp }}/cold.log
@@ -175,3 +190,4 @@ jobs:
           name: feel-reports-${{ inputs.shard }}
           path: ${{ runner.temp }}/feel-reports
           if-no-files-found: ignore
+          overwrite: true
