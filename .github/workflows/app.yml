@@ -408,7 +408,7 @@ jobs:
           # PROBE (#110, not for merge): only the turn walk, five times.
           only=(-only-testing:GatefoldUITests/FeelUITests/testEveryTurnMovesOnceAndADragLetGoStays)
           xcodebuild test-without-building -xctestrun "$XCTESTRUN" \
-            -destination "$DESTINATION" "${only[@]}" -test-iterations 5 \
+            -destination "$DESTINATION" "${only[@]}" -test-iterations 10 \
             -resultBundlePath "$RUNNER_TEMP/duo.xcresult" 2>&1 | tee "$RUNNER_TEMP/duo.log" \
             | grep --line-buffered -E "Test Case .*(started|passed|failed|skipped)|TEST (SUCCEEDED|FAILED)|REVIEWER|FEEL:|FEEL-NOTCHECKED|FEEL-LATE|\[ouro-feel\] FAIL|\.swift:[0-9]+: error" \
             | awk '{ if (match($0, /XCTAssert[A-Za-z]* failed/)) $0 = substr($0, 1, RSTART + RLENGTH - 1) " (text withheld)"; print; fflush() }'
