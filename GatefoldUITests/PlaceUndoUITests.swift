@@ -156,6 +156,29 @@ final class PlaceUndoUITests: XCTestCase {
         XCTAssertFalse(app.buttons["reader.contents"].exists, "the higher tap showed the controls instead of turning")
     }
 
+    /// On a chapter's first page (where a Contents jump lands), a tap at the left edge and a swipe
+    /// right each turn back into the chapter before, in every posture (feel-ci's folded Duo saw
+    /// neither move the page).
+    func testAChaptersFirstPageTurnsBackByTapAndBySwipe() {
+        let first = openFresh()
+        contentsJump(to: "Chapter XL")
+        let start = waitForWords(changingFrom: first, timeout: 30)
+        XCTAssertTrue(el("reader.veil").waitForNonExistence(timeout: 60), "the veil lifts")
+        if app.buttons["reader.contents"].exists { el("reader.page").coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap() }
+        XCTAssertTrue(app.buttons["reader.contents"].waitForNonExistence(timeout: 5), "the controls are hidden")
+        let page = el("reader.page")
+        page.coordinate(withNormalizedOffset: CGVector(dx: 0.06, dy: 0.5)).tap()
+        let before = waitForWords(changingFrom: start, timeout: 15)
+        XCTAssertNotEqual(opening(before), opening(start), "a tap at the left edge of a chapter's first page didn't turn back")
+        XCTAssertFalse(app.buttons["reader.contents"].exists, "the tap showed the controls instead of turning")
+        page.coordinate(withNormalizedOffset: CGVector(dx: 0.97, dy: 0.5)).tap()
+        let again = waitForWords(changingFrom: before, timeout: 15)
+        XCTAssertEqual(opening(again), opening(start), "the forward turn didn't come back to the chapter's first page")
+        page.swipeRight()
+        let swiped = waitForWords(changingFrom: again, timeout: 15)
+        XCTAssertNotEqual(opening(swiped), opening(start), "a swipe right on a chapter's first page didn't turn back")
+    }
+
     /// A tap on the turn zone while a jump's veil is up is not a turn: the page lands where he chose.
     func testATapWhileAJumpIsUnderWayLandsWhereHeChose() {
         let first = openFresh(["-GatefoldHoldChapterLoad", "60"])
