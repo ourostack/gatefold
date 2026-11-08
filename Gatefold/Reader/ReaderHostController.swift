@@ -1145,6 +1145,8 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         // from wherever the jump has got to, and the place he chose is lost.
         guard veil == nil, !jumpStarting else { return true }
         let edge = TapZones.edge(viewWidth: width, spread: model.layout.columns == .two)
+        let zone = point.x < edge ? "back" : point.x > width - edge ? "forward" : "middle"
+        readerLog.notice("tap: \(zone, privacy: .public) at x \(Int(point.x), privacy: .public) of \(Int(width), privacy: .public), controls \(self.model.chromeVisible, privacy: .public)")
         if model.chromeVisible {
             model.controlsTapped(visible: false)
             return true
@@ -1204,9 +1206,11 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     private func prepareTurn(forward: Bool, startingAt point: CGPoint) async -> Bool {
         guard !isTurning, weakModel != nil else { return false }
         isTurning = true
+        let t0 = ContinuousClock.now
         let size = navigator.view.bounds.size
         // The page on screen now; a black or bare capture (seen in spreads) is retried.
         let top = await renderedSnapshot(afterChange: false)
+        readerLog.notice("turn: \(forward ? "forward" : "back", privacy: .public) page pictured at \(ReaderModel.ms(since: t0), privacy: .public) ms")
         curl.size = size
         curl.style = model.pageTurn == .fade ? .fade : .curl
         curl.isSpread = model.layout.posture == .spread
@@ -1227,7 +1231,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         let moved = forward
             ? await navigator.goForward(options: .init(animated: false))
             : await navigator.goBackward(options: .init(animated: false))
-        readerLog.notice("turn moved=\(moved, privacy: .public)")
+        readerLog.notice("turn moved=\(moved, privacy: .public) at \(ReaderModel.ms(since: t0), privacy: .public) ms")
         guard moved, weakModel != nil else {
             curl.reset()
             isTurning = false

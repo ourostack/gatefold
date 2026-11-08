@@ -34,11 +34,11 @@ final class PlaceUndoUITests: XCTestCase {
         return visibleText
     }
 
-    /// Reads of the page's words, a quarter-second apart, until they differ from `old` (`atMost` + 1
+    /// Reads of the page's words, `interval` apart, until they differ from `old` (`atMost` + 1
     /// if they never do).
-    private func readsUntilWords(changeFrom old: String, atMost: Int) -> Int {
+    private func readsUntilWords(changeFrom old: String, atMost: Int, every interval: TimeInterval = 0.25) -> Int {
         for read in 1...atMost {
-            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+            RunLoop.current.run(until: Date().addingTimeInterval(interval))
             let now = visibleText
             if !now.isEmpty, now != old { return read }
         }
@@ -57,9 +57,9 @@ final class PlaceUndoUITests: XCTestCase {
         return last
     }
 
-    private func openFresh(_ extra: [String] = []) -> String {
+    private func openFresh(_ extra: [String] = [], goTo: String = "0.31") -> String {
         app.launchArguments = common + extra + ["-GatefoldReset", "YES", "-GatefoldDownloadAll", "YES",
-                                                "-GatefoldOpenBook", "gutenberg-pride-and-prejudice", "-GatefoldGoTo", "0.31"]
+                                                "-GatefoldOpenBook", "gutenberg-pride-and-prejudice", "-GatefoldGoTo", goTo]
             // GATEFOLD_POSTURE=spread runs the same checks on the unfolded Duo.
             + (ProcessInfo.processInfo.environment["GATEFOLD_POSTURE"].map { ["-GatefoldForcePosture", $0] } ?? [])
         app.launch()
@@ -170,15 +170,26 @@ final class PlaceUndoUITests: XCTestCase {
     /// A tap at the left edge turns back as promptly as one at the right edge turns forward: the
     /// page has moved within 12 reads (feel-ci's folded Duo saw it move only after 43).
     func testATapAtTheLeftEdgeTurnsBackPromptly() {
-        let first = openFresh()
+        leftEdgeTurnsBack(within: 12, reading: 0.25)
+    }
+
+    /// The same, opened and read as feel-ci's turn check does (at 0.3 with curl turns, a read every
+    /// tenth of a second): moved within its 24 reads.
+    func testATapAtTheLeftEdgeTurnsBackPromptlyAsFeelOpensIt() {
+        leftEdgeTurnsBack(within: 24, reading: 0.1, extra: ["-GatefoldPageTurn", "curl"], goTo: "0.3")
+    }
+
+    private func leftEdgeTurnsBack(within limit: Int, reading interval: TimeInterval, extra: [String] = [], goTo: String = "0.31") {
+        let first = openFresh(extra, goTo: goTo)
         let page = el("reader.page")
         page.coordinate(withNormalizedOffset: CGVector(dx: 0.92, dy: 0.5)).tap()
-        _ = waitForWords(changingFrom: first, timeout: 15)
+        let forward = readsUntilWords(changeFrom: first, atMost: 200, every: interval)
         let ahead = settledWords()
         XCTAssertNotEqual(opening(ahead), opening(first), "the forward turn didn't happen")
         page.coordinate(withNormalizedOffset: CGVector(dx: 0.08, dy: 0.5)).tap()
-        let reads = readsUntilWords(changeFrom: ahead, atMost: 40)
-        XCTAssertLessThanOrEqual(reads, 12, "a tap at the left edge turned back only after \(reads) reads")
+        let reads = readsUntilWords(changeFrom: ahead, atMost: 200, every: interval)
+        XCTContext.runActivity(named: "reads to turn: forward \(forward), back \(reads)") { _ in }
+        XCTAssertLessThanOrEqual(reads, limit, "a tap at the left edge turned back only after \(reads) reads (forward took \(forward))")
         XCTAssertEqual(opening(settledWords()), opening(first), "the tap at the left edge didn't turn back to the page before")
     }
 
