@@ -251,6 +251,10 @@ jobs:
             | grep --line-buffered -E "Test Case .*(started|passed|failed|skipped)|TEST (SUCCEEDED|FAILED)|REPRO (round|SUMMARY)|TAPRATE|PLACEHOLDER|REVIEWER|OLDPAGEHELD|WINDOWFIT|REOPEN round [0-9]+:|\.swift:[0-9]+: error" \
             | awk '{ if (match($0, /XCTAssert[A-Za-z]* failed/)) $0 = substr($0, 1, RSTART + RLENGTH - 1) " (text withheld)"; print; fflush() }'
           exit ${PIPESTATUS[0]}
+      - name: Why each failed test failed (from the result bundles, text withheld)
+        if: failure() || cancelled()
+        timeout-minutes: 5
+        run: python3 -I scripts/ci-failures.py "$RUNNER_TEMP"/cold.xcresult "$RUNNER_TEMP"/ipad.xcresult
       - name: The app's place log, for a miss (file and progression only, never the book's words)
         if: failure() || cancelled()
         # Kept as the job ran (a `log show` over hours of a busy simulator took 23 min and ran the job
@@ -360,6 +364,10 @@ jobs:
           # No retry: a wait that runs out prints how many probe reads it made and the slowest one.
           grep -E "error:|Test Case .*(passed|failed|skipped)|TEST (SUCCEEDED|FAILED)|probe says|probe timing|TAPRATE" "$RUNNER_TEMP/ui.log" | tail -60 || true
           exit ${status:-0}
+      - name: Why each failed test failed (from the result bundles, text withheld)
+        if: failure() || cancelled()
+        timeout-minutes: 5
+        run: python3 -I scripts/ci-failures.py "$RUNNER_TEMP"/unit.xcresult "$RUNNER_TEMP"/ui.xcresult
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
@@ -426,6 +434,10 @@ jobs:
             | grep --line-buffered -E "Test Case .*(started|passed|failed|skipped)|TEST (SUCCEEDED|FAILED)|REVIEWER|TURNWAIT|\.swift:[0-9]+: error" \
             | awk '{ if (match($0, /XCTAssert[A-Za-z]* failed/)) $0 = substr($0, 1, RSTART + RLENGTH - 1) " (text withheld)"; print; fflush() }'
           exit ${PIPESTATUS[0]}
+      - name: Why each failed test failed (from the result bundles, text withheld)
+        if: failure() || cancelled()
+        timeout-minutes: 5
+        run: python3 -I scripts/ci-failures.py "$RUNNER_TEMP"/duo.xcresult
       - name: The app's place log, for a miss (file and progression only, never the book's words)
         if: failure() || cancelled()
         # Kept as the job ran (a `log show` over hours of a busy simulator took 23 min and ran the job

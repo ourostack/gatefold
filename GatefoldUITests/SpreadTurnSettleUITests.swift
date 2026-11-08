@@ -5,7 +5,7 @@ import XCTest
 /// Build 14 on the iPad spread landed about 55 pt out and snapped back (Ari: "page turn animation
 /// ends with the page off to the side and is pretty janky before it jerks into the correct
 /// position"). The landing report measured only after the snap; `reader.turnSettle` watches the
-/// outer page in every frame from the turn's last leg until 0.5 s after it lands.
+/// outer page in every frame from the turn's last leg until at least six samples and 0.5 s after it lands.
 @MainActor
 final class SpreadTurnSettleUITests: XCTestCase {
     override func setUp() { continueAfterFailure = false }

@@ -80,14 +80,18 @@ final class PositionUITests: XCTestCase {
     private func expectAnchorKept(_ what: String, file: StaticString = #filePath, line: UInt = #line, after action: () -> Void) {
         let before = reflowNumber()
         action()
-        let deadline = Date().addingTimeInterval(40)
+        // Counted in reads of the probe, not seconds: on a starved runner one read took 22 s, so a 40 s
+        // deadline saw a reflow twice and called it stuck (main at 379fda7, "settling 2").
+        // Done once the new reflow's verdict has read the same 5 times in a row (2 s of 0.5 s beats).
         var last = ""
-        var stableSince = Date()
-        while Date() < deadline {
+        var same = 0
+        // A backstop, not the verdict: a runner that slow is broken, whatever the probe says.
+        let cap = Date().addingTimeInterval(600)
+        for _ in 0..<80 where Date() < cap {
             let label = probe.label
-            if label != last { last = label; stableSince = Date() }
+            if label != last { last = label; same = 0 } else { same += 1 }
             let n = Int(label.split(separator: " ").last ?? "") ?? 0
-            if n > before, !label.hasPrefix("settling"), Date().timeIntervalSince(stableSince) > 2 { break }
+            if n > before, !label.hasPrefix("settling"), same >= 4 { break }
             Thread.sleep(forTimeInterval: 0.5)
         }
         XCTAssertTrue(last.hasPrefix("anchor-visible"), "\(what): probe says \(last) (was reflow \(before)) — \(probe.value as? String ?? "")", file: file, line: line)

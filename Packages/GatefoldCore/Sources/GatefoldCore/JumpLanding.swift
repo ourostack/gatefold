@@ -18,12 +18,18 @@ public enum JumpLanding {
     /// (`VisibleRange.contains`, half-open). A margin in book progression can't tell a file's start from a
     /// place a few pages in (run 42418233954 took 0.3003, its file's start, for a jump to 0.31). A target
     /// on its file's first page is on screen at the file's start, so it still lands at once.
-    public static func land(target: ReadingAnchor, go: () async -> Bool, visible: () async -> VisibleRange?, beat: () async -> Void) async -> Bool {
+    ///
+    /// With `reported` (where the navigator says it is), that place must be on the same page too: the page
+    /// can show the target before Readium's own report has caught up, and a landing taken then is kept at
+    /// the report's place, the file start the jump passed through (gatefold#83).
+    public static func land(target: ReadingAnchor, go: () async -> Bool, visible: () async -> VisibleRange?,
+                            reported: (() -> ReadingAnchor?)? = nil, beat: () async -> Void) async -> Bool {
         let place = ReadingAnchor(href: target.href, progression: target.progression, text: nil)
         var taken = await go()
         for read in 1...reads {
             await beat()
-            if taken, let range = await visible(), range.contains(place) { return true }
+            if taken, let range = await visible(), range.contains(place),
+               reported.map({ $0().map(range.contains) ?? false }) ?? true { return true }
             if !taken || read % resendEvery == 0 { taken = await go() }
         }
         return false
