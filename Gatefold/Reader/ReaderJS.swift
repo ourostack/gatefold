@@ -127,7 +127,8 @@ enum ReaderJS {
         },
         // The page on screen as one read of the web view, for a jump's landing (`JumpLanding`): where it
         // starts and ends in its document, as progressions, and which document that is. The start sits
-        // two pixels early, since Readium snaps a jump one pixel past its place. Right-to-left scrolls
+        // two pixels early: Readium adds a pixel before rounding a jump down to its page, so a place
+        // within a pixel of a page's end opens the next page. Right-to-left scrolls
         // count from the right, so the offset is taken whole. Null until the document has loaded.
         pageRange: function () {
           if (document.readyState !== "complete") { return null; }

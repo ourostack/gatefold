@@ -568,7 +568,7 @@ final class ReaderModel {
                 await page?.go(to: locator)
                 landed = false
             }
-            readerLog.notice("open: the launch jump to \(target, privacy: .public) \(landed ? "landed" : "ran out of reads", privacy: .public) at \(self.page?.currentLocation?.locations.totalProgression ?? -1, privacy: .public)")
+            readerLog.notice("open: the launch jump to \(target, privacy: .public) \(landed ? "landed" : locator.locations.progression == nil ? "was sent once (no place in its file to check)" : "ran out of reads", privacy: .public) at \(self.page?.currentLocation?.locations.totalProgression ?? -1, privacy: .public)")
             launchJumpInFlight = false
         }
         // A book about to land on the InkPad's place takes its first place there, not on the cover.
