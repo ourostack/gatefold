@@ -1570,6 +1570,7 @@ final class ReaderModel {
         // a move of his, and the next layout report moved his place (2 in 20 reopens). A swipe that a
         // tap follows before Readium reports it is the rarer case and is left to that report.
         touchesSinceLocation = 0
+        readerLog.notice("controls: \(visible ? "up" : "down", privacy: .public) by a tap")
         setChrome(visible)
     }
 
