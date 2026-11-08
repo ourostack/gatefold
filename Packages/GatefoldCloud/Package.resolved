@@ -1,5 +1,5 @@
 {
-  "originHash" : "7848d795d6fec5c77d9c4dad10bcb0d79f216ecf29dee1fcb34c0c387daf060b",
+  "originHash" : "8eccfcba9269bc4431c1432c47b6c3a8fe23c0ca79cb730d979e18e2a479366b",
   "pins" : [
     {
       "identity" : "cryptoswift",
@@ -49,9 +49,10 @@
     {
       "identity" : "swift-toolkit",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/ourostack/swift-toolkit.git",
+      "location" : "https://github.com/readium/swift-toolkit.git",
       "state" : {
-        "revision" : "f594d0874d7d7a4d74425ffbc3a1cc84c5340d51"
+        "revision" : "9a8c094b72245fd27043c9d298005e5c78b32a01",
+        "version" : "3.11.1"
       }
     },
     {
