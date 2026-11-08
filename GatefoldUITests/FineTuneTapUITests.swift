@@ -144,4 +144,31 @@ final class FineTuneTapUITests: XCTestCase {
         toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.2, dy: 0.5)).tap()
         assertChangedOnce(toggle, from: before, "a tap on the row's name changes it")
     }
+
+    /// A tap on the page beside the Appearance panel puts it away, as any overlay goes, and never reaches the page
+    /// beneath: the words stay (gatefold#62, seen on the folded Duo and the iPad).
+    func testATapBesideAppearancePutsItAwayAndLeavesThePage() {
+        launchReader()
+        let page = app.descendants(matching: .any)["reader.page"]
+        let words = { (self.app.descendants(matching: .any)["reader.visibleText"].value as? String) ?? "" }
+        for round in 1...3 {
+            for _ in 0..<4 where !app.buttons["reader.appearance"].waitForExistence(timeout: 5) {
+                page.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+            }
+            app.buttons["reader.appearance"].tap()
+            let panel = app.descendants(matching: .any)["appearance.panel"].firstMatch
+            XCTAssertTrue(panel.waitForExistence(timeout: 10), "Appearance opened (\(round))")
+            sleep(1)
+            let before = words()
+            // Between the top bar and the panel, in the page's middle third (not a turn zone).
+            let barFoot = max(app.buttons["reader.close"].frame.maxY, page.frame.minY)
+            let gap = panel.frame.minY - barFoot
+            guard gap > 60 else { XCTFail("no page between the bar (\(barFoot)) and the panel (\(panel.frame.minY))"); return }
+            app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: page.frame.midX, dy: barFoot + gap / 2)).tap()
+            XCTAssertTrue(panel.waitForNonExistence(timeout: 5), "a tap beside Appearance put it away (\(round))")
+            sleep(2)
+            XCTAssertTrue(words() == before, "the tap beside Appearance left the page as it was (\(round))")
+            if panel.exists, app.buttons["appearance.close"].exists { app.buttons["appearance.close"].tap() }
+        }
+    }
 }
