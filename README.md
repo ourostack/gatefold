@@ -21,7 +21,7 @@
 - **A real gatefold.** On iPhone Duo it reads folded, flat as a two-page spread, or half-open on the table.
 - **Free, for good.** No ads, no subscriptions, no tracking.
 
-**Status:** TestFlight beta, by invite. Not on the App Store yet; ask for an invite on the [Support page](https://ourostack.github.io/gatefold/support/).
+**Status:** TestFlight beta, by invite. Not on the App Store yet; ask for an invite by [opening an issue](https://github.com/ourostack/gatefold/issues/new).
 
 **Build it:** with Xcode and [XcodeGen](https://github.com/yonaskolb/XcodeGen). It runs in Simulator as is; for a device, set your own team in `project.yml` (`DEVELOPMENT_TEAM`).
 
