@@ -301,6 +301,7 @@ final class TwoStepJumpPage: ReaderPage {
                 "kept at \(saved.locations.progression ?? -1), not his page (\(readium.locations.progression ?? -1))")
         #expect(saved.locations.progression != target.locations.progression)
     }
+
     /// A slide and then a tap for the controls, both under the reflow: the slide was his move, and the
     /// tap that follows doesn't bring back the target (the slide's report was dropped for the reflow).
     @Test func aSlideThenAControlsTapUnderAReflowKeepsHisPage() async throws {
