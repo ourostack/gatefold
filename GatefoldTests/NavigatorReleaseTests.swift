@@ -144,7 +144,11 @@ import WebKit
             host.willMove(toParent: nil)
             host.view.removeFromSuperview()
             host.removeFromParent()
-            // Retired by the close itself, not by the model going away.
+            // Retired by the close itself, not by the model going away. UIKit sends viewDidDisappear
+            // after the removal, not inside it (CI run 42513920212), so wait for it as for the web views.
+            for _ in 0..<50 where host.navigator.parent != nil {
+                try await Task.sleep(for: .milliseconds(100))
+            }
             #expect(host.navigator.parent == nil, "the closed reader's navigator is retired")
             #expect(host.navigator.viewIfLoaded?.subviews.isEmpty ?? true, "and its pagination view is out of it (not proof that no page is made later: #116)")
             models.append(model)
