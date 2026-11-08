@@ -1543,7 +1543,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         if LaunchOptions.isUITest, let looks = LaunchOptions.holdOldPageLoadLooks, looks > 0 { heldLoadLooks = looks }
         // The jump he chose starts now: the old page is pictured as it is, never waited on while it
         // loads (its spinner held the jump back up to 60 s, and the page never moved: gatefold#73).
-        let old = await renderedSnapshot(afterChange: false, waitsForLoad: true)
+        let old = await renderedSnapshot(afterChange: false, waitsForLoad: false)
         if LaunchOptions.isUITest, LaunchOptions.holdOldPageLoadLooks != nil { heldLoadLooks = 0 }
         jumpStarting = false
         // Let go of while its old page was being pictured (`abandonVeil`): no cover goes up.
