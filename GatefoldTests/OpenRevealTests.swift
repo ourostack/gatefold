@@ -208,6 +208,17 @@ final class StarvedOpenPage: ReaderPage {
         model.close()
     }
 
+    /// Taking the offer of his own place goes back to his words with no Back pill: the guessed page he
+    /// was shown is not a place to come back to (#49).
+    @Test func takingHisOwnPlacePutsUpNoWayBack() async throws {
+        let (model, page, _) = try await open(slowMoveLooks: nil)
+        #expect(model.suggestion != nil, "his place was not offered")
+        await model.acceptSuggestion()
+        #expect(page.showsHisWords, "the Jump didn't reach his words")
+        #expect(!model.showJumpBack, "taking his own place put up a way back to the guessed page")
+        model.close()
+    }
+
     /// The move to his words began under the cover and is still going when the cover's bound runs out:
     /// the reveal waits for it rather than showing the page mid-move.
     @Test func aMoveBegunUnderTheCoverFinishesBeforeTheReveal() async throws {

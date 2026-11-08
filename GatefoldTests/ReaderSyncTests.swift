@@ -454,6 +454,18 @@ final class ScriptedPage: ReaderPage {
         #expect(f.model.suggestion?.detail.contains("Jump there?") == true)
     }
 
+    /// Landing on another device's place is a jump he can undo: the Back pill comes up (#49, #46).
+    @Test func aCatchUpLandingPutsUpTheWayBack() async throws {
+        let f = try await Self.make(remote: { pub, mapper in
+            try await Self.inkPadPlace(pub, mapper, index: 12, percent: 40)
+        }, book: { $0.totalProgression = 0.05; $0.lastOpened = Date().addingTimeInterval(-600) }, startAt: 0.05)
+        await f.model.load()
+        #expect(f.model.suggestion != nil)
+        await f.model.acceptSuggestion()
+        #expect(f.model.showJumpBack && f.model.backLocator != nil, "landing on another device's place left no way back")
+        f.model.close()
+    }
+
     @Test func theCatchUpPageLoadsWhileTheSlipIsUpSoTheTapOnlySwapsItIn() async throws {
         let opened = Date().addingTimeInterval(-600)
         var target: ReadingPosition?
