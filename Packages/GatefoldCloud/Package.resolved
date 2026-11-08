@@ -51,7 +51,7 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/ourostack/swift-toolkit.git",
       "state" : {
-        "revision" : "f594d0874d7d7a4d74425ffbc3a1cc84c5340d51"
+        "revision" : "a0eb21330d0f8c37476859922bd967073e7b73f4"
       }
     },
     {
