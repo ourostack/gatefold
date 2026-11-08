@@ -232,10 +232,15 @@ enum ReaderJS {
           }
           return null;
         },
-        // All the text on screen, whitespace collapsed.
+        // All the text on screen, whitespace collapsed. A spread is read page by page: from the left
+        // page's first words to the right page's last. Scanned across both pages at once, a left page
+        // opening with a picture (whose caption is never a place) started at the right page's first
+        // line, and his words on the left page read as off screen (Real unfold, #58).
         visibleText: function () {
           const w = window.innerWidth;
-          const a = first(0, w), b = last(0, w);
+          const two = window.gatefoldColumns === 2;
+          const a = two ? (first(0, w / 2) || first(w / 2, w)) : first(0, w);
+          const b = two ? (last(w / 2, w) || last(0, w / 2)) : last(0, w);
           if (!a || !b) { return null; }
           const range = document.createRange();
           try {
