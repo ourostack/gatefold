@@ -155,13 +155,22 @@ final class FeelUITests: XCTestCase {
     /// The most refreshes a sheet may travel before it lands: 36 is 0.6 s at 60 Hz, a little over UIKit's own sheet.
     private static let landingRefreshes = 36
 
-    /// Films `key` with no input until its last `restRefreshes` refreshes held still (at most ten films).
-    private func waitUntilStill(_ key: String) {
+    /// Films `key` with no input until its last `restRefreshes` refreshes held still (at most ten films). False, with a
+    /// `FEEL-NOTCHECKED` line, when it never did or the recorder gave no film, so what follows was not on a landed sheet.
+    @discardableResult
+    private func waitUntilStill(_ key: String) -> Bool {
         for _ in 0..<10 {
-            let track = feel.recordedFilm([key]) {}.track(key)
-            guard let last = track.last else { continue }
-            if track.reversed().prefix(while: { FeelFilm.distance($0.frame, last.frame) <= 0.5 }).count >= Self.restRefreshes { return }
+            let film = feel.recordedFilm([key]) {}
+            let track = film.track(key)
+            guard let last = track.last else {
+                if film.stalledAt != nil { break }
+                continue
+            }
+            if track.reversed().prefix(while: { FeelFilm.distance($0.frame, last.frame) <= 0.5 }).count >= Self.restRefreshes { return true }
         }
+        tally.notChecked += 1
+        print("FEEL-NOTCHECKED \(key): never held still for \(Self.restRefreshes) refreshes in ten films")
+        return false
     }
 
     /// How `key` landed in `film`, in refreshes: from the first that moved it to the first of the run it then held still
