@@ -495,7 +495,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         }
         dropStandby()
         stopCounting()
-        model.keeper.reflowWillBegin(reason, move: model.moveCount)
+        model.keeper.reflowWillBegin(reason, move: model.hisMoves)
         model.reflowDidBegin()
         if !curl.isActive {
             let page = navigator.view!
@@ -672,6 +672,11 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             // that would be a blank page and a spinner.
             await self.waitWhileLoading()
             guard generation == self.reflowGeneration, self.settledGeneration != generation else { return }
+            // He moved while it hung: no restore of the old place to start again.
+            if let model = self.weakModel, model.keeper.reflowing != nil, !model.keeper.restoreMayMove(move: model.hisMoves) {
+                self.giveWayIfHeMoved(generation: generation)
+                return
+            }
             self.uncoverUnsettled()
             guard self.reflowRetries < 3 else { return }
             self.reflowRetries += 1
@@ -683,15 +688,17 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     /// shown him among them): it ends where his move left the page, never bringing the old place back, and
     /// his page becomes the anchor again.
     private func giveWayIfHeMoved(generation: Int) {
-        guard generation == reflowGeneration, let model = weakModel, model.keeper.reflowing != nil,
-              !model.keeper.restoreMayMove(move: model.moveCount) else { return }
+        // Closing is not a move to give way to: the restore just stops, and nothing is shown or taken after.
+        guard generation == reflowGeneration, let model = weakModel, !model.isClosed, model.keeper.reflowing != nil,
+              !model.keeper.restoreMayMove(move: model.hisMoves) else { return }
         readerLog.notice("reflow: he moved while the restore ran; it gives way to his move")
         model.keeper.restoreGaveWay()
         settledGeneration = generation
         reflowRetries = 0
         showPageAsItIs()
+        // His move's own report took his place, or reflowDidFinish's owed-place path does now (with its guards
+        // for a landing and a launch jump in flight): no capture of whatever the page shows here.
         model.reflowDidFinish(visible: nil)
-        Task { [weak model] in await model?.captureAnchor() }
     }
 
     /// A reflow that hasn't settled in 12 s: the page as it is, never a picture of the old one under a
@@ -725,7 +732,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         // His move (a turn, a jump, a landing) since the reflow began also ends it: the page is his again.
         func current() -> Bool {
             guard generation == reflowGeneration, let model = weakModel else { return false }
-            return model.keeper.restoreMayMove(move: model.moveCount)
+            return model.keeper.restoreMayMove(move: model.hisMoves)
         }
         defer { giveWayIfHeMoved(generation: generation) }
         _ = await navigator.evaluateJavaScript(ReaderJS.install)

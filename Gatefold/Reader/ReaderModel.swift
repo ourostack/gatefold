@@ -224,8 +224,10 @@ final class ReaderModel {
     /// Counts every move of the page (a turn, a jump, a landing, the close). A settle or a landing
     /// that started before the latest move has been overtaken and must not move or record anything.
     private var moves = 0 { didSet { layoutOnly = false } }
-    /// `moves`, for a restore to tell whether he has moved since its reflow began.
-    var moveCount: Int { moves }
+    /// His own moves only (his turns, the jumps and links he chose, the offer he took): never the app's (a
+    /// launch jump, a Cloud landing, the close). A restore gives way once this has changed since its reflow
+    /// began; a restore's own moves go straight to the navigator and are not counted at all.
+    @ObservationIgnored private(set) var hisMoves = 0
     /// Set from the moment the reader closes; nothing moves the page or records a place after it.
     private(set) var isClosed = false
     /// While a landing settles, the navigator's in-between locations are not places: the landing
@@ -1084,6 +1086,7 @@ final class ReaderModel {
 
     func acceptSuggestion() async {
         guard let s = suggestion, !isClosed else { return }
+        hisMoves += 1
         withAnimation(Motion.banner) { suggestion = nil }
         hideSlip()
         let locator = suggestionLocator, aim = suggestionRemote, cloud = suggestionCloud
@@ -1163,7 +1166,7 @@ final class ReaderModel {
             // not places (as below): `go` counts this move first thing.
             let move = moves + 1
             landingMove = move
-            await go(toProgression: progression, rememberBack: rememberBack)
+            await go(toProgression: progression, rememberBack: rememberBack, his: false)
             guard moves == move, !isClosed else {
                 if landingMove == move { landingMove = nil }
                 return
@@ -1713,6 +1716,7 @@ final class ReaderModel {
 
     /// A turn landed or sprang back: take the place from where the navigator is now.
     func userTurnedPage() {
+        hisMoves += 1
         foldSlip()
         hasMoved = true
         moves += 1
@@ -1811,7 +1815,9 @@ final class ReaderModel {
 
     // MARK: Jumps
 
-    func go(toProgression progression: Double, rememberBack: Bool) async {
+    /// `his`: false for a landing's own percent step (the Cloud's place), which is not a move of his.
+    func go(toProgression progression: Double, rememberBack: Bool, his: Bool = true) async {
+        if his { hisMoves += 1 }
         hasMoved = true
         moves += 1
         let back = rememberBack ? rememberPlace() : nil
@@ -1829,6 +1835,7 @@ final class ReaderModel {
     }
 
     func go(to entry: TOCEntry) async {
+        hisMoves += 1
         hasMoved = true
         moves += 1
         let back = rememberPlace()
@@ -1838,6 +1845,7 @@ final class ReaderModel {
     }
 
     func follow(_ link: ReadiumShared.Link) async {
+        hisMoves += 1
         hasMoved = true
         moves += 1
         let back = rememberPlace()
@@ -1848,6 +1856,7 @@ final class ReaderModel {
 
     /// A highlight's exact place: Readium finds its words, so the page is the one they are on.
     func go(to locator: Locator, rememberBack: Bool) async {
+        hisMoves += 1
         hasMoved = true
         moves += 1
         let back = rememberBack ? rememberPlace() : nil
@@ -1864,6 +1873,7 @@ final class ReaderModel {
 
     func goBack() async {
         guard let back = backLocator else { return }
+        hisMoves += 1
         hasMoved = true
         moves += 1
         backLocator = nil
