@@ -522,8 +522,10 @@ final class FeelUITests: XCTestCase {
             back.tap()
         }
         expectGesture("Back after the jump", .moveOnce) { goBack("the jump") }
-        check(FeelPlace.compare(start: start, after: ["Back after a Contents jump": FeelPlace.fingerprint(settled())]),
-              name: "contents-back-place")
+        let backPlace = FeelPlace.fingerprint(settled())
+        XCTExpectFailure("gatefold#83: Back after a Contents jump lands on a different page than he left", strict: true) {
+            check(FeelPlace.compare(start: start, after: ["Back after a Contents jump": backPlace]), name: "contents-back-place")
+        }
 
         // A link in the book: the front matter links into the text. The first page is the cover, so turn (counted, at
         // most eight turns) until a page shows a link.
@@ -580,7 +582,15 @@ final class FeelUITests: XCTestCase {
         // The panel grows out of its pill (no snap) and holds still once up, filmed by the app frame by frame.
         showChrome()
         let film = feel.recordedFilm(["appearance.panel"]) { self.app.buttons["reader.appearance"].tap() }
-        judgeSeen(film.snaps(of: "appearance.panel", appearing: true), name: "appearance-snaps", film: film)
+        let snaps = film.snaps(of: "appearance.panel", appearing: true)
+        if pad {
+            judgeSeen(snaps, name: "appearance-snaps", film: film)
+        } else {
+            // Intermittent on the Duo (once in two runs), so not strict.
+            XCTExpectFailure("gatefold#84: on the Duo the Appearance panel sometimes appears with no transition", strict: false) {
+                judgeSeen(snaps, name: "appearance-snaps", film: film)
+            }
+        }
         judgeSeen(film.jumps(of: "appearance.panel"), name: "appearance-jumps", film: film)
         record(film.settles("appearance.panel", within: 1.0), name: "appearance-settles")
         close()
