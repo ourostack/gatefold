@@ -69,6 +69,15 @@ final class PageLoadUITests: XCTestCase {
             value = (probe.value as? String) ?? ""
             if value.hasPrefix("done") || value == "never" || value == "stuck" { break }
         }
+        // RotationRepro's reopen: leave, relaunch in landscape, give the restore 30 s (the app logs its load).
+        sleep(8)
+        XCUIDevice.shared.press(.home)
+        sleep(3)
+        app.terminate()
+        app.launchArguments = base + extra
+        app.launch()
+        XCUIDevice.shared.orientation = .landscapeLeft
+        sleep(30)
         app.terminate()
         XCUIDevice.shared.orientation = .portrait
         return (value, reads)

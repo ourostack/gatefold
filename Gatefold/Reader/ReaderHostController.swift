@@ -428,6 +428,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     /// For measuring opens: when the first web view appears, starts loading and finishes, after the host loads.
     private func traceWebViews() {
         let start = Date()
+        Self.watchMain(for: 40, label: "open")
         Task { [weak self] in
             var seen = false, loading = false
             var marks = Set<Int>()
@@ -1852,6 +1853,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     /// reads "loading", then "done <ms>", or "never" when no load starts within 5 s.
     func watchReflowLoad() {
         reflowLoadWatch?.cancel()
+        Self.watchMain(for: 30, label: "reflow")
         reflowLoadWatch = Task { @MainActor [weak self] in
             let started = ContinuousClock.now
             var saw = false
@@ -1885,6 +1887,28 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         }
     }
     private var reflowLoadWatch: Task<Void, Never>?
+
+    /// #94 probe: logs each time the main thread doesn't answer for over 250 ms (the web view server
+    /// runs on it, and the page's own request waits behind whatever holds it).
+    nonisolated static func watchMain(for seconds: Double, label: String) {
+        let start = Date()
+        Thread.detachNewThread {
+            var total = 0.0
+            while Date().timeIntervalSince(start) < seconds {
+                let sent = Date()
+                let answered = DispatchSemaphore(value: 0)
+                DispatchQueue.main.async { answered.signal() }
+                answered.wait()
+                let late = Date().timeIntervalSince(sent)
+                if late > 0.25 {
+                    total += late
+                    readerLog.notice("mainwatch \(label, privacy: .public): main busy \(Int(late * 1000), privacy: .public) ms from \(sent.timeIntervalSince(start), privacy: .public) s")
+                }
+                Thread.sleep(forTimeInterval: 0.05)
+            }
+            readerLog.notice("mainwatch \(label, privacy: .public): main busy \(Int(total * 1000), privacy: .public) ms in all over \(Int(seconds), privacy: .public) s")
+        }
+    }
 
     /// File names only, never the book's words: what a page's `load` is still waiting on.
     static func pendingLoads(in web: WKWebView) async -> String {
