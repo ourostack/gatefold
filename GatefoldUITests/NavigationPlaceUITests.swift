@@ -286,7 +286,15 @@ final class NavigationPlaceUITests: XCTestCase {
     /// Scroll mode: a scroll is his move even after the launch reflow, through all of a long scroll's
     /// reports, so a reopen shows where he scrolled to, not where the scroll began.
     func testScrolledAfterTheLaunchReflowThenLeftKeepsWhereHeScrolled() {
-        let first = openFresh()
+        var first = openFresh()
+        // A fresh install offers the Cloud's place and never lands on it (#46): the book opens on its
+        // cover, which has no words to scroll through. He takes the offer, as he would.
+        let offer = app.buttons["banner.jump"]
+        if first.isEmpty, offer.waitForExistence(timeout: 30) {
+            offer.tap()
+            first = waitForWords(changingFrom: first)
+        }
+        XCTAssertFalse(first.isEmpty, "the page he scrolls from shows words")
         showChrome()
         app.buttons["reader.appearance"].tap()
         let turnStyle = app.descendants(matching: .any)["appearance.pageTurn"].firstMatch
