@@ -23,7 +23,11 @@ import WebKit
 
     @Test func retiredNavigatorsLetGoOfTheirWebViews() async throws {
         let publication = try await HighlightTests.publication()
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 820, height: 1180))
+        // In the app's scene, as the reader's window is: a window outside any scene may never send the
+        // appearance calls a closed reader waits for.
+        let scene = try #require(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 820, height: 1180)
         let host = UIViewController()
         window.rootViewController = host
         window.isHidden = false
@@ -56,7 +60,11 @@ import WebKit
     /// as he opens and closes books in a session.
     @Test func aClosedReaderLetsGoOfItsWebViews() async throws {
         let publication = try await HighlightTests.publication()
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 820, height: 1180))
+        // In the app's scene, as the reader's window is: a window outside any scene may never send the
+        // appearance calls a closed reader waits for.
+        let scene = try #require(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 820, height: 1180)
         let root = UIViewController()
         window.rootViewController = root
         window.isHidden = false

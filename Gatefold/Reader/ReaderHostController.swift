@@ -169,7 +169,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     func prepareStandby(at locator: Locator) {
         if let standby, standby.locator == locator { return }
         dropStandby()
-        guard isViewLoaded, let next = try? Self.makeNavigator(publication: publication, at: locator, preferences: preferences) else { return }
+        guard !closed, isViewLoaded, let next = try? Self.makeNavigator(publication: publication, at: locator, preferences: preferences) else { return }
         let started = ContinuousClock.now
         addChild(next)
         next.view.frame = navigator.view.frame
@@ -212,7 +212,8 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             view.subviews.forEach(stop)
         }
         stopCounting()
-        stop(navigator.view)
+        // Only a view already loaded: reading `view` would load it, and start Readium, off screen.
+        if let view = navigator.viewIfLoaded { stop(view) }
         readerLog.notice("warm: stopped loading \(self.weakModel?.bookID ?? "?", privacy: .public)")
     }
 
@@ -235,7 +236,6 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     }
 
     private func retireOwnNavigator() {
-        guard navigator.parent != nil else { return }
         Self.retire(navigator)
     }
 
@@ -318,7 +318,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     func countPages(_ hrefs: [String], record: @escaping @MainActor (String, Int) -> Void, finished: @escaping @MainActor () -> Void) {
         stopCounting()
         // Every way out says so, or the slot keeps promising a number.
-        guard isViewLoaded, preferences.scroll != true, !hrefs.isEmpty else { finished(); return }
+        guard !closed, isViewLoaded, preferences.scroll != true, !hrefs.isEmpty else { finished(); return }
         let links = hrefs.compactMap { href in publication.readingOrder.first { $0.url().removingFragment().string == href } }
         // A chapter's cost is its web view loading (about 3 s each, one after another, in build 17), not
         // its measuring: several counters behind the page take chapters from one queue at once.
@@ -433,8 +433,10 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     /// its web content process alive: 187 of them after one Fine-Tune test.
     static func retire(_ navigator: EPUBNavigatorViewController) {
         navigator.willMove(toParent: nil)
-        navigator.view.subviews.forEach { $0.removeFromSuperview() }
-        navigator.view.removeFromSuperview()
+        if let view = navigator.viewIfLoaded {
+            view.subviews.forEach { $0.removeFromSuperview() }
+            view.removeFromSuperview()
+        }
         navigator.removeFromParent()
     }
 
