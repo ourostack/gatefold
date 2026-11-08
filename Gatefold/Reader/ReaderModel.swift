@@ -69,6 +69,8 @@ final class ReaderModel {
     let highlights: HighlightStore
     /// The first page is on screen and legible.
     private(set) var pageReady = false
+    /// The opening cover has finished fading off the first page: until then the controls sit above it (#104).
+    private(set) var coverLifted = false
     /// Reopened at launch: the page as he left it, shown until the live page has laid out beneath it.
     var reopenPicture: UIImage? {
         didSet { if reopenPicture != nil { reopened = true } }
@@ -702,7 +704,7 @@ final class ReaderModel {
     var reopenAdapted = false
 
     private func showPage() {
-        withAnimation(.easeOut(duration: 0.3)) { pageReady = true }
+        withAnimation(.easeOut(duration: 0.3)) { pageReady = true } completion: { [weak self] in self?.coverLifted = true }
         if reopenPicture == nil { pageShownAt = Date() }
         // Counting the book's pages waits until the open has settled (the reopen picture gone too), so
         // it never slows the first page.

@@ -81,9 +81,9 @@ final class PageFurnitureUITests: XCTestCase {
         // Kept across a relaunch: the book reopens on his page with its numbers on.
         XCUIDevice.shared.press(.home)
         sleep(2)
-        app.terminate()
+        app.quit()
         app.launchArguments = common
-        app.launch()
+        app.relaunch()
         XCTAssertTrue(pageNumber.waitForExistence(timeout: 120), "page numbers are still on after a relaunch")
     }
 
@@ -136,9 +136,9 @@ final class PageFurnitureUITests: XCTestCase {
             XCUIApplication(bundleIdentifier: "com.apple.springboard").activate()
         }
         sleep(4)
-        app.terminate()
+        app.quit()
         app.launchArguments = common
-        app.launch()
+        app.relaunch()
         let back = Date().addingTimeInterval(60)
         while visibleText.isEmpty, Date() < back { RunLoop.current.run(until: Date().addingTimeInterval(0.2)) }
         sleep(4)

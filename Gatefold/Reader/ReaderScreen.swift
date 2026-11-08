@@ -61,6 +61,8 @@ struct ReaderScreen: View {
                 : PageSafeArea.Lift(scale: 0.96, anchorY: 0.5)
             // Reduce Motion drops the plain lift, but not one that keeps a line out from under the capsule.
             let liftNeeded = chromeLift.anchorY != 0.5
+            // The opening cover is up or fading (no reopen picture over it): the controls sit above it.
+            let controlsOverCover = !model.coverLifted && model.reopenPicture == nil
             ZStack(alignment: .topLeading) {
                 model.theme.background
 
@@ -114,6 +116,10 @@ struct ReaderScreen: View {
                     showSearch: $showSearch
                 )
                 .frame(width: proxy.size.width, height: layout.deck == nil ? proxy.size.height : layout.pageFrame.height)
+                // Above the opening cover while the first page loads: a tap on the cover brings them up,
+                // and Close works however long the load takes (#104; a stuck load took every tap for a minute).
+                // They stay above it through its fade, so controls already up don't blink under it.
+                .zIndex(controlsOverCover ? 3.5 : 0)
 
                 if showAppearance {
                     // A tap anywhere off the panel closes it, and nothing else: it never reaches the page,

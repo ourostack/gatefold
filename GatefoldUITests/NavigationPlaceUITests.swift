@@ -63,9 +63,9 @@ final class NavigationPlaceUITests: XCTestCase {
             XCUIApplication(bundleIdentifier: "com.apple.springboard").activate()
         }
         sleep(3)
-        app.terminate()
+        app.quit()
         app.launchArguments = common
-        app.launch()
+        app.relaunch()
         _ = waitForWords()
         sleep(4)
         XCTAssertEqual(opening(visibleText), opening(settled), "after a \(how) and no turn, the reopen is on the page he jumped to")
@@ -172,6 +172,47 @@ final class NavigationPlaceUITests: XCTestCase {
         return (move ?? reads, back ?? reads)
     }
 
+    /// While the first page is still loading behind the opening cover, a tap still brings up the
+    /// controls and Close still closes the book (#104): the cover took every tap, Close among them, for
+    /// over a minute while a load hung (#94). The load is held open (`-GatefoldHoldOpeningLoad`), and
+    /// each answer is judged in reads, never seconds.
+    func testTheOpeningCoverLetsTheControlsThrough() {
+        app.launchArguments = common + ["-GatefoldHoldOpeningLoad", "2400", "-GatefoldReset", "YES", "-GatefoldDownloadAll", "YES",
+                                        "-GatefoldOpenBook", "gutenberg-pride-and-prejudice"]
+        app.launch()
+        let held = app.descendants(matching: .any)["reader.loadingHeld"]
+        let cover = app.descendants(matching: .any)["reader.opening"]
+        let ready = app.descendants(matching: .any)["reader.pageReady"]
+        XCTAssertTrue(held.waitForExistence(timeout: 60), "the first page's load is held open")
+        XCTAssertTrue(cover.waitForExistence(timeout: 10), "the opening cover is up")
+
+        // A tap in the middle of the cover: the controls come up within a few reads.
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        let close = app.buttons["reader.close"].firstMatch
+        var reads = 0, up = false
+        while reads < 15 {
+            reads += 1
+            if close.exists, close.isHittable { up = true; break }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        }
+        let stillLoading = held.exists && (ready.value as? String) == "0"
+        print("PLACEHOLDER controls up=\(up) after \(reads) reads; still loading=\(stillLoading)")
+        XCTAssertTrue(stillLoading, "the page was still loading when the controls were judged")
+        XCTAssertTrue(up, "a tap on the opening cover brings up the controls")
+        guard up else { return }
+
+        // Close still closes the book while it loads.
+        close.tap()
+        let shelf = app.descendants(matching: .any)["library.grid"]
+        reads = 0
+        while reads < 25, !shelf.exists {
+            reads += 1
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        }
+        print("PLACEHOLDER shelf=\(shelf.exists) after \(reads) reads")
+        XCTAssertTrue(shelf.exists, "Close on the opening cover goes back to the shelf")
+    }
+
     func testAScrubberJumpKeepsThePlace() {
         let first = openFresh()
         showChrome()
@@ -194,9 +235,9 @@ final class NavigationPlaceUITests: XCTestCase {
             XCUIApplication(bundleIdentifier: "com.apple.springboard").activate()
         }
         sleep(3)
-        app.terminate()
+        app.quit()
         app.launchArguments = common + relaunchExtra
-        app.launch()
+        app.relaunch()
     }
 
     private var relaunchExtra: [String] = []
@@ -223,9 +264,9 @@ final class NavigationPlaceUITests: XCTestCase {
         let cover = app.descendants(matching: .any)["book.gutenberg-pride-and-prejudice"].firstMatch
         XCTAssertTrue(cover.waitForExistence(timeout: 15), "back on the shelf")
         sleep(2)
-        app.terminate()
+        app.quit()
         app.launchArguments = common
-        app.launch()
+        app.relaunch()
         XCTAssertTrue(cover.waitForExistence(timeout: 30), "the shelf after a relaunch")
         cover.tap()
         _ = waitForWords()

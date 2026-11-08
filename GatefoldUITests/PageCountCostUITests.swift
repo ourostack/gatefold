@@ -54,7 +54,7 @@ final class PageCountCostUITests: XCTestCase {
             let line = "\(book): \(total.isEmpty ? "not counted in 900 s" : "\(total) pages in \(Int(Date().timeIntervalSince(shown))) s")"
             lines.append(line)
             XCTAssertFalse(total.isEmpty, line)
-            app.terminate()
+            app.quit()
         }
         note(lines.joined(separator: "\n"), "count times")
     }

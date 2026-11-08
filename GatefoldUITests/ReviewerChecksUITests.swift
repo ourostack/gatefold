@@ -79,9 +79,9 @@ final class ReviewerChecksUITests: XCTestCase {
         XCUIDevice.shared.press(.home)
         if !app.wait(for: .runningBackground, timeout: 3) { XCUIApplication(bundleIdentifier: "com.apple.springboard").activate() }
         sleep(3)
-        app.terminate()
+        app.quit()
         app.launchArguments = base
-        app.launch()
+        app.relaunch()
         XCTAssertTrue(el("reader.page").waitForExistence(timeout: 90), "the book reopened")
         _ = settle(90)
         sleep(3)
@@ -163,7 +163,7 @@ final class ReviewerChecksUITests: XCTestCase {
         for spot in ["0.31", "0.12", "0.47"] {
             app.launchArguments = base + ["-GatefoldReset", "YES", "-GatefoldDownloadAll", "YES",
                                           "-GatefoldOpenBook", "gutenberg-pride-and-prejudice", "-GatefoldGoTo", spot]
-            app.launch()
+            app.relaunch()
             XCTAssertTrue(el("reader.page").waitForExistence(timeout: 120), "the book opened at \(spot)")
             _ = settle(120)
             turnForward(); turnForward()
@@ -178,7 +178,7 @@ final class ReviewerChecksUITests: XCTestCase {
                 note("reopen at \(spot) round \(round + 1): left \(Self.hash(left)) back \(Self.hash(back)) \(ok ? "SAME" : "MISS")")
                 XCTAssertTrue(ok, "reopen at \(spot), round \(round + 1), returned other words (\(Self.hash(left)) then \(Self.hash(back)))")
             }
-            app.terminate()
+            app.quit()
         }
         note("REOPEN SUMMARY same=\(same) of \(total)")
     }

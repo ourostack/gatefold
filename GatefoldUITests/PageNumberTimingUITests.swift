@@ -98,9 +98,9 @@ final class PageNumberTimingUITests: XCTestCase {
                 XCUIApplication(bundleIdentifier: "com.apple.springboard").activate()
             }
             sleep(2)
-            app.terminate()
+            app.quit()
             app.launchArguments = common
-            app.launch()
+            app.relaunch()
             check("gutenberg-pride-and-prejudice", spot, "reopen")
         }
     }

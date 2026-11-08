@@ -106,6 +106,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         super.viewDidLoad()
         if let model = weakModel { readerLog.notice("open: host loads after \(Date().timeIntervalSince(model.openedAt), privacy: .public) s") }
         if LaunchOptions.isUITest || LaunchOptions.openTour != nil { traceWebViews() }
+        if LaunchOptions.isUITest, let looks = LaunchOptions.holdOpeningLoadLooks, looks > 0 { holdLoadForTest(looks: looks) }
         view.clipsToBounds = true
         addChild(navigator)
         navigator.view.frame = view.bounds
@@ -1544,7 +1545,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         // UI tests: the old page reads as still loading (spinner up, page bare) while it is pictured.
         let heldBefore = heldLoadLooks
         if LaunchOptions.isUITest, let looks = LaunchOptions.holdOldPageLoadLooks, looks > 0 {
-            heldLoadLooks = looks
+            heldLoadLooks = max(heldLoadLooks, looks)
             if oldPageHeldMarker == nil {
                 let marker = UIView(frame: CGRect(x: 0, y: 0, width: 1, height: 1))
                 marker.isAccessibilityElement = true
@@ -1869,7 +1870,12 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
 
     private func holdChapterLoadForTest() {
         guard let looks = LaunchOptions.holdChapterLoadLooks, looks > 0 else { return }
-        heldLoadLooks = looks
+        holdLoadForTest(looks: looks)
+    }
+
+    private func holdLoadForTest(looks: Int) {
+        heldLoadMarker?.removeFromSuperview()
+        heldLoadLooks = max(heldLoadLooks, looks)
         let marker = UIView(frame: CGRect(x: 0, y: 0, width: 1, height: 1))
         marker.isAccessibilityElement = true
         marker.accessibilityIdentifier = "reader.loadingHeld"
