@@ -16,7 +16,7 @@ final class Probe118UITests: XCTestCase {
     ]
 
     // Contents' own Done (an xmark); the reader's Close also reads "Close", so not matched by label.
-    private var done: XCUIElement { app.navigationBars.buttons["xmark"].firstMatch }
+    private var done: XCUIElement { app.buttons["xmark"].firstMatch }
 
     private func openContents() -> Bool {
         app.descendants(matching: .any)["reader.page"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
