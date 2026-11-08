@@ -1527,7 +1527,9 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         let chapterBefore = navigator.currentLocation?.href.string.split(separator: "#").first
         // Where the turn starts, read live from the page (Readium's own location trails a turn by a debounce,
         // so straight after one it can still name the page before): a spring back returns here (#110).
-        turnFrom = await pageRange().flatMap { live in navigator.currentLocation?.copy(locations: { $0.progression = live.start }) }
+        turnFrom = await pageRange().flatMap { live in
+            navigator.currentLocation?.copy(locations: { $0.progression = CurlRelease.jumpTarget(start: live.start, end: live.end) })
+        }
         let moved = forward
             ? await navigator.goForward(options: .init(animated: false))
             : await navigator.goBackward(options: .init(animated: false))
@@ -1647,25 +1649,25 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             readerLog.notice("turn: sprang back by a step (the start wasn't read)")
             return
         }
-        func here() async -> Double? {
+        func here() async -> ClosedRange<Double>? {
             _ = await navigator.evaluateJavaScript(ReaderJS.install)
             guard let json = (try? await navigator.evaluateJavaScript(ReaderJS.pageRange).get()) as? String,
                   let data = json.data(using: .utf8) else { return nil }
-            struct Found: Decodable { var s: Double; var doc: String }
+            struct Found: Decodable { var s: Double; var e: Double; var doc: String }
             guard let found = try? JSONDecoder().decode(Found.self, from: data),
                   ScreenPageGeometry.document(found.doc, isChapter: start.href.string) else { return nil }
-            return found.s
+            return found.s...max(found.s, found.e)
         }
         var now = await here()
         var again = false
-        if now.map({ abs($0 - p) > 0.0005 }) ?? true {
+        if !(now.map { CurlRelease.isOn(p, page: $0) } ?? false) {
             again = true
             _ = await navigator.go(to: start, options: .init(animated: false))
             try? await Task.sleep(for: .milliseconds(120))
             now = await here()
         }
-        let ok = now.map { abs($0 - p) <= 0.0005 } ?? false
-        readerLog.notice("turn: sprang back to \(start.href.string, privacy: .public) @\(now ?? -1, privacy: .public) (started @\(p, privacy: .public))\(again ? " after a second jump" : "", privacy: .public) -> \(ok ? "same page" : "elsewhere", privacy: .public)")
+        let ok = now.map { CurlRelease.isOn(p, page: $0) } ?? false
+        readerLog.notice("turn: sprang back to \(start.href.string, privacy: .public) @\(now?.lowerBound ?? -1, privacy: .public) (started on the page with @\(p, privacy: .public))\(again ? " after a second jump" : "", privacy: .public) -> \(ok ? "same page" : "elsewhere", privacy: .public)")
     }
 
     private var beneathFrames: [CGRect] = []
