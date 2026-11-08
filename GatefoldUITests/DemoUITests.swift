@@ -48,7 +48,7 @@ final class DemoUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Moby-Dick"].firstMatch.waitForExistence(timeout: 10))
         sleep(2)
 
-        app.terminate()
+        app.quit()
         app.launchArguments = [
             "-GatefoldUITest", "YES", "-GatefoldFakeCloud", "YES", "-GatefoldSkipWelcome", "YES", "-GatefoldSignedIn", "YES", "-GatefoldTheme", "vellum",
         ]

@@ -46,7 +46,7 @@ final class ReopenUITests: XCTestCase {
         // He leaves (the picture of the page is kept), and iOS ends Gatefold.
         XCUIApplication(bundleIdentifier: "com.apple.Preferences").activate()
         sleep(3)
-        app.terminate()
+        app.quit()
 
         // Back to Gatefold, no book asked for: it reopens on the picture of his page.
         app.launchArguments = common

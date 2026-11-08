@@ -63,7 +63,7 @@ final class NavigationPlaceUITests: XCTestCase {
             XCUIApplication(bundleIdentifier: "com.apple.springboard").activate()
         }
         sleep(3)
-        app.terminate()
+        app.quit()
         app.launchArguments = common
         app.launch()
         _ = waitForWords()
@@ -141,7 +141,7 @@ final class NavigationPlaceUITests: XCTestCase {
             XCUIApplication(bundleIdentifier: "com.apple.springboard").activate()
         }
         sleep(3)
-        app.terminate()
+        app.quit()
         app.launchArguments = common + relaunchExtra
         app.launch()
     }
@@ -170,7 +170,7 @@ final class NavigationPlaceUITests: XCTestCase {
         let cover = app.descendants(matching: .any)["book.gutenberg-pride-and-prejudice"].firstMatch
         XCTAssertTrue(cover.waitForExistence(timeout: 15), "back on the shelf")
         sleep(2)
-        app.terminate()
+        app.quit()
         app.launchArguments = common
         app.launch()
         XCTAssertTrue(cover.waitForExistence(timeout: 30), "the shelf after a relaunch")

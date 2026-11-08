@@ -52,7 +52,7 @@ final class PageTurnPlacementUITests: XCTestCase {
             b.lifetime = .keepAlways
             add(b)
         }
-        app.terminate()
+        app.quit()
     }
 
     /// The folded Duo's status column, reported as a trailing inset.

@@ -42,7 +42,7 @@ final class ReopenTimingUITests: XCTestCase {
                 XCUIApplication(bundleIdentifier: "com.apple.springboard").activate()
             }
             sleep(4)
-            app.terminate()
+            app.quit()
             app.launchArguments = common
             let launched = Date()
             app.launch()

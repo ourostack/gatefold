@@ -139,7 +139,7 @@ final class RotationRepro: XCTestCase {
         for round in 1...3 {
             XCUIDevice.shared.press(.home)
             sleep(3)
-            app.terminate()
+            app.quit()
             app.launchArguments = base
             app.launch()
             XCUIDevice.shared.orientation = .landscapeLeft

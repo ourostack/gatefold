@@ -101,7 +101,7 @@ final class ReopenAfterControlsUITests: XCTestCase {
             if ok { same += 1 }
             print("REOPEN round \(round): opened \(Self.hash(opened)) left \(Self.hash(left)) back \(Self.hash(back)) \(ok ? "SAME" : "MISS")")
             XCTAssertTrue(ok, "round \(round) returned other words (\(Self.hash(left)) then \(Self.hash(back)))")
-            app.terminate()
+            app.quit()
         }
         print("REOPEN SUMMARY same=\(same) of \(rounds)")
     }

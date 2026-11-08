@@ -58,7 +58,7 @@ final class SafeAreaUITests: XCTestCase {
         shot.name = "shelf-insets-\(insets)"
         shot.lifetime = .keepAlways
         add(shot)
-        app.terminate()
+        app.quit()
     }
 
     /// A status column at the trailing edge, as the folded Duo's cover screen reports it.
@@ -93,7 +93,7 @@ final class SafeAreaUITests: XCTestCase {
             shot.name = "shelf-inset-\(insets ?? "none")"
             shot.lifetime = .keepAlways
             add(shot)
-            app.terminate()
+            app.quit()
             return (v[0], v[1], v[2], window)
         }
         let own = measure(nil)
