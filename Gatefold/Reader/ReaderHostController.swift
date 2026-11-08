@@ -1060,6 +1060,19 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         cover?.removeFromSuperview()
     }
 
+    /// The page on screen, start and end from one live read of the web view, in the document it names;
+    /// nil while that document is still loading or isn't the navigator's.
+    func pageRange() async -> VisibleRange? {
+        guard let location = navigator.currentLocation else { return nil }
+        _ = await navigator.evaluateJavaScript(ReaderJS.install)
+        guard let json = (try? await navigator.evaluateJavaScript(ReaderJS.pageRange).get()) as? String,
+              let data = json.data(using: .utf8) else { return nil }
+        struct Found: Decodable { var s: Double; var e: Double; var doc: String }
+        guard let found = try? JSONDecoder().decode(Found.self, from: data),
+              ScreenPageGeometry.document(found.doc, isChapter: location.href.string) else { return nil }
+        return VisibleRange(href: location.href.string, start: found.s, end: max(found.s, found.e))
+    }
+
     /// What's on screen now: the resource, its progression range and the visible text.
     func visibleRange() async -> VisibleRange? {
         guard let location = navigator.currentLocation else { return nil }
