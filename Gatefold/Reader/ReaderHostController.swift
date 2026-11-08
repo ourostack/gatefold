@@ -404,9 +404,14 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         return false
     }
 
-    /// Takes a navigator that is done (a counter, a standby page, the page a swap replaced) out of the reader.
+    /// Takes a navigator that is done (a counter, a standby page, the page a swap replaced) out of the reader,
+    /// and lets go of its web views (#109). Readium breaks each page's cycle (the web view's script handlers
+    /// hold the spread view, which holds the web view) only when its pagination view leaves its superview,
+    /// and UIKit tells only the view that left. Removing just the navigator's view kept every web view and
+    /// its web content process alive: 187 of them after one Fine-Tune test.
     static func retire(_ navigator: EPUBNavigatorViewController) {
         navigator.willMove(toParent: nil)
+        navigator.view.subviews.forEach { $0.removeFromSuperview() }
         navigator.view.removeFromSuperview()
         navigator.removeFromParent()
     }
