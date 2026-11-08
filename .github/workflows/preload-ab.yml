@@ -1,0 +1,51 @@
+name: Preload A/B
+
+# Measurement for #61, not a gate: the open's reveal and a turn into the next chapter on the folded
+# Duo, with Readium preloading 0 positions each side (today) and 1, interleaved so both arms share
+# the runner's load. One PRELOADAB line of counts per run, never the book's words.
+on:
+  push:
+    branches: [gf-preload-measure]
+  workflow_dispatch:
+
+concurrency:
+  group: preload-ab-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  duo:
+    name: Duo preload A/B
+    runs-on: xcode-27
+    # Build about 15 min, a Duo boot up to 10, six opens of about 2 min each: 60 keeps 30% headroom.
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/select-xcode
+      - name: Install the Metal toolchain
+        run: xcodebuild -downloadComponent MetalToolchain
+      - name: Generate the Xcode project from project.yml
+        run: |
+          brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
+          xcodegen generate
+      - name: Create and boot an iPhone Duo
+        id: sim
+        run: |
+          set -euo pipefail
+          runtime="$(xcrun simctl list runtimes --json | python3 -c 'import json,sys; r=[x for x in json.load(sys.stdin)["runtimes"] if x["platform"]=="iOS" and x["isAvailable"] and any(d["name"].startswith("iPhone Duo") for d in x.get("supportedDeviceTypes",[]))]; print(max(r, key=lambda x: [int(p) for p in x["version"].split(".")])["identifier"])')"
+          udid="$(.github/scripts/boot-sim.sh gatefold-duo com.apple.CoreSimulator.SimDeviceType.iPhone-Duo "$runtime")"
+          echo "destination=platform=iOS Simulator,arch=$(uname -m),id=$udid" >> "$GITHUB_OUTPUT"
+      - name: Build for testing
+        run: |
+          set -o pipefail
+          xcodebuild build-for-testing -project Gatefold.xcodeproj -scheme Gatefold \
+            -destination "${{ steps.sim.outputs.destination }}" -derivedDataPath "$RUNNER_TEMP/dd" 2>&1 | tail -5
+      - name: Preload 0 and 1, three rounds each, interleaved
+        run: |
+          for round in 1 2 3; do
+            for p in 0 1; do
+              TEST_RUNNER_GATEFOLD_PRELOAD=$p xcodebuild test-without-building -project Gatefold.xcodeproj -scheme Gatefold \
+                -destination "${{ steps.sim.outputs.destination }}" -derivedDataPath "$RUNNER_TEMP/dd" \
+                -only-testing:GatefoldUITests/PlaceUndoUITests/testPreloadMeasureRevealAndCrossing 2>&1 \
+                | grep --line-buffered -E "PRELOADAB|Test Case .*(passed|failed)" | grep -v "Activity" || true
+            done
+          done

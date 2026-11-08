@@ -94,8 +94,8 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
                 // Readium shows and reports the first page only once every preloaded neighbour has loaded
                 // too: 2 behind and 4 ahead held the cover up for three to six seconds. Neighbours load on
                 // demand; a turn into a chapter still loading holds the old page (`renderedSnapshot`).
-                preloadPreviousPositionCount: 0,
-                preloadNextPositionCount: 0,
+                preloadPreviousPositionCount: LaunchOptions.preload ?? 0,
+                preloadNextPositionCount: LaunchOptions.preload ?? 0,
                 decorationTemplates: HTMLDecorationTemplate.defaultTemplates().merging([.gatefoldSync: .gatefoldSync()]) { a, _ in a }
                     .merging(Self.highlightTemplates) { a, _ in a }
             )

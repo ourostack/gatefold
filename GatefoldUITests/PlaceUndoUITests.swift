@@ -64,6 +64,8 @@ final class PlaceUndoUITests: XCTestCase {
             + (ProcessInfo.processInfo.environment["GATEFOLD_POSTURE"].map { ["-GatefoldForcePosture", $0] } ?? [])
             // GATEFOLD_COUNTERS=0 opens the same page with no counting behind it, for an A/B of what it costs.
             + (ProcessInfo.processInfo.environment["GATEFOLD_COUNTERS"].map { ["-GatefoldCounters", $0] } ?? [])
+            // GATEFOLD_PRELOAD=N has Readium preload N positions each side, for the open/turn A/B (#61).
+            + (ProcessInfo.processInfo.environment["GATEFOLD_PRELOAD"].map { ["-GatefoldPreload", $0] } ?? [])
         app.launch()
         XCTAssertTrue(el("reader.page").waitForExistence(timeout: 90))
         return settledWords()
@@ -181,6 +183,31 @@ final class PlaceUndoUITests: XCTestCase {
     /// to load (#61); its check comes with the fix that preloads the neighbours.
     func testATapAtTheLeftEdgeTurnsBackPromptlyWithinAChapter() {
         leftEdgeTurnsBack(reading: 0.1, extra: ["-GatefoldPageTurn", "curl"], goTo: "0.31", label: "curl at 0.31")
+    }
+
+    /// Measurement only (#61): the open's reveal and a turn into the next chapter and back, as feel-ci
+    /// opens it (0.3, curl). Run under GATEFOLD_PRELOAD=0 and =1 side by side; one PRELOADAB line of
+    /// counts per run, no bars.
+    func testPreloadMeasureRevealAndCrossing() {
+        let first = openFresh(["-GatefoldPageTurn", "curl"], goTo: "0.3")
+        let reveal = el("reader.reveal")
+        let shown = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value != ''"), object: reveal)
+        _ = XCTWaiter.wait(for: [shown], timeout: 30)
+        let revealed = (reveal.value as? String) ?? "?"
+        let page = el("reader.page")
+        let before = turnWait().turn
+        page.coordinate(withNormalizedOffset: CGVector(dx: 0.92, dy: 0.5)).tap()
+        _ = readsUntilWords(changeFrom: first, atMost: 200, every: 0.1)
+        let forward = looks(ofTurnAfter: before)
+        let ahead = settledWords()
+        let middle = turnWait().turn
+        page.coordinate(withNormalizedOffset: CGVector(dx: 0.08, dy: 0.5)).tap()
+        _ = readsUntilWords(changeFrom: ahead, atMost: 200, every: 0.1)
+        let back = looks(ofTurnAfter: middle)
+        let preload = ProcessInfo.processInfo.environment["GATEFOLD_PRELOAD"] ?? "0"
+        let line = "PRELOADAB preload \(preload): reveal \(revealed) s; looks forward \(forward.looks)\(forward.crossed ? " (crossed)" : ""), back \(back.looks)\(back.crossed ? " (crossed)" : "")"
+        print(line)
+        XCTContext.runActivity(named: line) { _ in }
     }
 
     /// The newest turn's count and the looks it waited for the page beneath, from the app itself:

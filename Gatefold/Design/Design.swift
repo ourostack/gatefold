@@ -98,6 +98,9 @@ enum LaunchOptions {
     /// Tests only: how many counters count pages behind the page (0 counts none), for an A/B of what
     /// counting costs a turn.
     static var counters: Int? { defaults.object(forKey: "GatefoldCounters") == nil ? nil : defaults.integer(forKey: "GatefoldCounters") }
+    /// Tests only: positions Readium preloads each side of the page (0 by default), for an A/B of the
+    /// open against a turn into another chapter (#61).
+    static var preload: Int? { defaults.object(forKey: "GatefoldPreload") == nil ? nil : defaults.integer(forKey: "GatefoldPreload") }
     static var unfoldPaintDelay: Double? { defaults.object(forKey: "GatefoldUnfoldPaintDelay") == nil ? nil : defaults.double(forKey: "GatefoldUnfoldPaintDelay") }
     /// Book IDs to open and close one after another, as taps would (see `RootView.openTour`).
     /// Seconds an open tour rests on the shelf between books (the warm books reopen meanwhile).

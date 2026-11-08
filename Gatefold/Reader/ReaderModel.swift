@@ -173,6 +173,9 @@ final class ReaderModel {
     var turnPlacement = "none"
     /// UI tests: "<turn> <looks>": the newest turn, and how many looks it waited for the page beneath to paint.
     var turnWaitProbe = ""
+    /// UI tests: seconds from this reader's making to the cover giving way to the page.
+    var revealProbe = ""
+    private let madeAt = Date()
     /// For UI tests: how far a spread's outer page ever strayed from its rest, frame by frame, from the
     /// turn's last leg until 0.5 s after it landed: "settle <n> frames <k> worst <pt> pt".
     var turnSettle = "none"
@@ -610,6 +613,7 @@ final class ReaderModel {
 
     private func showPage() {
         withAnimation(.easeOut(duration: 0.3)) { pageReady = true }
+        if LaunchOptions.isUITest { revealProbe = String(format: "%.2f", Date().timeIntervalSince(madeAt)) }
         if reopenPicture == nil { pageShownAt = Date() }
         // Counting the book's pages waits until the open has settled (the reopen picture gone too), so
         // it never slows the first page.
