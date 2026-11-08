@@ -131,7 +131,6 @@ struct ReaderScreen: View {
                         .zIndex(0.5)
                     // Low over the page (or the spread), inside the safe area, the top of the page in view.
                     SettingsPanel(model: model, width: proxy.size.width) { showAppearance = false }
-                        .accessibilityAddTraits(.isModal)
                         .accessibilityAction(.escape) { showAppearance = false }
                         .frame(maxWidth: 560)
                         // A height cap takes all the room it's offered, so its own alignment decides
