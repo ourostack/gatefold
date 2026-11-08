@@ -139,7 +139,9 @@ final class ReaderModel {
 
     private func keepMoveMadeBehindTheShelf() async {
         // A jump still on its way is kept where it lands, not where it passes through.
-        for _ in 0..<(JumpLanding.reads + 25) where launchJumpInFlight && !isClosed { try? await Task.sleep(for: .milliseconds(200)) }
+        // The landing ends by itself when its reads run out, and a read now also asks the page for its range,
+        // so this waits for the landing to end rather than for a count of beats.
+        while launchJumpInFlight && !isClosed { try? await Task.sleep(for: .milliseconds(200)) }
         guard !isClosed, moves != recordedMoves, let here = page?.currentLocation else { return }
         readerLog.notice("place: a move made behind the shelf is kept at the tap (reported \(Self.placeTag(here), privacy: .public))")
         layoutOnly = false
@@ -553,11 +555,12 @@ final class ReaderModel {
             // Sent until the page says it is there: Readium refuses a jump while it is loading, and a
             // web view still loading can take one, open the file's first page and drop the place inside
             // it (CI's Duo opened a jump to 0.993 at 0.938 and stayed; #30). Counted in reads.
+            // Landed when the page on screen holds the target's place in its file (`JumpLanding`).
             let target = locator.locations.totalProgression ?? goTo
             let landed = await JumpLanding.land(
-                target: target,
+                target: ReadingAnchor(href: locator.href.string, progression: locator.locations.progression ?? 0, text: nil),
                 go: { [weak self] in await self?.page?.go(to: locator) == true },
-                reported: { [weak self] in self?.page?.currentLocation?.locations.totalProgression },
+                visible: { [weak self] in await self?.page?.visibleRange() },
                 beat: { try? await Task.sleep(for: .milliseconds(200)) })
             readerLog.notice("open: the launch jump to \(target, privacy: .public) \(landed ? "landed" : "ran out of reads", privacy: .public) at \(self.page?.currentLocation?.locations.totalProgression ?? -1, privacy: .public)")
             launchJumpInFlight = false
