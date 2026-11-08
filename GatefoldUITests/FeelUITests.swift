@@ -704,6 +704,34 @@ final class FeelUITests: XCTestCase {
         }
     }
 
+    // MARK: Pull-down sheets
+
+    /// Every sheet he can pull down goes away when pulled from its bar once it has landed. Contents is pulled in
+    /// ``testContentsJumpDismissLinkAndBack``; Search is pulled here. The Highlights sheets need a highlight and the
+    /// shelf's reconnect sheet a lapsed sign-in, which the walk does not set up.
+    func testEveryPullDownSheetGoesAway() {
+        launch(open: true, ["-GatefoldGoTo", "0.31"])
+        hideChrome()
+        let done = app.buttons["Done"]
+        showChrome()
+        let search = app.buttons["reader.search"]
+        XCTAssertTrue(search.waitForExistence(timeout: 5), "Search is offered")
+        search.tap()
+        XCTAssertTrue(done.waitForExistence(timeout: 15), "Search opened, with a visible way back")
+        waitUntilStill("Done")
+        // From the top of the sheet's bar, above its search field, so the pull moves the sheet.
+        let bar = app.navigationBars.firstMatch
+        let from = bar.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.15))
+        from.press(forDuration: 0.05, thenDragTo: from.withOffset(CGVector(dx: 0, dy: app.windows.firstMatch.frame.height * 0.6)),
+                   withVelocity: .fast, thenHoldForDuration: 0)
+        let gone = done.waitForNonExistence(timeout: 10)
+        expectChecked(FeelResult(check: FeelGenre.overlayDismissal.rawValue, passed: gone,
+                                 summary: gone ? "a pull down put Search away" : "Search stayed up after a pull down",
+                                 findings: gone ? [] : [FeelFinding(what: "Search stayed up after a pull down")],
+                                 environment: feel.environment))
+        if !gone, done.exists { done.tap() }
+    }
+
     // MARK: Appearance and Fine-Tune
 
     /// Appearance and its Fine-Tune page sit inside the window, go away with Close, and leave the page alone; a tap
