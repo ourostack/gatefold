@@ -35,4 +35,9 @@ struct ReopenMatchTests {
         #expect(ReopenMatch.compare(left: leftOnTail, reopened: "upon the hill beside the old mill and the river",
                                     saved: "rests upon the hill beside the old mill and the") == .different)
     }
+
+    /// A saved place of a few characters is no proof the dropped token was a word's tail.
+    @Test func aShortSavedPlaceProvesNothing() {
+        #expect(ReopenMatch.compare(left: leftOnTail, reopened: reopenedFromWhole, saved: "rests") == .different)
+    }
 }

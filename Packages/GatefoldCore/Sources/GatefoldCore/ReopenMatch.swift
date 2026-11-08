@@ -25,8 +25,9 @@ public enum ReopenMatch: String, Sendable {
         guard words.count == 2, let saved = saved.map(normalized), !saved.isEmpty else { return .different }
         let whole = String(words[1])
         // The proof: the app's own place starts at the second token, which it does only for a word's tail.
-        let n = min(headLength, saved.count, whole.count)
-        guard n > 0, saved.prefix(n) == whole.prefix(n) else { return .different }
+        // As long as the head compared, so a few saved characters can't stand in for his words.
+        let n = min(headLength, whole.count)
+        guard n > 0, saved.count >= n, saved.prefix(n) == whole.prefix(n) else { return .different }
         return head(r) == head(whole) ? .fromSavedWholeWord : .different
     }
 
