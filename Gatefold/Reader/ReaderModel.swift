@@ -224,6 +224,8 @@ final class ReaderModel {
     /// Counts every move of the page (a turn, a jump, a landing, the close). A settle or a landing
     /// that started before the latest move has been overtaken and must not move or record anything.
     private var moves = 0 { didSet { layoutOnly = false } }
+    /// `moves`, for a restore to tell whether he has moved since its reflow began.
+    var moveCount: Int { moves }
     /// Set from the moment the reader closes; nothing moves the page or records a place after it.
     private(set) var isClosed = false
     /// While a landing settles, the navigator's in-between locations are not places: the landing

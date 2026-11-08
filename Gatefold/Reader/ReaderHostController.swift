@@ -495,7 +495,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         }
         dropStandby()
         stopCounting()
-        model.keeper.reflowWillBegin(reason)
+        model.keeper.reflowWillBegin(reason, move: model.moveCount)
         model.reflowDidBegin()
         if !curl.isActive {
             let page = navigator.view!
@@ -679,11 +679,31 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             self.settleReflowSoon()
         }
     }
+    /// A restore he overtook (he turned or jumped while it ran, the 12 s watchdog's retry on a page it had
+    /// shown him among them): it ends where his move left the page, never bringing the old place back, and
+    /// his page becomes the anchor again.
+    private func giveWayIfHeMoved(generation: Int) {
+        guard generation == reflowGeneration, let model = weakModel, model.keeper.reflowing != nil,
+              !model.keeper.restoreMayMove(move: model.moveCount) else { return }
+        readerLog.notice("reflow: he moved while the restore ran; it gives way to his move")
+        model.keeper.restoreGaveWay()
+        settledGeneration = generation
+        reflowRetries = 0
+        showPageAsItIs()
+        model.reflowDidFinish(visible: nil)
+        Task { [weak model] in await model?.captureAnchor() }
+    }
+
     /// A reflow that hasn't settled in 12 s: the page as it is, never a picture of the old one under a
     /// leaf that stopped rising (a cold iPad turned on its side kept that up past 14 s in build 19).
     private func uncoverUnsettled() {
         guard reflowCover != nil || leaf != nil || navigator.view.alpha < 1 else { return }
         readerLog.error("reflow: no settle after 12 s; showing the page as it is")
+        showPageAsItIs()
+    }
+
+    private func showPageAsItIs() {
+        guard reflowCover != nil || leaf != nil || navigator.view.alpha < 1 else { return }
         unfolding = false
         dropLeaf()
         let cover = reflowCover
@@ -702,7 +722,12 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
 
     private func restoreAnchor(generation: Int) async {
         // A newer reflow may begin during any await below; it owns the restore from then on.
-        func current() -> Bool { generation == reflowGeneration && weakModel != nil }
+        // His move (a turn, a jump, a landing) since the reflow began also ends it: the page is his again.
+        func current() -> Bool {
+            guard generation == reflowGeneration, let model = weakModel else { return false }
+            return model.keeper.restoreMayMove(move: model.moveCount)
+        }
+        defer { giveWayIfHeMoved(generation: generation) }
         _ = await navigator.evaluateJavaScript(ReaderJS.install)
         firstScriptBack = max(firstScriptBack, generation)
         _ = await navigator.evaluateJavaScript(ReaderJS.setColumns(columns))
