@@ -12,8 +12,8 @@ import WebKit
 /// Fine-Tune test left 187 web content processes (4.8 GB) on a 7 GB runner, and its UI queries timed out (#28).
 @MainActor @Suite(.serialized) struct NavigatorReleaseTests {
     private final class Held {
-        weak var web: WKWebView?
-        init(_ web: WKWebView) { self.web = web }
+        weak var web: UIView?
+        init(_ web: UIView) { self.web = web }
     }
 
     /// Rides on a web view as an associated object, and signals as the web view is freed.
@@ -27,13 +27,13 @@ import WebKit
     /// so a slow runner only makes the wait longer, never the verdict different.
     @MainActor private final class Releases {
         nonisolated(unsafe) private static let key = UnsafeMutableRawPointer.allocate(byteCount: 1, alignment: 1)
-        private(set) let releases = Releases()
+        private(set) var held: [Held] = []
         private let events: AsyncStream<Void>
         private let signal: AsyncStream<Void>.Continuation
 
         init() { (events, signal) = AsyncStream<Void>.makeStream() }
 
-        func watch(_ webs: [WKWebView]) {
+        func watch(_ webs: [UIView]) {
             for web in webs {
                 held.append(Held(web))
                 objc_setAssociatedObject(web, Self.key, Gone(signal), .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
@@ -53,6 +53,45 @@ import WebKit
             }
             return held.filter { $0.web != nil }.count
         }
+    }
+
+    /// The view as it is on screen, drawn through the render server as the screen is.
+    private static func render(_ view: UIView) -> CGImage? {
+        UIGraphicsImageRenderer(bounds: view.bounds).image { _ in
+            _ = view.drawHierarchy(in: view.bounds, afterScreenUpdates: true)
+        }.cgImage
+    }
+
+    private static func pixels(_ image: CGImage) -> [UInt8] {
+        var bytes = [UInt8](repeating: 0, count: image.width * image.height * 4)
+        let space = CGColorSpaceCreateDeviceRGB()
+        bytes.withUnsafeMutableBytes { raw in
+            let context = CGContext(data: raw.baseAddress, width: image.width, height: image.height, bitsPerComponent: 8,
+                                    bytesPerRow: image.width * 4, space: space, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+            context?.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+        }
+        return bytes
+    }
+
+    /// Of a picture's pixels, the share that differ from its paper (the top-left pixel): the page's ink.
+    private static func ink(_ image: CGImage) -> Double {
+        let p = pixels(image)
+        var inked = 0
+        for i in stride(from: 0, to: p.count, by: 4) where (0..<3).contains(where: { abs(Int(p[i + $0]) - Int(p[$0])) > 24 }) {
+            inked += 1
+        }
+        return Double(inked) / Double(p.count / 4)
+    }
+
+    /// The share of pixels that differ between two pictures of the same size.
+    private static func change(_ a: CGImage, _ b: CGImage) -> Double {
+        let p = pixels(a), q = pixels(b)
+        guard p.count == q.count else { return 1 }
+        var changed = 0
+        for i in stride(from: 0, to: p.count, by: 4) where (0..<3).contains(where: { abs(Int(p[i + $0]) - Int(q[i + $0])) > 24 }) {
+            changed += 1
+        }
+        return Double(changed) / Double(p.count / 4)
     }
 
     private static func webViews(in view: UIView) -> [WKWebView] {
@@ -149,6 +188,7 @@ import WebKit
         window.isHidden = false
         defer { window.isHidden = true }
         let releases = Releases()
+        let pictures = Releases()
         // Kept alive to the end, so the web views go because the close retired them, not because the model did.
         var models: [ReaderModel?] = []
         for round in 0..<3 {
@@ -170,8 +210,27 @@ import WebKit
             }
             try #require(!webs.isEmpty, "the reader made a web view")
             releases.watch(webs)
+            // The first round films the close's own frame: the page drawn, then the picture in its place.
+            var before: CGImage?
+            if round == 0 {
+                for _ in 0..<1200 { // until the page has drawn its words; 2 min is only a hang guard
+                    if let shot = Self.render(host.view), Self.ink(shot) > 0.005 { before = shot; break }
+                    try await Task.sleep(for: .milliseconds(100))
+                }
+                try #require(before != nil, "the reader drew its page before the close")
+            }
             // As the app closes it: the model first, then SwiftUI takes the reader off screen.
             model?.close()
+            if let before {
+                let after = try #require(Self.render(host.view))
+                let changed = Self.change(before, after)
+                #expect(changed < 0.01, "the close left the page drawn: \(Int(changed * 1000)) per mille of pixels changed (ink \(Int(Self.ink(before) * 1000)) to \(Int(Self.ink(after) * 1000)) per mille)")
+            }
+            // The picture that holds the screen as the reader leaves: freed with the reader.
+            // (The close adds it last, over everything the reader draws.)
+            let picture = try #require(host.view.subviews.last, "the closed reader shows a picture of its page")
+            #expect(picture !== host.navigator.viewIfLoaded, "the picture, not the retired page")
+            pictures.watch([picture])
             // Retired by the close itself, at once and with the reader still on screen: not by a view
             // lifecycle call (which came after the removal in CI run 42513920212), nor by the model going away.
             #expect(host.navigator.parent == nil, "the closed reader's navigator is retired")
@@ -185,5 +244,10 @@ import WebKit
         let alive = await releases.alive()
         #expect(alive == 0, "\(alive) of \(releases.held.count) closed readers' web views are still alive")
         withExtendedLifetime(models) {}
+        // Then the readers go, and with them the pictures that stood in for their pages.
+        try #require(!pictures.held.isEmpty, "a closed reader on screen put a picture in its page's place")
+        models.removeAll()
+        let pictured = await pictures.alive()
+        #expect(pictured == 0, "\(pictured) of \(pictures.held.count) close pictures outlived their readers")
     }
 }
