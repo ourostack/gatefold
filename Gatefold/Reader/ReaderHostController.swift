@@ -1525,7 +1525,9 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         await nextFrame()
 
         let chapterBefore = navigator.currentLocation?.href.string.split(separator: "#").first
-        turnFrom = navigator.currentLocation
+        // Where the turn starts, read live from the page (Readium's own location trails a turn by a debounce,
+        // so straight after one it can still name the page before): a spring back returns here (#110).
+        turnFrom = await pageRange().flatMap { live in navigator.currentLocation?.copy(locations: { $0.progression = live.start }) }
         let moved = forward
             ? await navigator.goForward(options: .init(animated: false))
             : await navigator.goBackward(options: .init(animated: false))
@@ -1533,6 +1535,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         guard moved, weakModel != nil else {
             curl.reset()
             isTurning = false
+            turnFrom = nil
             // Past the last page there is no page: there is the end leaf.
             if forward, let model = weakModel { model.reachedEnd() } else {
                 UIImpactFeedbackGenerator(style: .soft).impactOccurred(intensity: 0.4)
@@ -1593,9 +1596,9 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
                                          step: { $0 ? await navigator.goForward(options: .init(animated: false))
                                                     : await navigator.goBackward(options: .init(animated: false)) })
             try? await Task.sleep(for: .milliseconds(120))
-            let back = navigator.currentLocation
-            readerLog.notice("turn: sprang back to \(back?.href.string ?? "-", privacy: .public) @\(back?.locations.progression ?? -1, privacy: .public)")
+            await confirmSpringBack()
         }
+        turnFrom = nil
         let uncovered = curl.beneath
         curl.reset()
         isTurning = false
@@ -1635,6 +1638,34 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         withAnimation(lifted.isSpread ? landing.animation : .timingCurve(0.3, 0.1, 0.25, 1, duration: 0.42)) { lifted.finger = target }
         try? await Task.sleep(for: .seconds(flight + 0.02))
         return true
+    }
+
+    /// The page a spring back left on screen, read live, against where the turn started; one more jump if it's
+    /// elsewhere. Logged either way, as the walk's evidence (#110).
+    private func confirmSpringBack() async {
+        guard let start = turnFrom, let p = start.locations.progression else {
+            readerLog.notice("turn: sprang back by a step (the start wasn't read)")
+            return
+        }
+        func here() async -> Double? {
+            _ = await navigator.evaluateJavaScript(ReaderJS.install)
+            guard let json = (try? await navigator.evaluateJavaScript(ReaderJS.pageRange).get()) as? String,
+                  let data = json.data(using: .utf8) else { return nil }
+            struct Found: Decodable { var s: Double; var doc: String }
+            guard let found = try? JSONDecoder().decode(Found.self, from: data),
+                  ScreenPageGeometry.document(found.doc, isChapter: start.href.string) else { return nil }
+            return found.s
+        }
+        var now = await here()
+        var again = false
+        if now.map({ abs($0 - p) > 0.0005 }) ?? true {
+            again = true
+            _ = await navigator.go(to: start, options: .init(animated: false))
+            try? await Task.sleep(for: .milliseconds(120))
+            now = await here()
+        }
+        let ok = now.map { abs($0 - p) <= 0.0005 } ?? false
+        readerLog.notice("turn: sprang back to \(start.href.string, privacy: .public) @\(now ?? -1, privacy: .public) (started @\(p, privacy: .public))\(again ? " after a second jump" : "", privacy: .public) -> \(ok ? "same page" : "elsewhere", privacy: .public)")
     }
 
     private var beneathFrames: [CGRect] = []
