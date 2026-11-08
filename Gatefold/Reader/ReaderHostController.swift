@@ -729,6 +729,14 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         var after = visible
         let action = visible.map { model.keeper.reflowDidSettle(visible: $0) } ?? RestoreAction.none
         let held = model.keeper.anchor
+        // A restore run again on a page with nothing over it (the 12 s watchdog showed the page): its jump
+        // and its moves are held behind a picture of the page and shown as one change (gatefold#108).
+        var restorePicture: UIView?
+        // Overtaken (a newer reflow, his move, the close): this restore's picture goes at once, never a newer one's.
+        defer { if let restorePicture, settlePicture === restorePicture { dropSettlePicture() } }
+        if case .jump = action, !pageCovered, settlePicture == nil {
+            if holdSettlePicture() { restorePicture = settlePicture } else { noteVisibleMove("restore jump") }
+        }
         if case let .jump(anchor) = action,
            let locator = model.locator(for: anchor) {
             // A jump made while the book is still settling can land short of the place; try again.
@@ -750,6 +758,11 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             let moved = await keepOnLeft(target, purpose: .restore, current: current)
             if placingGeneration == generation { placingGeneration = -1 }
             if let moved { after = moved }
+        }
+        guard current() else { return }
+        if let picture = restorePicture {
+            if settlePicture === picture { await releaseSettlePicture() }
+            restorePicture = nil
         }
         guard current() else { return }
         model.keeper.restoreDidComplete()
@@ -891,40 +904,46 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
 
         func beat() async { try? await Task.sleep(for: .milliseconds(120)) }
 
-        var isCovered: Bool {
-            host.reflowCover != nil || host.veil != nil || host.navigator.view.alpha < 0.5
-                || host.weakModel?.reopenPicture != nil
-        }
+        var isCovered: Bool { host.pageCovered }
 
-        func hold() async -> Bool {
-            let page = host.navigator.view!
-            guard host.settlePicture == nil, let container = page.superview,
-                  let cover = page.snapshotView(afterScreenUpdates: false) else { return false }
-            cover.frame = page.frame
-            cover.isUserInteractionEnabled = false
-            container.insertSubview(cover, aboveSubview: page)
-            host.settlePicture = cover
-            readerLog.notice("spread: held a picture over the page he is reading while his words are put back")
-            return true
-        }
+        func hold() async -> Bool { host.holdSettlePicture() }
 
         func release(landed: Bool) async {
-            guard let cover = host.settlePicture else { return }
-            guard landed else {
-                // Overtaken by his move, a reflow or the close: nothing may stand over his page.
-                host.dropSettlePicture()
-                return
-            }
-            // His words on the left page as the moves left them, painted, before the picture goes.
-            _ = await host.renderedSnapshot(afterChange: true)
-            guard host.settlePicture === cover else { return }
-            await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
-                UIView.animate(withDuration: 0.2, delay: 0, options: [.curveEaseInOut]) {
-                    cover.alpha = 0
-                } completion: { _ in done.resume() }
-            }
-            if host.settlePicture === cover { host.dropSettlePicture() }
+            // Overtaken by his move, a reflow or the close: nothing may stand over his page.
+            guard landed else { host.dropSettlePicture(); return }
+            await host.releaseSettlePicture()
         }
+    }
+
+    /// Something stands over the page (a reflow's cover, a jump's veil, the reopen picture), so a move is not seen.
+    fileprivate var pageCovered: Bool {
+        reflowCover != nil || veil != nil || navigator.view.alpha < 0.5 || weakModel?.reopenPicture != nil
+    }
+
+    /// Puts a picture of the page as it is over it; false when one is already up or none could be taken.
+    fileprivate func holdSettlePicture() -> Bool {
+        let page = navigator.view!
+        guard settlePicture == nil, let container = page.superview,
+              let cover = page.snapshotView(afterScreenUpdates: false) else { return false }
+        cover.frame = page.frame
+        cover.isUserInteractionEnabled = false
+        container.insertSubview(cover, aboveSubview: page)
+        settlePicture = cover
+        readerLog.notice("spread: held a picture over the page he is reading while his words are put back")
+        return true
+    }
+
+    /// Fades the held picture onto the page as the moves left it, once that has painted: one change.
+    fileprivate func releaseSettlePicture() async {
+        guard let cover = settlePicture else { return }
+        _ = await renderedSnapshot(afterChange: true)
+        guard settlePicture === cover else { return }
+        await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
+            UIView.animate(withDuration: 0.2, delay: 0, options: [.curveEaseInOut]) {
+                cover.alpha = 0
+            } completion: { _ in done.resume() }
+        }
+        if settlePicture === cover { dropSettlePicture() }
     }
 
     /// The picture a correction on a spread he is reading holds over the page (`WebSpread.hold`).

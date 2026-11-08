@@ -92,10 +92,10 @@ final class RotationRepro: XCTestCase {
         try rotateThenLeave()
     }
 
-    /// The same path with every reflow stalled behind its cover (`-GatefoldStallReflow`), so the 12 s
-    /// watchdog shows the page as it is and the restore runs again on a page with no cover up: the slow
-    /// path, forced. gatefold#108: the rotation took that path and the reopens the quick one, and the
-    /// two paginated his place differently (the column break at his words went in only while covered).
+    /// The same path with the rotation's reflows stalled behind their cover (`-GatefoldStallReflow`, first
+    /// launch only), so the 12 s watchdog shows the page as it is and the restore runs again with no cover
+    /// up, while the reopens take the quick, covered path: gatefold#108's pair, forced. The two paginated
+    /// his place differently (the column break at his words went in only while covered).
     func testRotateThenLeaveWithoutTurningAfterStalledReflows() throws {
         try rotateThenLeave(extra: ["-GatefoldStallReflow", "YES"])
     }
@@ -159,7 +159,7 @@ final class RotationRepro: XCTestCase {
             XCUIDevice.shared.press(.home)
             sleep(3)
             app.quit()
-            app.launchArguments = base + extra
+            app.launchArguments = base
             app.relaunch()
             XCUIDevice.shared.orientation = .landscapeLeft
             sleep(2)
@@ -185,7 +185,7 @@ final class RotationRepro: XCTestCase {
         XCUIDevice.shared.press(.home)
         sleep(3)
         app.quit()
-        app.launchArguments = base + extra
+        app.launchArguments = base
         app.relaunch()
         XCUIDevice.shared.orientation = .landscapeLeft
         sleep(2)

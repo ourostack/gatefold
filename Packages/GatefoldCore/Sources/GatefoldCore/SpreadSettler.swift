@@ -97,7 +97,7 @@ public enum SpreadSettler {
     /// spread and then his own).
     @MainActor
     public static func keepOnLeft(_ s: SpreadSurface, current: () -> Bool, maxPasses: Int = 8,
-                                  purpose: Purpose = .restore) async -> Bool? {
+                                  purpose: Purpose) async -> Bool? {
         var held = false
         let result = await settle(s, current: current, maxPasses: maxPasses, breaksColumns: purpose == .restore) {
             // Before every move: a cover that was up when the settle began may have lifted since.
@@ -126,16 +126,15 @@ public enum SpreadSettler {
             case .left, .right:
                 if !pinTried {
                     pinTried = true
-                    // A break moves the page: on one he can see, it is held behind a picture first.
                     if breaksColumns {
+                        // A break moves the page: on one he can see, it is held behind a picture first.
                         await beforeMove()
-                    }
-                    if breaksColumns, await s.pinWords() {
-                        await beforeMove()
-                        await s.goToWords()
-                        moved = true
-                        confirmed = false
-                        continue
+                        if await s.pinWords() {
+                            await s.goToWords()
+                            moved = true
+                            confirmed = false
+                            continue
+                        }
                     }
                 }
                 if side == .left {
