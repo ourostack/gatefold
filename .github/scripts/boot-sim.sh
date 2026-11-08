@@ -2,7 +2,8 @@
 # Create and boot a simulator, and print its UDID once it is really booted.
 # `simctl bootstatus -b` can exit 0 on a device whose first boot failed ("Data Migration Failed",
 # or a runtime that won't mount), and the install then dies minutes later (#57). So check the
-# device's state, and try a fresh device up to three times.
+# device's state, and try a fresh device up to three times. A failed first boot can repeat on every
+# new device on the same host, so each retry also restarts CoreSimulatorService (#57, run 42437958662).
 # Usage: boot-sim.sh <name> <device type id> <runtime id>
 set -uo pipefail
 name="$1" type="$2" runtime="$3"
@@ -19,6 +20,8 @@ for attempt in 1 2 3; do
   echo "attempt $attempt: $udid did not boot" >&2
   xcrun simctl shutdown "$udid" >/dev/null 2>&1 || true
   xcrun simctl delete "$udid" >&2 || true
+  xcrun simctl shutdown all >/dev/null 2>&1 || true
+  killall -9 com.apple.CoreSimulator.CoreSimulatorService >/dev/null 2>&1 || true
   sleep 20
 done
 echo "the $name simulator never booted" >&2
