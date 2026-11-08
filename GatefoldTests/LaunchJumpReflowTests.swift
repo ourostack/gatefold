@@ -114,9 +114,11 @@ final class TwoStepJumpPage: ReaderPage {
         func savedPlace() -> Locator? {
             app.library.book(ReaderSyncTests.frankenstein.fastHash)?.locatorJSON.flatMap { try? Locator(jsonString: $0) }
         }
-        for _ in 0..<200 where savedPlace()?.locations.progression != target.locations.progression {
+        for _ in 0..<200 where savedPlace()?.locations.progression != target.locations.progression || model.placeOwed {
             try await Task.sleep(for: .milliseconds(25))
         }
+        // The owed record has nothing left to write: a later overwrite would show here.
+        #expect(!model.placeOwed, "the reflow still owes a place")
         let saved = try #require(savedPlace(), "the launch jump kept no place")
         #expect(saved.href.string == target.href.string)
         #expect(saved.locations.progression == target.locations.progression,

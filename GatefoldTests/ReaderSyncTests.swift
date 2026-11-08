@@ -62,8 +62,11 @@ final class ScriptedPage: ReaderPage {
         return true
     }
 
+    /// The page whose words are on screen, when Readium names another (its boundary after a jump).
+    var shownLocation: Locator?
+
     func visibleRange() async -> VisibleRange? {
-        guard let here = currentLocation else { return nil }
+        guard let here = shownLocation ?? currentLocation else { return nil }
         let start = here.locations.progression ?? 0
         return VisibleRange(href: here.href.string, start: start, end: min(1, start + 0.03), text: visibleText)
     }
@@ -89,12 +92,14 @@ final class ScriptedPage: ReaderPage {
 
     func currentAnchor() async -> (ReadingAnchor, Locator)? {
         anchorReads += 1
+        // As the host does: Readium's place is taken before the wait for the words on screen.
+        let taken = currentLocation
         if holdNextAnchor {
             holdNextAnchor = false
             await withCheckedContinuation { heldAnchor = $0 }
         }
         if anchorDelay > .zero { try? await Task.sleep(for: anchorDelay) }
-        guard !withholdAnchor, let here = currentLocation else { return nil }
+        guard !withholdAnchor, let here = taken else { return nil }
         let anchor = ReadingAnchor(href: here.href.string, progression: here.locations.progression ?? 0, text: nil)
         return (anchor, here)
     }
@@ -322,12 +327,17 @@ final class ScriptedPage: ReaderPage {
         // Both reports wait on the web view for his words, as they do on a device, and the boundary's read
         // comes back first (a busy runner reordered them: #82 kept the boundary, progression 0). Ordered by
         // the page's reads, not by time: the jump's report holds in its read until the boundary's is done.
+        // Readium has already named the boundary when the jump's report reads (the host takes Readium's
+        // place first), while his words, the jump's page, stay on screen.
+        let boundary = Self.boundary(of: jumped)
+        f.page.shownLocation = jumped
+        f.page.currentLocation = boundary
         f.page.holdNextAnchor = true
         let reads = f.page.anchorReads
         let first = Task { await f.model.locationDidChange(jumped) }
         for _ in 0..<10_000 where !f.page.isHoldingAnchor { await Task.yield() }
         try #require(f.page.isHoldingAnchor && f.page.anchorReads == reads + 1, "the jump's report isn't the read held")
-        await f.model.locationDidChange(Self.boundary(of: jumped))
+        await f.model.locationDidChange(boundary)
         f.page.releaseAnchor()
         // A write is synchronous: once both reports have returned, the place is what was kept.
         await first.value
