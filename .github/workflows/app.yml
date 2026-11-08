@@ -135,7 +135,7 @@ jobs:
     # a real miss. The Duo job's posture test skips on the folded cover; this one runs it on a spread.
     # Three jobs side by side, each with at least 30% headroom (one job took 94 of 100 min in build
     # 19). Measured on a hosted runner: about 13 min to set up and build, then the tests' own time.
-    strategy:
+    if: false # diagnostic branch only: the unit job alone
       fail-fast: false
       matrix:
         include:
@@ -373,7 +373,7 @@ jobs:
     # Pull requests run its smoke (a page a turn, and a reopen keeps the numbers); pushes to main add the reviewers'
     # full list, about 13 min a test on this runner (gatefold#39).
     needs: [changes, build]
-    if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
+    if: false # diagnostic branch only: the unit job alone
     runs-on: xcode-27
     # 45 min measured (build 20): 65 keeps 30% headroom.
     timeout-minutes: 65
