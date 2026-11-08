@@ -60,7 +60,8 @@ final class PlaceUndoUITests: XCTestCase {
         // A tap under a jump's veil is swallowed (the veil is the page changing), so wait it out.
         XCTAssertTrue(el("reader.veil").waitForNonExistence(timeout: 60), "the veil lifts")
         // Already up (a jump made from them leaves them up): a tap now would put them down.
-        if app.buttons["reader.contents"].exists { return }
+        let contents = app.buttons["reader.contents"]
+        if contents.exists && contents.isHittable { return }
         el("reader.page").coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
         XCTAssertTrue(app.buttons["reader.contents"].waitForExistence(timeout: 5))
     }

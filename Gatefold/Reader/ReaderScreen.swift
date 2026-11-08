@@ -401,9 +401,9 @@ struct ReaderScreen: View {
                 .accessibilityIdentifier("reader.posture")
                 .accessibilityLabel(layout.posture.rawValue)
                 .allowsHitTesting(false)
-            // UI tests switch posture at runtime, so one test can walk every posture. Top-centre, just
-            // under the running head: never in a turn zone, where they swallowed a test's edge taps
-            // (the iPad spread's back-turn at x 0.07 did nothing).
+            // UI tests switch posture at runtime, so one test can walk every posture. Top-centre, at the
+            // top of the page frame: never in a turn zone, where they swallowed a test's edge taps on
+            // a short spread (the unfolded Duo's mid-height sat inside them).
             HStack(spacing: 0) {
                 ForEach(Posture.allCases, id: \.self) { posture in
                     Button {
