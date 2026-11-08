@@ -195,9 +195,7 @@ jobs:
         run: |
           set -euo pipefail
           runtime="$(xcrun simctl list runtimes --json | python3 -c 'import json,sys; r=[x for x in json.load(sys.stdin)["runtimes"] if x["platform"]=="iOS" and x["isAvailable"] and any(d["name"].startswith("iPhone Duo") for d in x.get("supportedDeviceTypes",[]))]; print(max(r, key=lambda x: [int(p) for p in x["version"].split(".")])["identifier"])')"
-          udid="$(xcrun simctl create gatefold-duo com.apple.CoreSimulator.SimDeviceType.iPhone-Duo "$runtime")"
-          xcrun simctl boot "$udid"
-          xcrun simctl bootstatus "$udid" -b
+          udid="$(.github/scripts/boot-sim.sh gatefold-duo com.apple.CoreSimulator.SimDeviceType.iPhone-Duo "$runtime")"
           echo "destination=platform=iOS Simulator,arch=$(uname -m),id=$udid" >> "$GITHUB_OUTPUT"
       - name: Build and run unit tests
         run: |
@@ -252,9 +250,7 @@ jobs:
         run: |
           set -euo pipefail
           runtime="$(xcrun simctl list runtimes --json | python3 -c 'import json,sys; r=[x for x in json.load(sys.stdin)["runtimes"] if x["platform"]=="iOS" and x["isAvailable"] and any(d["name"].startswith("iPhone Duo") for d in x.get("supportedDeviceTypes",[]))]; print(max(r, key=lambda x: [int(p) for p in x["version"].split(".")])["identifier"])')"
-          udid="$(xcrun simctl create gatefold-duo com.apple.CoreSimulator.SimDeviceType.iPhone-Duo "$runtime")"
-          xcrun simctl boot "$udid"
-          xcrun simctl bootstatus "$udid" -b
+          udid="$(.github/scripts/boot-sim.sh gatefold-duo com.apple.CoreSimulator.SimDeviceType.iPhone-Duo "$runtime")"
           echo "udid=$udid" >> "$GITHUB_OUTPUT"
           echo "destination=platform=iOS Simulator,arch=$(uname -m),id=$udid" >> "$GITHUB_OUTPUT"
       - name: Keep the app's place log as it runs (file and progression only, never the book's words)

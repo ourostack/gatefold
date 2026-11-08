@@ -46,10 +46,8 @@ jobs:
         run: |
           set -euo pipefail
           runtime="$(xcrun simctl list runtimes --json | python3 -c 'import json,sys; r=[x for x in json.load(sys.stdin)["runtimes"] if x["platform"]=="iOS" and x["isAvailable"] and any(d["name"].startswith("iPhone Duo") for d in x.get("supportedDeviceTypes",[]))]; print(max(r, key=lambda x: [int(p) for p in x["version"].split(".")])["identifier"])')"
-          udid="$(xcrun simctl create gatefold-duo com.apple.CoreSimulator.SimDeviceType.iPhone-Duo "$runtime")"
+          udid="$(.github/scripts/boot-sim.sh gatefold-duo com.apple.CoreSimulator.SimDeviceType.iPhone-Duo "$runtime")"
           echo "udid=$udid" >> "$GITHUB_OUTPUT"
-          xcrun simctl boot "$udid"
-          xcrun simctl bootstatus "$udid" -b
       - name: Build and install the app
         # 16 min measured at most; 16 / 0.7. Run 42393941976 hung here 75 min and lost its log (#35).
         timeout-minutes: 23
