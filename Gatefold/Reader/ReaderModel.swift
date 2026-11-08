@@ -1325,7 +1325,12 @@ final class ReaderModel {
             let onScreen = await page?.visibleRange()?.text.map(ReaderJS.normalize) ?? ""
             let read = Self.ms(since: t0)
             guard current() else { return }
-            if onScreen.contains(probe) { readerLog.notice("settle \(round, privacy: .public): on screen at \(read, privacy: .public) ms"); return }
+            if onScreen.contains(probe) {
+                // Probe (not for merge): which columns are in view, as positions in the file only.
+                let r = await page?.visibleRange()
+                readerLog.notice("settle \(round, privacy: .public): on screen at \(read, privacy: .public) ms; reflow check: probe visible \(r?.start ?? -1, privacy: .public)..\(r?.end ?? -1, privacy: .public) in \(r?.href ?? "none", privacy: .public), words at \(onScreen.range(of: probe).map { onScreen.distance(from: onScreen.startIndex, to: $0.lowerBound) } ?? -1, privacy: .public) of \(onScreen.count, privacy: .public) chars, columns \(self.layout.columns == .two ? 2 : 1, privacy: .public)")
+                return
+            }
             guard let exact = await page?.progression(of: words) else { readerLog.notice("settle \(round, privacy: .public): words not found at \(Self.ms(since: t0), privacy: .public) ms (read \(read, privacy: .public))"); continue }
             let found = Self.ms(since: t0)
             guard current() else { return }
