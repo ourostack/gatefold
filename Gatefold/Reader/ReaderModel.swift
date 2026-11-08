@@ -1455,7 +1455,8 @@ final class ReaderModel {
         // A swipe is a move of the page too (a late Back after it puts the page back here). A Back freed
         // by its count never reported its move, so with one out a swipe counts without a report since;
         // but not one in its chapter, which may be that trip landing (Readium reports before the jump
-        // returns). Whatever such a report kept, the trip's return keeps right (`goBack`).
+        // returns). Whatever such a report kept, the trip's return writes his place again (`goBack`),
+        // unless a newer move still on its way does.
         if swiped && (noMoveOfOurs || strayBack != nil) && !isStrayChapter(locator) { landed(takeStep(), at: locator) }
         // Only the reader moves the place. Readium reopening a page boundary off from the saved one is
         // not a move, so opening a book never overwrites a further-ahead place on the InkPad.
@@ -1709,8 +1710,15 @@ final class ReaderModel {
         await veiled(step: jump) { _ = await self.page?.go(to: back) }
         // Freed by its count: whatever its reports did meanwhile (Readium can report before the jump
         // returns), the place is settled here, once, from what the page shows.
+        // Its mark stays until that is done: its report can come while the page is being put back.
         let freed = strayBack?.jump == jump
-        if freed { strayBack = nil }
+        defer { if freed, strayBack?.jump == jump { strayBack = nil } }
+        // A touch during the hang brought no report: a tap, not a swipe of the page it lands on. And
+        // whatever the layout did meanwhile, the place written here is his.
+        if freed {
+            touchesSinceLocation = 0
+            layoutOnly = false
+        }
         // A trip that came back after its reads ran out, with another move made since (a jump, a turn,
         // a swipe), takes no words: the page is that move's now.
         guard steps == jump else {
