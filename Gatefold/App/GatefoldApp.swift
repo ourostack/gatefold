@@ -34,7 +34,15 @@ struct GatefoldApp: App {
                 ReopenSnapshot.setAside()
                 Task { await app.didBecomeActive() }
             case .inactive:
-                // He may be leaving: picture the page while it can still be drawn, for a reopen.
+                // He may be leaving: a move a reflow still owes is kept now, in case that reflow never
+                // ends (gatefold#96); the push below waits for it.
+                if let reader = app.activeReader, let owed = reader.owedPlaceOnLeaving() {
+                    Task {
+                        await reader.keepOwedPlace(owed)
+                        app.library.flushPushes()
+                    }
+                }
+                // Picture the page while it can still be drawn, for a reopen.
                 if let reader = app.activeReader, !reader.isWarming {
                     ReopenSnapshot.keep(model: reader, place: app.library.book(reader.bookID)?.locatorJSON)
                 } else {
