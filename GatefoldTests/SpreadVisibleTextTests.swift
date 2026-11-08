@@ -40,7 +40,7 @@ struct SpreadVisibleTextTests {
     }
 
     /// A 400 x 200 page laid out in `columns` columns, with the reader's script installed.
-    private func load(_ html: String, columns: Int) async throws -> (UIWindow, WKWebView) {
+    private func load(_ html: String, columns: Int?) async throws -> (UIWindow, WKWebView) {
         let scene = try #require(UIApplication.shared.connectedScenes.first as? UIWindowScene)
         let window = UIWindow(windowScene: scene)
         window.frame = CGRect(x: 0, y: 200, width: 400, height: 200)
@@ -54,12 +54,14 @@ struct SpreadVisibleTextTests {
             loaded.done = continuation
             web.loadHTMLString(html, baseURL: nil)
         }
-        for _ in 0..<50 {
-            if await eval(web, "[window.innerWidth, window.innerHeight].join('x')") as? String == "400x200" { break }
-            try? await Task.sleep(for: .milliseconds(100))
+        var size = ""
+        for _ in 0..<50 where size != "400x200" {
+            size = await eval(web, "[window.innerWidth, window.innerHeight].join('x')") as? String ?? ""
+            if size != "400x200" { try? await Task.sleep(for: .milliseconds(100)) }
         }
+        try #require(size == "400x200", "the page never laid out at 400x200 (\(size))")
         _ = await eval(web, ReaderJS.install)
-        _ = await eval(web, ReaderJS.setColumns(columns))
+        if let columns { _ = await eval(web, ReaderJS.setColumns(columns)) }
         return (window, web)
     }
 
@@ -82,6 +84,16 @@ struct SpreadVisibleTextTests {
         let visible = VisibleRange(href: "chapter.html", start: 0, end: 0.1, text: text)
         #expect(visible.contains(anchor), "his words on the left page read as lost")
         #expect(text?.hasPrefix("Heading Nineteen.") == true, "the words on screen start with the left page's")
+    }
+
+    /// A chapter's own web view, turned or jumped into on a spread before the reader has told it the
+    /// page count: the layout's two columns are read as two pages all the same.
+    @Test func aChapterNotYetToldItsPagesIsReadPageByPage() async throws {
+        let (window, web) = try await load(Self.html(columns: 2, picture: true, words: 120), columns: nil)
+        defer { window.isHidden = true }
+        let (anchor, text) = try await placeAndScreen(web)
+        #expect(anchor.text?.hasPrefix("Heading Nineteen.") == true, "the place is the heading under the picture")
+        #expect(VisibleRange(href: "chapter.html", start: 0, end: 0.1, text: text).contains(anchor), "his words on the left page read as lost")
     }
 
     /// The mirror: a chapter's last spread, whose right page ends a few lines down while the left page is

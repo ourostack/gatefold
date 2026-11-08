@@ -19,6 +19,14 @@ enum ReaderJS {
         if (el && el.closest("figure, figcaption, .caption, .figcenter, .figleft, .figright, .pagenum")) { return null; }
         return r;
       }
+      // Two pages on screen. The reader sets the count where it lays a page out, but a chapter's own web
+      // view (a turn or jump into it) can run before it has: then the layout says, from its columns.
+      function twoPages() {
+        if (window.gatefoldColumns) { return window.gatefoldColumns === 2; }
+        const cs = getComputedStyle(document.documentElement);
+        const count = parseInt(cs.columnCount, 10), width = parseFloat(cs.columnWidth);
+        return count === 2 || (width > 0 && width <= window.innerWidth / 2 + 1);
+      }
       // Scan a column from its top-left for the first character.
       function first(x0, x1) {
         const h = window.innerHeight;
@@ -72,7 +80,7 @@ enum ReaderJS {
         // contents anchor (of `ids`) above them.
         anchor: function (fx, ids) {
           const w = window.innerWidth;
-          const two = window.gatefoldColumns === 2;
+          const two = twoPages();
           const r = fx ? first(w / 2, w) : first(0, two ? w / 2 : w);
           if (!r) { return null; }
           const node = r.startContainer, text = node.textContent;
@@ -238,7 +246,7 @@ enum ReaderJS {
         // line, and his words on the left page read as off screen (Real unfold, #58).
         visibleText: function () {
           const w = window.innerWidth;
-          const two = window.gatefoldColumns === 2;
+          const two = twoPages();
           const a = two ? (first(0, w / 2) || first(w / 2, w)) : first(0, w);
           const b = two ? (last(w / 2, w) || last(0, w / 2)) : last(0, w);
           if (!a || !b) { return null; }
