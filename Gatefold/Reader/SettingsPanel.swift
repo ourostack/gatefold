@@ -67,6 +67,7 @@ struct SettingsPanel: View {
                 RoundIcon(systemName: "chevron.backward", label: "Back", id: "appearance.back") { customizing = false }
             } else {
                 RoundIcon(systemName: "xmark", label: "Close", id: "appearance.close", action: onClose)
+                    .keyboardShortcut(.cancelAction)
             }
             Text(customizing ? "Fine-Tune" : "Your Page")
                 .font(.headline)

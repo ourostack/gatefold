@@ -103,6 +103,7 @@ struct ReaderScreen: View {
                     TabletopDeck(model: model, showAppearance: $showAppearance, showContents: $showContents)
                         .frame(width: deck.width, height: deck.height)
                         .offset(x: deck.minX, y: deck.minY)
+                        .zIndex(1)
                 }
 
                 ReaderChrome(
@@ -118,12 +119,25 @@ struct ReaderScreen: View {
                 .frame(width: proxy.size.width, height: layout.deck == nil ? proxy.size.height : layout.pageFrame.height)
                 // Above the opening cover while the first page loads: a tap on the cover brings them up,
                 // and Close works however long the load takes (#104; a stuck load took every tap for a minute).
-                // They stay above it through its fade, so controls already up don't blink under it.
-                .zIndex(controlsOverCover ? 3.5 : 0)
+                // They stay above it through its fade, so controls already up don't blink under it. Otherwise
+                // above Appearance's tap catcher (gatefold#62), so the bar stays live while the panel is up.
+                .zIndex(controlsOverCover ? 3.5 : 1)
 
                 if showAppearance {
+                    // A tap or a swipe on the page beside the panel puts it away, as any overlay does, and never
+                    // reaches the page: no turn, no controls toggled (gatefold#62). Ruling: the first touch beside
+                    // the panel only dismisses it; the next one reads. It lies over the page only, under the
+                    // chrome, the deck, the slip and the ahead tab, which stay live (their own buttons close the
+                    // panel first). VoiceOver's escape and the keyboard's Escape do the same, on the panel.
+                    Color.clear
+                        .contentShape(.rect)
+                        .onTapGesture { showAppearance = false }
+                        .gesture(DragGesture(minimumDistance: 12).onEnded { _ in showAppearance = false })
+                        .accessibilityHidden(true)
+                        .zIndex(0.5)
                     // Low over the page (or the spread), inside the safe area, the top of the page in view.
                     SettingsPanel(model: model, width: proxy.size.width) { showAppearance = false }
+                        .accessibilityAction(.escape) { showAppearance = false }
                         .frame(maxWidth: 560)
                         // A height cap takes all the room it's offered, so its own alignment decides
                         // where the panel sits in it: the foot (build 14 centred it, mid-screen on the
