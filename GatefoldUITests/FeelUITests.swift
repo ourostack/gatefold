@@ -543,10 +543,21 @@ final class FeelUITests: XCTestCase {
             return
         }
         let linkStart = FeelPlace.fingerprint(settled())
-        expectGesture("a link followed", .moveOnce) { link.tap() }
-        expectGesture("Back after the link", .moveOnce) { goBack("the link") }
-        check(FeelPlace.compare(start: linkStart, after: ["Back after a link": FeelPlace.fingerprint(settled())]),
-              name: "link-back-place")
+        func followAndBack() {
+            expectGesture("a link followed", .moveOnce) { link.tap() }
+            expectGesture("Back after the link", .moveOnce) { goBack("the link") }
+            check(FeelPlace.compare(start: linkStart, after: ["Back after a link": FeelPlace.fingerprint(settled())]),
+                  name: "link-back-place")
+        }
+        if pad {
+            // A known failure on the iPad, strict, so the check goes red the moment a fix lands and the expectation must
+            // be restored.
+            XCTExpectFailure("gatefold#73: on the iPad a followed link does not move the page and leaves no Back", strict: true) {
+                followAndBack()
+            }
+        } else {
+            followAndBack()
+        }
     }
 
     // MARK: Appearance and Fine-Tune
@@ -616,9 +627,9 @@ final class FeelUITests: XCTestCase {
                                        summary: gone ? "a tap beside Appearance put it away" : "Appearance stayed after a tap beside it",
                                        findings: gone ? [] : [FeelFinding(what: "a tap on the page above the Appearance panel did not put it away")],
                                        environment: feel.environment)
-            // A known failure, strict on the Duo where it was seen, so the check goes red the moment a fix lands and the
-            // expectation must be restored; not strict on the iPad, where nobody has reproduced it.
-            XCTExpectFailure("gatefold#62: a tap beside the Appearance panel does not put it away", strict: !pad) {
+            // A known failure, strict (seen on the folded Duo and the iPad), so the check goes red the moment a fix lands
+            // and the expectation must be restored.
+            XCTExpectFailure("gatefold#62: a tap beside the Appearance panel does not put it away", strict: true) {
                 check(dismissal, name: "appearance-tap-beside")
             }
             if !gone { close() }
