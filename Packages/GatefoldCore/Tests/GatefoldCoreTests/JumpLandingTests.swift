@@ -102,4 +102,24 @@ private final class ColdPage {
         let landed = await JumpLanding.land(target: elsewhere, go: { page.go(0.02) }, visible: { page.visible() }, beat: {})
         #expect(!landed)
     }
+
+    /// The page shows the target before Readium's report has caught up (gatefold#83): not landed until
+    /// the report names the same page, counted in reads.
+    @Test func aLandingWaitsForTheReportToNameThePage() async {
+        let page = ColdPage(loadsAfterReads: 0)
+        var reportReads = 0
+        let landed = await JumpLanding.land(target: page.place(0.31), go: { page.go(0.31) }, visible: { page.visible() },
+                                            reported: { reportReads += 1; return reportReads < 5 ? page.place(0) : page.place(page.pageStart(0.31)) },
+                                            beat: {})
+        #expect(landed)
+        #expect(reportReads == 5)
+    }
+
+    /// A navigator that reports nothing is not landed.
+    @Test func noReportIsNotALanding() async {
+        let page = ColdPage(loadsAfterReads: 0)
+        let landed = await JumpLanding.land(target: page.place(0.31), go: { page.go(0.31) }, visible: { page.visible() },
+                                            reported: { nil }, beat: {})
+        #expect(!landed)
+    }
 }
