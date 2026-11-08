@@ -93,6 +93,9 @@ final class PlaceUndoUITests: XCTestCase {
         XCTAssertEqual(opening(returned), opening(first), "Back did not return to his page")
         // And Back itself is one tap to undo.
         XCTAssertTrue(app.buttons["reader.back"].waitForExistence(timeout: 5), "going back can't be undone")
+        // And the page still answers: a tap in its middle brings the controls up.
+        el("reader.page").coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        XCTAssertTrue(app.buttons["reader.contents"].waitForExistence(timeout: 5), "after Back a tap no longer shows the controls")
     }
 
     /// A touch resting on the scrubber, and a short wobble on it, never move the page.
@@ -115,7 +118,8 @@ final class PlaceUndoUITests: XCTestCase {
         app.buttons["reader.appearance"].tap()
         let panel = el("appearance.panel")
         XCTAssertTrue(panel.waitForExistence(timeout: 10))
-        el("reader.page").coordinate(withNormalizedOffset: CGVector(dx: 0.97, dy: 0.12)).tap()
+        // In the page's right margin, below the top bar: the turn zone, where a tap that got through would turn.
+        el("reader.page").coordinate(withNormalizedOffset: CGVector(dx: 0.97, dy: 0.25)).tap()
         XCTAssertTrue(panel.waitForNonExistence(timeout: 5), "a tap above Your Page didn't close it")
         RunLoop.current.run(until: Date().addingTimeInterval(2))
         XCTAssertEqual(opening(settledWords()), opening(first), "closing Your Page moved the page")

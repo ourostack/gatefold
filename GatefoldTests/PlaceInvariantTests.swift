@@ -170,6 +170,8 @@ import Testing
         #expect(f.model.showJumpBack)
         var midJump: [(shown: Bool, hasPlace: Bool)] = []
         f.page.onGo = { midJump.append((f.model.showJumpBack, f.model.backLocator != nil)) }
+        // Reading the words after a jump takes a moment, as on a device: the second tap lands mid-way.
+        f.page.anchorDelay = .milliseconds(150)
         let jumpsBefore = f.page.jumps.count
         async let first: Void = f.model.goBack()
         async let second: Void = f.model.goBack()
