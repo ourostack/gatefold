@@ -20,6 +20,8 @@ final class FeelUITests: XCTestCase {
     private var pad: Bool { UIDevice.current.userInterfaceIdiom == .pad }
     /// Film checks the recorder could not judge in this run (a busy frame), printed as `FEEL-NOTCHECKED`.
     private static var notChecked = 0
+    /// This test's judged checks, failed checks (known failures included) and not-checked films, for its `FEEL:` line.
+    private var tally = (checks: 0, failed: 0, notChecked: 0)
 
     override func setUp() async throws {
         continueAfterFailure = true
@@ -27,6 +29,9 @@ final class FeelUITests: XCTestCase {
     }
 
     override func tearDown() async throws {
+        // One line per test, so a Feel miss is easy to find in a job log that runs other suites too.
+        let verdict = (testRun?.hasSucceeded ?? false) ? "passed" : "FAILED"
+        print("FEEL: \(name) \(verdict) checks=\(tally.checks) failed=\(tally.failed) notChecked=\(tally.notChecked)")
         XCUIDevice.shared.orientation = .portrait
         app?.terminate()
     }
@@ -196,6 +201,8 @@ final class FeelUITests: XCTestCase {
     /// Records `result` under `name` and fails the test if it failed.
     private func check(_ result: FeelResult, name: String, film: FeelFilm? = nil, file: StaticString = #filePath, line: UInt = #line) {
         let kept = feel.record(result, name: name, film: film)
+        tally.checks += 1
+        if !kept.passed { tally.failed += 1 }
         if !kept.passed { XCTFail(kept.text, file: file, line: line) }
     }
 
@@ -205,6 +212,9 @@ final class FeelUITests: XCTestCase {
     private func judgeSeen(_ result: FeelResult, name: String, film: FeelFilm, file: StaticString = #filePath, line: UInt = #line) {
         let kept = feel.record(result, name: name, film: film)
         let unchecked = kept.findings.filter(\.unchecked).count
+        tally.checks += 1
+        tally.notChecked += unchecked
+        if !kept.detections.isEmpty { tally.failed += 1 }
         if unchecked > 0 {
             // Counted and printed, so a film that never sees anything cannot pass every run in silence.
             Self.notChecked += unchecked
