@@ -63,4 +63,25 @@ import Testing
         await turnAndSpringBack(book, forward: false)
         #expect(book.location == Book.locator(1, 0))
     }
+
+    /// A turn whose start wasn't read steps back a page, as before.
+    @Test func anUnknownStartStepsBack() async {
+        let book = Book()
+        book.chapter = 1; book.page = 2
+        _ = book.step(forward: true)
+        await CurlRelease.springBack(to: nil, mirrored: false, go: { book.go(to: $0) }, step: { book.step(forward: $0) })
+        #expect(book.location == Book.locator(1, 2))
+    }
+
+    /// A jump back that fails falls back to the step.
+    @Test func aFailedJumpStepsBack() async {
+        let book = Book()
+        book.chapter = 1; book.page = 2
+        let start = book.location
+        _ = book.step(forward: true)
+        var tried = false
+        await CurlRelease.springBack(to: start, mirrored: false, go: { _ in tried = true; return false }, step: { book.step(forward: $0) })
+        #expect(tried)
+        #expect(book.location == Book.locator(1, 2))
+    }
 }
