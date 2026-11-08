@@ -25,6 +25,7 @@ final class Probe118UITests: XCTestCase {
         }
         guard app.buttons["reader.contents"].exists else { return false }
         app.buttons["reader.contents"].tap()
+        guard app.navigationBars.firstMatch.waitForExistence(timeout: 15) else { print("PROBE118 no sheet bar"); return false }
         guard done.waitForExistence(timeout: 15) else { print("PROBE118 no Done: bars \(app.navigationBars.count)"); return false }
         // Landed: Done's frame the same for ten reads in a row.
         var last = CGRect.null, same = 0
@@ -44,9 +45,9 @@ final class Probe118UITests: XCTestCase {
         let from = bar.coordinate(withNormalizedOffset: CGVector(dx: dx, dy: dy))
         from.press(forDuration: 0.05, thenDragTo: from.withOffset(CGVector(dx: 0, dy: window.height * fraction)),
                    withVelocity: velocity, thenHoldForDuration: 0)
-        let gone = done.waitForNonExistence(timeout: 10)
+        let gone = app.navigationBars.firstMatch.waitForNonExistence(timeout: 10)
         print("PROBE118 \(name): gone=\(gone) window=\(window) bars=\(bars) start=\(from.screenPoint)")
-        if !gone { done.tap(); _ = done.waitForNonExistence(timeout: 10) }
+        if !gone { done.tap(); _ = app.navigationBars.firstMatch.waitForNonExistence(timeout: 10) }
     }
 
     func testWhichPullsPutContentsAway() {
