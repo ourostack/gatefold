@@ -22,6 +22,14 @@ enum CurlRelease {
         return v > 250 || (v > -250 && dx > width * 0.25)
     }
 
+    /// Where to jump to come back to a page read as `start`...`end` (`gatefold.pageRange`): its middle. The read's start
+    /// sits two pixels early, and Readium rounds a jump down to its page after adding one, so a jump to the start
+    /// lands a page early.
+    static func jumpTarget(start: Double, end: Double) -> Double { (start + end) / 2 }
+
+    /// Whether the page read as `page` is the one holding `target`.
+    static func isOn(_ target: Double, page: ClosedRange<Double>) -> Bool { page.contains(target) }
+
     /// Puts the page back under a curl that sprang back: to where the turn started, not a page back the other
     /// way, which across a chapter's start lands at the start of the chapter before (#110). `step` (forward when
     /// true) is only for a turn whose start wasn't known.
