@@ -22,9 +22,12 @@ enum CurlRelease {
         return v > 250 || (v > -250 && dx > width * 0.25)
     }
 
-    /// Puts the page back under a curl that sprang back. `step` moves one page (forward when true).
+    /// Puts the page back under a curl that sprang back: to where the turn started, not a page back the other
+    /// way, which across a chapter's start lands at the start of the chapter before (#110). `step` (forward when
+    /// true) is only for a turn whose start wasn't known.
     @MainActor static func springBack(to start: Locator?, mirrored: Bool,
                                       go: (Locator) async -> Bool, step: (Bool) async -> Bool) async {
+        if let start, await go(start) { return }
         _ = await step(mirrored)
     }
 }
