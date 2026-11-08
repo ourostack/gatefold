@@ -393,7 +393,7 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/samples"
           # The probe build logs "probe84: appearance opening" when Your Page is tapped and opens the
-          # panel 1.5 s later, so a 4 s sample, started on that line, spans the open.
+          # panel 0.4 s later (inside the Feel film), so a 3 s sample, started on that line, spans the open.
           nohup sh -c '
             n=0
             xcrun simctl spawn "$1" log stream --style compact --predicate "subsystem == \"bot.ouro.gatefold\" AND eventMessage CONTAINS \"probe84\"" 2>/dev/null \
@@ -401,7 +401,7 @@ jobs:
                 case "$line" in *"appearance opening"*) ;; *) continue ;; esac
                 pid=$(pgrep -x Gatefold | head -1); [ -n "$pid" ] || continue
                 n=$((n+1)); echo "open $n at $(date +%s) pid $pid" >>"$0/sampler.log"
-                sample "$pid" 4 1 -mayDie -file "$0/open-$n.txt" >>"$0/sampler.log" 2>&1 &
+                sample "$pid" 3 1 -mayDie -file "$0/open-$n.txt" >>"$0/sampler.log" 2>&1 &
               done' "$RUNNER_TEMP/samples" "$UDID" >/dev/null 2>&1 &
       - name: The reviewers' checks on the Duo; every screen and gesture feels right (Ouro Feel)
         env:
