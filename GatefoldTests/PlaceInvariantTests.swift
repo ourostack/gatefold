@@ -56,6 +56,36 @@ import Testing
         f.model.close()
     }
 
+    /// A first open whose shelf still holds an older listing (no Cloud place ahead on the record): the
+    /// cover isn't held for a landing, and the InkPad's place, found only by the reader's own fetch, is
+    /// offered, never jumped to (integrator ruling on #46: the slip is the fallback here).
+    @Test func aFirstOpenFromAnOldListingOffersTheInkPadsPlace() async throws {
+        let f = try await S.make(remote: { pub, mapper in try await S.inkPadPlace(pub, mapper, index: 12, percent: 40) },
+                                 listed: false)
+        await f.model.load()
+        #expect(f.model.pageReady)
+        #expect(f.page.jumps.isEmpty, "the page jumped to a Cloud place he didn't choose")
+        #expect(saved(f) == nil, "the place was saved without a move of his")
+        #expect(f.model.suggestion != nil, "the InkPad's place is offered instead")
+        f.model.close()
+    }
+
+    /// A book he has read here, read further on the InkPad: reopened, it shows his own page and offers
+    /// the InkPad's. Never lands on it (integrator ruling on #46: build 20 lost his place this way).
+    @Test func aReopenedBookOffersTheInkPadsFurtherPlaceAndNeverLands() async throws {
+        let pub = try await S.publication()
+        let early = try #require(await S.locate(pub, 0.05))
+        let json = try #require(try early.jsonString())
+        let f = try await S.make(remote: { pub, mapper in try await S.inkPadPlace(pub, mapper, index: 12, percent: 40) },
+                                 book: { $0.locatorJSON = json; $0.totalProgression = 0.05; $0.lastOpened = Date().addingTimeInterval(-3600) })
+        await f.model.load()
+        #expect(f.model.pageReady)
+        #expect(f.page.jumps.isEmpty, "a reopened book jumped to the Cloud's place")
+        #expect(f.page.currentLocation?.href == early.href, "his own page isn't the one showing")
+        #expect(f.model.suggestion != nil, "the InkPad's further place is offered instead")
+        f.model.close()
+    }
+
     /// Landing on the InkPad's place at a first open is a jump he didn't choose: the way back is on
     /// screen without the controls.
     @Test func theFirstOpenLandingCanBeUndone() async throws {
@@ -156,6 +186,29 @@ import Testing
         let back = try #require(f.model.backLocator, "Back left no way to return")
         #expect(abs((back.locations.totalProgression ?? 0) - (jumped.locations.totalProgression ?? 1)) < 0.01)
         #expect(f.model.showJumpBack)
+        f.model.close()
+    }
+
+    /// Back never takes its own pill down while it goes back: on the Duo, a pill taken down under his
+    /// finger and put up again never showed, so going back could not be undone. A second tap meanwhile
+    /// is not a second jump.
+    @Test func theWayBackStaysUpWhileItGoesBack() async throws {
+        let f = try await S.make(remote: { _, _ in nil }, startAt: 0.05)
+        await f.model.load()
+        await f.model.locationDidChange(try #require(f.page.currentLocation))
+        await f.model.go(toProgression: 0.7, rememberBack: true)
+        #expect(f.model.showJumpBack)
+        var midJump: [(shown: Bool, hasPlace: Bool)] = []
+        f.page.onGo = { midJump.append((f.model.showJumpBack, f.model.backLocator != nil)) }
+        // Reading the words after a jump takes a moment, as on a device: the second tap lands mid-way.
+        f.page.anchorDelay = .milliseconds(150)
+        let jumpsBefore = f.page.jumps.count
+        async let first: Void = f.model.goBack()
+        async let second: Void = f.model.goBack()
+        _ = await (first, second)
+        #expect(f.page.jumps.count == jumpsBefore + 1, "a second tap on Back made a second jump")
+        #expect(!midJump.isEmpty && midJump.allSatisfy { $0.shown && $0.hasPlace }, "the pill went down while Back went back")
+        #expect(f.model.showJumpBack && f.model.backLocator != nil)
         f.model.close()
     }
 }
