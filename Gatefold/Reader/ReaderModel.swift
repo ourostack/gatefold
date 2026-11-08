@@ -1362,6 +1362,7 @@ final class ReaderModel {
         suggestion = nil
         page?.dropStandby()
         page?.stopCounting()
+        hostController?.close()
         suggestionLocator = nil
         suggestionRemote = nil
         suggestionCloud = nil
