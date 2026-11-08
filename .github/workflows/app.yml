@@ -176,6 +176,7 @@ jobs:
           name: ${{ needs.build.outputs.artifact }}
           path: ${{ runner.temp }}
       - name: Unpack the app and its tests (built once, for this commit and Xcode)
+        id: unpack
         env:
           ARTIFACT: ${{ needs.build.outputs.artifact }}
         run: |
@@ -187,6 +188,7 @@ jobs:
           [ "$want" = "$ARTIFACT" ] || { echo "::error::Built as $ARTIFACT, but this job's Xcode makes $want"; exit 1; }
           echo "XCTESTRUN=$(ls "$RUNNER_TEMP"/dd/Build/Products/*.xctestrun | head -1)" >> "$GITHUB_ENV"
       - name: The iPad finished booting
+        id: boot
         # boot-sim.sh retries a boot that fails or hangs (#57); this step waits for it with a limit.
         timeout-minutes: 22
         run: python3 -I scripts/ci-simulator.py wait gatefold-ipad "iPad Pro 13-inch" 1200
@@ -231,7 +233,8 @@ jobs:
           exit $status
       - name: ${{ matrix.title }}
         # A miss in the cold step still lets the rest report: one failure must not hide the others.
-        if: ${{ !cancelled() }}
+        # Not without the app or a booted iPad, which would only add a misleading red.
+        if: ${{ !cancelled() && steps.unpack.outcome == 'success' && steps.boot.outcome == 'success' }}
         env:
           TESTS: ${{ needs.changes.outputs.full != 'false' && matrix.tests || matrix.pr_tests || matrix.tests }}
           # Five rounds of the controls-then-numbers reopen (about 2 min each); 30 locally.

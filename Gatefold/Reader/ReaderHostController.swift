@@ -1541,12 +1541,24 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         jumpStarting = true
         veilJump = jump
         let jumpTapped = ContinuousClock.now
-        if LaunchOptions.isUITest, let looks = LaunchOptions.holdOldPageLoadLooks, looks > 0 { heldLoadLooks = looks }
+        // UI tests: the old page reads as still loading (spinner up, page bare) while it is pictured.
+        let heldBefore = heldLoadLooks
+        if LaunchOptions.isUITest, let looks = LaunchOptions.holdOldPageLoadLooks, looks > 0 {
+            heldLoadLooks = looks
+            if oldPageHeldMarker == nil {
+                let marker = UIView(frame: CGRect(x: 0, y: 0, width: 1, height: 1))
+                marker.isAccessibilityElement = true
+                marker.accessibilityIdentifier = "reader.oldPageHeld"
+                view.addSubview(marker)
+                oldPageHeldMarker = marker
+            }
+        }
         // The jump he chose starts now: the old page is pictured as it is, never waited on while it
         // loads (its spinner held the jump back up to 60 s, and the page never moved: gatefold#73).
         let old = await renderedSnapshot(afterChange: false, waitsForLoad: false)
-        if LaunchOptions.isUITest, LaunchOptions.holdOldPageLoadLooks != nil { heldLoadLooks = 0 }
+        if LaunchOptions.isUITest, LaunchOptions.holdOldPageLoadLooks != nil { heldLoadLooks = heldBefore }
         jumpStarting = false
+        readerLog.notice("veil: jump \(jump, privacy: .public) pictured the old page in \(ReaderModel.ms(since: jumpTapped), privacy: .public) ms, \(self.lastSnapshotLooks, privacy: .public) looks")
         // Let go of while its old page was being pictured (`abandonVeil`): no cover goes up.
         guard veilJump == jump else { return await body() }
         // The old page, opaque, with a wash of paper over it: it reads as dimmed to 60 %, and nothing
@@ -1593,7 +1605,6 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         }
         let dim = UIViewPropertyAnimator(duration: 0.15, curve: .easeOut) { wash.alpha = 0.4 }
         dim.startAnimation()
-        readerLog.notice("veil: jump \(jump, privacy: .public) pictured the old page in \(ReaderModel.ms(since: jumpTapped), privacy: .public) ms")
         await body()
         readerLog.notice("veil: jump \(jump, privacy: .public) arrived \(ReaderModel.ms(since: jumpTapped), privacy: .public) ms after it began")
         _ = await renderedSnapshot(afterChange: true)
@@ -1606,6 +1617,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             } completion: { _ in done.resume() }
         }
         cover.removeFromSuperview()
+        readerLog.notice("veil: jump \(jump, privacy: .public) lifted \(ReaderModel.ms(since: jumpTapped), privacy: .public) ms after it began")
         // Its own cover only: one abandoned meanwhile (`abandonVeil`) may have made way for a newer one.
         if veil === cover { veil = nil; veilJump = nil }
     }
@@ -1852,6 +1864,8 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     /// Looks left in a load held open for a test (`-GatefoldHoldChapterLoad`), and its marker.
     private var heldLoadLooks = 0
     private var heldLoadMarker: UIView?
+    /// UI tests: up once a jump's old page has been held as loading, so a test knows the hold armed.
+    private var oldPageHeldMarker: UIView?
 
     private func holdChapterLoadForTest() {
         guard let looks = LaunchOptions.holdChapterLoadLooks, looks > 0 else { return }
@@ -2118,7 +2132,10 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             defer { attempt += 1 }
             let image = await snapshot()
             guard let signature = PageSignature(image) else { return image }
-            let usable = !signature.isBlack(paper: paper) && !signature.isBare(paper: paper)
+            // A test's held load (`holdOldPageLoadLooks`) pictures the old page as a bare one, the
+            // way a page still loading looks, so the few tries and the fallback below are what run.
+            let heldBare = !waitsForLoad && !afterChange && heldLoadLooks > 0
+            let usable = !heldBare && !signature.isBlack(paper: paper) && !signature.isBare(paper: paper)
             if usable, !afterChange { return image }
             if usable, let (_, previous) = last, previous.matches(signature) { return image }
             if usable { last = (image, signature) }
@@ -2126,7 +2143,11 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         }
         if loadingLooks > 0 { readerLog.notice("veil: held the old page \(loadingLooks, privacy: .public) looks while the chapter loaded") }
         if let last { return last.0 }
-        return await snapshot()
+        let final = await snapshot()
+        // A page pictured as it is never shows black under a jump's veil: an empty picture lets the
+        // veil's paper show instead.
+        if !waitsForLoad, let signature = PageSignature(final), signature.isBlack(paper: paper) { return UIImage() }
+        return final
     }
 
     /// How many looks (about 50 ms each) the old page is held while Readium's spinner is up.

@@ -136,7 +136,8 @@ final class NavigationPlaceUITests: XCTestCase {
         XCTAssertLessThanOrEqual(plain.move, Self.jumpReadCeiling, "the jump from a loaded page moved the page only after \(plain.move) reads")
         XCTAssertLessThanOrEqual(held.move, Self.jumpReadCeiling, "the jump from a page still loading moved the page only after \(held.move) reads")
         XCTAssertLessThanOrEqual(held.move, plain.move + 10, "a jump from a page still loading moved the page only after \(held.move) reads (\(plain.move) from a loaded one)")
-        XCTAssertLessThanOrEqual(held.back, 10, "the jump from a page still loading left no way back within 10 reads (\(held.back))")
+        XCTAssertLessThanOrEqual(held.back, plain.back + 10, "the jump from a page still loading put up Back only after \(held.back) reads (\(plain.back) from a loaded one)")
+        XCTAssertLessThanOrEqual(held.back, Self.jumpReadCeiling, "the jump from a page still loading put up Back only after \(held.back) reads")
     }
 
     private static let jumpReadLimit = 400
@@ -155,20 +156,20 @@ final class NavigationPlaceUITests: XCTestCase {
         for _ in 0..<20 where !(row.exists && row.isHittable) { app.swipeUp(velocity: .slow) }
         XCTAssertTrue(row.exists && row.isHittable, "the contents list chapter XXX")
         row.tap()
-        var move = 0
-        while move < Self.jumpReadLimit {
-            move += 1
+        // Both counted from the tap: the reads until the words change, and until Back is up.
+        var reads = 0, move: Int?, back: Int?
+        while reads < Self.jumpReadLimit, move == nil || back == nil {
+            reads += 1
             let now = visibleText
-            if !now.isEmpty, opening(now) != opening(first) { break }
+            if move == nil, !now.isEmpty, opening(now) != opening(first) { move = reads }
+            if back == nil, app.buttons["reader.back"].exists { back = reads }
             RunLoop.current.run(until: Date().addingTimeInterval(0.2))
         }
-        var back = 0
-        while back < Self.jumpReadLimit, !app.buttons["reader.back"].exists {
-            back += 1
-            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        if extra.contains("-GatefoldHoldOldPageLoad") {
+            XCTAssertTrue(app.descendants(matching: .any)["reader.oldPageHeld"].exists, "the old page's held load armed")
         }
         app.terminate()
-        return (move, back)
+        return (move ?? reads, back ?? reads)
     }
 
     func testAScrubberJumpKeepsThePlace() {
