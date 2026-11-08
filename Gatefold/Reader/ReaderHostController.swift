@@ -220,6 +220,9 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     /// Set by `close()`: the book is closed, and nothing starts a page again.
     private var closed = false
 
+    /// The still picture `close()` put in the page's place, while the reader leaves the screen.
+    private(set) weak var closePicture: UIView?
+
     /// The book closed (#109): retire the page's own navigator as well as its counters and standby, so its
     /// web views go, here and now, not on a view lifecycle call that may come late or not at all. On screen,
     /// a still picture of the page takes its place, so the reader stays drawn as it leaves.
@@ -234,6 +237,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             // A picture, not the page: VoiceOver has nothing to find on it while it leaves.
             picture.accessibilityElementsHidden = true
             view.addSubview(picture)
+            closePicture = picture
         }
         Self.retire(navigator)
     }
