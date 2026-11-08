@@ -64,9 +64,18 @@ final class ScriptedPage: ReaderPage {
 
     /// The page whose words are on screen, when Readium names another (its boundary after a jump).
     var shownLocation: Locator?
+    /// The page's geometry can't be read (a web view still loading): `pageRange` is nil.
+    var pageUnmeasured = false
+
+    /// As the host measures it: the page on screen, from its own geometry.
+    func pageRange() async -> VisibleRange? {
+        guard !pageUnmeasured, let here = shownLocation ?? currentLocation else { return nil }
+        let start = here.locations.progression ?? 0
+        return VisibleRange(href: here.href.string, start: start, end: min(1, start + 0.03), text: visibleText)
+    }
 
     func visibleRange() async -> VisibleRange? {
-        guard let here = shownLocation ?? currentLocation else { return nil }
+        guard let here = currentLocation else { return nil }
         let start = here.locations.progression ?? 0
         return VisibleRange(href: here.href.string, start: start, end: min(1, start + 0.03), text: visibleText)
     }
@@ -318,6 +327,15 @@ final class ScriptedPage: ReaderPage {
     /// The same, with the second report arriving while the first is still being written (the loop's
     /// double writes came 0.3 s apart, inside the first write's wait for its exact position).
     @Test func aReportDuringAJumpsWriteLeavesThePlace() async throws {
+        try await reportDuringAJumpsWrite(pageUnmeasured: false)
+    }
+
+    /// The same with a page that can't be measured yet: the first report keeps the move.
+    @Test func aReportDuringAJumpsWriteOnAnUnmeasuredPageLeavesThePlace() async throws {
+        try await reportDuringAJumpsWrite(pageUnmeasured: true)
+    }
+
+    private func reportDuringAJumpsWrite(pageUnmeasured: Bool) async throws {
         let f = try await Self.make(remote: { _, _ in nil })
         await f.model.load()
         // The test sends the jump's reports itself, so no third one races them.
@@ -331,6 +349,7 @@ final class ScriptedPage: ReaderPage {
         // place first), while his words, the jump's page, stay on screen.
         let boundary = Self.boundary(of: jumped)
         f.page.shownLocation = jumped
+        f.page.pageUnmeasured = pageUnmeasured
         f.page.currentLocation = boundary
         f.page.holdNextAnchor = true
         let reads = f.page.anchorReads

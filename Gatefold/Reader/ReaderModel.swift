@@ -1420,7 +1420,7 @@ final class ReaderModel {
         }
     }
     /// A move arrived while a reflow was under way; the reflow's end records it.
-    @ObservationIgnored private var placeOwed = false
+    @ObservationIgnored private(set) var placeOwed = false
     /// `moves` when the place was last recorded: a reflow only owes a move not yet kept, so an
     /// ordinary rotation never swaps his exact words for Readium's page boundary.
     @ObservationIgnored private var recordedMoves = -1
