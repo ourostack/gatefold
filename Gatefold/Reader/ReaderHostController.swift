@@ -905,7 +905,8 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         guard await SpreadSettler.keepOnLeft(surface, current: current, purpose: purpose) == true, current() else { return nil }
         let visible = await visibleRange()
         // The settler also ends here when its passes run out with the words still off the left page.
-        readerLog.notice("spread: after placing, screen h\(probeHash(visible?.text.map { String($0.prefix(2400)) }), privacy: .public) \(visible?.start ?? -1, privacy: .public)..\(visible?.end ?? -1, privacy: .public)")
+        let geo = await layoutProbe()
+        readerLog.notice("spread: after placing, screen h\(probeHash(visible?.text.map { String($0.prefix(2400)) }), privacy: .public) \(visible?.start ?? -1, privacy: .public)..\(visible?.end ?? -1, privacy: .public) chars \(visible?.text?.count ?? -1, privacy: .public) geo \(geo, privacy: .public)")
         readerLog.notice("spread: words placed on the left page; \(surface.moves, privacy: .public) moves (last read side \(surface.lastSide.map { String($0.rawValue) } ?? "nil", privacy: .public))")
         return visible
     }
@@ -1311,6 +1312,13 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     }
 
     /// What's on screen now: the resource, its progression range and the visible text.
+    /// Probe only: the page's geometry, numbers only.
+    func layoutProbe() async -> String {
+        let js = "(function(){const se=document.scrollingElement,b=document.body,cs=getComputedStyle(document.documentElement),bs=getComputedStyle(b);return [window.innerWidth,window.innerHeight,se.scrollWidth,se.scrollLeft,cs.columnCount,cs.columnWidth,bs.fontSize,bs.lineHeight,!!document.getElementById('gatefold-pin'),!!document.getElementById('gatefold-verso'),window.devicePixelRatio].join(' ')})()"
+        let a = (try? await navigator.answer(js)) as? String
+        return "\(a ?? "nil") frame \(Int(navigator.view.frame.width))x\(Int(navigator.view.frame.height))"
+    }
+
     func visibleRange() async -> VisibleRange? {
         return await Self.onSpread {
             let navigator = self.navigator // the one on screen now, on each try

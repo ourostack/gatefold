@@ -2164,7 +2164,28 @@ final class ReaderModel {
     /// place skipped (`ReaderJS.anchor`) from a page that skipped his place (`ReopenMatch`).
     private(set) var savedWordsProbe = ""
 
+    /// Probe only: reads the live screen every second and logs each change, with its geometry.
+    @ObservationIgnored private var screenTicker: Task<Void, Never>?
+    func startScreenTicker() {
+        guard LaunchOptions.isUITest, screenTicker == nil else { return }
+        screenTicker = Task { [weak self] in
+            var last = ""
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(1))
+                guard let self, !self.isClosed else { return }
+                guard !self.isWarming, let host = self.host, let v = await host.visibleRange(), let t = v.text else { continue }
+                let h = probeHash(String(t.prefix(2400)))
+                if h != last {
+                    last = h
+                    let geo = await host.layoutProbe()
+                    readerLog.notice("landing probe: live screen h\(h, privacy: .public) \(v.start, privacy: .public)..\(v.end, privacy: .public) chars \(t.count, privacy: .public) picture \(self.reopenPicture != nil, privacy: .public) geo \(geo, privacy: .public)")
+                }
+            }
+        }
+    }
+
     private func refreshBookmarkState(_ visible: VisibleRange?, why: String = #function, line: Int = #line) {
+        startScreenTicker()
         if LaunchOptions.isUITest, reopenPicture == nil, let text = visible?.text {
             let next = String(text.prefix(2400))
             if next != visibleTextProbe, let v = visible {
