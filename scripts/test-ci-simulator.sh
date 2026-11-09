@@ -91,5 +91,47 @@ erase_case "one listing times out, the next answers: the answer decides" "" 0 de
 # The step's budget (CI_SIMULATOR_BUDGET, less ci-simulator.py's 30 s margin) is a few seconds: never killed by the step.
 erase_case "the step's time runs out mid-check: the device kept, with its own warning" "" 0 dev0 "" "1 2" 32 "Simulator check out of time"
 erase_case "the runtime went but no time is left for a fresh device: kept, with its own warning" "1" 0 dev0 "" "" 40 "Simulator check out of time"
+# The real boot-sim.sh against a fake xcrun: a bootstatus that hangs on a device that did boot (gatefold#132, job
+# 128961815446: the watchdog shut the booted device down, then called it not booted, and the second device ran the
+# wait out of time). `sleep` here caps at 3 s, so the 7 min watchdog fires at once; killall and xcodebuild are fakes,
+# so nothing touches this machine's simulators.
+real="$work/real"; mkdir -p "$real/bin"
+cat > "$real/bin/xcrun" <<'FAKE'
+#!/usr/bin/env bash
+state() { cat "$FAKE/state-$1" 2>/dev/null || echo Shutdown; }
+case "$1 $2" in
+  "simctl create") n=$(( $(cat "$FAKE/created" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$FAKE/created"; echo "dev$n" ;;
+  "simctl boot") echo Booted > "$FAKE/state-$3" ;;
+  "simctl shutdown") [ "$3" = all ] || echo Shutdown > "$FAKE/state-$3"; echo "shutdown $3" >> "$FAKE/calls" ;;
+  "simctl delete") echo "delete $3" >> "$FAKE/calls" ;;
+  "simctl bootstatus")
+    n=$(( $(cat "$FAKE/bootstatus" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$FAKE/bootstatus"
+    # The first one hangs, as on the runner, though the device is up.
+    if [ "$n" = 1 ]; then echo "Monitoring boot status for $3."; exec /bin/sleep 30; fi
+    echo "Device already booted, nothing to do." ;;
+  "simctl list")
+    if [ "${3:-}" = devices ] && [ "${4:-}" = -j ]; then
+      list=""; for f in "$FAKE"/state-*; do [ -e "$f" ] || continue; u="${f##*/state-}"
+        list="$list${list:+,}{\"udid\":\"$u\",\"state\":\"$(state "$u")\"}"; done
+      echo "{\"devices\":{\"iOS-27-1\":[$list]}}"
+    fi ;;
+  *) echo "fake xcrun: unexpected $*" >&2; exit 64 ;;
+esac
+FAKE
+printf '#!/usr/bin/env bash\nexec /bin/sleep "$(( ${1%%.*} > 3 ? 3 : ${1%%.*} ))"\n' > "$real/bin/sleep"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$real/bin/killall"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$real/bin/xcodebuild"
+chmod +x "$real/bin/"*
+mkdir -p "$real/fake"
+began=$(date +%s)
+got="$(PATH="$real/bin:$PATH" FAKE="$real/fake" bash "$here/../.github/scripts/boot-sim.sh" gatefold-ipad iPad-Pro-13 iOS-27-1 2>"$real/err")"; code=$?
+took=$(( $(date +%s) - began ))
+if [ "$code" = 0 ] && [ "$got" = dev1 ] && ! grep -q "did not boot" "$real/err" && [ "$took" -lt 20 ]; then
+  echo "ok   boot-sim.sh: a bootstatus that hangs on a booted device keeps that device (gatefold#132)"
+else
+  echo "FAIL boot-sim.sh: a bootstatus that hangs on a booted device: exit $code (want 0), printed '$got' (want dev1), took ${took}s (want under 20)"
+  tail -8 "$real/err"; fails=$((fails + 1))
+fi
+
 echo "$fails failed"
 [ "$fails" = 0 ]
