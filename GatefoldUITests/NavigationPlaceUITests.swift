@@ -224,18 +224,18 @@ final class NavigationPlaceUITests: XCTestCase {
         let held = app.descendants(matching: .any)["reader.loadingHeld"]
         let cover = app.descendants(matching: .any)["reader.opening"]
         let ready = app.descendants(matching: .any)["reader.pageReady"]
-        XCTAssertTrue(held.waitForExistence(timeout: 60), "the first page's load is held open")
-        XCTAssertTrue(cover.waitForExistence(timeout: 10), "the opening cover is up")
         let offer = app.buttons["banner.jump"], tab = app.descendants(matching: .any)["banner.tab"]
-        // Unanswered for 10 s the offer folds into its tab: the tab opens it again.
-        let up = Date().addingTimeInterval(60)
-        while !(offer.exists && offer.isHittable), Date() < up {
-            if tab.exists, tab.isHittable { tab.tap() }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+        // Tapped the moment it is up: unanswered for 10 s it folds into its tab (then the tab opens it
+        // again, with 10 s more). Tapped at its point, so a fold mid-tap can't fail the tap itself.
+        let up = Date().addingTimeInterval(90)
+        while !offer.exists, Date() < up {
+            if tab.exists { tab.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap() }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
         }
         XCTAssertTrue(offer.exists, "the Cloud's place is offered while the first page loads")
         guard offer.exists else { return }
-        offer.tap()
+        let coverUp = cover.exists
+        offer.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
         // Taken: the offer and its tab are gone at once. Missed: the offer stays, or folds into its tab.
         var reads = 0, taken = false
         while reads < 10 {
@@ -244,7 +244,8 @@ final class NavigationPlaceUITests: XCTestCase {
             RunLoop.current.run(until: Date().addingTimeInterval(0.2))
         }
         let stillLoading = held.exists && (ready.value as? String) == "0"
-        print("PLACEHOLDER offer taken=\(taken) after \(reads) reads; still loading=\(stillLoading)")
+        print("PLACEHOLDER offer taken=\(taken) after \(reads) reads; cover up=\(coverUp); still loading=\(stillLoading)")
+        XCTAssertTrue(coverUp, "the opening cover was up when Catch up was tapped")
         XCTAssertTrue(stillLoading, "the page was still loading when the tap was judged")
         XCTAssertTrue(taken, "Catch up over the opening cover takes the tap")
         // And it lands: once the page shows, it is on words (the round that missed showed none for 120 s).
