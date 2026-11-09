@@ -273,6 +273,8 @@ jobs:
           echo "$(date -u +%T) done ($status)"
           exit $status
       - id: left
+        # Its minutes are the next step's limit, and that step runs after a cold-step miss too.
+        if: ${{ !cancelled() }}
         uses: ./.github/actions/time-left
         with:
           limit: ${{ matrix.timeout }}
