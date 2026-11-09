@@ -516,7 +516,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         if reflow { settleReflowSoon() }
         Task {
             let navigator = navigator
-            _ = await Self.onSpread {
+            _ = await Self.onSpread { () async throws -> Void? in
                 guard self.columns == columns else { return nil } // a newer apply owns the columns now
                 if columns == 1 { _ = try await navigator.answer(ReaderJS.removeVerso) }
                 _ = try await navigator.answer(ReaderJS.setColumns(columns))
