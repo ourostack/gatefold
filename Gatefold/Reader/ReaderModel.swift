@@ -693,8 +693,10 @@ final class ReaderModel {
     /// anyway: 60, about 3 s. The settle itself is bounded at 4 rounds of two page reads; this only
     /// bounds a page whose reads never come back.
     static let revealLooks = 60
-    /// How long Catch up, taken over the opening cover, waits for the first page to show: 60 s in looks.
-    static let catchUpReadyLooks = 1200
+    /// How long Catch up, taken over the opening cover, waits for the first page to show, in looks: past
+    /// the cover's own worst case (its 11.5 s, `revealLooks`, then a load waited out over up to 1200 looks
+    /// that each take longer than 50 ms), so on a starved host it never lands into a page still loading.
+    static let catchUpReadyLooks = 6000
     /// Looks (one every 50 ms) any open keeps its cover before the page is forced: 230, about 11.5 s,
     /// the placeholder's own timeout.
     static let coverLooks = 230

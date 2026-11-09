@@ -63,9 +63,10 @@ struct ReaderScreen: View {
             let liftNeeded = chromeLift.anchorY != 0.5
             // The opening cover is up or fading (no reopen picture over it): the controls sit above it.
             let controlsOverCover = !model.coverLifted && model.reopenPicture == nil
-            // The Cloud's offer sits above whatever stands in for the page meanwhile (the opening cover or
-            // the reopen picture), so his tap on it is never taken for the cover's or the picture's.
-            let slipOverCover = !model.coverLifted || model.reopenPicture != nil
+            // The Cloud's offer sits above the opening cover with the controls, so his tap on it is never
+            // taken for the cover's. Not above the reopen picture: a landing taken there would jump under a
+            // picture whose lift doesn't wait for it, and the picture covers the offer whole meanwhile.
+            let slipOverCover = controlsOverCover
             ZStack(alignment: .topLeading) {
                 model.theme.background
 
@@ -178,7 +179,7 @@ struct ReaderScreen: View {
                     )
                     .animation(Motion.chrome, value: model.chromeVisible)
                     .transition(reduceMotion ? .opacity : .move(edge: kind == .landed ? .bottom : .top).combined(with: .opacity))
-                    // Catch up over the opening cover or the reopen picture takes his tap, as the tab does.
+                    // Catch up over the opening cover takes his tap, as the tab does.
                     .zIndex(slipOverCover ? 3.6 : 2)
                 }
 
