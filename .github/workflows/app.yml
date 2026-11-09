@@ -491,9 +491,9 @@ jobs:
     needs: [changes, build]
     if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
     runs-on: xcode-27
-    # 45 min measured (build 20), plus about 10 for the two turn checks: 85 keeps over 30% headroom.
+    # 45 min measured (build 20), plus about 10 for the two turn checks; 47 min at c4c3b6a with both.
     # feel-ci sets this job longer (gatefold#65 tracks the overrun): at a merge, the larger value wins.
-    timeout-minutes: 97 # 85 for the job, 12 for the logs after the tests (gatefold#141)
+    timeout-minutes: 85 # 73 for the tests, 12 for the logs after them (gatefold#141)
     steps:
       - name: Note when the job began, so each test step can stop in time to upload its logs (gatefold#126)
         run: echo "JOB_START=$(date +%s)" >> "$GITHUB_ENV"
@@ -535,7 +535,7 @@ jobs:
       - id: left
         uses: ./.github/actions/time-left
         with:
-          limit: "97" # the job's timeout-minutes
+          limit: "85" # the job's timeout-minutes
       - name: The reviewers' checks on the Duo
         timeout-minutes: ${{ fromJSON(steps.left.outputs.minutes) }}
         env:
