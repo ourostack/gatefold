@@ -711,14 +711,18 @@ final class ReaderModel {
     /// pixel the live page, so it fades.
     var reopenAdapted = false
 
+    /// The count gave up waiting for the reopen's picture: the picture's lift counts the book instead.
+    @ObservationIgnored private var countsWhenPictureLifts = false
+
     private func showPage() {
         withAnimation(.easeOut(duration: 0.3)) { pageReady = true } completion: { [weak self] in self?.coverLifted = true }
         if reopenPicture == nil { pageShownAt = Date() }
         // Counting the book's pages waits until the open has settled (the reopen picture gone too), so
         // it never slows the first page.
         Task {
-            // Past the picture's own wait for the open's settle (`pictureSettleLooks`), or the book goes uncounted.
-            for _ in 0..<240 where reopenPicture != nil { try? await Task.sleep(for: .milliseconds(250)) }
+            for _ in 0..<120 where reopenPicture != nil { try? await Task.sleep(for: .milliseconds(250)) }
+            // A picture still up (a long settle beneath it) counts the book itself when it lifts.
+            guard reopenPicture == nil else { countsWhenPictureLifts = true; return }
             try? await Task.sleep(for: .milliseconds(400))
             await refreshScreenNumbers(recount: true)
         }
@@ -763,6 +767,10 @@ final class ReaderModel {
                 withAnimation(.easeInOut(duration: 0.3)) { reopenPicture = nil }
             }
             app.reopenCurl.reset()
+            if countsWhenPictureLifts {
+                countsWhenPictureLifts = false
+                Task { [weak self] in try? await Task.sleep(for: .milliseconds(400)); await self?.refreshScreenNumbers(recount: true) }
+            }
             if landed == true { userTurnedPage() }
             if let forward = queued, landed == nil {
                 readerLog.notice("reopen: played the kept \(forward ? "forward" : "back", privacy: .public) turn at \(LaunchClock.sinceLaunch, privacy: .public) s after launch")
