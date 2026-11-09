@@ -1664,16 +1664,14 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
                   ScreenPageGeometry.document(found.doc, isChapter: start.href.string) else { return nil }
             return found.s...max(found.s, found.e)
         }
-        var now = await here()
-        var again = false
-        if !(now.map { CurlRelease.isOn(p, page: $0) } ?? false) {
-            again = true
+        let navigator = navigator
+        let found = await CurlRelease.confirm(p, read: here, jump: {
             _ = await navigator.go(to: start, options: .init(animated: false))
             try? await Task.sleep(for: .milliseconds(120))
-            now = await here()
-        }
+        })
+        let now = found.page, again = found.jumpedAgain
         let ok = now.map { CurlRelease.isOn(p, page: $0) } ?? false
-        readerLog.notice("turn: sprang back to \(start.href.string, privacy: .public) landed @\(now?.lowerBound ?? -1, privacy: .public)...\(now?.upperBound ?? -1, privacy: .public) (target @\(p, privacy: .public))\(again ? " after a second jump" : "", privacy: .public) -> \(ok ? "same page" : "elsewhere", privacy: .public)")
+        readerLog.notice("turn: sprang back to \(start.href.string, privacy: .public) landed @\(now?.lowerBound ?? -1, privacy: .public)...\(now?.upperBound ?? -1, privacy: .public) (target @\(p, privacy: .public)) in \(found.reads, privacy: .public) reads\(again ? " after a second jump" : "", privacy: .public) -> \(ok ? "same page" : "elsewhere", privacy: .public)")
     }
 
     private var beneathFrames: [CGRect] = []

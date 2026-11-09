@@ -38,6 +38,22 @@ enum CurlRelease {
         if let start, await go(start) { return }
         _ = await step(mirrored)
     }
+
+    /// What a spring back's check found: the page read live (nil if never read), and whether it took a second jump.
+    struct Confirmation: Equatable { var page: ClosedRange<Double>?; var jumpedAgain: Bool; var reads: Int }
+
+    /// Checks the page a spring back left against `target`, by `read` (the page in the start's document, nil when
+    /// it can't be read there). One more `jump` when it's elsewhere.
+    @MainActor static func confirm(_ target: Double, read: () async -> ClosedRange<Double>?,
+                                   jump: () async -> Void) async -> Confirmation {
+        var reads = 1
+        var page = await read()
+        guard !(page.map { isOn(target, page: $0) } ?? false) else { return Confirmation(page: page, jumpedAgain: false, reads: reads) }
+        await jump()
+        reads += 1
+        page = await read()
+        return Confirmation(page: page, jumpedAgain: true, reads: reads)
+    }
 }
 
 /// The curl's pan, which keeps the touches' own times: how long the finger was still before it lifted,
