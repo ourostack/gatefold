@@ -1250,11 +1250,13 @@ final class ReaderModel {
             let anchor = ReadingAnchor(href: locator.href.string, progression: locator.locations.progression ?? 0, text: words)
             // A reflow's restore owns the page once it begins (one settler at a time), and a swipe of his
             // takes a step without counting a move.
+            settlingLanding = locator
             await page?.settleLanding(anchor) { [weak self] in
                 guard let self else { return false }
                 return self.moves == move && self.hisMoves == his && self.steps == step
                     && self.keeper.reflowing == nil && !self.isClosed
             }
+            if settlingLanding == locator { settlingLanding = nil }
         }
         let settled = Self.ms(since: started)
         guard moves == move, !isClosed else { return }
@@ -1587,8 +1589,12 @@ final class ReaderModel {
     }
 
     func locator(for anchor: ReadingAnchor) -> Locator? {
-        anchorLocator
+        // A landing being settled: its own words' place, not the page he left (the last one captured).
+        if let landing = settlingLanding, landing.href.string == anchor.href { return landing }
+        return anchorLocator
     }
+    /// The landing a settle is moving the page to, while it does.
+    @ObservationIgnored private var settlingLanding: Locator?
 
     // MARK: Navigation events
 
