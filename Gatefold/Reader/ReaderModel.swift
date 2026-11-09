@@ -1883,19 +1883,24 @@ final class ReaderModel {
     /// Readium's report checked against the page on screen, read live: a file it has just reloaded can
     /// report its start while the screen shows its last page, and that start was saved as his place
     /// (gatefold#128). When the live read is in the reported file and the report isn't on its page, the
-    /// place is the page's middle (the read's start is a little early, so its start would be a page early).
-    /// One read; a read of another file, or none, keeps the report.
+    /// place is that page: its first words, taken from the screen as every write takes them, at the page's
+    /// middle (the read's start is a little early, so its start would be a page early). Without words, the
+    /// middle alone. A read of another file, or none, keeps the report.
     private func onScreen(_ reported: Locator) async -> Locator {
         guard let live = await page?.pageRange(), let p = reported.locations.progression,
               ScreenPageGeometry.document(live.href, isChapter: reported.href.string) else { return reported }
         guard !(live.start...live.end).contains(p) else { return reported }
         let middle = (live.start + live.end) / 2
-        readerLog.notice("place: the report \(Self.placeTag(reported), privacy: .public) isn't on the page on screen (@\(live.start, privacy: .public)...\(live.end, privacy: .public)): kept @\(middle, privacy: .public)")
         let total = readingOrderHrefs.firstIndex(where: { ContentsIndex.sameResource($0, reported.href.string) })
             .flatMap { ReadingScale.totalProgression(resourceIndex: $0, progression: middle, resourceStarts: resourceStarts) }
-        // Readium's words and position were the file's start: none of them are the page on screen.
+        // The words on screen (the anchor reads the page itself; only its progression is Readium's).
+        let words = await page?.currentAnchor().flatMap { anchor, locator in
+            anchor.href == reported.href.string && locator.text.highlight?.isEmpty == false ? locator.text : nil
+        }
+        readerLog.notice("place: the report \(Self.placeTag(reported), privacy: .public) isn't on the page on screen (@\(live.start, privacy: .public)...\(live.end, privacy: .public)): kept @\(middle, privacy: .public) with \(words != nil ? "its first words" : "no words, the middle alone", privacy: .public)")
+        // Readium's position and words were the file's start: none of them are the page on screen.
         return reported.copy(locations: { $0.progression = middle; $0.totalProgression = total; $0.position = nil },
-                             text: { $0 = Locator.Text() })
+                             text: { $0 = words ?? Locator.Text() })
     }
 
     /// Takes the first words on screen as the reader's place, unless a reflow is moving the page.
