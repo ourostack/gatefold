@@ -83,7 +83,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError() }
 
-    private static func makeNavigator(publication: Publication, at location: Locator?, preferences: EPUBPreferences) throws -> EPUBNavigatorViewController {
+    static func makeNavigator(publication: Publication, at location: Locator?, preferences: EPUBPreferences) throws -> EPUBNavigatorViewController {
         try EPUBNavigatorViewController(
             publication: publication,
             initialLocation: location,
@@ -172,7 +172,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     func prepareStandby(at locator: Locator) {
         if let standby, standby.locator == locator { return }
         dropStandby()
-        guard isViewLoaded, let next = try? Self.makeNavigator(publication: publication, at: locator, preferences: preferences) else { return }
+        guard !closed, isViewLoaded, let next = try? Self.makeNavigator(publication: publication, at: locator, preferences: preferences) else { return }
         let started = ContinuousClock.now
         addChild(next)
         next.view.frame = navigator.view.frame
@@ -189,7 +189,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
                 if case .success = await next.evaluateJavaScript(ReaderJS.install) { break }
                 try? await Task.sleep(for: .milliseconds(100))
             }
-            _ = await next.evaluateJavaScript(ReaderJS.setColumns(columns))
+            _ = await ReaderHostController.onSpread { try await next.answer(ReaderJS.setColumns(columns)) }
             // Readium places the page by progression; turn to the page the words are on, as `settle` does.
             if let words = locator.text.highlight.map(ReaderJS.normalize), words.count >= 8 {
                 let probe = String(words.prefix(24))
@@ -215,17 +215,41 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             view.subviews.forEach(stop)
         }
         stopCounting()
-        stop(navigator.view)
+        // Only a view already loaded: reading `view` would load it, and start Readium, off screen.
+        if let view = navigator.viewIfLoaded { stop(view) }
         readerLog.notice("warm: stopped loading \(self.weakModel?.bookID ?? "?", privacy: .public)")
+    }
+
+    /// Set by `close()`: the book is closed, and nothing starts a page again.
+    private var closed = false
+
+    /// The still picture `close()` put in the page's place, while the reader leaves the screen.
+    private(set) weak var closePicture: UIView?
+
+    /// The book closed (#109): retire the page's own navigator as well as its counters and standby, so its
+    /// web views go, here and now, not on a view lifecycle call that may come late or not at all. On screen,
+    /// a still picture of the page takes its place, so the reader stays drawn as it leaves.
+    func close() {
+        closed = true
+        stopCounting()
+        dropStandby()
+        if let view = viewIfLoaded, view.window != nil, let page = navigator.viewIfLoaded,
+           let picture = page.snapshotView(afterScreenUpdates: false) {
+            picture.frame = page.frame
+            picture.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+            // A picture, not the page: VoiceOver has nothing to find on it while it leaves.
+            picture.accessibilityElementsHidden = true
+            view.addSubview(picture)
+            closePicture = picture
+        }
+        Self.retire(navigator)
     }
 
     func dropStandby() {
         guard let old = standby else { return }
         standby = nil
         old.ready.cancel()
-        old.navigator.willMove(toParent: nil)
-        old.navigator.view.removeFromSuperview()
-        old.navigator.removeFromParent()
+        Self.retire(old.navigator)
     }
 
     /// Puts the standby page in front when it is `locator`'s, waiting for it to finish loading if it
@@ -260,9 +284,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         next.navigator.view.accessibilityElementsHidden = false
         navigator = next.navigator
         wire(navigator)
-        old.willMove(toParent: nil)
-        old.view.removeFromSuperview()
-        old.removeFromParent()
+        Self.retire(old)
         weakModel?.highlights.navigatorChanged()
         if let here = navigator.currentLocation { self.navigator(navigator, locationDidChange: here) }
         return true
@@ -280,9 +302,14 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     }
 
     private static func geometry(of navigator: EPUBNavigatorViewController, columns: Int) async -> (href: String, geometry: ScreenPageGeometry)? {
+        await onSpread { try await measure(navigator, columns: columns) }
+    }
+
+    private static func measure(_ navigator: EPUBNavigatorViewController, columns: Int) async throws -> (href: String, geometry: ScreenPageGeometry)? {
+        // The place read once the spread has answered: read first, it could name the spread this one replaced.
+        _ = try await navigator.answer(ReaderJS.install)
         guard let location = navigator.currentLocation else { return nil }
-        _ = await navigator.evaluateJavaScript(ReaderJS.install)
-        guard let json = (try? await navigator.evaluateJavaScript(ReaderJS.geometry).get()) as? String,
+        guard let json = try await navigator.answer(ReaderJS.geometry) as? String,
               let data = json.data(using: .utf8) else { return nil }
         struct Found: Decodable { var w: Double; var l: Double; var v: Double; var verso: Bool; var pinned: Bool; var doc: String? }
         guard let found = try? JSONDecoder().decode(Found.self, from: data) else { return nil }
@@ -302,7 +329,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     func countPages(_ hrefs: [String], record: @escaping @MainActor (String, Int) -> Void, finished: @escaping @MainActor () -> Void) {
         stopCounting()
         // Every way out says so, or the slot keeps promising a number.
-        guard isViewLoaded, preferences.scroll != true, !hrefs.isEmpty else { finished(); return }
+        guard !closed, isViewLoaded, preferences.scroll != true, !hrefs.isEmpty else { finished(); return }
         let links = hrefs.compactMap { href in publication.readingOrder.first { $0.url().removingFragment().string == href } }
         // A chapter's cost is its web view loading (about 3 s each, one after another, in build 17), not
         // its measuring: several counters behind the page take chapters from one queue at once.
@@ -410,6 +437,20 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         return false
     }
 
+    /// Takes a navigator that is done (a counter, a standby page, the page a swap replaced) out of the reader,
+    /// and lets go of its web views (#109). Readium clears its pages (stops them loading, resumes whatever
+    /// waits on them) only when its pagination view leaves its superview, and UIKit tells only the view that
+    /// left, so the pagination view comes out first. A page stopped mid-load held its web view, and its web
+    /// content process, for good while a script waited on it: 187 of them after one Fine-Tune test.
+    static func retire(_ navigator: EPUBNavigatorViewController) {
+        navigator.willMove(toParent: nil)
+        if let view = navigator.viewIfLoaded {
+            view.subviews.forEach { $0.removeFromSuperview() }
+            view.removeFromSuperview()
+        }
+        navigator.removeFromParent()
+    }
+
     func stopCounting() {
         guard let old = counter else { return }
         counter = nil
@@ -422,9 +463,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         }
         for counting in old.navigators {
             stop(counting.view)
-            counting.willMove(toParent: nil)
-            counting.view.removeFromSuperview()
-            counting.removeFromParent()
+            Self.retire(counting)
         }
     }
 
@@ -465,6 +504,8 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     // MARK: Preferences
 
     func apply(_ preferences: EPUBPreferences, columns: Int, reflow: Bool) {
+        // A closed reader's page is retired: new preferences would only load pages nobody sees (#109).
+        guard !closed else { return }
         // One page becoming two is the unfold: the right page swings open once it has laid out.
         unfolding = reflow && self.columns == 1 && columns == 2
         self.columns = columns
@@ -476,8 +517,13 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         navigator.submitPreferences(preferences)
         if reflow { settleReflowSoon() }
         Task {
-            if columns == 1 { _ = await navigator.evaluateJavaScript(ReaderJS.removeVerso) }
-            _ = await navigator.evaluateJavaScript(ReaderJS.setColumns(columns))
+            _ = await Self.onSpread { () async throws -> Void? in
+                let navigator = self.navigator // the one on screen now, on each try
+                guard self.columns == columns else { return nil } // a newer apply owns the columns now
+                if columns == 1 { _ = try await navigator.answer(ReaderJS.removeVerso) }
+                _ = try await navigator.answer(ReaderJS.setColumns(columns))
+                return ()
+            }
             if reflow, model.pageReady {
                 try? await Task.sleep(for: .seconds(1))
                 await logTypography()
@@ -737,9 +783,16 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             return model.keeper.restoreMayMove(move: model.hisMoves)
         }
         defer { giveWayIfHeMoved(generation: generation) }
-        _ = await navigator.evaluateJavaScript(ReaderJS.install)
-        firstScriptBack = max(firstScriptBack, generation)
-        _ = await navigator.evaluateJavaScript(ReaderJS.setColumns(columns))
+        // Back from the page itself: a script whose spread the reflow replaced comes back at once with
+        // no page behind it (gatefold#109), and runs again on the spread that replaced it.
+        _ = await Self.onSpread { () async throws -> Void? in
+            let navigator = self.navigator // the one on screen now, on each try
+            guard current() else { return nil }
+            _ = try await navigator.answer(ReaderJS.install)
+            self.firstScriptBack = max(self.firstScriptBack, generation)
+            _ = try await navigator.answer(ReaderJS.setColumns(self.columns))
+            return ()
+        }
         guard current() else { return }
         if LaunchOptions.stallReflow, reflowCover != nil || leaf != nil {
             readerLog.notice("reflow: held for the test (GatefoldStallReflow)")
@@ -904,7 +957,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         }
 
         private func number(_ script: String) async -> Int? {
-            ((try? await host.navigator.evaluateJavaScript(script).get()) as? NSNumber)?.intValue
+            await ReaderHostController.onSpread { (try await self.host.navigator.answer(script) as? NSNumber)?.intValue }
         }
 
         func wordsSide() async -> WordsSide? {
@@ -923,7 +976,8 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
 
         func pinWords() async -> Bool {
             let visible = !isCovered && host.settlePicture == nil
-            let pinned = await number(ReaderJS.pinToTop(text)) == 1
+            // A move: never run again on a spread that replaced this one, where a newer restore owns the page.
+            let pinned = ((try? await host.navigator.answer(ReaderJS.pinToTop(text))) as? NSNumber)?.intValue == 1
             if pinned {
                 moves += 1
                 if visible { host.noteVisibleMove("column break") }
@@ -957,7 +1011,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         }
 
         func stillness() async -> String? {
-            let geometry = (try? await host.navigator.evaluateJavaScript(ReaderJS.geometry).get()) as? String ?? "-"
+            let geometry = await ReaderHostController.onSpread { try await self.host.navigator.answer(ReaderJS.geometry) as? String } ?? "-"
             let at = host.navigator.currentLocation?.locations.progression ?? -1
             return "\(geometry)@\(at)"
         }
@@ -1241,38 +1295,51 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     /// The page on screen, start and end from one live read of the web view, in the document it names;
     /// nil while that document is still loading or isn't the navigator's.
     func pageRange() async -> VisibleRange? {
-        guard let location = navigator.currentLocation else { return nil }
-        _ = await navigator.evaluateJavaScript(ReaderJS.install)
-        guard let json = (try? await navigator.evaluateJavaScript(ReaderJS.pageRange).get()) as? String,
-              let data = json.data(using: .utf8) else { return nil }
-        struct Found: Decodable { var s: Double; var e: Double; var doc: String }
-        guard let found = try? JSONDecoder().decode(Found.self, from: data),
-              ScreenPageGeometry.document(found.doc, isChapter: location.href.string) else { return nil }
-        return VisibleRange(href: location.href.string, start: found.s, end: max(found.s, found.e))
+        return await Self.onSpread {
+            let navigator = self.navigator // the one on screen now, on each try
+            _ = try await navigator.answer(ReaderJS.install)
+            guard let location = navigator.currentLocation else { return nil }
+            guard let json = try await navigator.answer(ReaderJS.pageRange) as? String,
+                  let data = json.data(using: .utf8) else { return nil }
+            struct Found: Decodable { var s: Double; var e: Double; var doc: String }
+            guard let found = try? JSONDecoder().decode(Found.self, from: data),
+                  ScreenPageGeometry.document(found.doc, isChapter: location.href.string) else { return nil }
+            return VisibleRange(href: location.href.string, start: found.s, end: max(found.s, found.e))
+        }
     }
 
     /// What's on screen now: the resource, its progression range and the visible text.
     func visibleRange() async -> VisibleRange? {
-        guard let location = navigator.currentLocation else { return nil }
-        _ = await navigator.evaluateJavaScript(ReaderJS.install)
-        let text = (try? await navigator.evaluateJavaScript(ReaderJS.visibleText).get()) as? String
-        let start = location.locations.progression ?? 0
-        let end = (try? await navigator.evaluateJavaScript(ReaderJS.pageEnd).get()) as? Double
-        return VisibleRange(href: location.href.string, start: start, end: max(start, min(1, end ?? start + 0.0001)), text: text)
+        return await Self.onSpread {
+            let navigator = self.navigator // the one on screen now, on each try
+            _ = try await navigator.answer(ReaderJS.install)
+            guard let location = navigator.currentLocation else { return nil }
+            let text = try await navigator.answer(ReaderJS.visibleText) as? String
+            let start = location.locations.progression ?? 0
+            let end = try await navigator.answer(ReaderJS.pageEnd) as? Double
+            return VisibleRange(href: location.href.string, start: start, end: max(start, min(1, end ?? start + 0.0001)), text: text)
+        }
     }
 
     /// Where `quote` is in the resource on screen, as a progression; nil when it isn't there.
     func progression(of quote: String) async -> Double? {
-        _ = await navigator.evaluateJavaScript(ReaderJS.install)
-        return (try? await navigator.evaluateJavaScript(ReaderJS.progressionOf(quote)).get()) as? Double
+        return await Self.onSpread {
+            let navigator = self.navigator // the one on screen now, on each try
+            _ = try await navigator.answer(ReaderJS.install)
+            return try await navigator.answer(ReaderJS.progressionOf(quote)) as? Double
+        }
     }
 
     /// The first words on the page the reader is on.
     func currentAnchor() async -> (ReadingAnchor, Locator)? {
+        await Self.onSpread { try await self.readAnchor() }
+    }
+
+    private func readAnchor() async throws -> (ReadingAnchor, Locator)? {
+        _ = try await navigator.answer(ReaderJS.install)
         guard let location = navigator.currentLocation else { return nil }
-        _ = await navigator.evaluateJavaScript(ReaderJS.install)
         let anchors = weakModel?.contents.fragments(in: location.href.string) ?? []
-        let json = (try? await navigator.evaluateJavaScript(ReaderJS.anchor(column: 0, contentsAnchors: anchors)).get()) as? String
+        let json = try await navigator.answer(ReaderJS.anchor(column: 0, contentsAnchors: anchors)) as? String
         struct Found: Decodable { var highlight: String; var before: String?; var heading: String?; var contents: String? }
         let found = json.flatMap { $0.data(using: .utf8) }.flatMap { try? JSONDecoder().decode(Found.self, from: $0) }
         weakModel?.heading = found?.heading.map(ReaderJS.tidyHeading)
@@ -1287,6 +1354,26 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             $0 = Locator.Text(after: nil, before: found?.before, highlight: found?.highlight)
         })
         return (anchor, locator)
+    }
+
+    /// Runs `body`'s scripts on the spread on screen. A script whose spread was replaced while it waited
+    /// (a reflow, a jump), or that found no spread at all, throws `SpreadChanged` (gatefold#109): it never
+    /// ran, and an answer taken from the next script, on another spread, would mix two pages. So `body` runs
+    /// again from its start, on the spread that replaced it. Readium makes that spread on its next turn and
+    /// each script waits for it to load, so the retry waits on the page, not on a clock. At most `attempts`
+    /// runs: nil if the spread changed under every one.
+    static func onSpread<T>(_ attempts: Int = 8, _ body: () async throws -> T?) async -> T? {
+        for _ in 0..<attempts {
+            do {
+                return try await body()
+            } catch is SpreadChanged {
+                await Task.yield()
+            } catch {
+                return nil
+            }
+        }
+        readerLog.notice("script: no spread answered in \(attempts, privacy: .public) runs (it changed each time, or there is none)")
+        return nil
     }
 
     // MARK: EPUBNavigatorDelegate
@@ -2441,4 +2528,21 @@ private final class CountingInsets: NSObject, EPUBNavigatorDelegate {
     func navigatorContentInset(_ navigator: VisualNavigator) -> UIEdgeInsets? { inset() }
     func navigator(_ navigator: Navigator, locationDidChange locator: Locator) {}
     func navigator(_ navigator: Navigator, presentError error: NavigatorError) {}
+}
+
+/// A script found no spread to run on, or its spread was replaced while it waited (gatefold#109).
+struct SpreadChanged: Error {}
+
+extension EPUBNavigatorViewController {
+    /// A script's answer on the spread on screen, nil if it ran and failed there. Throws `SpreadChanged`
+    /// when it never ran: Readium's `spreadNotLoaded`, for no spread yet or one cleared while it waited.
+    func answer(_ script: String) async throws -> Any? {
+        switch await evaluateJavaScript(script) {
+        case let .success(value):
+            return value
+        case let .failure(error):
+            if let error = error as? EPUBNavigatorViewController.EPUBError, case .spreadNotLoaded = error { throw SpreadChanged() }
+            return nil
+        }
+    }
 }
