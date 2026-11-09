@@ -219,14 +219,15 @@ final class NavigationPlaceUITests: XCTestCase {
     /// ReopenAfterControls round 1, no words for 120 s after Catch up). Judged in reads, never seconds.
     func testTheCloudsOfferOverTheOpeningCoverTakesHisTap() {
         app.launchArguments = common + ["-GatefoldHoldOpeningLoad", "2400", "-GatefoldReset", "YES", "-GatefoldDownloadAll", "YES",
-                                        "-GatefoldNoLatency", "YES", "-GatefoldOpenBook", "gutenberg-pride-and-prejudice"]
+                                        "-GatefoldNoLatency", "YES", "-GatefoldOpenBook", "gutenberg-pride-and-prejudice",
+                                        // This host's queries take seconds; the offer mustn't fold between seeing it and the tap.
+                                        "-GatefoldOfferFoldSeconds", "600"]
         app.launch()
         let held = app.descendants(matching: .any)["reader.loadingHeld"]
         let cover = app.descendants(matching: .any)["reader.opening"]
         let ready = app.descendants(matching: .any)["reader.pageReady"]
         let offer = app.buttons["banner.jump"], tab = app.descendants(matching: .any)["banner.tab"]
-        // Tapped the moment it is up: unanswered for 10 s it folds into its tab (then the tab opens it
-        // again, with 10 s more). Tapped at its point, so a fold mid-tap can't fail the tap itself.
+        // If it is folded into its tab anyway, the tab opens it again.
         let up = Date().addingTimeInterval(90)
         while !offer.exists, Date() < up {
             if tab.exists { tab.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap() }
