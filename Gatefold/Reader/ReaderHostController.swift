@@ -174,6 +174,15 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         dropStandby()
         guard !closed, isViewLoaded, let next = try? Self.makeNavigator(publication: publication, at: locator, preferences: preferences) else { return }
         let started = ContinuousClock.now
+        // The page's own bands (`navigatorContentInset`), as the counters have them, before its view loads.
+        // Without them it laid out for a taller page, and once swapped in Readium asked for the bands and
+        // laid it out again under him: the landing's words ended a page on (#46, the web view 944 pt, then 758).
+        let insets = CountingInsets { [weak self] in
+            guard let self else { return nil }
+            return self.navigatorContentInset(self.navigator)
+        }
+        standbyInsets = insets
+        next.delegate = insets
         addChild(next)
         next.view.frame = navigator.view.frame
         next.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
@@ -253,6 +262,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     func dropStandby() {
         guard let old = standby else { return }
         standby = nil
+        standbyInsets = nil
         old.ready.cancel()
         Self.retire(old.navigator)
     }
@@ -282,6 +292,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         let t0 = ContinuousClock.now
         defer { readerLog.notice("standby: swapped in, \(ReaderModel.ms(since: t0), privacy: .public) ms on the main thread") }
         standby = nil
+        standbyInsets = nil
         let old = navigator
         unwire(old)
         next.navigator.view.frame = old.view.frame
@@ -301,6 +312,8 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     private var counter: (navigators: [EPUBNavigatorViewController], task: Task<Void, Never>)?
     /// The counters' delegate, held here (a navigator holds its delegate weakly).
     private var countingInsets: CountingInsets?
+    /// The standby page's delegate until it is the page (a navigator holds its delegate weakly).
+    private var standbyInsets: CountingInsets?
 
     func screenGeometry() async -> (href: String, geometry: ScreenPageGeometry)? {
         await Self.geometry(of: navigator, columns: columns)
