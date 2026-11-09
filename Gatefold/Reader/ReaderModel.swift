@@ -1856,7 +1856,8 @@ final class ReaderModel {
         moves += 1
         let step = steps
         Task {
-            guard let first = page?.currentLocation else { return }
+            guard let reported = page?.currentLocation else { return }
+            let first = await onScreen(reported)
             // A turn is a move too: a Back that comes back late after it puts the page back here.
             landed(step, at: first)
             await locationDidChange(first)
@@ -1868,13 +1869,33 @@ final class ReaderModel {
                 readerLog.notice("turn: second look found a freed Back's chapter, skipped")
                 return
             }
-            if let later = page?.currentLocation, later.href != first.href
-                || later.locations.progression != first.locations.progression {
-                landed(step, at: later)
-                // His turn's own report, corrected: never taken for the layout's (same words, no move since).
-                await locationDidChange(later, hisMove: true)
+            if let report = page?.currentLocation {
+                let later = await onScreen(report)
+                if later.href != first.href || later.locations.progression != first.locations.progression {
+                    landed(step, at: later)
+                    // His turn's own report, corrected: never taken for the layout's (same words, no move since).
+                    await locationDidChange(later, hisMove: true)
+                }
             }
         }
+    }
+
+    /// Readium's report checked against the page on screen, read live: a file it has just reloaded can
+    /// report its start while the screen shows its last page, and that start was saved as his place
+    /// (gatefold#128). When the live read is in the reported file and the report isn't on its page, the
+    /// place is the page's middle (the read's start is a little early, so its start would be a page early).
+    /// One read; a read of another file, or none, keeps the report.
+    private func onScreen(_ reported: Locator) async -> Locator {
+        guard let live = await page?.pageRange(), let p = reported.locations.progression,
+              ScreenPageGeometry.document(live.href, isChapter: reported.href.string) else { return reported }
+        guard !(live.start...live.end).contains(p) else { return reported }
+        let middle = (live.start + live.end) / 2
+        readerLog.notice("place: the report \(Self.placeTag(reported), privacy: .public) isn't on the page on screen (@\(live.start, privacy: .public)...\(live.end, privacy: .public)): kept @\(middle, privacy: .public)")
+        let total = readingOrderHrefs.firstIndex(where: { ContentsIndex.sameResource($0, reported.href.string) })
+            .flatMap { ReadingScale.totalProgression(resourceIndex: $0, progression: middle, resourceStarts: resourceStarts) }
+        // Readium's words and position were the file's start: none of them are the page on screen.
+        return reported.copy(locations: { $0.progression = middle; $0.totalProgression = total; $0.position = nil },
+                             text: { $0 = Locator.Text() })
     }
 
     /// Takes the first words on screen as the reader's place, unless a reflow is moving the page.
