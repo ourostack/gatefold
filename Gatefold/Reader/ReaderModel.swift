@@ -224,6 +224,10 @@ final class ReaderModel {
     /// that started before the latest move has been overtaken and must not move or record anything.
     /// Every move of his counts a step too (see `steps`).
     private var moves = 0 { didSet { layoutOnly = false; if moves > oldValue { steps += 1 } } }
+    /// His own moves only (his turns, the jumps and links he chose, the offer he took): never the app's (a
+    /// launch jump, a Cloud landing, the close). A restore gives way once this has changed since its reflow
+    /// began; a restore's own moves go straight to the navigator and are not counted at all.
+    @ObservationIgnored private(set) var hisMoves = 0
     /// Set from the moment the reader closes; nothing moves the page or records a place after it.
     private(set) var isClosed = false
     /// While a landing settles, the navigator's in-between locations are not places: the landing
@@ -1086,6 +1090,7 @@ final class ReaderModel {
 
     func acceptSuggestion() async {
         guard let s = suggestion, !isClosed else { return }
+        hisMoves += 1
         withAnimation(Motion.banner) { suggestion = nil }
         hideSlip()
         let locator = suggestionLocator, aim = suggestionRemote, cloud = suggestionCloud
@@ -1200,7 +1205,7 @@ final class ReaderModel {
             // not places (as below): `go` counts this move first thing.
             let move = moves + 1
             landingMove = move
-            await go(toProgression: progression, rememberBack: rememberBack)
+            await go(toProgression: progression, rememberBack: rememberBack, his: false)
             guard moves == move, !isClosed else {
                 if landingMove == move { landingMove = nil }
                 return
@@ -1393,6 +1398,8 @@ final class ReaderModel {
     /// the page or records a place after the close has sent the last one.
     func close() {
         if isWarming, !pageReady { hostController?.halt() }
+        // A move a reflow still owes is his place: kept now, since that reflow will never end (gatefold#96).
+        let owed = owedPlaceOnLeaving()
         isClosed = true
         launchJumpDone()
         stallTimer?.cancel()
@@ -1407,6 +1414,34 @@ final class ReaderModel {
         suggestionLocator = nil
         suggestionRemote = nil
         suggestionCloud = nil
+        if let owed {
+            Task {
+                await keepOwedPlace(owed)
+                // Sent now: the close's own send may have gone before this write.
+                app.library.flushPushes()
+            }
+        }
+    }
+
+    /// What a reflow still owes as he leaves: an unreached jump's target, or the page he is on. Read
+    /// before the page goes, so a reflow that never settles (a slow device, a load stuck as in gatefold#94)
+    /// can't drop the move he made under it (gatefold#96).
+    func owedPlaceOnLeaving() -> Locator? {
+        guard placeOwed, !isClosed, !isWarming else { return nil }
+        return owedJumpTarget.flatMap { $0.1 == moves && !touchedSinceLocation ? $0.0 : nil } ?? page?.currentLocation
+    }
+
+    /// Writes the place a reflow owed, as he leaves: the reader may have closed, and the reflow may
+    /// still be under way. Only the place; nothing on screen changes. If he hasn't closed the book
+    /// (the app only went inactive), the debt stands: a reflow that settles later still records his
+    /// own words over this write, as it would have without it.
+    func keepOwedPlace(_ here: Locator) async {
+        guard placeOwed, !isWarming else { return }
+        if isClosed { owedJumpTarget = nil }
+        let recordedBefore = recordedMoves
+        readerLog.notice("place: recorded the move a reflow held, on leaving, at \(here.locations.totalProgression ?? -1, privacy: .public) moves \(self.moves, privacy: .public) recorded \(self.recordedMoves, privacy: .public)")
+        await locationDidChange(here, hisMove: true, placeOnly: true, leaving: true)
+        if !isClosed, placeOwed, recordedMoves == moves { recordedMoves = recordedBefore }
     }
 
     func dismissSuggestion() {
@@ -1545,8 +1580,11 @@ final class ReaderModel {
 
     /// `placeOnly`: keep `locator` as the place without naming it on screen (a launch jump that never
     /// landed: the page still shows what Readium names, so the running head and the end check stay there).
-    func locationDidChange(_ locator: Locator, duringTurn: Bool = false, hisMove: Bool = false, placeOnly: Bool = false) async {
-        guard !isClosed else { return }
+    /// `leaving`: the place a reflow owes, written as he leaves (`keepOwedPlace`), past a close and a reflow
+    /// still under way.
+    func locationDidChange(_ locator: Locator, duringTurn: Bool = false, hisMove: Bool = false, placeOnly: Bool = false,
+                           leaving: Bool = false) async {
+        guard !isClosed || leaving else { return }
         let reportedBefore = lastReported
         lastReported = locator
         if !placeOnly {
@@ -1569,12 +1607,13 @@ final class ReaderModel {
         // is owed: the reflow's end records it, or the place he went to is never kept (build 17 reopened
         // a book jumped to during that reflow at its start, then landed on the Cloud's older place).
         // A reader warmed behind the shelf has no place of his to owe.
-        if keeper.reflowing != nil, hasMoved, moves != recordedMoves, !duringTurn, !isWarming {
+        if keeper.reflowing != nil, !leaving, hasMoved, moves != recordedMoves, !duringTurn, !isWarming {
             if !placeOwed { readerLog.notice("place: owed by a reflow, at \(locator.locations.totalProgression ?? -1, privacy: .public) moves \(self.moves, privacy: .public) recorded \(self.recordedMoves, privacy: .public)") }
             placeOwed = true
         }
-        guard keeper.reflowing == nil, !duringTurn else { return }
-        placeOwed = false
+        guard keeper.reflowing == nil || leaving, !duringTurn else { return }
+        // A reader still open keeps the debt for its reflow's end (`keepOwedPlace`).
+        if !leaving || isClosed { placeOwed = false }
         // Only he moves the place: a turn, a jump or a touch since the last report. A report after a
         // reflow, with none of them since, is the layout (a rotation, an unfold, a late report from the new spread), and it never
         // re-anchors or rewrites the saved place: a spread that slips a verso before his page starts a
@@ -1698,6 +1737,7 @@ final class ReaderModel {
         if let json = try? here.jsonString() {
             let now = Date()
             let exact = await mapper?.position(for: BookLocation(here), at: now)
+            if LaunchOptions.isUITest { savedWordsProbe = here.text.highlight.map(ReaderJS.normalize) ?? "" }
             readerLog.notice("place write [r\(self.readerNumber, privacy: .public)]: his move (\(fresh != nil ? "his first words" : "Readium's boundary", privacy: .public)) \(Self.placeTag(here), privacy: .public); reported \(Self.placeTag(locator), privacy: .public); move \(self.moves, privacy: .public), touched \(self.touchedSinceLocation, privacy: .public), layoutOnly \(self.layoutOnly, privacy: .public)")
             app.library.recordPlace(
                 bookID: bookID,
@@ -1740,6 +1780,7 @@ final class ReaderModel {
 
     /// A turn landed or sprang back: take the place from where the navigator is now.
     func userTurnedPage() {
+        hisMoves += 1
         foldSlip()
         readOnAfterJump()
         hasMoved = true
@@ -1849,7 +1890,9 @@ final class ReaderModel {
 
     // MARK: Jumps
 
-    func go(toProgression progression: Double, rememberBack: Bool) async {
+    /// `his`: false for a landing's own percent step (the Cloud's place), which is not a move of his.
+    func go(toProgression progression: Double, rememberBack: Bool, his: Bool = true) async {
+        if his { hisMoves += 1 }
         hasMoved = true
         moves += 1
         let back = rememberBack ? rememberPlace() : nil
@@ -1874,6 +1917,7 @@ final class ReaderModel {
     }
 
     func go(to entry: TOCEntry) async {
+        hisMoves += 1
         hasMoved = true
         moves += 1
         let back = rememberPlace()
@@ -1883,6 +1927,7 @@ final class ReaderModel {
     }
 
     func follow(_ link: ReadiumShared.Link) async {
+        hisMoves += 1
         hasMoved = true
         moves += 1
         let back = rememberPlace()
@@ -1893,6 +1938,7 @@ final class ReaderModel {
 
     /// A highlight's exact place: Readium finds its words, so the page is the one they are on.
     func go(to locator: Locator, rememberBack: Bool) async {
+        hisMoves += 1
         hasMoved = true
         moves += 1
         let back = rememberBack ? rememberPlace() : nil
@@ -1911,6 +1957,7 @@ final class ReaderModel {
     /// with one more.
     func goBack() async {
         guard let back = backLocator, goingBack == nil else { return }
+        hisMoves += 1
         backTrips += 1
         let trip = backTrips
         goingBack = trip
@@ -2039,6 +2086,10 @@ final class ReaderModel {
     /// reported until the live page takes its place (CI's reviewer check hashed the page under a
     /// picture that stayed up 24 s on a slow runner, and called a correct reopen a miss).
     private(set) var visibleTextProbe = ""
+
+    /// For UI tests: the words of the place his last move saved, so a test can tell a word's tail the
+    /// place skipped (`ReaderJS.anchor`) from a page that skipped his place (`ReopenMatch`).
+    private(set) var savedWordsProbe = ""
 
     private func refreshBookmarkState(_ visible: VisibleRange?) {
         if LaunchOptions.isUITest, reopenPicture == nil, let text = visible?.text { visibleTextProbe = String(text.prefix(2400)) }
