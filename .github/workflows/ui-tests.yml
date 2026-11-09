@@ -262,10 +262,9 @@ jobs:
         # A green job stays green if the artifact store has a bad moment.
         continue-on-error: true
         with:
-          name: ${{ inputs.shard }}-results
+          # By attempt, so a rerun keeps the failed attempt's logs beside its own.
+          name: ${{ inputs.shard }}-results-${{ github.run_attempt }}
           retention-days: ${{ job.status != 'failure' && 3 || 0 }} # 0: the repository's default
-          # A rerun replaces the failed attempt's logs.
-          overwrite: true
           path: |
             ${{ runner.temp }}/place.log
             ${{ runner.temp }}/rb.log
@@ -278,8 +277,7 @@ jobs:
         if: failure() || cancelled()
         continue-on-error: true
         with:
-          name: ${{ inputs.shard }}-xcresults
-          overwrite: true
+          name: ${{ inputs.shard }}-xcresults-${{ github.run_attempt }}
           path: |
             ${{ runner.temp }}/cold.xcresult
             ${{ runner.temp }}/ui.xcresult

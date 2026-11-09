@@ -4,15 +4,15 @@
     python3 -I scripts/ci-shards.py --selftest
 
 Each shard job in app.yml (one that calls ui-tests.yml) lists `tests`, `skip` and `pr_tests` per matrix entry, under
-GatefoldUITests: a class, or a class and a test. The `app` job's `-only-testing:GatefoldUITests/...` lists count as one
-more shard that runs on both tiers. For each tier (`pr`: a pull request that runs the PR lists; `main`: main and
-full-list pull requests) this fails when
+GatefoldUITests: a class, or a class and a test. For each tier (`pr`: a pull request that runs the PR lists; `main`:
+main and full-list pull requests) this fails when
   - an entry names no test in the sources (a renamed test would otherwise drop out of CI quietly),
-  - a skipped test is not in its shard's `tests`,
+  - a skipped test is not in its shard's `tests`, or runs in no other shard on that device on main,
   - a cold shard has no `tests` or has `pr_tests` (the cold step runs `tests` on every tier), or a shard has no list,
   - one test runs in two shards on the same device in the same tier.
---list prints every "tier device test shard" line. --expect FILE fails unless the "tier|device|test" set equals
-the file's lines (blank lines and lines starting with # ignored), to prove a reshuffle kept every test.
+--list prints every "tier|device|test" with its shard. --expect FILE fails unless that set equals the file's (the first
+word of each line; blank lines and lines starting with # ignored). CI checks against scripts/ci-shards.expect, so a
+test leaves CI only by a visible edit there: after adding or removing a test, write the file from --list.
 Reads only; no dependencies, so it runs in the Swift container of `GatefoldCore tests`.
 """
 import os
@@ -38,10 +38,13 @@ def read_tests(sources_dir):
 def tests_in(text, tests):
     cls = None
     for line in text.splitlines():
-        m = re.match(r"\s*(?:final\s+)?class\s+(\w+)\s*:\s*XCTestCase\b", line)
+        # A top-level type: an XCTestCase subclass starts a class; any other type or extension ends it.
+        m = re.match(r"(?:(?:final|private|fileprivate|public|internal|open)\s+)*"
+                     r"(class|struct|enum|extension|actor|protocol)\s+(\w+)\s*(:\s*XCTestCase\b)?", line)
         if m:
-            cls = m.group(1)
-            tests.setdefault(cls, [])
+            cls = m.group(2) if m.group(1) == "class" and m.group(3) else None
+            if cls:
+                tests.setdefault(cls, [])
             continue
         m = re.match(r"\s*func\s+(test\w*)\s*\(", line)
         if m and cls:
@@ -77,7 +80,7 @@ def scalar(value):
 
 
 def shards(text):
-    """[(job, device, entry)] for every matrix entry of a job that calls ui-tests.yml, and the `app` job's lists."""
+    """[(job, device, entry)] for every matrix entry of a job that calls ui-tests.yml."""
     found = []
     for job, lines in jobs(text).items():
         body = "\n".join(lines)
@@ -86,12 +89,6 @@ def shards(text):
             device = scalar(device.group(1)) if device else "?"
             for entry in matrix_entries(lines):
                 found.append((job, device, entry))
-        elif job == "app":
-            device = re.search(r'ci-simulator\.py start \S+ "([^"]+)"', body)
-            only = re.findall(r"-only-testing:GatefoldUITests/(\S+?)\s*\\?$", body, re.M)
-            if only:
-                found.append((job, device.group(1) if device else "?",
-                              {"shard": "app", "tests": " ".join(only), "skip": "", "pr_tests": "", "cold": "false"}))
     return found
 
 
@@ -141,7 +138,7 @@ def expand(entries, tests, problems, where):
 
 def plan(text, tests):
     """(problems, {(tier, device, test): [shard, ...]})"""
-    problems, runs, seen = [], {}, set()
+    problems, runs, seen, skips = [], {}, set(), []
     for job, device, s in shards(text):
         name = s.get("shard", "?")
         where = f"{job} shard {name}"
@@ -154,6 +151,7 @@ def plan(text, tests):
         for t in sorted(skipped - listed):
             problems.append(f"{where}: skips {t}, which it does not list")
         full = listed - skipped
+        skips += [(where, device, t) for t in sorted(skipped & listed)]
         pr = s.get("pr_tests", "")
         if not s.get("tests", "").strip():
             problems.append(f"{where}: no tests listed (an empty list runs the whole suite)")
@@ -168,6 +166,10 @@ def plan(text, tests):
         for tier, chosen in (("pr", on_pr), ("main", full)):
             for t in chosen:
                 runs.setdefault((tier, device, t), []).append(name)
+    # A catch-all's skip hands a test to another shard; it must run there, or it runs nowhere.
+    for where, device, t in skips:
+        if ("main", device, t) not in runs:
+            problems.append(f"{where}: skips {t}, which no other shard runs on the {device} on main")
     for (tier, device, t), names in sorted(runs.items()):
         if len(names) > 1:
             problems.append(f"{tier}: {t} runs on the {device} in {len(names)} shards: {', '.join(names)}")
@@ -180,10 +182,10 @@ def check(args):
     problems, runs = plan(text, read_tests(SOURCES))
     if "--list" in args:
         for (tier, device, t), names in sorted(runs.items()):
-            print(f"{tier} {device} {t} {','.join(names)}")
+            print(f"{tier}|{device}|{t}\t{','.join(names)}")
     if "--expect" in args:
         with open(args[args.index("--expect") + 1], encoding="utf-8") as f:
-            want = {l.strip() for l in f if l.strip() and not l.lstrip().startswith("#")}
+            want = {l.split("\t")[0].strip() for l in f if l.strip() and not l.lstrip().startswith("#")}
         have = {f"{tier}|{device}|{t}" for tier, device, t in runs}
         for line in sorted(want - have):
             problems.append(f"expected but not run: {line}")
@@ -209,6 +211,12 @@ final class AUITests: XCTestCase {
 }
 final class BUITests: XCTestCase {
     func testThree() { checkTurns() }
+}
+enum Density {
+    static func testLooksLikeATest() {}
+}
+extension XCUIApplication {
+    func testNotATestEither() {}
 }
 """, {})
     assert tests == {"AUITests": ["testOne", "testTwo"], "BUITests": ["testThree"]}, tests
@@ -237,7 +245,6 @@ jobs:
           - shard: s1
             tests: >-
               AUITests/testOne
-              BUITests
             timeout: 30 # with a comment
             skip: ""
             pr_tests: ""
@@ -250,22 +257,32 @@ jobs:
             pr_tests: >-
               none
             timeout: 30
-            cold: false""", app="""  app:
-    steps:
-      - run: python3 -I scripts/ci-simulator.py start gatefold-duo "iPhone Duo"
-      - run: |
-          xcodebuild test-without-building \\
-            -only-testing:GatefoldUITests/BUITests \\
-            -resultBundlePath x""")
+            cold: false
+          - shard: s3
+            tests: >-
+              BUITests
+            skip: ""
+            pr_tests: ""
+            timeout: 30
+            cold: false""")
     found = shards(ok)
     assert [(j, d, s["shard"]) for j, d, s in found] == [
-        ("one", "iPad Pro 13-inch", "s1"), ("one", "iPad Pro 13-inch", "s2"), ("app", "iPhone Duo", "app")], found
-    assert found[0][2]["tests"] == "AUITests/testOne BUITests" and found[0][2]["timeout"] == "30", found[0]
+        ("one", "iPad Pro 13-inch", "s1"), ("one", "iPad Pro 13-inch", "s2"), ("one", "iPad Pro 13-inch", "s3")], found
+    assert found[0][2]["tests"] == "AUITests/testOne" and found[0][2]["timeout"] == "30", found[0]
     problems, runs = plan(ok, tests)
     assert problems == [], problems
     assert runs[("main", "iPad Pro 13-inch", "AUITests/testTwo")] == ["s2"]
     assert ("pr", "iPad Pro 13-inch", "AUITests/testTwo") not in runs  # pr_tests: none
-    assert runs[("pr", "iPhone Duo", "BUITests/testThree")] == ["app"]
+    assert runs[("pr", "iPad Pro 13-inch", "BUITests/testThree")] == ["s3"]
+    # The catch-all skips AUITests/testOne; with s1 gone it runs nowhere.
+    orphan = plan(ok.replace("""          - shard: s1
+            tests: >-
+              AUITests/testOne
+""", """          - shard: s1
+            tests: >-
+              BUITests/testThree
+"""), tests)[0]
+    assert any("skips AUITests/testOne, which no other shard runs" in p for p in orphan), orphan
 
     def problems_of(entries):
         return plan(wf(entries), tests)[0]

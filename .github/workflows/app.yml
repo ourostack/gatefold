@@ -140,15 +140,17 @@ jobs:
       - name: Every listed UI test exists, and none runs in two shards (gatefold#39)
         run: |
           python3 -I scripts/ci-shards.py --selftest
-          python3 -I scripts/ci-shards.py check
+          python3 -I scripts/ci-shards.py check --expect scripts/ci-shards.expect
 
   # UI tests run in shards, each on its own runner from the one build, so a pull request's checks fit the PR clock
-  # (gatefold#39). The split follows per-test times from runs 42605468542, 42656170735 and 42673726551 (the slowest
-  # pass of each test): about 10 min of tests a shard at most, plus about 6 min to download and boot. A test that
-  # alone takes longer has a shard of its own. Each required check is a gate job below, green only when every one of
-  # its shards passed. Shards with `pr_tests: none` run on main and on full-list pull requests only.
-  # Each `timeout` is the shard's measured time (6 min of setup plus its tests) / 0.7, plus 12 for the logs after the
-  # tests (gatefold#141); a cold shard adds 4 min for the erase before /0.7 and 10 for one fresh device (gatefold#71).
+  # (gatefold#39). The split follows the slowest pass of each test in ten runs (green 42675099629, 42640941539,
+  # 42584275845 and 42570370853, and main's 42673726551, 42666016340, 42656170735, 42605468542, 42605267361 and
+  # 42576626603): about 10 to 13 min of tests a pull-request shard. A test that alone takes longer has a shard of its
+  # own. Each required check is a gate job below, green only when every one of its shards passed. Shards with
+  # `pr_tests: none` run on main and on full-list pull requests only.
+  # Each `timeout` is the shard's measured time / 0.7, plus 12 for the logs after the tests (gatefold#141): 9 min of
+  # setup (job start to booted: median 4.7, p90 8.1 over 89 jobs in 40 runs) plus its tests' slowest passes; a cold
+  # shard adds 4 min for the erase before /0.7 and 10 for one fresh device (gatefold#71).
   # scripts/ci-shards.py (in `GatefoldCore tests`) fails when a listed test does not exist or runs in two shards.
   ipad-place:
     name: iPad place shard (${{ matrix.shard }})
@@ -158,12 +160,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # The rotation tests on an erased iPad (the cold step), each shard on its own: 561, 487 and 647 s.
+          # The rotation tests on an erased iPad (the cold step), each shard on its own: 606, 548 and 716 s.
           - shard: ipad-place-cold-rotate
             tests: >-
               RotationRepro/testRotateThenLeaveWithoutTurning
             cold: true
-            timeout: 50 # (6 + 4 + 9.4) / 0.7 = 28, + 10 + 12
+            timeout: 56 # (9 + 4 + 10.1) / 0.7 = 34, + 10 + 12
             skip: ""
             pr_tests: ""
           - shard: ipad-place-cold-stalled
@@ -172,47 +174,49 @@ jobs:
             skip: >-
               RotationRepro/testRotateThenLeaveWithoutTurning
             cold: true
-            timeout: 48 # (6 + 4 + 8.1) / 0.7 = 26, + 10 + 12
+            timeout: 54 # (9 + 4 + 9.1) / 0.7 = 32, + 10 + 12
             pr_tests: ""
           - shard: ipad-place-cold-midturn
             tests: >-
               RotationMidTransitionUITests
             cold: true
-            timeout: 52 # (6 + 4 + 10.8) / 0.7 = 30, + 10 + 12
+            timeout: 58 # (9 + 4 + 11.9) / 0.7 = 36, + 10 + 12
             skip: ""
             pr_tests: ""
           - shard: ipad-place-portrait
-            # 306 + 287 s
+            # 344 + 340 + 52 s
             tests: >-
               NavigationPlaceUITests/testReadInPortraitRotatedThenLeftKeepsHisFirstWords
               NavigationPlaceUITests/testWithPageNumbersOnReadInPortraitRotatedThenLeftKeepsHisFirstWords
-            timeout: 35 # (6 + 9.9) / 0.7 = 23, + 12
+              NavigationPlaceUITests/testTheOpeningCoverLetsTheControlsThrough
+            timeout: 43 # (9 + 12.3) / 0.7 = 31, + 12
             skip: ""
             pr_tests: ""
             cold: false
           - shard: ipad-place-jumps
-            # 188 + 160 + 146 + 127 s
+            # 227 + 191 + 180 + 153 s
             tests: >-
               NavigationPlaceUITests/testOpenedFromTheShelfThenLeftTwiceWithoutATurnKeepsThePlace
               NavigationPlaceUITests/testAContentsJumpKeepsThePlace
               NavigationPlaceUITests/testScrolledAfterTheLaunchReflowThenLeftKeepsWhereHeScrolled
               NavigationPlaceUITests/testAJumpsVeilHoldsWhileTheChapterLoads
-            timeout: 36 # (6 + 10.4) / 0.7 = 24, + 12
+            timeout: 43 # (9 + 12.5) / 0.7 = 31, + 12
             skip: ""
             pr_tests: ""
             cold: false
           - shard: ipad-place-rest
-            # The catch-all for new place tests: 125 + 41 + 195 + 131 + 95 s
+            # The catch-all for new place tests: 153 + 237 + 131 + 102 s
             tests: >-
               NavigationPlaceUITests PositionUITests/testEveryPostureKeepsThePlace CountingPlaceholderUITests
             skip: >-
               NavigationPlaceUITests/testReadInPortraitRotatedThenLeftKeepsHisFirstWords
               NavigationPlaceUITests/testWithPageNumbersOnReadInPortraitRotatedThenLeftKeepsHisFirstWords
+              NavigationPlaceUITests/testTheOpeningCoverLetsTheControlsThrough
               NavigationPlaceUITests/testOpenedFromTheShelfThenLeftTwiceWithoutATurnKeepsThePlace
               NavigationPlaceUITests/testAContentsJumpKeepsThePlace
               NavigationPlaceUITests/testScrolledAfterTheLaunchReflowThenLeftKeepsWhereHeScrolled
               NavigationPlaceUITests/testAJumpsVeilHoldsWhileTheChapterLoads
-            timeout: 35 # (6 + 9.8) / 0.7 = 23, + 12
+            timeout: 40 # (9 + 10.4) / 0.7 = 28, + 12
             pr_tests: ""
             cold: false
     uses: ./.github/workflows/ui-tests.yml
@@ -236,36 +240,36 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Each of the two every-tap tests takes longer than 10 min at its slowest (1030 and 826 s), so each has a
+          # Each of the two every-tap tests takes longer than 10 min at its slowest (1045 and 1086 s), so each has a
           # shard of its own.
           - shard: ipad-taps-landscape
             tests: >-
               FineTuneTapUITests/testEveryTapFlipsItsSwitchLandscape
-            timeout: 46 # (6 + 17.2) / 0.7 = 34, + 12
+            timeout: 50 # (9 + 17.4) / 0.7 = 38, + 12
             skip: ""
             pr_tests: ""
             cold: false
           - shard: ipad-taps-portrait
             tests: >-
               FineTuneTapUITests/testEveryTapFlipsItsSwitchPortrait
-            timeout: 41 # (6 + 13.8) / 0.7 = 29, + 12
+            timeout: 51 # (9 + 18.1) / 0.7 = 39, + 12
             skip: ""
             pr_tests: ""
             cold: false
           - shard: ipad-taps-rest
-            # The catch-all for new Fine-Tune tests: 351 + 269 + 90 s
+            # The catch-all for new Fine-Tune tests: 351 + 325 + 105 s
             tests: >-
               FineTuneTapUITests
             skip: >-
               FineTuneTapUITests/testEveryTapFlipsItsSwitchLandscape FineTuneTapUITests/testEveryTapFlipsItsSwitchPortrait
-            timeout: 38 # (6 + 11.8) / 0.7 = 26, + 12
+            timeout: 44 # (9 + 13.0) / 0.7 = 32, + 12
             pr_tests: ""
             cold: false
           - shard: ipad-taps-furniture
-            # 115 + 181 + 251 s
+            # 141 + 275 + 305 s
             tests: >-
               PageFurnitureUITests
-            timeout: 34 # (6 + 9.1) / 0.7 = 22, + 12
+            timeout: 43 # (9 + 12.0) / 0.7 = 31, + 12
             skip: ""
             pr_tests: ""
             cold: false
@@ -295,33 +299,33 @@ jobs:
       matrix:
         include:
           - shard: ipad-reviewer-controls
-            # 1763 s on main; the PR smoke 206 + 95 + 95 s
+            # 1763 s on main; the PR smoke 223 + 105 + 126 s
             tests: >-
               ReopenAfterControlsUITests
             pr_tests: >-
               ReviewerChecksUITests/testTheLastPagesNumberIsTheCount WindowFitUITests
-            timeout: 63 # (6 + 29.4) / 0.7 = 51, + 12
+            timeout: 67 # (9 + 29.4) / 0.7 = 55, + 12
             skip: ""
             cold: false
           - shard: ipad-reviewer-numbers
-            # 1184 + 448 s
+            # 1184 + 588 s
             tests: >-
               ReviewerChecksUITests/testPageNumbersAreOnOrOffInEveryBook
               PageNumberUITests/testOnASpreadEveryTurnMovesOnTwoPages
             pr_tests: >-
               none
-            timeout: 60 # (6 + 27.2) / 0.7 = 48, + 12
+            timeout: 68 # (9 + 29.5) / 0.7 = 56, + 12
             skip: ""
             cold: false
           - shard: ipad-reviewer-rest
-            # The catch-all for new reviewer checks: 979 + 206 + 139 + 95 + 95 + 117 s
+            # The catch-all for new reviewer checks: 979 + 223 + 139 + 105 + 126 + 151 s
             tests: >-
               ReviewerChecksUITests WindowFitUITests SpreadTurnSettleUITests/testSpreadTurnsLandWithoutSliding
             skip: >-
               ReviewerChecksUITests/testPageNumbersAreOnOrOffInEveryBook
             pr_tests: >-
               none
-            timeout: 60 # (6 + 27.2) / 0.7 = 48, + 12
+            timeout: 66 # (9 + 28.7) / 0.7 = 54, + 12
             cold: false
     uses: ./.github/workflows/ui-tests.yml
     with:
@@ -338,9 +342,9 @@ jobs:
 
   duo:
     # The reviewers' standing checks on the Duo: reopen by hash, true numbers and reader-wide toggles (density is the
-    # iPad's), and a page a turn with a reopen keeping its numbers; and the Duo's Fine-Tune taps (from `app`, so that
-    # job's UI tests stay short). Pull requests run the page-a-turn test and the taps; pushes to main add the
-    # reviewers' full list in two shards.
+    # iPad's), and a page a turn with a reopen keeping its numbers; the Duo's Fine-Tune taps; and its reading position
+    # through posture and font changes. The taps and the position tests came from `app`, so that check fits the PR
+    # clock. Pull requests run all but the reviewers' full list, which pushes to main add in two shards.
     name: Duo shard (${{ matrix.shard }})
     needs: [changes, build]
     if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
@@ -349,21 +353,29 @@ jobs:
       matrix:
         include:
           - shard: duo-taps-portrait
-            # 410 + 216 s
+            # 424 + 253 s
             tests: >-
               FineTuneTapUITests/testEveryTapFlipsItsSwitchPortrait FineTuneTapUITests/testAQuickTouchChangesEverySwitchOnce
-            timeout: 36 # (6 + 10.4) / 0.7 = 24, + 12
+            timeout: 41 # (9 + 11.3) / 0.7 = 29, + 12
             skip: ""
             pr_tests: ""
             cold: false
           - shard: duo-taps-rest
-            # The catch-all for new Fine-Tune tests, and a page a turn: 167 + 83 + 46 (the landscape test skips on
-            # the Duo) + 308 s
+            # The catch-all for new Fine-Tune tests, and a page a turn: 228 + 105 + 364 s
             tests: >-
               FineTuneTapUITests PageNumberUITests/testEveryTurnMovesOnAPageAndAReopenKeepsTheNumbers
             skip: >-
               FineTuneTapUITests/testEveryTapFlipsItsSwitchPortrait FineTuneTapUITests/testAQuickTouchChangesEverySwitchOnce
-            timeout: 35 # (6 + 10.1) / 0.7 = 23, + 12
+              FineTuneTapUITests/testEveryTapFlipsItsSwitchLandscape
+            timeout: 42 # (9 + 11.6) / 0.7 = 30, + 12
+            pr_tests: ""
+            cold: false
+          - shard: duo-position
+            # 237 + 173 + 86 + 83 + 79 s, and 65 s for the landscape every-tap test, which skips on the Duo
+            tests: >-
+              PositionUITests FineTuneTapUITests/testEveryTapFlipsItsSwitchLandscape
+            timeout: 43 # (9 + 12.1) / 0.7 = 31, + 12
+            skip: ""
             pr_tests: ""
             cold: false
           - shard: duo-reviewer-reopen
@@ -372,18 +384,18 @@ jobs:
               ReviewerChecksUITests/testEveryReopenReturnsTheSameWords
             pr_tests: >-
               none
-            timeout: 56 # (6 + 24.6) / 0.7 = 44, + 12
+            timeout: 60 # (9 + 24.6) / 0.7 = 48, + 12
             skip: ""
             cold: false
           - shard: duo-reviewer-rest
-            # The catch-all for new reviewer checks: 888 + 203 s (the default spread skips on the Duo)
+            # The catch-all for new reviewer checks: 1109 + 283 s (the default spread skips on the Duo)
             tests: >-
               ReviewerChecksUITests
             skip: >-
               ReviewerChecksUITests/testEveryReopenReturnsTheSameWords
             pr_tests: >-
               none
-            timeout: 47 # (6 + 18.2) / 0.7 = 35, + 12
+            timeout: 59 # (9 + 23.2) / 0.7 = 47, + 12
             cold: false
     uses: ./.github/workflows/ui-tests.yml
     with:
@@ -467,25 +479,22 @@ jobs:
           echo "Shards: $SHARDS"
           [ "$SHARDS" = success ]
 
-  app:
-    name: Build and unit-test the app
-    # xcode-27 is the only hosted image with Xcode 27.1: the first SDK with the iPhone Duo fold
-    # APIs, the iOS 27 deployment target and the iPhone Duo simulator. macos-latest (macOS 26) has
-    # only Xcode 26, so this job cannot move there.
-    # ~55 min in build 19: 85 keeps 30% headroom, and 12 more for the logs after the tests (gatefold#141).
-    needs: [changes, build]
+  # xcode-27 is the only hosted image with Xcode 27.1: the first SDK with the iPhone Duo fold APIs, the iOS 27
+  # deployment target and the iPhone Duo simulator. macos-latest (macOS 26) has only Xcode 26, so these jobs cannot
+  # move there. The required check `Build and unit-test the app` is `app` below, green only when the Release build and
+  # the unit tests both passed (gatefold#39): the Release build starts with the run instead of after `build`, and the
+  # Duo's position tests and Fine-Tune taps are Duo shards.
+  release:
+    name: Release build for devices
+    needs: changes
     if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
     runs-on: xcode-27
-    timeout-minutes: 97
+    # Up to 27 min measured in the old `app` job (Metal 5.1, xcodegen 4.4, Release build 16.6, and the setup;
+    # runs 42570370853 to 42675099629): / 0.7 keeps 30% headroom.
+    timeout-minutes: 39
     steps:
-      - name: Note when the job began, so each test step can stop in time to upload its logs (gatefold#126)
-        run: echo "JOB_START=$(date +%s)" >> "$GITHUB_ENV"
       - uses: actions/checkout@v4
       - uses: ./.github/actions/select-xcode
-      - name: Start an iPhone Duo booting
-        run: python3 -I scripts/ci-simulator.py start gatefold-duo "iPhone Duo"
-      # The device build runs while the Duo boots. A boot retry restarts CoreSimulatorService, which this generic
-      # device build does not use for a destination; retries are rare (#57), so the overlap is worth it.
       - name: Install the Metal toolchain (the page curl is a Metal shader)
         run: xcodebuild -downloadComponent MetalToolchain
       - name: Generate the Xcode project from project.yml
@@ -497,6 +506,22 @@ jobs:
           set -o pipefail
           xcodebuild build -project Gatefold.xcodeproj -scheme Gatefold -configuration Release \
             -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO 2>&1 | tail -50
+
+  unit:
+    name: Unit tests (iPhone Duo)
+    needs: [changes, build]
+    if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
+    runs-on: xcode-27
+    # 9 min of setup (job start to booted; p90 8.1 over 89 jobs) and up to 3.9 of unit tests: / 0.7 = 19, and 12 for
+    # the logs after the tests (gatefold#141).
+    timeout-minutes: 31
+    steps:
+      - name: Note when the job began, so each test step can stop in time to upload its logs (gatefold#126)
+        run: echo "JOB_START=$(date +%s)" >> "$GITHUB_ENV"
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/select-xcode
+      - name: Start an iPhone Duo booting
+        run: python3 -I scripts/ci-simulator.py start gatefold-duo "iPhone Duo"
       - id: fetch
         # Usually 4 s, but 13 of 144 took over 2 min and one 10.6 min (gatefold#144), in bunches across jobs: the
         # artifact store, not the runner. A download cut off at 4 min tries once more, rather than eating the tests' time.
@@ -534,7 +559,7 @@ jobs:
       - id: left_unit
         uses: ./.github/actions/time-left
         with:
-          limit: "97" # the job's timeout-minutes
+          limit: "31" # the job's timeout-minutes
       - name: Unit tests
         timeout-minutes: ${{ fromJSON(steps.left_unit.outputs.minutes) }}
         env:
@@ -544,50 +569,43 @@ jobs:
           python3 -I scripts/ci-within.py --until "$STEP_UNTIL" -- xcodebuild test-without-building -xctestrun "$XCTESTRUN" \
             -destination "$DESTINATION" \
             -only-testing:GatefoldTests \
-            -resultBundlePath "$RUNNER_TEMP/unit.xcresult" 2>&1 | tail -200
-      - id: left_ui
-        uses: ./.github/actions/time-left
-        with:
-          limit: "97" # the job's timeout-minutes
-      - name: Reading position survives posture and font changes (UI tests; the Duo's Fine-Tune taps are Duo shards)
-        timeout-minutes: ${{ fromJSON(steps.left_ui.outputs.minutes) }}
-        env:
-          STEP_UNTIL: ${{ steps.left_ui.outputs.until }}
-        run: |
-          set -o pipefail
-          sh scripts/ci-crashes.sh mark
-          python3 -I scripts/ci-within.py --until "$STEP_UNTIL" -- xcodebuild test-without-building -xctestrun "$XCTESTRUN" \
-            -destination "$DESTINATION" \
-            -only-testing:GatefoldUITests/PositionUITests \
-            -resultBundlePath "$RUNNER_TEMP/ui.xcresult" > "$RUNNER_TEMP/ui.log" 2>&1 || status=$?
-          # No retry: a wait that runs out prints how many probe reads it made and the slowest one.
-          grep -E "error:|Test Case .*(passed|failed|skipped)|TEST (SUCCEEDED|FAILED)|probe says|probe timing|TAPRATE" "$RUNNER_TEMP/ui.log" | tail -60 || true
-          exit ${status:-0}
-      - name: The app did not crash, and the system did not end it for memory (gatefold#76)
-        if: ${{ !cancelled() }}
-        timeout-minutes: 2
-        run: sh scripts/ci-crashes.sh check
+            -resultBundlePath "$RUNNER_TEMP/unit.xcresult" 2>&1 | tee "$RUNNER_TEMP/unit.log" | tail -200
       - name: Why each failed test failed (from the result bundles, text withheld)
         if: failure() || cancelled()
         timeout-minutes: 5
-        run: python3 -I scripts/ci-failures.py "$RUNNER_TEMP"/unit.xcresult "$RUNNER_TEMP"/ui.xcresult
+        run: python3 -I scripts/ci-failures.py "$RUNNER_TEMP"/unit.xcresult
       - uses: actions/upload-artifact@v4
         # Every run, so a green run can be audited too (gatefold#127): kept 3 days unless the job failed.
         if: always()
         # A green job stays green if the artifact store has a bad moment.
         continue-on-error: true
         with:
-          name: app-results
+          name: unit-results-${{ github.run_attempt }}
           retention-days: ${{ job.status != 'failure' && 3 || 0 }} # 0: the repository's default
-          path: |
-            ${{ runner.temp }}/ui.log
-            ${{ runner.temp }}/crashes
+          path: ${{ runner.temp }}/unit.log
       - uses: actions/upload-artifact@v4
-        # The result bundles only when the job did not pass: they are large (gatefold#127).
+        # The result bundle only when the job did not pass: it is large (gatefold#127).
         if: failure() || cancelled()
         continue-on-error: true
         with:
-          name: xcresults
-          path: |
-            ${{ runner.temp }}/unit.xcresult
-            ${{ runner.temp }}/ui.xcresult
+          name: unit-xcresults-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/unit.xcresult
+
+  app:
+    # The required check for the app's Release build and unit tests: green when both passed, or when only Markdown
+    # changed (gatefold#42). Always runs, so the check reports on every pull request; a failed or cancelled job turns
+    # it red.
+    name: Build and unit-test the app
+    needs: [changes, release, unit]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - env:
+          APP: ${{ needs.changes.outputs.app }}
+          RELEASE: ${{ needs.release.result }}
+          UNIT: ${{ needs.unit.result }}
+        run: |
+          if [ "$APP" = false ]; then echo "Only Markdown changed; nothing to build."; exit 0; fi
+          echo "Release build: $RELEASE; unit tests: $UNIT"
+          [ "$RELEASE" = success ] && [ "$UNIT" = success ]
