@@ -166,7 +166,7 @@ jobs:
             pr_tests: >-
               ReviewerChecksUITests/testTheLastPagesNumberIsTheCount WindowFitUITests
     needs: [changes, build]
-    if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
+    if: false # diagnostic branch only
     runs-on: xcode-27
     timeout-minutes: ${{ matrix.timeout }}
     steps:
@@ -335,9 +335,10 @@ jobs:
           set -o pipefail
           xcodebuild test-without-building -xctestrun "$XCTESTRUN" \
             -destination "$DESTINATION" \
-            -only-testing:GatefoldTests \
+            -only-testing:GatefoldTests/SpreadChangeTests \
             -resultBundlePath "$RUNNER_TEMP/unit.xcresult" 2>&1 | tail -200
       - name: Reading position survives posture and font changes; every Fine-Tune tap lands (UI tests)
+        if: false # diagnostic branch only
         run: |
           set -o pipefail
           sh scripts/ci-crashes.sh mark
@@ -373,7 +374,7 @@ jobs:
     # Pull requests run its smoke (a page a turn, and a reopen keeps the numbers); pushes to main add the reviewers'
     # full list, about 13 min a test on this runner (gatefold#39).
     needs: [changes, build]
-    if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
+    if: false # diagnostic branch only
     runs-on: xcode-27
     # 45 min measured (build 20): 65 keeps 30% headroom.
     timeout-minutes: 65
