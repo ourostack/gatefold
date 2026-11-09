@@ -610,6 +610,9 @@ final class ReaderModel {
                     reported: { [weak self] in
                         self?.page?.currentLocation.map { ReadingAnchor(href: $0.href.string, progression: $0.locations.progression ?? 0, text: nil) }
                     },
+                    // A turn of his ends it: a page forced into view while the jump still reads as loading
+                    // takes his tap, and a resend then put the page back over his turn (CI's Duo at c57dfcd).
+                    stillWanted: { [weak self] in self.map { $0.moves == jumpMove && !$0.isClosed } ?? false },
                     beat: jumpBeat)
             } else {
                 await page?.go(to: locator)
