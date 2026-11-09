@@ -871,7 +871,11 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     /// spread he lands on is the one every reopen shows. Behind the jump's veil when it is still up;
     /// after it lifted (`abandonVeil`), each move is held behind a picture (`SpreadSettler.keepOnLeft`).
     func settleLanding(_ anchor: ReadingAnchor, stillWanted: @escaping @MainActor () -> Bool) async {
-        guard columns == 2, stillWanted(), !lateSettling, placingGeneration == -1 else { return }
+        guard columns == 2, stillWanted() else { return }
+        guard !lateSettling, placingGeneration == -1 else {
+            readerLog.notice("spread: a landing left unsettled (a late look \(self.lateSettling, privacy: .public), a restore placing \(self.placingGeneration != -1, privacy: .public))")
+            return
+        }
         lateSettling = true
         defer { lateSettling = false }
         if await keepOnLeft(anchor, purpose: .restore, current: stillWanted) != nil {

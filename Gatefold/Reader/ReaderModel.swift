@@ -1246,11 +1246,14 @@ final class ReaderModel {
         // The spread the place it keeps reopens on: its words to the top of a left page, as a restore
         // puts them. Given way to any move of his, another jump or the close meanwhile.
         if let words = locator.text.highlight.map(ReaderJS.normalize), !words.isEmpty {
-            let his = hisMoves
+            let his = hisMoves, step = steps
             let anchor = ReadingAnchor(href: locator.href.string, progression: locator.locations.progression ?? 0, text: words)
+            // A reflow's restore owns the page once it begins (one settler at a time), and a swipe of his
+            // takes a step without counting a move.
             await page?.settleLanding(anchor) { [weak self] in
                 guard let self else { return false }
-                return self.moves == move && self.hisMoves == his && !self.isClosed
+                return self.moves == move && self.hisMoves == his && self.steps == step
+                    && self.keeper.reflowing == nil && !self.isClosed
             }
         }
         let settled = Self.ms(since: started)
