@@ -696,6 +696,10 @@ final class ReaderModel {
     /// Looks (one every 50 ms) any open keeps its cover before the page is forced: 230, about 11.5 s,
     /// the placeholder's own timeout.
     static let coverLooks = 230
+    /// Looks (one every 50 ms) a reopen's picture of his page waits for the open's settle: 900, 45 s.
+    /// The picture is his page, so waiting costs nothing he can see; the settle ends long before on a
+    /// device (29 s on CI's starved Duo).
+    static let pictureSettleLooks = 900
 
     /// The cover gives way to the page. A reopen's picture of the page stays over it a moment longer,
     /// while the running head and footer come up beneath, then goes at once: the two are the same
@@ -730,6 +734,13 @@ final class ReaderModel {
             if keeper.reflowing != nil {
                 while keeper.reflowing != nil, Date() < reflowBudget, !isClosed { try? await Task.sleep(for: .milliseconds(100)) }
                 await host?.waitForSettledPage()
+            }
+            // The picture is his page: it stays while the open settles, so the settle moves the page beneath
+            // it, not in view. A starved Duo forced the page at 27 s, lifted the picture onto the page
+            // Readium guessed (306, his was 326), then found his words and could only offer them (#46).
+            // Bounded, and a turn he asks of the picture ends the wait.
+            for _ in 0..<Self.pictureSettleLooks where openSettling && app.reopenQueuedTurn == nil && !isClosed {
+                try? await Task.sleep(for: .milliseconds(50))
             }
             // The picture never lifts onto a page still loading (#38), nor one the open's settle is moving.
             await host?.waitWhileLoading()
