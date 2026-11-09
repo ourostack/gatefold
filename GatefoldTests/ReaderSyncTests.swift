@@ -99,6 +99,12 @@ final class ScriptedPage: ReaderPage {
         currentLocation?.locations.progression.map { $0 + 0.01 }
     }
 
+    /// The chapter each landing settle's words resolved to, as the host's moves look them up.
+    private(set) var landingSettles: [String?] = []
+    func settleLanding(_ anchor: ReadingAnchor, stillWanted: @escaping @MainActor () -> Bool) async {
+        landingSettles.append(model?.locator(for: anchor)?.href.string)
+    }
+
     /// A capture a stalled reflow cuts short: no first words to be had.
     var withholdAnchor = false
 
@@ -543,6 +549,22 @@ final class ScriptedPage: ReaderPage {
         #expect(f.model.suggestion != nil)
         await f.model.acceptSuggestion()
         #expect(f.model.showJumpBack && f.model.backLocator != nil, "landing on another device's place left no way back")
+        f.model.close()
+    }
+
+    /// A landing settle moves the page to its words through the place they resolve to. Resolved to the
+    /// page he left (the last place captured), its moves went nowhere: on CI's iPad the Cloud's words
+    /// stayed pinned off the spread and every reopen showed another one (#46's reviewer leg, 5 of 5).
+    @Test func aLandingSettlesOnTheLandingsChapterNotThePageHeLeft() async throws {
+        let f = try await Self.make(remote: { pub, mapper in
+            try await Self.inkPadPlace(pub, mapper, index: 12, percent: 40)
+        }, book: { $0.totalProgression = 0.05; $0.lastOpened = Date().addingTimeInterval(-600) }, startAt: 0.05)
+        await f.model.load()
+        let left = try #require(f.page.currentLocation?.href.string)
+        await f.model.acceptSuggestion()
+        let landed = try #require(f.page.currentLocation?.href.string)
+        #expect(landed != left, "the Cloud's place is in another chapter")
+        #expect(f.page.landingSettles == [landed], "the landing settle's words resolved to \(f.page.landingSettles), not \(landed)")
         f.model.close()
     }
 
