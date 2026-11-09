@@ -15,6 +15,7 @@ import os
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 
 GRACE = 120  # seconds before the step's end: the 90 s for the command to end, and a margin
@@ -64,17 +65,11 @@ def selftest():
     assert run(1, [sys.executable, "-c", "import time; time.sleep(60)"], settle=10) == 124
     # Ignores SIGINT, and has started a child of its own: both killed after the settle time.
     ignore = ("import signal, subprocess, sys, time; signal.signal(signal.SIGINT, signal.SIG_IGN); "
-              "p = subprocess.Popen(['sleep', '60']); print(p.pid, flush=True); time.sleep(60)")
-    sys.stdout.flush()
-    out = os.pipe()
-    saved = os.dup(1)
-    os.dup2(out[1], 1)
-    try:
-        status = run(1, [sys.executable, "-c", ignore], settle=2)
-    finally:
-        os.dup2(saved, 1)
-        os.close(out[1])
-    grandchild = int(os.read(out[0], 64).split()[0])
+              "p = subprocess.Popen(['sleep', '60']); open(sys.argv[1], 'w').write(str(p.pid)); time.sleep(60)")
+    with tempfile.TemporaryDirectory() as scratch:
+        pidfile = os.path.join(scratch, "pid")
+        status = run(1, [sys.executable, "-c", ignore, pidfile], settle=2)
+        grandchild = int(open(pidfile).read())
     assert status == 124
     deadline = time.monotonic() + 3
     while not gone(grandchild) and time.monotonic() < deadline:
