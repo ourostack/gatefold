@@ -2035,10 +2035,10 @@ final class ReaderModel {
         // first page and drops the place inside it (CI's iPad at 8c5f294: Back came back to the chapter's
         // start). Never once he has moved on or the trip was given up.
         // A swipe under the veil (slide mode) is a step of his, not a move: that also ends the re-sends.
-        var sends = 0
+        var sends = 0, backLanded = false
         await veiled(step: jump) {
             guard let inFile = back.locations.progression, inFile > 0 else { _ = await self.page?.go(to: back); return }
-            _ = await JumpLanding.land(
+            backLanded = await JumpLanding.land(
                 target: ReadingAnchor(href: back.href.string, progression: inFile, text: nil),
                 go: { [weak self] in sends += 1; return await self?.page?.go(to: back) == true },
                 visible: { [weak self] in await self?.page?.pageRange() },
@@ -2079,7 +2079,7 @@ final class ReaderModel {
         if freed, steps == jump, !isClosed, let here = page?.currentLocation { await locationDidChange(here, hisMove: true) }
         // Sent more than once: the dropped try's report (the chapter's start) claimed Back's move and was
         // kept, and the landing's own report then read as layout. His page is kept here, once.
-        else if !freed, sends > 1, steps == jump, !isClosed, let here = page?.currentLocation { await locationDidChange(here, hisMove: true) }
+        else if !freed, backLanded, sends > 1, steps == jump, !isClosed, let here = page?.currentLocation { await locationDidChange(here, hisMove: true) }
     }
     /// The Back trip under way: a second tap meanwhile is not a second jump.
     @ObservationIgnored private var goingBack: Int?
