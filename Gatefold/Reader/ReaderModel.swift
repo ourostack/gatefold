@@ -1012,7 +1012,7 @@ final class ReaderModel {
     private func foldSlipLater() {
         slipTask?.cancel()
         slipTask = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(10))
+            try? await Task.sleep(for: .seconds(LaunchOptions.offerFoldSeconds))
             guard !Task.isCancelled else { return }
             self?.foldSlip()
         }

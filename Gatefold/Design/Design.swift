@@ -116,6 +116,15 @@ enum LaunchOptions {
     /// Tests only: the first page counts as still loading for this many looks, so the opening cover
     /// stays up as it does on a slow device or a stuck load (#94), and a test can tap through it (#104).
     static var holdOpeningLoadLooks: Int? { defaults.object(forKey: "GatefoldHoldOpeningLoad") == nil ? nil : defaults.integer(forKey: "GatefoldHoldOpeningLoad") }
+    /// Tests only: seconds an unanswered offer waits before it folds into its tab (10 by default), so
+    /// a test on a slow host can tap Catch up without racing the fold.
+    static var offerFoldSeconds: Double {
+        #if DEBUG
+        defaults.object(forKey: "GatefoldOfferFoldSeconds") == nil ? 10 : defaults.double(forKey: "GatefoldOfferFoldSeconds")
+        #else
+        10
+        #endif
+    }
     static var unfoldPaintDelay: Double? { defaults.object(forKey: "GatefoldUnfoldPaintDelay") == nil ? nil : defaults.double(forKey: "GatefoldUnfoldPaintDelay") }
     /// Book IDs to open and close one after another, as taps would (see `RootView.openTour`).
     /// Seconds an open tour rests on the shelf between books (the warm books reopen meanwhile).
