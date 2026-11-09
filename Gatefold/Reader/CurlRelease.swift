@@ -40,7 +40,8 @@ enum CurlRelease {
     }
 
     /// Reads of the page a spring back left before an unreadable page counts as a miss: a file just reloaded
-    /// names its document a few reads after the jump lands. Counted in reads, never time; then a covered jump.
+    /// names its document a few reads after the jump lands. Counted in reads (one a display frame), never time;
+    /// then a covered jump.
     static let readsBeforeJumpingAgain = 20
 
     /// What a spring back's check found: the page read live (nil if never read), and whether it took a second jump.

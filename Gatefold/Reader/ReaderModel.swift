@@ -1807,7 +1807,7 @@ final class ReaderModel {
                 return refreshBookmarkState(await page?.visibleRange())
             }
             if LaunchOptions.isUITest { savedWordsProbe = here.text.highlight.map(ReaderJS.normalize) ?? "" }
-            readerLog.notice("place write [r\(self.readerNumber, privacy: .public)]: his move (\(fresh != nil ? "his first words" : "Readium's boundary", privacy: .public)) \(Self.placeTag(here), privacy: .public); reported \(Self.placeTag(locator), privacy: .public); move \(self.moves, privacy: .public), touched \(self.touchedSinceLocation, privacy: .public), layoutOnly \(self.layoutOnly, privacy: .public)")
+            readerLog.notice("place write [r\(self.readerNumber, privacy: .public)]: his move (\(fresh != nil ? "his first words" : here.text.highlight?.isEmpty == false ? "the screen's first words" : "Readium's boundary", privacy: .public)) \(Self.placeTag(here), privacy: .public); reported \(Self.placeTag(locator), privacy: .public); move \(self.moves, privacy: .public), touched \(self.touchedSinceLocation, privacy: .public), layoutOnly \(self.layoutOnly, privacy: .public)")
             app.library.recordPlace(
                 bookID: bookID,
                 locatorJSON: json,
@@ -1871,7 +1871,10 @@ final class ReaderModel {
             }
             if let report = page?.currentLocation {
                 let later = await onScreen(report)
-                if later.href != first.href || later.locations.progression != first.locations.progression {
+                // Against the place saved, not the first look: Readium's own late report of a reloaded file's
+                // start can be kept before the turn's corrected one, which is then dropped as already kept.
+                let kept = app.library.book(bookID)?.locatorJSON.flatMap { try? Locator(jsonString: $0) } ?? first
+                if later.href != kept.href || later.locations.progression != kept.locations.progression {
                     landed(step, at: later)
                     // His turn's own report, corrected: never taken for the layout's (same words, no move since).
                     await locationDidChange(later, hisMove: true)

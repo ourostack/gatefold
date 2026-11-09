@@ -1656,8 +1656,8 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             return
         }
         func here() async -> ClosedRange<Double>? {
-            // One read per frame: the reloaded document gets a frame to name itself between reads.
-            await nextFrame()
+            // One read per display frame: the reloaded document gets a frame to name itself between reads.
+            await displayFrame()
             _ = await navigator.evaluateJavaScript(ReaderJS.install)
             guard let json = (try? await navigator.evaluateJavaScript(ReaderJS.pageRange).get()) as? String,
                   let data = json.data(using: .utf8) else { return nil }
@@ -2447,6 +2447,12 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             DispatchQueue.main.async { c.resume() }
         }
     }
+
+    /// The next display frame (a main-queue pass, `nextFrame`, can be far shorter). In the background the
+    /// display pauses, and so does the wait, until the app is back.
+    private func displayFrame() async {
+        await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in OneFrame(c).start() }
+    }
 }
 
 /// A 24×32 greyscale thumbnail of a snapshot, to tell a painted page from a black or bare one and
@@ -2604,5 +2610,21 @@ extension EPUBNavigatorViewController {
             if let error = error as? EPUBNavigatorViewController.EPUBError, case .spreadNotLoaded = error { throw SpreadChanged() }
             return nil
         }
+    }
+}
+
+/// A display link that fires once, resumes its waiter and stops.
+@MainActor private final class OneFrame: NSObject {
+    private var waiter: CheckedContinuation<Void, Never>?
+    private var link: CADisplayLink?
+    init(_ waiter: CheckedContinuation<Void, Never>) { self.waiter = waiter }
+    func start() {
+        let link = CADisplayLink(target: self, selector: #selector(fired))
+        self.link = link
+        link.add(to: .main, forMode: .common)
+    }
+    @objc private func fired() {
+        link?.invalidate(); link = nil
+        waiter?.resume(); waiter = nil
     }
 }
