@@ -532,8 +532,15 @@ jobs:
         with:
           name: ${{ needs.build.outputs.artifact }}
           path: ${{ runner.temp }}
-      - name: Download the build again (the first try failed or ran past 4 min; gatefold#144)
-        if: steps.fetch.outcome != 'success'
+      - id: whole
+        # A download can report success and still end truncated ("truncated gzip input" at the unpack; gatefold#89).
+        name: The download is whole (gzip -t)
+        if: steps.fetch.outcome == 'success'
+        continue-on-error: true
+        timeout-minutes: 2
+        run: gzip -t "$RUNNER_TEMP/products.tgz"
+      - name: Download the build again (the first try failed, ran past 4 min or came truncated; gatefold#144, gatefold#89)
+        if: steps.fetch.outcome != 'success' || steps.whole.outcome != 'success'
         uses: actions/download-artifact@v4
         timeout-minutes: 6
         with:
