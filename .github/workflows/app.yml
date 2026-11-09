@@ -380,7 +380,7 @@ jobs:
           set -o pipefail
           xcodebuild test-without-building -xctestrun "$XCTESTRUN" \
             -destination "$DESTINATION" \
-            -only-testing:GatefoldTests/PlaceInvariantTests/backReachesHisPageWhenTheFirstTryOpensTheChapterStart() \
+            "-only-testing:GatefoldTests/PlaceInvariantTests/backReachesHisPageWhenTheFirstTryOpensTheChapterStart()" \
             -test-iterations 60 \
             -resultBundlePath "$RUNNER_TEMP/unit.xcresult" 2>&1 | grep -E "BACKPROBE|Test run|passed|failed|issue|Expectation" | tail -1500
       - name: Reading position survives posture and font changes; every Fine-Tune tap lands (UI tests)
