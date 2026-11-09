@@ -1900,15 +1900,30 @@ final class ReaderModel {
         let words = await page?.currentAnchor().flatMap { anchor, locator in
             anchor.href == reported.href.string && locator.text.highlight?.isEmpty == false ? locator.text : nil
         }
+        let corrected = reported.copy(locations: { $0.progression = middle; $0.totalProgression = total; $0.position = nil },
+                                      text: { $0 = words ?? Locator.Text() })
+        screenCorrection = (moves, reported.href.string, p, corrected)
         readerLog.notice("place: the report \(Self.placeTag(reported), privacy: .public) isn't on the page on screen (@\(live.start, privacy: .public)...\(live.end, privacy: .public)): kept @\(middle, privacy: .public) with \(words != nil ? "its first words" : "no words, the middle alone", privacy: .public)")
         // Readium's position and words were the file's start: none of them are the page on screen.
-        return reported.copy(locations: { $0.progression = middle; $0.totalProgression = total; $0.position = nil },
-                             text: { $0 = words ?? Locator.Text() })
+        return corrected
     }
+    /// The page on screen a turn found where Readium named its file's start (`onScreen`), for the anchor
+    /// taken until his next move: `stale` is the progression Readium still reports.
+    @ObservationIgnored private var screenCorrection: (move: Int, href: String, stale: Double, place: Locator)?
 
     /// Takes the first words on screen as the reader's place, unless a reflow is moving the page.
     func captureAnchor() async {
-        guard keeper.reflowing == nil, let (anchor, anchorLoc) = await page?.currentAnchor(), keeper.reflowing == nil else { return }
+        guard keeper.reflowing == nil, var (anchor, anchorLoc) = await page?.currentAnchor(), keeper.reflowing == nil else { return }
+        // The anchor's words are the screen's but its progression is Readium's: while Readium still names the
+        // start of a file the turn found on screen at its end, the anchor takes the page on screen, or a
+        // rotation restores him to the file's start (gatefold#128).
+        if let fix = screenCorrection, fix.move == moves, fix.href == anchor.href, fix.stale == anchor.progression,
+           let corrected = fix.place.locations.progression {
+            anchor = ReadingAnchor(href: anchor.href, progression: corrected, text: anchor.text)
+            anchorLoc = anchorLoc.copy(locations: {
+                $0.progression = corrected; $0.totalProgression = fix.place.locations.totalProgression; $0.position = nil
+            })
+        }
         readerLog.notice("anchor \(anchor.text ?? "nil", privacy: .private)")
         keeper.userSettled(on: anchor)
         if keeper.anchor == anchor { anchorLocator = anchorLoc }
