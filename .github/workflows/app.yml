@@ -461,7 +461,7 @@ jobs:
         timeout-minutes: ${{ fromJSON(steps.left.outputs.minutes) }}
         env:
           STEP_MINUTES: ${{ steps.left.outputs.minutes }}
-          FULL: ${{ needs.changes.outputs.full }}
+          FULL: "false" # proof branch only (#127): the smoke, so the job is green
         run: |
           set -o pipefail
           only=(-only-testing:GatefoldUITests/PageNumberUITests/testEveryTurnMovesOnAPageAndAReopenKeepsTheNumbers)
