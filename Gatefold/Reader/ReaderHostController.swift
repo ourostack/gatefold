@@ -515,8 +515,8 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         navigator.submitPreferences(preferences)
         if reflow { settleReflowSoon() }
         Task {
-            let navigator = navigator
             _ = await Self.onSpread { () async throws -> Void? in
+                let navigator = self.navigator // the one on screen now, on each try
                 guard self.columns == columns else { return nil } // a newer apply owns the columns now
                 if columns == 1 { _ = try await navigator.answer(ReaderJS.removeVerso) }
                 _ = try await navigator.answer(ReaderJS.setColumns(columns))
@@ -783,8 +783,8 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         defer { giveWayIfHeMoved(generation: generation) }
         // Back from the page itself: a script whose spread the reflow replaced comes back at once with
         // no page behind it (gatefold#109), and runs again on the spread that replaced it.
-        let navigator = navigator
         _ = await Self.onSpread { () async throws -> Void? in
+            let navigator = self.navigator // the one on screen now, on each try
             guard current() else { return nil }
             _ = try await navigator.answer(ReaderJS.install)
             self.firstScriptBack = max(self.firstScriptBack, generation)
@@ -930,8 +930,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         }
 
         private func number(_ script: String) async -> Int? {
-            let navigator = host.navigator
-            return await ReaderHostController.onSpread { (try await navigator.answer(script) as? NSNumber)?.intValue }
+            await ReaderHostController.onSpread { (try await self.host.navigator.answer(script) as? NSNumber)?.intValue }
         }
 
         func wordsSide() async -> WordsSide? {
@@ -949,7 +948,8 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
 
         func pinWords() async -> Bool {
             let visible = !isCovered && host.settlePicture == nil
-            let pinned = await number(ReaderJS.pinToTop(text)) == 1
+            // A move: never run again on a spread that replaced this one, where a newer restore owns the page.
+            let pinned = ((try? await host.navigator.answer(ReaderJS.pinToTop(text))) as? NSNumber)?.intValue == 1
             if pinned {
                 moves += 1
                 if visible { host.noteVisibleMove("column break") }
@@ -983,8 +983,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         }
 
         func stillness() async -> String? {
-            let navigator = host.navigator
-            let geometry = await ReaderHostController.onSpread { try await navigator.answer(ReaderJS.geometry) as? String } ?? "-"
+            let geometry = await ReaderHostController.onSpread { try await self.host.navigator.answer(ReaderJS.geometry) as? String } ?? "-"
             let at = host.navigator.currentLocation?.locations.progression ?? -1
             return "\(geometry)@\(at)"
         }
@@ -1268,8 +1267,8 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     /// The page on screen, start and end from one live read of the web view, in the document it names;
     /// nil while that document is still loading or isn't the navigator's.
     func pageRange() async -> VisibleRange? {
-        let navigator = navigator
         return await Self.onSpread {
+            let navigator = self.navigator // the one on screen now, on each try
             _ = try await navigator.answer(ReaderJS.install)
             guard let location = navigator.currentLocation else { return nil }
             guard let json = try await navigator.answer(ReaderJS.pageRange) as? String,
@@ -1283,8 +1282,8 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
 
     /// What's on screen now: the resource, its progression range and the visible text.
     func visibleRange() async -> VisibleRange? {
-        let navigator = navigator
         return await Self.onSpread {
+            let navigator = self.navigator // the one on screen now, on each try
             _ = try await navigator.answer(ReaderJS.install)
             guard let location = navigator.currentLocation else { return nil }
             let text = try await navigator.answer(ReaderJS.visibleText) as? String
@@ -1296,8 +1295,8 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
 
     /// Where `quote` is in the resource on screen, as a progression; nil when it isn't there.
     func progression(of quote: String) async -> Double? {
-        let navigator = navigator
         return await Self.onSpread {
+            let navigator = self.navigator // the one on screen now, on each try
             _ = try await navigator.answer(ReaderJS.install)
             return try await navigator.answer(ReaderJS.progressionOf(quote)) as? Double
         }
@@ -1345,7 +1344,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
                 return nil
             }
         }
-        readerLog.notice("script: the spread changed under \(attempts, privacy: .public) runs in a row")
+        readerLog.notice("script: no spread answered in \(attempts, privacy: .public) runs (it changed each time, or there is none)")
         return nil
     }
 

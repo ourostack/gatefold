@@ -99,13 +99,16 @@ import WebKit
         // A page that loaded before the second jump proves nothing about a replaced one.
         try #require(first.isLoading && !asked.done, "the anchor's script was waiting on a page still loading")
         // A second jump replaces that page while the anchor's script waits on it.
-        Task { _ = await host.navigator.go(to: order[10], options: .init(animated: false)) }
+        let second = Task { await host.navigator.go(to: order[10], options: .init(animated: false)) }
 
         // On stock Readium the script waits forever: 2 min is only a hang guard.
         let hangGuard = Task { try? await Task.sleep(for: .seconds(120)); signal.finish() }
         for await _ in answered { break }
         hangGuard.cancel()
         #expect(asked.done, "the anchor came back")
+        let jumped = await second.value
+        #expect(jumped, "the second jump went through")
+        #expect(!Self.webViews(in: host.navigator.view).contains(first), "so the page the anchor waited on was replaced")
         #expect(asked.anchor?.text != nil, "with words, from the page that replaced the one it waited on")
     }
 }
