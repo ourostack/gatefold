@@ -157,7 +157,10 @@ final class ReviewerChecksUITests: XCTestCase {
             if tab.exists, tab.isHittable { tab.tap() }
             RunLoop.current.run(until: Date().addingTimeInterval(0.3))
         }
-        guard offer.exists, words.isEmpty else { return }
+        guard offer.exists, words.isEmpty else {
+            if words.isEmpty { note("no Cloud offer on a page with no words") }
+            return
+        }
         offer.tap()
         let up = Date().addingTimeInterval(60)
         while words.isEmpty, Date() < up { RunLoop.current.run(until: Date().addingTimeInterval(0.3)) }

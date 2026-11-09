@@ -696,7 +696,7 @@ final class ReaderModel {
     /// Looks (one every 50 ms) any open keeps its cover before the page is forced: 230, about 11.5 s,
     /// the placeholder's own timeout.
     static let coverLooks = 230
-    /// Looks (one every 50 ms) a reopen's picture of his page waits for the open's settle: 900, 45 s.
+    /// Looks (one every 50 ms) a reopen's picture of his page waits for the open's settle: 900, about 45 s.
     /// The picture is his page, so waiting costs nothing he can see; the settle ends long before on a
     /// device (29 s on CI's starved Duo).
     static let pictureSettleLooks = 900
@@ -717,7 +717,8 @@ final class ReaderModel {
         // Counting the book's pages waits until the open has settled (the reopen picture gone too), so
         // it never slows the first page.
         Task {
-            for _ in 0..<120 where reopenPicture != nil { try? await Task.sleep(for: .milliseconds(250)) }
+            // Past the picture's own wait for the open's settle (`pictureSettleLooks`), or the book goes uncounted.
+            for _ in 0..<240 where reopenPicture != nil { try? await Task.sleep(for: .milliseconds(250)) }
             try? await Task.sleep(for: .milliseconds(400))
             await refreshScreenNumbers(recount: true)
         }
