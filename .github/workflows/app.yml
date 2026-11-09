@@ -150,7 +150,8 @@ jobs:
       matrix:
         include:
           - name: place
-            # 48 min measured with the erased-iPad rotation at 23; it has taken 38, so 63 / 0.7.
+            # 48 min measured with the erased-iPad rotation at 23; it has taken 38, so 63 / 0.7. Green runs now take up to
+            # 79 min (gatefold#141), so the headroom is down to about 12% (gatefold#39).
             timeout: 102 # 90 for the job, 12 for the logs
             # Rotation first, on an erased iPad (the cold step), then the rest on the same one.
             cold: true
@@ -164,7 +165,8 @@ jobs:
             title: Every Fine-Tune tap lands; the furniture never moves the words
             tests: FineTuneTapUITests PageFurnitureUITests
           - name: reviewer
-            # 65 min measured with the full list; measured / 0.7 keeps 30% headroom.
+            # 65 min measured with the full list; measured / 0.7 keeps 30% headroom. Green runs now take up to 78 min
+            # (gatefold#141), so the headroom is down to about 18% (gatefold#39).
             timeout: 107 # 95 for the job, 12 for the logs
             title: The reviewers' checks - reopen by hash, true numbers, reader-wide toggles, density, landing; the reader fits its window
             # Pushes to main run the whole list.
