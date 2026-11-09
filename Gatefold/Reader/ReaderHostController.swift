@@ -292,7 +292,6 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         let t0 = ContinuousClock.now
         defer { readerLog.notice("standby: swapped in, \(ReaderModel.ms(since: t0), privacy: .public) ms on the main thread") }
         standby = nil
-        standbyInsets = nil
         let old = navigator
         unwire(old)
         next.navigator.view.frame = old.view.frame
@@ -300,6 +299,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         next.navigator.view.accessibilityElementsHidden = false
         navigator = next.navigator
         wire(navigator)
+        standbyInsets = nil
         Self.retire(old)
         weakModel?.highlights.navigatorChanged()
         if let here = navigator.currentLocation { self.navigator(navigator, locationDidChange: here) }
