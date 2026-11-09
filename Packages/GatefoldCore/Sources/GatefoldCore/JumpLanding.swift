@@ -35,7 +35,8 @@ public enum JumpLanding {
             guard stillWanted() else { return false }
             if taken, let range = await visible(), range.contains(place),
                reported.map({ $0().map(range.contains) ?? false }) ?? true { return true }
-            if !taken || read % resendEvery == 0 { taken = await go() }
+            // Asked again after the read: a read of a loading page can take long enough for him to move.
+            if !taken || read % resendEvery == 0 { guard stillWanted() else { return false }; taken = await go() }
         }
         return false
     }
