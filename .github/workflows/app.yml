@@ -165,7 +165,7 @@ jobs:
             pr_tests: >-
               ReviewerChecksUITests/testTheLastPagesNumberIsTheCount WindowFitUITests
     needs: [changes, build]
-    if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
+    if: false # proof branch only (#126): the Duo alone
     runs-on: xcode-27
     timeout-minutes: ${{ matrix.timeout }}
     steps:
@@ -312,7 +312,7 @@ jobs:
     # only Xcode 26, so this job cannot move there.
     # ~55 min in build 19: 85 keeps 30% headroom.
     needs: [changes, build]
-    if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
+    if: false # proof branch only (#126): the Duo alone
     runs-on: xcode-27
     timeout-minutes: 85
     steps:
@@ -418,7 +418,7 @@ jobs:
     if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
     runs-on: xcode-27
     # 45 min measured (build 20): 65 keeps 30% headroom.
-    timeout-minutes: 65
+    timeout-minutes: 30 # proof branch only (#126): the full list outruns it
     steps:
       - name: Note when the job began, so each test step can stop in time to upload its logs (gatefold#126)
         run: echo "JOB_START=$(date +%s)" >> "$GITHUB_ENV"
@@ -456,7 +456,7 @@ jobs:
       - id: left
         uses: ./.github/actions/time-left
         with:
-          limit: "65" # the job's timeout-minutes
+          limit: "30" # the job's timeout-minutes
       - name: The reviewers' checks on the Duo
         timeout-minutes: ${{ fromJSON(steps.left.outputs.minutes) }}
         env:
@@ -465,7 +465,7 @@ jobs:
         run: |
           set -o pipefail
           only=(-only-testing:GatefoldUITests/PageNumberUITests/testEveryTurnMovesOnAPageAndAReopenKeepsTheNumbers)
-          if [ "$FULL" != false ]; then only+=(-only-testing:GatefoldUITests/ReviewerChecksUITests); fi
+          if true; then only+=(-only-testing:GatefoldUITests/ReviewerChecksUITests); fi
           python3 -I scripts/ci-within.py "$STEP_MINUTES" -- xcodebuild test-without-building -xctestrun "$XCTESTRUN" \
             -destination "$DESTINATION" "${only[@]}" \
             -resultBundlePath "$RUNNER_TEMP/duo.xcresult" 2>&1 | tee "$RUNNER_TEMP/duo.log" \
