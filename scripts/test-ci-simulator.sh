@@ -72,10 +72,10 @@ erase_case() {
   mkdir -p "$case_dir/tmp/ci-simulator"; cp "$case_dir/tmp/plan.json" "$case_dir/tmp/ci-simulator/gatefold-ipad.plan"
   local got code
   got="$(PATH="$work/bin:$PATH" FAKE="$case_dir/fake" FAKE_UNAVAIL_CALLS="$2" FAKE_BOOT_EXIT=0 FAKE_BOOTSTATUS_FAILED_CALLS="${5:-}" \
-    FAKE_HANG_CALLS="${6:-}" CI_SIMULATOR_LIST_TIMEOUT=1 \
+    FAKE_HANG_CALLS="${6:-}" CI_SIMULATOR_LIST_TIMEOUT=1 CI_SIMULATOR_BUDGET="${7:-inf}" \
     CI_SIMULATOR_BOOT_SIM="$work/boot-sim.sh" RUNNER_TEMP="$case_dir/tmp" GITHUB_ENV="$case_dir/env" \
     python3 -I "$here/ci-simulator.py" erase gatefold-ipad dev0 2>"$case_dir/err")"; code=$?
-  if [ "$code" = "$3" ] && [ "${got:--}" = "$4" ]; then echo "ok   erase: $1"; else
+  if [ "$code" = "$3" ] && [ "${got:--}" = "$4" ] && grep -qF -- "${8:-}" "$case_dir/err"; then echo "ok   erase: $1"; else
     echo "FAIL erase: $1: exit $code (want $3), printed '${got}' (want $4)"; tail -5 "$case_dir/err"; fails=$((fails + 1)); fi
   # Whatever device it ends on was erased (never a fresh one tested unerased).
   if [ "$3" = 0 ] && ! grep -qx "simctl erase $4" "$case_dir/fake/simctl"; then
@@ -88,5 +88,8 @@ erase_case "bootstatus says Failed, yet the device is Booted (#57)" "" 0 dev1 "1
 erase_case "bootstatus fails on the fresh device too" "" 1 - "1 2"
 erase_case "the check's listing times out on a healthy device: kept, not replaced (run 42502520118)" "" 0 dev0 "" "1 2"
 erase_case "one listing times out, the next answers: the answer decides" "" 0 dev0 "" "1"
+# The step's budget (CI_SIMULATOR_BUDGET, less ci-simulator.py's 30 s margin) is a few seconds: never killed by the step.
+erase_case "the step's time runs out mid-check: the device kept, with its own warning" "" 0 dev0 "" "1 2" 32 "Simulator check out of time"
+erase_case "the runtime went but no time is left for a fresh device: kept, with its own warning" "1" 0 dev0 "" "" 40 "Simulator check out of time"
 echo "$fails failed"
 [ "$fails" = 0 ]
