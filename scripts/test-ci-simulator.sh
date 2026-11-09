@@ -9,10 +9,13 @@ mkdir -p "$work/bin"
 cat > "$work/bin/xcrun" <<'FAKE'
 #!/usr/bin/env bash
 # Fake xcrun. Runtime listing number N (1-based) shows iOS 27.1 unavailable when N is in $FAKE_UNAVAIL_CALLS.
+# ci-simulator.py waits 1 s for a listing here (CI_SIMULATOR_LIST_TIMEOUT), so a hanging one times out.
 case "$*" in
   "--sdk iphonesimulator --show-sdk-version") echo 27.1 ;;
   "simctl list runtimes -j")
     n=$(( $(cat "$FAKE/runtime-calls" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$FAKE/runtime-calls"
+    # Listing N hangs, then gives up with no answer, when N is in $FAKE_HANG_CALLS.
+    for u in ${FAKE_HANG_CALLS:-}; do [ "$u" = "$n" ] && { sleep 3; exit 1; }; done
     avail=true; for u in $FAKE_UNAVAIL_CALLS; do [ "$u" = "$n" ] && avail=false; done
     echo "{\"runtimes\":[{\"platform\":\"iOS\",\"isAvailable\":$avail,\"version\":\"27.1\",\"identifier\":\"iOS-27-1\",\"supportedDeviceTypes\":[{\"name\":\"iPad Pro 13-inch (M5)\",\"identifier\":\"iPad-Pro-13\"}]}]}" ;;
   "simctl list devices -j")
@@ -69,6 +72,7 @@ erase_case() {
   mkdir -p "$case_dir/tmp/ci-simulator"; cp "$case_dir/tmp/plan.json" "$case_dir/tmp/ci-simulator/gatefold-ipad.plan"
   local got code
   got="$(PATH="$work/bin:$PATH" FAKE="$case_dir/fake" FAKE_UNAVAIL_CALLS="$2" FAKE_BOOT_EXIT=0 FAKE_BOOTSTATUS_FAILED_CALLS="${5:-}" \
+    FAKE_HANG_CALLS="${6:-}" CI_SIMULATOR_LIST_TIMEOUT=1 \
     CI_SIMULATOR_BOOT_SIM="$work/boot-sim.sh" RUNNER_TEMP="$case_dir/tmp" GITHUB_ENV="$case_dir/env" \
     python3 -I "$here/ci-simulator.py" erase gatefold-ipad dev0 2>"$case_dir/err")"; code=$?
   if [ "$code" = "$3" ] && [ "${got:--}" = "$4" ]; then echo "ok   erase: $1"; else
@@ -82,5 +86,7 @@ erase_case "the runtime went during the erase (gatefold#71)" "1" 0 dev1
 erase_case "it stays gone" "1 2 3" 1 -
 erase_case "bootstatus says Failed, yet the device is Booted (#57)" "" 0 dev1 "1"
 erase_case "bootstatus fails on the fresh device too" "" 1 - "1 2"
+erase_case "the check's listing times out on a healthy device: kept, not replaced (run 42502520118)" "" 0 dev0 "" "1 2"
+erase_case "one listing times out, the next answers: the answer decides" "" 0 dev0 "" "1"
 echo "$fails failed"
 [ "$fails" = 0 ]

@@ -121,14 +121,31 @@ def unready(udid, runtimes, devices):
     return None
 
 
+LIST_TRIES = 2  # a list that has not answered in this many tries says nothing about the device
+LIST_TIMEOUT = float(os.environ.get("CI_SIMULATOR_LIST_TIMEOUT", "120"))  # the offline test shortens it
+
+
+def listing(what):
+    """`simctl list <what> -j`, parsed, or None when it never answered in LIST_TRIES tries."""
+    for n in range(1, LIST_TRIES + 1):
+        try:
+            out = subprocess.run(["xcrun", "simctl", "list", what, "-j"], capture_output=True, text=True,
+                                 timeout=LIST_TIMEOUT)
+            return json.loads(out.stdout)[what]
+        except (OSError, subprocess.SubprocessError, ValueError, KeyError) as e:
+            print(f"simctl list {what}, try {n} of {LIST_TRIES}: no answer ({e!r})")
+    return None
+
+
 def check(udid):
-    try:
-        runtimes = json.loads(subprocess.run(["xcrun", "simctl", "list", "runtimes", "-j"], capture_output=True,
-                                             text=True, timeout=120).stdout)["runtimes"]
-        devices = json.loads(subprocess.run(["xcrun", "simctl", "list", "devices", "-j"], capture_output=True,
-                                            text=True, timeout=120).stdout)["devices"]
-    except (OSError, subprocess.SubprocessError, ValueError, KeyError) as e:
-        return f"simctl could not list the simulators ({e!r})"
+    """None when the device is ready, else why not. Only an answer can say a device is not ready: a list that
+    times out after a clean boot is the machine being slow (run 42502520118 replaced a healthy iPad over one), so
+    the device is kept, with a warning."""
+    runtimes, devices = listing("runtimes"), listing("devices")
+    if runtimes is None or devices is None:
+        print(f"::warning title=Simulator check unanswered::simctl list did not answer in {LIST_TRIES} tries; "
+              f"keeping {udid}, whose boot finished.")
+        return None
     return unready(udid, runtimes, devices)
 
 
