@@ -1764,6 +1764,7 @@ final class ReaderModel {
         }
         // Kept as of now, before any further wait.
         recordedMoves = moves
+        let keeping = moves
         // The first words on screen make the place exact; Readium's progression is a page boundary.
         // Only words captured on this very page count; a capture a reflow cut short leaves the last page's.
         let fresh = anchorLocator.flatMap { a in
@@ -1791,6 +1792,12 @@ final class ReaderModel {
             let now = Date()
             await placeWriteWait()
             let exact = await mapper?.position(for: BookLocation(here), at: now)
+            // A newer move kept during those waits owns the place: this write, resumed after it, would land
+            // over it (#46 at c4c3b6a: the Contents jump's write landed after Back's and kept the jump's page).
+            guard recordedMoves == keeping else {
+                readerLog.notice("place write [r\(self.readerNumber, privacy: .public)]: move \(keeping, privacy: .public) overtaken by move \(self.recordedMoves, privacy: .public)'s write, not written")
+                return refreshBookmarkState(await page?.visibleRange())
+            }
             if LaunchOptions.isUITest { savedWordsProbe = here.text.highlight.map(ReaderJS.normalize) ?? "" }
             readerLog.notice("place write [r\(self.readerNumber, privacy: .public)]: his move (\(fresh != nil ? "his first words" : "Readium's boundary", privacy: .public)) \(Self.placeTag(here), privacy: .public); reported \(Self.placeTag(locator), privacy: .public); move \(self.moves, privacy: .public), touched \(self.touchedSinceLocation, privacy: .public), layoutOnly \(self.layoutOnly, privacy: .public)")
             app.library.recordPlace(
