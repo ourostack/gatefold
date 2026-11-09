@@ -693,6 +693,8 @@ final class ReaderModel {
     /// anyway: 60, about 3 s. The settle itself is bounded at 4 rounds of two page reads; this only
     /// bounds a page whose reads never come back.
     static let revealLooks = 60
+    /// How long Catch up, taken over the opening cover, waits for the first page to show: 60 s in looks.
+    static let catchUpReadyLooks = 1200
     /// Looks (one every 50 ms) any open keeps its cover before the page is forced: 230, about 11.5 s,
     /// the placeholder's own timeout.
     static let coverLooks = 230
@@ -1122,6 +1124,11 @@ final class ReaderModel {
         suggestionLocator = nil
         suggestionRemote = nil
         suggestionCloud = nil
+        // Taken while the first page still loads behind the opening cover (the offer sits above it):
+        // Readium refuses a jump then, and the landing's few reads can't outwait a chapter's load. The
+        // landing goes once the page shows, which the cover itself bounds (`forceReady`); counted in looks.
+        for _ in 0..<Self.catchUpReadyLooks where !pageReady && !isClosed { try? await Task.sleep(for: .milliseconds(50)) }
+        guard !isClosed else { return }
         // The pages riffle past on the way, the way a thumb finds a place in a real book.
         await veiled(riffle: true, forward: s.targetProgression >= totalProgression) {
             await self.land(on: locator, progression: s.targetProgression, target: aim, cloud: cloud, rememberBack: !own)
