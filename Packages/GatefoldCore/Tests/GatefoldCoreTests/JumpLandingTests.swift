@@ -127,6 +127,20 @@ private final class ColdPage {
         #expect(page.reads <= 4)
     }
 
+    /// A landing overtaken while its jump was out (a Back freed by its count, then a turn of his) returns
+    /// the moment the jump comes back, with no beat first: a beat lets the late jump's own report run while
+    /// the caller has not yet settled the trip, and it was kept as a swipe of his (CI run 42614139141,
+    /// PlaceInvariantTests, "turn, then a swallowed tap").
+    @Test func aLandingOvertakenWhileItsJumpWasOutReturnsWithoutABeat() async {
+        let page = ColdPage(loadsAfterReads: 0)
+        var wanted = true, beats = 0
+        let landed = await JumpLanding.land(target: page.place(0.62), go: { wanted = false; return page.go(0.62) },
+                                            visible: { page.visible() }, stillWanted: { wanted }, beat: { beats += 1 })
+        #expect(!landed)
+        #expect(beats == 0, "beat \(beats) times after the jump came back no longer wanted")
+        #expect(page.jumps == 1)
+    }
+
     /// A navigator that reports nothing is not landed.
     @Test func noReportIsNotALanding() async {
         let page = ColdPage(loadsAfterReads: 0)
