@@ -39,6 +39,9 @@ enum CurlRelease {
         _ = await step(mirrored)
     }
 
+    /// Reads of the page a spring back left before an unreadable page counts as a miss.
+    static let readsBeforeJumpingAgain = 1
+
     /// What a spring back's check found: the page read live (nil if never read), and whether it took a second jump.
     struct Confirmation: Equatable { var page: ClosedRange<Double>?; var jumpedAgain: Bool; var reads: Int }
 

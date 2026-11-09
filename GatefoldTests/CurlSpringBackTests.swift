@@ -103,4 +103,37 @@ import Testing
         }
         #expect(landing(read(18).s) == 17, "the read's own start lands a page early")
     }
+    /// The page a spring back left, read live: nil until the reloaded start's document is the one on screen.
+    @MainActor final class Reads {
+        var answers: [ClosedRange<Double>?]
+        var jumps = 0
+        init(_ answers: [ClosedRange<Double>?]) { self.answers = answers }
+        func read() -> ClosedRange<Double>? { answers.count > 1 ? answers.removeFirst() : answers.first ?? nil }
+    }
+
+    /// A file just reloaded can't be read in its own document for a few reads after the jump back lands on it.
+    /// Those reads aren't a miss: the check reads again and finds the page, without a second jump (#110 walk
+    /// 42536069772: a spring back into a reloaded h-4 took a second jump and 35 s).
+    @Test func aPageNotYetReadableIsReadAgainNotJumpedTo() async {
+        let reads = Reads([nil, nil, 0.986428...1.0])
+        let found = await CurlRelease.confirm(0.993214, read: { reads.read() }, jump: { reads.jumps += 1 })
+        #expect(found.page == 0.986428...1.0)
+        #expect(!found.jumpedAgain && reads.jumps == 0, "a page it couldn't read yet was taken for a miss")
+    }
+
+    /// A page read elsewhere is a miss: one more jump.
+    @Test func aPageReadElsewhereTakesOneMoreJump() async {
+        let reads = Reads([0.0...0.0135, 0.986428...1.0])
+        let found = await CurlRelease.confirm(0.993214, read: { reads.read() }, jump: { reads.jumps += 1 })
+        #expect(found.jumpedAgain && reads.jumps == 1)
+        #expect(found.page == 0.986428...1.0)
+    }
+
+    /// A page that never becomes readable stops after a bounded number of reads and jumps once more, never spins.
+    @Test func aPageNeverReadableStopsReadingAndJumpsOnce() async {
+        let reads = Reads([nil])
+        let found = await CurlRelease.confirm(0.993214, read: { reads.read() }, jump: { reads.jumps += 1 })
+        #expect(found.jumpedAgain && reads.jumps == 1)
+        #expect(found.reads <= CurlRelease.readsBeforeJumpingAgain * 2 + 2, "read \(found.reads) times")
+    }
 }
