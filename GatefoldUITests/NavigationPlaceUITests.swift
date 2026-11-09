@@ -247,6 +247,8 @@ final class NavigationPlaceUITests: XCTestCase {
         print("PLACEHOLDER offer taken=\(taken) after \(reads) reads; still loading=\(stillLoading)")
         XCTAssertTrue(stillLoading, "the page was still loading when the tap was judged")
         XCTAssertTrue(taken, "Catch up over the opening cover takes the tap")
+        // And it lands: once the page shows, it is on words (the round that missed showed none for 120 s).
+        XCTAssertFalse(waitForWords(timeout: 180).isEmpty, "the page never showed words after Catch up")
     }
 
     func testAScrubberJumpKeepsThePlace() {

@@ -569,6 +569,28 @@ final class ScriptedPage: ReaderPage {
         f.model.close()
     }
 
+    /// Catch up taken while the first page is still loading behind the opening cover (the offer sits
+    /// above the cover since #46 at c8d3084): Readium refuses a jump then, and the landing's few reads
+    /// can't outwait a chapter's load, so the landing waits for the page to show, then goes.
+    @Test func catchUpTakenWhileTheFirstPageLoadsLandsOnceItShows() async throws {
+        let f = try await Self.make(remote: { pub, mapper in
+            try await Self.inkPadPlace(pub, mapper, index: 12, percent: 40)
+        }, book: { $0.totalProgression = 0.05; $0.lastOpened = Date().addingTimeInterval(-600) }, startAt: 0.05)
+        // No load: the first page has not shown, and the Cloud's reply is offered over the cover.
+        await f.model.checkRemote()
+        try #require(f.model.suggestion != nil, "the Cloud's place is offered")
+        try #require(!f.model.pageReady, "the first page is still loading")
+        let taking = Task { await f.model.acceptSuggestion() }
+        for _ in 0..<20 { await Task.yield(); try await Task.sleep(for: .milliseconds(10)) }
+        #expect(f.page.jumps.isEmpty && f.page.promoted.isEmpty, "the landing went while the first page was still loading")
+        #expect(f.model.suggestion == nil, "the offer stayed up after his tap")
+        f.model.forceReady()
+        await taking.value
+        #expect(f.model.pageReady)
+        #expect(!f.page.jumps.isEmpty || !f.page.promoted.isEmpty, "the landing never went once the page showed")
+        f.model.close()
+    }
+
     /// A landing settle moves the page to its words through the place they resolve to. Resolved to the
     /// page he left (the last place captured), its moves went nowhere: on CI's iPad the Cloud's words
     /// stayed pinned off the spread and every reopen showed another one (#46's reviewer leg, 5 of 5).
