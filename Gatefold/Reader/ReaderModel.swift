@@ -2132,6 +2132,10 @@ final class ReaderModel {
         // No page number: the counted one can still be the page before a jump within the chapter, and
         // Readium's positions aren't his pages. The pill says where it goes in words.
         pendingBack = (backJumps, here ?? location)
+        // Where each way back starts, beside the page on screen and the place kept (gatefold#143: a Back
+        // saved its chapter's start because the place it remembered was already that start). Tags only.
+        let tag: (Locator?) -> String = { $0.map(Self.placeTag) ?? "none" }
+        readerLog.notice("back: jump \(self.backJumps, privacy: .public) remembers \(tag(here ?? self.location), privacy: .public) (from \(here == nil ? "where he is" : "the page on screen", privacy: .public)); on screen \(tag(self.page?.currentLocation), privacy: .public); kept \(tag(self.app.library.book(self.bookID)?.locatorJSON.flatMap { try? Locator(jsonString: $0) }), privacy: .public)")
         if !keepingTheWayBack { backLocator = nil }
         return backJumps
     }
