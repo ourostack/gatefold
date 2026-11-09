@@ -261,27 +261,38 @@ def again(name, limit):
     return udid, outcome(proc.returncode, udid, int(timeout))
 
 
-ERASE_STEPS = [(("shutdown",), 120), (("erase",), 300), (("boot",), 300), (("bootstatus", "-b"), 420)]
+# Shutdown's bound is a setting so the offline test can make it hang. On a healthy runner an idle device shuts down in
+# seconds; the one that hung past 120 s (job 129031300623) did so while `simctl list` hung too, so CoreSimulatorService
+# was not answering: a longer bound or a second shutdown would only spend more of the step on the same stall.
+ERASE_STEPS = [(("shutdown",), setting("CI_SIMULATOR_SHUTDOWN_TIMEOUT", "120")), (("erase",), 300), (("boot",), 300),
+               (("bootstatus", "-b"), 420)]
 
 
 def erase(udid, steps=ERASE_STEPS):
     """Shut down, erase, boot and wait for the device, each call bounded (a runtime that won't mount hangs bootstatus,
-    #57), then check it. "ready", or why not."""
+    #57), then check it. "ready", or why not. Any call that does not finish or fails fails the erase, with its reason:
+    the cold test is only worth running on an erased device, and a shutdown that hung leaves the device Booted, so the
+    erase after it fails (405) and the device was never erased (gatefold#137, job 129031300623)."""
     for args, limit in steps:
         cmd = (args[0], udid, *args[1:])
+        timeout = bounded(limit)
         try:
-            out = subprocess.run(["xcrun", "simctl", *cmd], capture_output=True, text=True, timeout=bounded(limit))
-            print(f"simctl {' '.join(cmd)}: exit {out.returncode} {out.stderr.strip()[-300:]}")
+            out = subprocess.run(["xcrun", "simctl", *cmd], capture_output=True, text=True, timeout=timeout)
         except subprocess.TimeoutExpired:
-            print(f"simctl {' '.join(cmd)} hung past {limit} s")
-            if args[0] == "bootstatus":
-                return f"bootstatus hung past {limit} s"
-            continue
+            print(f"simctl {' '.join(cmd)} hung past {int(timeout)} s")
+            return f"simctl {args[0]} hung past {int(timeout)} s"
         except OSError as e:
             return f"simctl could not run ({e!r})"
+        said = (out.stdout + out.stderr).strip()
+        print(f"simctl {' '.join(cmd)}: exit {out.returncode} {out.stderr.strip()[-300:]}")
+        # A device that is already shut down is what the shutdown is for.
+        if args[0] == "shutdown" and out.returncode != 0 and "current state: Shutdown" in said:
+            continue
+        if out.returncode != 0:
+            return f"simctl {args[0]} exited {out.returncode}" + (" and said Failed" if "Failed" in said else "")
         # As boot-sim.sh: a boot whose bootstatus failed is a failed boot, even if the device is listed Booted.
-        if args[0] == "bootstatus" and (out.returncode != 0 or "Failed" in out.stdout + out.stderr):
-            return f"bootstatus exited {out.returncode}" + (" and said Failed" if "Failed" in out.stdout + out.stderr else "")
+        if args[0] == "bootstatus" and "Failed" in said:
+            return "bootstatus said Failed"
     problem = check(udid)
     return "ready" if problem is None else problem
 

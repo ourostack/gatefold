@@ -25,7 +25,18 @@ case "$*" in
     echo "$*" >> "$FAKE/simctl"
     n=$(( $(cat "$FAKE/bootstatus-calls" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$FAKE/bootstatus-calls"
     for u in ${FAKE_BOOTSTATUS_FAILED_CALLS:-}; do [ "$u" = "$n" ] && { echo "Data Migration Failed"; exit 0; }; done; true ;;
-  "simctl shutdown "*|"simctl delete "*|"simctl erase "*|"simctl boot "*) echo "$*" >> "$FAKE/simctl" ;;
+  "simctl shutdown "*)
+    echo "$*" >> "$FAKE/simctl"
+    # Shutdown N hangs when N is in $FAKE_SHUTDOWN_HANGS; says the device is already shut down in $FAKE_SHUTDOWN_DONE.
+    n=$(( $(cat "$FAKE/shutdown-calls" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$FAKE/shutdown-calls"
+    for u in ${FAKE_SHUTDOWN_HANGS:-}; do [ "$u" = "$n" ] && exec /bin/sleep 5; done
+    for u in ${FAKE_SHUTDOWN_DONE:-}; do [ "$u" = "$n" ] && { echo "Unable to shutdown device in current state: Shutdown" >&2; exit 149; }; done ;;
+  "simctl erase "*)
+    n=$(( $(cat "$FAKE/erase-calls" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$FAKE/erase-calls"
+    # Erase N fails as on job 129031300623 when N is in $FAKE_ERASE_405; then it never erased.
+    for u in ${FAKE_ERASE_405:-}; do [ "$u" = "$n" ] && { echo "Unable to erase contents and settings in current state: Booted (code=405)" >&2; exit 149; }; done
+    echo "$*" >> "$FAKE/simctl" ;;
+  "simctl delete "*|"simctl boot "*) echo "$*" >> "$FAKE/simctl" ;;
   *) echo "fake xcrun: unexpected $*" >&2; exit 64 ;;
 esac
 FAKE
@@ -125,6 +136,15 @@ fresh_case "the fresh device hangs: its whole process group ended, the timeout t
   "the fresh device did not boot within [0-9]+ s"
 fresh_case "less left than one boot attempt: no fresh device, and it says so" 60 \
   "only [0-9]+ s left, less than one boot attempt \\(60 s\\), so no fresh device"
+
+# gatefold#137 (job 129031300623): a shutdown that hung, then an erase that failed 405, still passed as erased. Any
+# erase call that does not finish or fails now fails the erase: a fresh device, erased, or the step fails.
+FAKE_SHUTDOWN_HANGS="1" CI_SIMULATOR_SHUTDOWN_TIMEOUT=1 erase_case "the shutdown hangs: not erased, so a fresh device, erased (gatefold#137)" "" 0 dev1
+# Shutdown 2 is the quiet one before the old device is deleted; 3 is the fresh device's.
+FAKE_SHUTDOWN_HANGS="1 3" CI_SIMULATOR_SHUTDOWN_TIMEOUT=1 erase_case "the fresh device's shutdown hangs too: fails, no app code ran" "" 1 - "" "" "" "simctl shutdown hung past 1 s. No app code ran"
+FAKE_ERASE_405="1" erase_case "the erase fails 405: not erased, so a fresh device, erased (gatefold#137)" "" 0 dev1
+FAKE_ERASE_405="1 2" erase_case "the fresh device's erase fails 405 too: fails, no app code ran" "" 1 - "" "" "" "simctl erase exited 149. No app code ran"
+FAKE_SHUTDOWN_DONE="1" erase_case "the device was already shut down: erased as usual" "" 0 dev0
 
 # The real boot-sim.sh against a fake xcrun. Bootstatus call N hangs when N is in $FAKE_HANGS; a device in
 # $FAKE_NO_BOOT never comes up. Its limits are cut to seconds and `sleep` caps at 3 s; killall and xcodebuild are
