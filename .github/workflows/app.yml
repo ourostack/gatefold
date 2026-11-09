@@ -12,7 +12,8 @@ name: App
 # PR clock (gatefold#39); a gate job named for each required check is green only when all of its shards passed.
 #
 # A pull request that changes only Markdown still gets every required check: `changes` says so, the test shards skip,
-# and each gate job (`iPad (...)`, `Duo (the reviewers' checks)`) reports success (gatefold#42).
+# and each gate job (`iPad (...)`, `Duo (the reviewers' checks)`, `Build and unit-test the app`) reports success
+# (gatefold#42).
 # The jobs run unless `changes` said "only Markdown", and a failed `build` turns them red at the download instead of
 # letting them skip, which would count as a pass. A failed `changes` leaves `full` empty, which runs the full lists.
 #
