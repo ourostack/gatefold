@@ -495,7 +495,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         }
         dropStandby()
         stopCounting()
-        model.keeper.reflowWillBegin(reason)
+        model.keeper.reflowWillBegin(reason, move: model.hisMoves)
         model.reflowDidBegin()
         if !curl.isActive {
             let page = navigator.view!
@@ -672,6 +672,11 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             // that would be a blank page and a spinner.
             await self.waitWhileLoading()
             guard generation == self.reflowGeneration, self.settledGeneration != generation else { return }
+            // He moved while it hung: no restore of the old place to start again.
+            if let model = self.weakModel, model.keeper.reflowing != nil, !model.keeper.restoreMayMove(move: model.hisMoves) {
+                self.giveWayIfHeMoved(generation: generation)
+                return
+            }
             self.uncoverUnsettled()
             guard self.reflowRetries < 3 else { return }
             self.reflowRetries += 1
@@ -679,11 +684,33 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             self.settleReflowSoon()
         }
     }
+    /// A restore he overtook (he turned or jumped while it ran, the 12 s watchdog's retry on a page it had
+    /// shown him among them): it ends where his move left the page, never bringing the old place back, and
+    /// his page becomes the anchor again.
+    private func giveWayIfHeMoved(generation: Int) {
+        // Closing is not a move to give way to: the restore just stops, and nothing is shown or taken after.
+        guard generation == reflowGeneration, let model = weakModel, !model.isClosed, model.keeper.reflowing != nil,
+              !model.keeper.restoreMayMove(move: model.hisMoves) else { return }
+        readerLog.notice("reflow: he moved while the restore ran; it gives way to his move")
+        model.keeper.restoreGaveWay()
+        settledGeneration = generation
+        reflowRetries = 0
+        showPageAsItIs()
+        // His move's own report took his place, or reflowDidFinish's owed-place path does now (with its guards
+        // for a landing and a launch jump in flight): no capture of whatever the page shows here.
+        model.reflowDidFinish(visible: nil)
+    }
+
     /// A reflow that hasn't settled in 12 s: the page as it is, never a picture of the old one under a
     /// leaf that stopped rising (a cold iPad turned on its side kept that up past 14 s in build 19).
     private func uncoverUnsettled() {
         guard reflowCover != nil || leaf != nil || navigator.view.alpha < 1 else { return }
         readerLog.error("reflow: no settle after 12 s; showing the page as it is")
+        showPageAsItIs()
+    }
+
+    private func showPageAsItIs() {
+        guard reflowCover != nil || leaf != nil || navigator.view.alpha < 1 else { return }
         unfolding = false
         dropLeaf()
         let cover = reflowCover
@@ -702,7 +729,12 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
 
     private func restoreAnchor(generation: Int) async {
         // A newer reflow may begin during any await below; it owns the restore from then on.
-        func current() -> Bool { generation == reflowGeneration && weakModel != nil }
+        // His move (a turn, a jump, a landing) since the reflow began also ends it: the page is his again.
+        func current() -> Bool {
+            guard generation == reflowGeneration, let model = weakModel else { return false }
+            return model.keeper.restoreMayMove(move: model.hisMoves)
+        }
+        defer { giveWayIfHeMoved(generation: generation) }
         _ = await navigator.evaluateJavaScript(ReaderJS.install)
         firstScriptBack = max(firstScriptBack, generation)
         _ = await navigator.evaluateJavaScript(ReaderJS.setColumns(columns))
@@ -729,6 +761,14 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         var after = visible
         let action = visible.map { model.keeper.reflowDidSettle(visible: $0) } ?? RestoreAction.none
         let held = model.keeper.anchor
+        // A restore run again on a page with nothing over it (the 12 s watchdog showed the page): its jump
+        // and its moves are held behind a picture of the page and shown as one change (gatefold#108).
+        var restorePicture: UIView?
+        // Overtaken (a newer reflow, his move, the close): this restore's picture goes at once, never a newer one's.
+        defer { if let restorePicture, settlePicture === restorePicture { dropSettlePicture() } }
+        if case .jump = action, !pageCovered, settlePicture == nil {
+            if holdSettlePicture() { restorePicture = settlePicture } else { noteVisibleMove("restore jump") }
+        }
         if case let .jump(anchor) = action,
            let locator = model.locator(for: anchor) {
             // A jump made while the book is still settling can land short of the place; try again.
@@ -747,9 +787,14 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         if case let .jump(anchor) = action { target = anchor }
         if columns == 2, let target {
             placingGeneration = generation
-            let moved = await keepOnLeft(target, current: current)
+            let moved = await keepOnLeft(target, purpose: .restore, current: current)
             if placingGeneration == generation { placingGeneration = -1 }
             if let moved { after = moved }
+        }
+        guard current() else { return }
+        if let picture = restorePicture {
+            if settlePicture === picture { await releaseSettlePicture() }
+            restorePicture = nil
         }
         guard current() else { return }
         model.keeper.restoreDidComplete()
@@ -797,10 +842,11 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     /// Moves the spread so `anchor`'s words start its left page: a blank verso before the file's first
     /// page shifts every page one side over. Returns what's on screen after a move, nil when none was needed.
     /// The moves are `SpreadSettler`'s: each is judged by measuring the page again once it stands still.
-    private func keepOnLeft(_ anchor: ReadingAnchor, current: () -> Bool) async -> VisibleRange? {
+    private func keepOnLeft(_ anchor: ReadingAnchor, purpose: SpreadSettler.Purpose,
+                            current: () -> Bool) async -> VisibleRange? {
         guard let text = anchor.text?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else { return nil }
         let surface = WebSpread(host: self, anchor: anchor, text: text)
-        guard await SpreadSettler.keepOnLeft(surface, current: current) == true, current() else { return nil }
+        guard await SpreadSettler.keepOnLeft(surface, current: current, purpose: purpose) == true, current() else { return nil }
         let visible = await visibleRange()
         readerLog.notice("spread: words placed on the left page; \(surface.moves, privacy: .public) moves")
         return visible
@@ -812,7 +858,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         guard columns == 2, stillWanted(), !lateSettling, placingGeneration == -1 else { return }
         lateSettling = true
         defer { lateSettling = false }
-        if await keepOnLeft(anchor, current: stillWanted) != nil {
+        if await keepOnLeft(anchor, purpose: .recheck, current: stillWanted) != nil {
             readerLog.notice("spread: a late layout had moved his words; put back on the left page")
         }
     }
@@ -840,20 +886,31 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             return side
         }
 
+        /// A move made on a page nothing covers is one he watches: counted, so a test can say there was none.
+        private func moving(_ kind: String) {
+            moves += 1
+            guard !isCovered, host.settlePicture == nil else { return }
+            host.noteVisibleMove(kind)
+        }
+
         func pinWords() async -> Bool {
+            let visible = !isCovered && host.settlePicture == nil
             let pinned = await number(ReaderJS.pinToTop(text)) == 1
-            if pinned { moves += 1 }
+            if pinned {
+                moves += 1
+                if visible { host.noteVisibleMove("column break") }
+            }
             return pinned
         }
 
         func toggleVerso() async {
-            moves += 1
+            moving("verso")
             _ = await host.navigator.evaluateJavaScript(ReaderJS.toggleVerso)
         }
 
         func goToSavedPlace() async {
             guard let locator = host.model.locator(for: anchor) else { return }
-            moves += 1
+            moving("saved place")
             _ = await host.navigator.go(to: locator, options: .init(animated: false))
         }
 
@@ -861,12 +918,12 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             guard let saved = host.model.locator(for: anchor) else { return }
             // Where the words are in the page as it is laid out now, not where the place was saved.
             let progression = await host.progression(of: text) ?? saved.locations.progression
-            moves += 1
+            moving("to his words")
             _ = await host.navigator.go(to: saved.copy(locations: { $0.progression = progression }), options: .init(animated: false))
         }
 
         func stepSpread(forward: Bool) async {
-            moves += 1
+            moving("a spread")
             _ = forward ? await host.navigator.goForward(options: .init(animated: false))
                         : await host.navigator.goBackward(options: .init(animated: false))
         }
@@ -879,44 +936,62 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
 
         func beat() async { try? await Task.sleep(for: .milliseconds(120)) }
 
-        var isCovered: Bool {
-            host.reflowCover != nil || host.veil != nil || host.navigator.view.alpha < 0.5
-                || host.weakModel?.reopenPicture != nil
-        }
+        var isCovered: Bool { host.pageCovered }
 
-        func hold() async -> Bool {
-            let page = host.navigator.view!
-            guard host.settlePicture == nil, let container = page.superview,
-                  let cover = page.snapshotView(afterScreenUpdates: false) else { return false }
-            cover.frame = page.frame
-            cover.isUserInteractionEnabled = false
-            container.insertSubview(cover, aboveSubview: page)
-            host.settlePicture = cover
-            readerLog.notice("spread: held a picture over the page he is reading while his words are put back")
-            return true
-        }
+        func hold() async -> Bool { host.holdSettlePicture() }
 
         func release(landed: Bool) async {
-            guard let cover = host.settlePicture else { return }
-            guard landed else {
-                // Overtaken by his move, a reflow or the close: nothing may stand over his page.
-                host.dropSettlePicture()
-                return
-            }
-            // His words on the left page as the moves left them, painted, before the picture goes.
-            _ = await host.renderedSnapshot(afterChange: true)
-            guard host.settlePicture === cover else { return }
-            await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
-                UIView.animate(withDuration: 0.2, delay: 0, options: [.curveEaseInOut]) {
-                    cover.alpha = 0
-                } completion: { _ in done.resume() }
-            }
-            if host.settlePicture === cover { host.dropSettlePicture() }
+            // Overtaken by his move, a reflow or the close: nothing may stand over his page.
+            guard landed else { host.dropSettlePicture(); return }
+            await host.releaseSettlePicture()
         }
+    }
+
+    /// Something stands over the page (a reflow's cover, a jump's veil, the reopen picture), so a move is not seen.
+    fileprivate var pageCovered: Bool {
+        reflowCover != nil || veil != nil || navigator.view.alpha < 0.5 || weakModel?.reopenPicture != nil
+    }
+
+    /// Puts a picture of the page as it is over it; false when one is already up or none could be taken.
+    fileprivate func holdSettlePicture() -> Bool {
+        let page = navigator.view!
+        guard settlePicture == nil, let container = page.superview,
+              let cover = page.snapshotView(afterScreenUpdates: false) else { return false }
+        cover.frame = page.frame
+        cover.isUserInteractionEnabled = false
+        container.insertSubview(cover, aboveSubview: page)
+        settlePicture = cover
+        readerLog.notice("spread: held a picture over the page he is reading while his words are put back")
+        return true
+    }
+
+    /// Fades the held picture onto the page as the moves left it, once that has painted: one change.
+    fileprivate func releaseSettlePicture() async {
+        guard let cover = settlePicture else { return }
+        _ = await renderedSnapshot(afterChange: true)
+        guard settlePicture === cover else { return }
+        await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
+            UIView.animate(withDuration: 0.2, delay: 0, options: [.curveEaseInOut]) {
+                cover.alpha = 0
+            } completion: { _ in done.resume() }
+        }
+        if settlePicture === cover { dropSettlePicture() }
     }
 
     /// The picture a correction on a spread he is reading holds over the page (`WebSpread.hold`).
     private var settlePicture: UIView?
+    /// UI tests: up once a settle moved a page nothing covered, so a test can say every move was hidden.
+    private var visibleMoveMarker: UIView?
+
+    fileprivate func noteVisibleMove(_ kind: String) {
+        readerLog.error("spread: moved a page he can see (\(kind, privacy: .public))")
+        guard LaunchOptions.isUITest, visibleMoveMarker == nil else { return }
+        let marker = UIView(frame: CGRect(x: 0, y: 0, width: 1, height: 1))
+        marker.isAccessibilityElement = true
+        marker.accessibilityIdentifier = "reader.visibleSettleMove"
+        view.addSubview(marker)
+        visibleMoveMarker = marker
+    }
     /// A late look for his words is running: one at a time, so two never stack pictures or undo each
     /// other's verso.
     private var lateSettling = false
