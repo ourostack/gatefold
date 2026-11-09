@@ -11,6 +11,8 @@ final class ReloadedPage: ReaderPage {
     var currentLocation: Locator?
     /// The page on screen, read live (`pageRange`): where the words really are.
     var live: VisibleRange?
+    /// The first words on the page on screen, read live; nil when the page gives none.
+    var words: String? = "words at the top of the page on screen"
 
     init(at location: Locator) { currentLocation = location }
 
@@ -29,14 +31,16 @@ final class ReloadedPage: ReaderPage {
 
     func currentAnchor() async -> (ReadingAnchor, Locator)? {
         guard let here = currentLocation else { return nil }
-        return (ReadingAnchor(href: here.href.string, progression: here.locations.progression ?? 0, text: "words on the page"), here)
+        // As the app's: the words are read from the screen, the progression is Readium's report.
+        return (ReadingAnchor(href: here.href.string, progression: here.locations.progression ?? 0, text: words),
+                here.copy(text: { $0 = Locator.Text(highlight: self.words) }))
     }
 }
 
 @MainActor @Suite(.serialized) struct TurnAfterReloadTests {
     /// He turns back from a chapter's first page onto the previous chapter's last page, and Readium, having
-    /// reloaded that chapter, reports its start: the place saved is the page he sees, its last.
-    @Test func aTurnBackAfterAReloadSavesThePageOnScreenNotTheFilesStart() async throws {
+    /// reloaded that chapter, reports its start; `words` are what the page on screen gives as its first words.
+    private func turnBackAfterAReload(words: String?) async throws -> (place: Locator, previous: String) {
         let sync = StubSync()
         await sync.setLibrary(.success([ReaderSyncTests.frankenstein]))
         await sync.setRemote(nil)
@@ -58,6 +62,7 @@ final class ReloadedPage: ReaderPage {
         page.currentLocation = Locator(href: try #require(AnyURL(string: previous)), mediaType: .xhtml,
                                        locations: .init(progression: 0, totalProgression: 0.29))
         page.live = VisibleRange(href: previous, start: 0.986428, end: 1)
+        page.words = words
         model.userTurnedPage()
 
         func saved() -> Locator? {
@@ -67,9 +72,25 @@ final class ReloadedPage: ReaderPage {
             try await Task.sleep(for: .milliseconds(25))
         }
         let place = try #require(saved(), "no place was saved")
+        model.close()
+        return (place, previous)
+    }
+
+    /// The place saved is the page he sees: in its chapter, on its page, with the page's own first words.
+    @Test func aTurnBackAfterAReloadSavesThePageOnScreenNotTheFilesStart() async throws {
+        let (place, previous) = try await turnBackAfterAReload(words: "words at the top of the page on screen")
         #expect(place.href.string == previous, "saved in \(place.href.string), not the chapter on screen")
         let p = place.locations.progression ?? -1
         #expect(p >= 0.986428 && p <= 1, "saved at \(p) in the chapter, not on the page on screen (0.986...1)")
-        model.close()
+        #expect(place.text.highlight == "words at the top of the page on screen", "saved without the page's own words")
+    }
+
+    /// A page that gives no words still saves the page he sees, by its progression alone.
+    @Test func aTurnBackAfterAReloadWithNoWordsSavesThePagesMiddle() async throws {
+        let (place, previous) = try await turnBackAfterAReload(words: nil)
+        #expect(place.href.string == previous)
+        let p = place.locations.progression ?? -1
+        #expect(p >= 0.986428 && p <= 1, "saved at \(p), not on the page on screen (0.986...1)")
+        #expect(place.text.highlight == nil, "kept words that weren't the page's")
     }
 }
