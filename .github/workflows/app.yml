@@ -142,13 +142,16 @@ jobs:
     # a real miss. The Duo job's posture test skips on the folded cover; this one runs it on a spread.
     # Three jobs side by side, each with at least 30% headroom (one job took 94 of 100 min in build
     # 19). Measured on a hosted runner: about 13 min to set up and build, then the tests' own time.
+    # Each limit is that plus the 12 min the time-left action keeps after the tests for the logs, so the
+    # tests keep the time they had before the logs were kept (gatefold#141): green place jobs took up to
+    # 79 min, and a cap at 90 - 12 would have stopped them.
     strategy:
       fail-fast: false
       matrix:
         include:
           - name: place
             # 48 min measured with the erased-iPad rotation at 23; it has taken 38, so 63 / 0.7.
-            timeout: 90
+            timeout: 102 # 90 for the job, 12 for the logs
             # Rotation first, on an erased iPad (the cold step), then the rest on the same one.
             cold: true
             title: Jumps keep his place; the number's slot is never blank
@@ -157,12 +160,12 @@ jobs:
               CountingPlaceholderUITests
           - name: taps
             # 53 min measured (a 10 min simulator boot among them); measured / 0.7 keeps 30% headroom.
-            timeout: 80
+            timeout: 92 # 80 for the job, 12 for the logs
             title: Every Fine-Tune tap lands; the furniture never moves the words
             tests: FineTuneTapUITests PageFurnitureUITests
           - name: reviewer
             # 65 min measured with the full list; measured / 0.7 keeps 30% headroom.
-            timeout: 95
+            timeout: 107 # 95 for the job, 12 for the logs
             title: The reviewers' checks - reopen by hash, true numbers, reader-wide toggles, density, landing; the reader fits its window
             # Pushes to main run the whole list.
             tests: >-
@@ -335,11 +338,11 @@ jobs:
     # xcode-27 is the only hosted image with Xcode 27.1: the first SDK with the iPhone Duo fold
     # APIs, the iOS 27 deployment target and the iPhone Duo simulator. macos-latest (macOS 26) has
     # only Xcode 26, so this job cannot move there.
-    # ~55 min in build 19: 85 keeps 30% headroom.
+    # ~55 min in build 19: 85 keeps 30% headroom, and 12 more for the logs after the tests (gatefold#141).
     needs: [changes, build]
     if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
     runs-on: xcode-27
-    timeout-minutes: 85
+    timeout-minutes: 97
     steps:
       - name: Note when the job began, so each test step can stop in time to upload its logs (gatefold#126)
         run: echo "JOB_START=$(date +%s)" >> "$GITHUB_ENV"
@@ -385,7 +388,7 @@ jobs:
       - id: left_unit
         uses: ./.github/actions/time-left
         with:
-          limit: "85" # the job's timeout-minutes
+          limit: "97" # the job's timeout-minutes
       - name: Unit tests
         timeout-minutes: ${{ fromJSON(steps.left_unit.outputs.minutes) }}
         env:
@@ -399,7 +402,7 @@ jobs:
       - id: left_ui
         uses: ./.github/actions/time-left
         with:
-          limit: "85" # the job's timeout-minutes
+          limit: "97" # the job's timeout-minutes
       - name: Reading position survives posture and font changes; every Fine-Tune tap lands (UI tests)
         timeout-minutes: ${{ fromJSON(steps.left_ui.outputs.minutes) }}
         env:
@@ -454,7 +457,7 @@ jobs:
     if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
     runs-on: xcode-27
     # 45 min measured (build 20): 65 keeps 30% headroom.
-    timeout-minutes: 65
+    timeout-minutes: 77 # 65 for the job, 12 for the logs after the tests (gatefold#141)
     steps:
       - name: Note when the job began, so each test step can stop in time to upload its logs (gatefold#126)
         run: echo "JOB_START=$(date +%s)" >> "$GITHUB_ENV"
@@ -496,7 +499,7 @@ jobs:
       - id: left
         uses: ./.github/actions/time-left
         with:
-          limit: "65" # the job's timeout-minutes
+          limit: "77" # the job's timeout-minutes
       - name: The reviewers' checks on the Duo
         timeout-minutes: ${{ fromJSON(steps.left.outputs.minutes) }}
         env:
