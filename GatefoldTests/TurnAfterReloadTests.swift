@@ -91,12 +91,12 @@ final class ReloadedPage: ReaderPage {
 
     /// Waits (in reads of the saved place) for a place on the previous chapter's last page, past the turn's
     /// second look.
-    private func placeOnItsLastPage(_ t: Turn) async throws -> Locator {
+    private func placeOnItsLastPage(closing close: Bool = true, _ t: Turn) async throws -> Locator {
         for _ in 0..<80 where t.saved()?.href.string != t.previous || (t.saved()?.locations.progression ?? 0) < 0.9 {
             try await Task.sleep(for: .milliseconds(25))
         }
         let place = try #require(t.saved(), "no place was saved")
-        t.model.close()
+        if close { t.model.close() }
         return place
     }
 
@@ -172,5 +172,27 @@ final class ReloadedPage: ReaderPage {
         t.model.close()
         #expect(place.href.string == t.previous)
         #expect(place.locations.progression == 0, "corrected by a read it couldn't trust: \(place.locations.progression ?? -1)")
+    }
+
+    /// A rotation right after a corrected turn restores the page he sees: the anchor it restores by is the
+    /// corrected page, not the file's start that Readium still names.
+    @Test func aRotationAfterACorrectedTurnRestoresThePageOnScreen() async throws {
+        let t = try await opened()
+        _ = try turnBack(t, words: "words at the top of the page on screen")
+        t.model.userTurnedPage()
+        _ = try await placeOnItsLastPage(closing: false, t)
+        // He turns the device: Readium lays the file out again at the start it still names.
+        t.model.keeper.reflowWillBegin(.rotation)
+        t.model.reflowDidBegin()
+        let action = t.model.keeper.reflowDidSettle(visible: try #require(await t.page.visibleRange()))
+        let anchor = try #require(t.model.keeper.anchor, "no anchor to restore by")
+        let jump = try #require(t.model.locator(for: anchor), "nothing to jump to")
+        t.model.close()
+        #expect(anchor.href == t.previous)
+        #expect(anchor.progression >= 0.986428 && anchor.progression <= 1, "the restore's anchor is @\(anchor.progression), not the page on screen")
+        #expect(action == .jump(anchor), "the file's start counted as his page")
+        let p = jump.locations.progression ?? -1
+        #expect(p >= 0.986428 && p <= 1, "the restore jumps to @\(p), not the page on screen")
+        #expect(jump.text.highlight == "words at the top of the page on screen")
     }
 }
