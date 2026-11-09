@@ -18,6 +18,9 @@ outputs:
   minutes:
     description: Whole minutes, at least 1.
     value: ${{ steps.left.outputs.minutes }}
+  until:
+    description: When those minutes end, in epoch seconds, for scripts/ci-within.py and any budget inside the step.
+    value: ${{ steps.left.outputs.until }}
 runs:
   using: composite
   steps:
@@ -35,3 +38,4 @@ runs:
         [ "$left" -ge 1 ] || left=1
         echo "$left min for this step: the job's limit is $LIMIT min, $RESERVE kept for its logs"
         echo "minutes=$left" >> "$GITHUB_OUTPUT"
+        echo "until=$(( $(date +%s) + left * 60 ))" >> "$GITHUB_OUTPUT"
