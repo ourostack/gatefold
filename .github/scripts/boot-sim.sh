@@ -11,23 +11,34 @@
 # Usage: boot-sim.sh <name> <device type id> <runtime id>
 set -uo pipefail
 name="$1" type="$2" runtime="$3"
-# Limits, in seconds; the offline test (scripts/test-ci-simulator.sh) shortens them.
-BOOTSTATUS_LIMIT="${BOOT_SIM_BOOTSTATUS_LIMIT:-420}" RECHECK_LIMIT="${BOOT_SIM_RECHECK_LIMIT:-90}" LIST_LIMIT="${BOOT_SIM_LIST_LIMIT:-60}"
+# Limits, in whole seconds; the offline test (scripts/test-ci-simulator.sh) shortens them. An override that is empty
+# means the default; a fraction is rounded down; anything else is refused.
+limit() {
+  local v="${1:-$2}"; v="${v%%.*}"
+  [[ $v =~ ^[0-9]+$ ]] || { echo "boot-sim.sh: a limit must be a number of seconds, not '$1'" >&2; exit 2; }
+  echo "$v"
+}
+BOOTSTATUS_LIMIT="$(limit "${BOOT_SIM_BOOTSTATUS_LIMIT:-}" 420)" || exit 2
+RECHECK_LIMIT="$(limit "${BOOT_SIM_RECHECK_LIMIT:-}" 90)" || exit 2
+LIST_LIMIT="$(limit "${BOOT_SIM_LIST_LIMIT:-}" 60)" || exit 2
 # within <seconds> <command...>: the command's own exit code, or 124 if it ran out of time; then it is killed (TERM,
-# then KILL 5 s later) and this logs "hung". This shell watches the command itself, every 0.2 s, so no watchdog
+# then KILL 5 s later) and this logs "hung". (A command that exits 124 by itself reads as a hang too; simctl does
+# not.) The limit is measured on the clock ($SECONDS), not by counting polls, which run slow on a busy runner.
+# This shell watches the command itself, every 0.2 s, so no watchdog
 # process exists to race or outlive it: a watchdog subshell could be stopped between forking its sleep and noting its
 # PID, and the orphaned sleep then held `$(... 2>&1)` open for the whole limit (#74 review). No pkill or temp files,
 # so it runs the same on macOS's /bin/bash 3.2 and in the core job's swift:6.2 container.
 within() {
   local secs="$1"; shift
   "$@" &
-  local pid=$! ticks=$(( secs * 5 ))
+  local pid=$! end=$(( SECONDS + secs ))
   while kill -0 "$pid" 2>/dev/null; do
-    if (( ticks-- <= 0 )); then
+    # Past the end, not at it: $SECONDS counts whole seconds, so this fires between secs and secs + 1, never early.
+    if (( SECONDS > end )); then
       echo "$* hung past $secs s" >&2
       kill "$pid" 2>/dev/null
-      local grace=25
-      while kill -0 "$pid" 2>/dev/null && (( grace-- > 0 )); do sleep 0.2; done
+      local grace=$(( SECONDS + 5 ))
+      while kill -0 "$pid" 2>/dev/null && (( SECONDS < grace )); do sleep 0.2; done
       kill -9 "$pid" 2>/dev/null
       wait "$pid" 2>/dev/null
       return 124
@@ -46,7 +57,8 @@ except ValueError: print("Unknown")' "$1"
 try_boot() {
   xcrun simctl boot "$1" >&2 || true
   status="$(within "$BOOTSTATUS_LIMIT" xcrun simctl bootstatus "$1" -b 2>&1)"
-  if [[ $? == 124 ]]; then
+  local code=$?
+  if [[ $code == 124 ]]; then
     echo "$status" | tail -3 >&2
     # Listed Booted is not ready: the data migration runs after that, and bootstatus is what waits for it (#57). So a
     # device that is up gets one more bounded bootstatus; it passes only if that one finishes clean (gatefold#132:
@@ -71,11 +83,16 @@ try_boot() {
   fi
   echo "$status" | tail -3 >&2
   grep -q "Failed" <<<"$status" && return 1
-  # bootstatus finished clean, which is the stronger word: a listing that did not answer does not undo it (as
-  # ci-simulator.py since 8b144cf; a healthy device was thrown away over one, run 42502520118).
+  # A bootstatus that exited 0 is the stronger word: a listing that did not answer does not undo it (as
+  # ci-simulator.py since 8b144cf; a healthy device was thrown away over one, run 42502520118). One that exited
+  # otherwise is not trusted on an unanswered listing (both happen when CoreSimulatorService is failing).
   case "$(booted "$1")" in
     True) return 0 ;;
-    Unknown) echo "$1: bootstatus finished clean; the device listing did not answer, so that stands" >&2; return 0 ;;
+    Unknown)
+      if [[ $code == 0 ]]; then
+        echo "$1: bootstatus finished clean; the device listing did not answer, so that stands" >&2; return 0
+      fi
+      echo "$1: bootstatus exited $code and the device listing did not answer; taken as not booted" >&2; return 1 ;;
     *) return 1 ;;
   esac
 }

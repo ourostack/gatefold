@@ -129,6 +129,7 @@ case "$1 $2" in
     n=$(( $(cat "$FAKE/bootstatus" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$FAKE/bootstatus"
     echo "bootstatus $3" >> "$FAKE/calls"
     for u in ${FAKE_HANGS:-}; do [ "$u" = "$n" ] && { echo "Monitoring boot status for $3."; exec /bin/sleep 30; }; done
+    for u in ${FAKE_BOOTSTATUS_EXITS:-}; do [ "$u" = "$n" ] && { echo "Unable to boot: the service went away."; exit 1; }; done
     echo "Device already booted, nothing to do." ;;
   "simctl list")
     if [ "${3:-}" = devices ] && [ "${4:-}" = -j ]; then
@@ -148,12 +149,12 @@ printf '#!/usr/bin/env bash\nexit 0\n' > "$real/bin/xcodebuild"
 chmod +x "$real/bin/"*
 # real_case <name> <hanging bootstatus calls> <devices that never boot> <expected UDID> <expected log text> \
 #   <text the log must not have> [a line the fake's call log must have]. $FAKE_LIST_HANGS: device listings that hang.
-# Under /bin/bash, as the macOS runner runs it (3.2 there; the core job's container has bash 5).
+# Under /bin/bash, macOS's 3.2, unless $BOOT_SIM_BASH names another (the core job's container has bash 5).
 real_case() {
   local d="$real/$(echo "$1" | tr -c 'a-zA-Z0-9\n' -)"; mkdir -p "$d/fake"
   local began got code took; began=$(date +%s)
   got="$(PATH="$real/bin:$PATH" FAKE="$d/fake" FAKE_HANGS="$2" FAKE_NO_BOOT="$3" BOOT_SIM_BOOTSTATUS_LIMIT=2 \
-    BOOT_SIM_RECHECK_LIMIT=2 BOOT_SIM_LIST_LIMIT=2 /bin/bash "${BOOT_SIM_UNDER_TEST:-$here/../.github/scripts/boot-sim.sh}" gatefold-ipad iPad-Pro-13 iOS-27-1 2>"$d/err")"; code=$?
+    BOOT_SIM_RECHECK_LIMIT=2 BOOT_SIM_LIST_LIMIT=2 "${BOOT_SIM_BASH:-/bin/bash}" "${BOOT_SIM_UNDER_TEST:-$here/../.github/scripts/boot-sim.sh}" gatefold-ipad iPad-Pro-13 iOS-27-1 2>"$d/err")"; code=$?
   took=$(( $(date +%s) - began ))
   # The script's last background process is gone once it returns (nothing of a watchdog left to act).
   if [ "$code" = 0 ] && [ "$got" = "$4" ] && grep -qF -- "$5" "$d/err" && ! grep -qF -- "$6" "$d/err" \
@@ -180,6 +181,22 @@ FAKE_LIST_HANGS="1" real_case "bootstatus hangs, the listing hangs once, then an
   "1" "" dev1 "dev1 is booted; its second bootstatus finished" "state unknown"
 FAKE_LIST_HANGS="1 2" real_case "bootstatus hangs, the listing hangs twice: state unknown, shut down, the next device" \
   "1" "" dev2 "dev1: state unknown (the device listing did not answer twice); taken as not booted" "dev1 never booted" "shutdown dev1"
+# Bootstatus exits non-zero (no "Failed") and the listing does not answer, as when CoreSimulatorService is failing:
+# not trusted, so not that device.
+FAKE_BOOTSTATUS_EXITS="1" FAKE_LIST_HANGS="1" real_case "bootstatus exits 1, then the listing hangs: not that device" \
+  "" "" dev2 "dev1: bootstatus exited 1 and the device listing did not answer; taken as not booted" "dev1: bootstatus finished clean"
+# A limit override: a fraction is rounded down, not a crash; one that is not a number is refused.
+fr="$real/fraction"; mkdir -p "$fr/fake"
+if got="$(PATH="$real/bin:$PATH" FAKE="$fr/fake" BOOT_SIM_LIST_LIMIT=2.5 BOOT_SIM_BOOTSTATUS_LIMIT= \
+   "${BOOT_SIM_BASH:-/bin/bash}" "${BOOT_SIM_UNDER_TEST:-$here/../.github/scripts/boot-sim.sh}" gatefold-ipad iPad-Pro-13 iOS-27-1 2>"$fr/err")" \
+   && [ "$got" = dev1 ]; then echo "ok   boot-sim.sh: a fractional or empty limit override means the rounded value or the default"
+else echo "FAIL boot-sim.sh: a fractional or empty limit override: printed '$got'"; tail -3 "$fr/err"; fails=$((fails + 1)); fi
+mkdir -p "$fr/bad/fake"
+PATH="$real/bin:$PATH" FAKE="$fr/bad/fake" BOOT_SIM_LIST_LIMIT=soon "${BOOT_SIM_BASH:-/bin/bash}" "${BOOT_SIM_UNDER_TEST:-$here/../.github/scripts/boot-sim.sh}" \
+  gatefold-ipad iPad-Pro-13 iOS-27-1 >/dev/null 2>"$fr/bad/err"; code=$?
+if [ "$code" = 2 ] && grep -q "a limit must be a number of seconds, not 'soon'" "$fr/bad/err" && [ ! -e "$fr/bad/fake/created" ]; then
+  echo "ok   boot-sim.sh: a limit override that is not a number is refused before any device is made"
+else echo "FAIL boot-sim.sh: a non-number limit override: exit $code (want 2)"; tail -3 "$fr/bad/err"; fails=$((fails + 1)); fi
 # The watchdog of a bootstatus that finished must not wake: the old one logged a false hang on most boots.
 for n in 1 2 3 4 5; do real_case "a clean boot logs no hang (run $n of 5)" "" "" dev1 "Device already booted" "hung"; done
 
