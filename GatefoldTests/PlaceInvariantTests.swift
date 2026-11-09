@@ -194,6 +194,27 @@ import Testing
         f.model.close()
     }
 
+    /// Back to a page partway through its chapter, taken by a web view still loading that opens the
+    /// chapter's first page instead (CI's iPad at 8c5f294: Back after a Contents jump came back to the
+    /// chapter's start, not his page). Back is sent again until his page is on screen.
+    @Test func backReachesHisPageWhenTheFirstTryOpensTheChapterStart() async throws {
+        let f = try await S.make(remote: { _, _ in nil }, startAt: 0.05)
+        await f.model.load()
+        let his = try #require(f.page.currentLocation)
+        try #require((his.locations.progression ?? 0) > 0.05, "his page is partway through its chapter")
+        await f.model.locationDidChange(his)
+        await f.model.go(toProgression: 0.7, rememberBack: true)
+        f.model.backBeat = { await Task.yield() }
+        f.page.dropsPlaceInFile = 1
+        await f.model.goBack()
+        let want = his.locations.totalProgression ?? -1
+        let at = f.page.currentLocation?.locations.totalProgression ?? -2
+        #expect(f.page.currentLocation?.href == his.href, "Back went to another chapter")
+        #expect(abs(at - want) < 0.005, "Back came back to \(at), not his page at \(want)")
+        #expect(f.page.dropsPlaceInFile == 0, "the dropped jump was never tried")
+        f.model.close()
+    }
+
     /// Back never takes its own pill down while it goes back: on the Duo, a pill taken down under his
     /// finger and put up again never showed, so going back could not be undone. A second tap meanwhile
     /// is not a second jump.

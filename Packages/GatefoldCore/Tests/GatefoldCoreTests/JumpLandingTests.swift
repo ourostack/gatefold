@@ -115,6 +115,18 @@ private final class ColdPage {
         #expect(reportReads == 5)
     }
 
+    /// A landing no longer wanted (he moved, or the trip was given up) stops at once: no jump is sent
+    /// again, so his newer page is never pulled back to it.
+    @Test func aLandingNoLongerWantedSendsNoMore() async {
+        let page = ColdPage(loadsAfterReads: nil)
+        var wanted = true
+        let landed = await JumpLanding.land(target: page.place(0.62), go: { page.go(0.62) }, visible: { page.visible() },
+                                            stillWanted: { wanted }, beat: { if page.reads >= 3 { wanted = false } })
+        #expect(!landed)
+        #expect(page.jumps == 1, "sent \(page.jumps) times after it was no longer wanted")
+        #expect(page.reads <= 4)
+    }
+
     /// A navigator that reports nothing is not landed.
     @Test func noReportIsNotALanding() async {
         let page = ColdPage(loadsAfterReads: 0)

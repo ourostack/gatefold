@@ -31,11 +31,28 @@ final class ScriptedPage: ReaderPage {
     private var held: [CheckedContinuation<Void, Never>] = []
     func releaseJumps() { let h = held; held = []; h.forEach { $0.resume() } }
 
+    /// Jumps a loading web view takes at its file's first page, dropping the place inside it (Readium on
+    /// CI's iPad: Back to a page mid-chapter opened the chapter's start, 8c5f294).
+    var dropsPlaceInFile = 0
+
     @discardableResult
     func go(to locator: Locator) async -> Bool {
         jumps.append(locator)
         onGo?()
         if holdsJumps { await withCheckedContinuation { held.append($0) } }
+        if dropsPlaceInFile > 0, let inFile = locator.locations.progression, inFile > 0 {
+            dropsPlaceInFile -= 1
+            currentLocation = locator.copy(
+                locations: {
+                    $0.progression = 0
+                    $0.totalProgression = max(0, ($0.totalProgression ?? 0) - inFile / 50)
+                },
+                text: { $0 = Locator.Text() }
+            )
+            visibleText = "the chapter's first page"
+            if let model, reportsJumps, reportsOnGo, let here = currentLocation { Task { await model.locationDidChange(here) } }
+            return true
+        }
         let before = pageStartsBefore
         let landed = locator.copy(
             locations: {
