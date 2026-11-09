@@ -168,6 +168,8 @@ jobs:
     timeout-minutes: ${{ matrix.timeout }}
     steps:
       - uses: actions/checkout@v4
+      - name: Note when the job began, so each test step can stop in time to upload its logs (gatefold#126)
+        run: echo "JOB_START=$(date +%s)" >> "$GITHUB_ENV"
       - uses: ./.github/actions/select-xcode
       - name: Start an iPad Pro 13-inch booting
         run: python3 -I scripts/ci-simulator.py start gatefold-ipad "iPad Pro 13-inch"
@@ -199,14 +201,20 @@ jobs:
           # Why the system ended the app, when it did (gatefold#76): runningboardd's lines about it, no page text.
           nohup sh -c 'xcrun simctl spawn "$0" log stream --style compact --predicate "process == \"runningboardd\" AND eventMessage CONTAINS \"bot.ouro.gatefold\"" 2>/dev/null \
             | grep --line-buffered -i -E "termin|kill|jetsam|exit|reason|invalidat|memory|highwater|limit" >> "$1"' "$UDID" "$RUNNER_TEMP/rb.log" >/dev/null 2>&1 &
+      - id: left_cold
+        if: matrix.cold
+        uses: ./.github/actions/time-left
+        with:
+          limit: ${{ matrix.timeout }}
+          cap: "55"
       - name: Turned on its side cold (an erased iPad), the spread always comes whole and keeps his place
         # An erased simulator, not a new one: build 19 left the old page under a frozen leaf in 3 of 9
         # rounds after an erase and 0 of 3 on a new simulator. Once a run, before anything warms it.
         if: matrix.cold
         # 36 and 38 min on a hosted runner (16-17 to build, the rest tests; build 20), so 55 keeps 30%
         # headroom. A runner once hung here past 90 min with nothing in the log, so the step is bounded
-        # and reports each test as it ends.
-        timeout-minutes: 55
+        # and reports each test as it ends. Less when less of the job is left, so a hang still uploads its logs.
+        timeout-minutes: ${{ fromJSON(steps.left_cold.outputs.minutes || '55') }}
         env:
           # The runner draws the spread two to four times slower than a Mac (up to 50 s seen): 90 s
           # still fails a page left stuck for good.
@@ -236,7 +244,13 @@ jobs:
           status=${PIPESTATUS[0]}
           echo "$(date -u +%T) done ($status)"
           exit $status
+      - id: left
+        uses: ./.github/actions/time-left
+        with:
+          limit: ${{ matrix.timeout }}
       - name: ${{ matrix.title }}
+        # Ends 10 min before the job's limit: a job cut off at its limit skips every later step and uploads nothing.
+        timeout-minutes: ${{ fromJSON(steps.left.outputs.minutes) }}
         env:
           TESTS: ${{ needs.changes.outputs.full != 'false' && matrix.tests || matrix.pr_tests || matrix.tests }}
           # Five rounds of the controls-then-numbers reopen (about 2 min each); 30 locally.
@@ -260,8 +274,9 @@ jobs:
         if: failure() || cancelled()
         timeout-minutes: 5
         run: python3 -I scripts/ci-failures.py "$RUNNER_TEMP"/cold.xcresult "$RUNNER_TEMP"/ipad.xcresult
-      - name: The app's place log, for a miss (file and progression only, never the book's words)
-        if: failure() || cancelled()
+      - name: The app's place log, closed off (file and progression only, never the book's words)
+        # Every run, so a green run can be audited too (gatefold#127).
+        if: always()
         # Kept as the job ran (a `log show` over hours of a busy simulator took 23 min and ran the job
         # out of time, losing every log), so here it is only closed off.
         timeout-minutes: 2
@@ -269,9 +284,12 @@ jobs:
           pkill -f "log stream --style compact" || true
           wc -l < "$RUNNER_TEMP/place.log" || true
       - uses: actions/upload-artifact@v4
-        if: failure() || cancelled()
+        # Every run, so a green run can be audited too (gatefold#127): kept 3 days when green, the default when not.
+        if: always()
         with:
           name: ipad-${{ matrix.name }}-results
+          retention-days: ${{ job.status == 'success' && 3 || 0 }}
+          compression-level: 9
           path: |
             ${{ runner.temp }}/place.log
             ${{ runner.temp }}/rb.log
@@ -293,6 +311,8 @@ jobs:
     timeout-minutes: 85
     steps:
       - uses: actions/checkout@v4
+      - name: Note when the job began, so each test step can stop in time to upload its logs (gatefold#126)
+        run: echo "JOB_START=$(date +%s)" >> "$GITHUB_ENV"
       - uses: ./.github/actions/select-xcode
       - name: Start an iPhone Duo booting
         run: python3 -I scripts/ci-simulator.py start gatefold-duo "iPhone Duo"
@@ -327,14 +347,24 @@ jobs:
       - name: The iPhone Duo finished booting
         timeout-minutes: 22
         run: python3 -I scripts/ci-simulator.py wait gatefold-duo "iPhone Duo" 1200
+      - id: left_unit
+        uses: ./.github/actions/time-left
+        with:
+          limit: "85" # the job's timeout-minutes
       - name: Unit tests
+        timeout-minutes: ${{ fromJSON(steps.left_unit.outputs.minutes) }}
         run: |
           set -o pipefail
           xcodebuild test-without-building -xctestrun "$XCTESTRUN" \
             -destination "$DESTINATION" \
             -only-testing:GatefoldTests \
             -resultBundlePath "$RUNNER_TEMP/unit.xcresult" 2>&1 | tail -200
+      - id: left_ui
+        uses: ./.github/actions/time-left
+        with:
+          limit: "85" # the job's timeout-minutes
       - name: Reading position survives posture and font changes; every Fine-Tune tap lands (UI tests)
+        timeout-minutes: ${{ fromJSON(steps.left_ui.outputs.minutes) }}
         run: |
           set -o pipefail
           sh scripts/ci-crashes.sh mark
@@ -354,9 +384,12 @@ jobs:
         timeout-minutes: 5
         run: python3 -I scripts/ci-failures.py "$RUNNER_TEMP"/unit.xcresult "$RUNNER_TEMP"/ui.xcresult
       - uses: actions/upload-artifact@v4
-        if: failure()
+        # Every run, so a green run can be audited too (gatefold#127): kept 3 days when green.
+        if: always()
         with:
           name: xcresults
+          retention-days: ${{ job.status == 'success' && 3 || 0 }}
+          compression-level: 9
           path: |
             ${{ runner.temp }}/unit.xcresult
             ${{ runner.temp }}/ui.xcresult
@@ -376,6 +409,8 @@ jobs:
     timeout-minutes: 65
     steps:
       - uses: actions/checkout@v4
+      - name: Note when the job began, so each test step can stop in time to upload its logs (gatefold#126)
+        run: echo "JOB_START=$(date +%s)" >> "$GITHUB_ENV"
       - uses: ./.github/actions/select-xcode
       - name: Start an iPhone Duo booting
         run: python3 -I scripts/ci-simulator.py start gatefold-duo "iPhone Duo"
@@ -406,7 +441,12 @@ jobs:
           # Why the system ended the app, when it did (gatefold#76): runningboardd's lines about it, no page text.
           nohup sh -c 'xcrun simctl spawn "$0" log stream --style compact --predicate "process == \"runningboardd\" AND eventMessage CONTAINS \"bot.ouro.gatefold\"" 2>/dev/null \
             | grep --line-buffered -i -E "termin|kill|jetsam|exit|reason|invalidat|memory|highwater|limit" >> "$1"' "$UDID" "$RUNNER_TEMP/rb.log" >/dev/null 2>&1 &
+      - id: left
+        uses: ./.github/actions/time-left
+        with:
+          limit: "65" # the job's timeout-minutes
       - name: The reviewers' checks on the Duo
+        timeout-minutes: ${{ fromJSON(steps.left.outputs.minutes) }}
         env:
           FULL: ${{ needs.changes.outputs.full }}
         run: |
@@ -426,8 +466,9 @@ jobs:
         if: failure() || cancelled()
         timeout-minutes: 5
         run: python3 -I scripts/ci-failures.py "$RUNNER_TEMP"/duo.xcresult
-      - name: The app's place log, for a miss (file and progression only, never the book's words)
-        if: failure() || cancelled()
+      - name: The app's place log, closed off (file and progression only, never the book's words)
+        # Every run, so a green run can be audited too (gatefold#127).
+        if: always()
         # Kept as the job ran (a `log show` over hours of a busy simulator took 23 min and ran the job
         # out of time, losing every log), so here it is only closed off.
         timeout-minutes: 2
@@ -435,9 +476,12 @@ jobs:
           pkill -f "log stream --style compact" || true
           wc -l < "$RUNNER_TEMP/place.log" || true
       - uses: actions/upload-artifact@v4
-        if: failure() || cancelled()
+        # Every run, so a green run can be audited too (gatefold#127): kept 3 days when green, the default when not.
+        if: always()
         with:
           name: duo-reviewer-results
+          retention-days: ${{ job.status == 'success' && 3 || 0 }}
+          compression-level: 9
           path: |
             ${{ runner.temp }}/place.log
             ${{ runner.temp }}/rb.log
