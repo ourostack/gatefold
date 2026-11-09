@@ -1241,8 +1241,19 @@ final class ReaderModel {
         // Opening another chapter, Readium places the page by progression before the chapter has laid
         // out; once it has, the same jump finds the exact words. Retry until they're on screen.
         await settle(on: locator, move: move, loaded: ready)
-        let settled = Self.ms(since: started)
         // Overtaken by a turn, another jump or the close: that move owns the place now.
+        guard moves == move, !isClosed else { return }
+        // The spread the place it keeps reopens on: its words to the top of a left page, as a restore
+        // puts them. Given way to any move of his, another jump or the close meanwhile.
+        if let words = locator.text.highlight.map(ReaderJS.normalize), !words.isEmpty {
+            let his = hisMoves
+            let anchor = ReadingAnchor(href: locator.href.string, progression: locator.locations.progression ?? 0, text: words)
+            await page?.settleLanding(anchor) { [weak self] in
+                guard let self else { return false }
+                return self.moves == move && self.hisMoves == his && !self.isClosed
+            }
+        }
+        let settled = Self.ms(since: started)
         guard moves == move, !isClosed else { return }
         await captureAnchor()
         let anchored = Self.ms(since: started)

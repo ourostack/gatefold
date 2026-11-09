@@ -865,6 +865,20 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         }
     }
 
+    /// A jump to a place with words (the Cloud's, his own offered back) lands where Readium puts its
+    /// progression, which can leave the words mid-column or on the right page; a reopen of the place it
+    /// keeps restores them to the top of a left page. Settled here the way that restore will, so the
+    /// spread he lands on is the one every reopen shows. Behind the jump's veil when it is still up;
+    /// after it lifted (`abandonVeil`), each move is held behind a picture (`SpreadSettler.keepOnLeft`).
+    func settleLanding(_ anchor: ReadingAnchor, stillWanted: @escaping @MainActor () -> Bool) async {
+        guard columns == 2, stillWanted(), !lateSettling, placingGeneration == -1 else { return }
+        lateSettling = true
+        defer { lateSettling = false }
+        if await keepOnLeft(anchor, purpose: .restore, current: stillWanted) != nil {
+            readerLog.notice("spread: a landing settled the way a reopen of its place will (veil \(self.veil != nil, privacy: .public))")
+        }
+    }
+
     /// The reader's page as `SpreadSettler` moves it.
     private final class WebSpread: SpreadSurface {
         private unowned let host: ReaderHostController
