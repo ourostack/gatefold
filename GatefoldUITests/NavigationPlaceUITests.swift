@@ -224,7 +224,9 @@ final class NavigationPlaceUITests: XCTestCase {
         let held = app.descendants(matching: .any)["reader.loadingHeld"]
         let cover = app.descendants(matching: .any)["reader.opening"]
         let ready = app.descendants(matching: .any)["reader.pageReady"]
-        let offer = app.buttons["banner.jump"], tab = app.descendants(matching: .any)["banner.tab"]
+        // Found as any element: XCUITest can read Catch up as a pop-up button, and then a Button query
+        // finds nothing at the tap (run 42651443296).
+        let offer = app.descendants(matching: .any)["banner.jump"], tab = app.descendants(matching: .any)["banner.tab"]
         // Tapped the moment it is up: unanswered for 10 s it folds into its tab (then the tab opens it
         // again, with 10 s more). Tapped at its point, so a fold mid-tap can't fail the tap itself.
         let up = Date().addingTimeInterval(90)
