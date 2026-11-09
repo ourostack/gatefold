@@ -237,9 +237,6 @@ jobs:
         uses: ./.github/actions/time-left
         with:
           limit: ${{ matrix.timeout }}
-          # The logs' 12 min and 41 for the next test step, the most it has taken green (gatefold#144), so a slow
-          # setup ends this step rather than starving that one. Every green place job's cold step has ended by then.
-          reserve: "53"
           cap: "65"
       - name: Turned on its side cold (an erased iPad), the spread always comes whole and keeps his place
         # An erased simulator, not a new one: build 19 left the old page under a frozen leaf in 3 of 9
