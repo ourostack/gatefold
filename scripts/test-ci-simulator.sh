@@ -97,6 +97,19 @@ erase_case "the runtime went but no time is left for a fresh device: fails, with
 # The wait path's fresh device: boot-sim.sh hangs. Its whole process group is ended at the timeout (not only its
 # bash, which left its children running), and the timeout reported is the one that applied. With less left than one
 # boot attempt, no fresh device is tried, and it says so.
+# gone <pid>: the process has exited. A zombie counts as exited: in the core job's container PID 1 is Actions'
+# `tail -f /dev/null`, which never reaps, so a killed orphan stays a zombie and `kill -0` still finds it (job
+# 129026427008). Reads /proc where there is one (Linux, with no procps), else ps (macOS).
+gone() {
+  local s
+  if [ -d /proc/self ]; then
+    [ -r "/proc/$1/stat" ] || return 0
+    s="$(sed 's/.*) //' "/proc/$1/stat" | cut -d' ' -f1)"
+  else
+    s="$(ps -o stat= -p "$1" 2>/dev/null)" || return 0
+  fi
+  case "$s" in Z*|"") return 0 ;; *) return 1 ;; esac
+}
 fresh_case() {
   local d="$work/fresh-$1"; mkdir -p "$d/fake" "$d/tmp"; : > "$d/env"
   local out code
@@ -104,7 +117,7 @@ fresh_case() {
     CI_SIMULATOR_RETRY_RESERVE=5 CI_SIMULATOR_BOOT_ATTEMPT="$2" CI_SIMULATOR_BOOT_SIM="$work/boot-sim.sh" \
     RUNNER_TEMP="$d/tmp" GITHUB_ENV="$d/env" bash -c 'python3 -I "$0/ci-simulator.py" start gatefold-ipad "iPad Pro 13-inch" \
     && python3 -I "$0/ci-simulator.py" wait gatefold-ipad "iPad Pro 13-inch" 30' "$here" 2>&1)"; code=$?
-  local alive=no; [ -s "$d/fake/child" ] && kill -0 "$(cat "$d/fake/child")" 2>/dev/null && alive=yes
+  local alive=no; [ -s "$d/fake/child" ] && ! gone "$(cat "$d/fake/child")" && alive=yes
   if [ "$code" = 1 ] && grep -qE -- "$3" <<<"$out" && [ "$alive" = no ]; then echo "ok   wait: $1"; else
     echo "FAIL wait: $1: exit $code (want 1), text /$3/, its child still running: $alive"; echo "$out" | tail -6; fails=$((fails + 1)); fi
 }
