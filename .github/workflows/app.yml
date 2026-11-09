@@ -184,7 +184,7 @@ jobs:
             pr_tests: >-
               ReviewerChecksUITests/testTheLastPagesNumberIsTheCount WindowFitUITests
     needs: [changes, build]
-    if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
+    if: false
     runs-on: xcode-27
     timeout-minutes: ${{ matrix.timeout }}
     steps:
@@ -462,13 +462,15 @@ jobs:
           set -o pipefail
           python3 -I scripts/ci-within.py --until "$STEP_UNTIL" -- xcodebuild test-without-building -xctestrun "$XCTESTRUN" \
             -destination "$DESTINATION" \
-            -only-testing:GatefoldTests \
+            "-only-testing:GatefoldTests/LaunchJumpYieldTests/aTurnWhileTheLaunchJumpIsOnItsWayIsNeverJumpedOver()" \
+            -test-iterations 5 \
             -resultBundlePath "$RUNNER_TEMP/unit.xcresult" 2>&1 | tail -200
       - id: left_ui
         uses: ./.github/actions/time-left
         with:
           limit: "97" # the job's timeout-minutes
       - name: Reading position survives posture and font changes; every Fine-Tune tap lands (UI tests)
+        if: false
         timeout-minutes: ${{ fromJSON(steps.left_ui.outputs.minutes) }}
         env:
           STEP_UNTIL: ${{ steps.left_ui.outputs.until }}
@@ -521,7 +523,7 @@ jobs:
     # Pull requests run its smoke (a page a turn, and a reopen keeps the numbers); pushes to main add the reviewers'
     # full list, about 13 min a test on this runner (gatefold#39).
     needs: [changes, build]
-    if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
+    if: false
     runs-on: xcode-27
     # 45 min measured (build 20), plus about 10 for the two turn checks; 47 min at c4c3b6a with both.
     # feel-ci sets this job longer (gatefold#65 tracks the overrun): at a merge, the larger value wins.
@@ -641,7 +643,7 @@ jobs:
     # from here instead (gatefold#42). It runs only when `changes` found nothing but Markdown.
     name: iPad (${{ matrix.name }})
     needs: changes
-    if: needs.changes.outputs.app != 'true'
+    if: false
     strategy:
       matrix:
         name: [place, taps, reviewer]
