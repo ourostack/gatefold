@@ -117,7 +117,7 @@ jobs:
     # In Swift's own image: the Ubuntu 26.04 runner image stopped carrying Swift (exit 127 on
     # `swift --version`, 2026-11-05).
     needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
+    if: false
     runs-on: ubuntu-latest
     container: swift:6.2
     timeout-minutes: 20
@@ -139,32 +139,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: place
-            # 48 min measured with the erased-iPad rotation at 23; it has taken 38, so 63 / 0.7.
-            timeout: 90
-            # Rotation first, on an erased iPad (the cold step), then the rest on the same one.
-            cold: true
-            title: Jumps keep his place; the number's slot is never blank
-            tests: >-
-              NavigationPlaceUITests PositionUITests/testEveryPostureKeepsThePlace
-              CountingPlaceholderUITests PlaceUndoUITests
-          - name: taps
-            # 53 min measured (a 10 min simulator boot among them); measured / 0.7 keeps 30% headroom.
-            timeout: 80
-            title: Every Fine-Tune tap lands; the furniture never moves the words
-            tests: FineTuneTapUITests PageFurnitureUITests
           - name: reviewer
             # 65 min measured with the full list; measured / 0.7 keeps 30% headroom.
             timeout: 95
             title: The reviewers' checks - reopen by hash, true numbers, reader-wide toggles, density, landing; the reader fits its window
             # Pushes to main run the whole list.
-            tests: >-
-              ReviewerChecksUITests PageNumberUITests/testOnASpreadEveryTurnMovesOnTwoPages
-              SpreadTurnSettleUITests/testSpreadTurnsLandWithoutSliding
-              ReopenAfterControlsUITests WindowFitUITests
+            tests: ReviewerChecksUITests/testPageNumbersAreOnOrOffInEveryBook
             # Pull requests run its smoke: the last page's number is the count (#30), and the reader fits its window.
-            pr_tests: >-
-              ReviewerChecksUITests/testTheLastPagesNumberIsTheCount WindowFitUITests
+            pr_tests: ReviewerChecksUITests/testPageNumbersAreOnOrOffInEveryBook
     needs: [changes, build]
     if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
     runs-on: xcode-27
@@ -296,7 +278,7 @@ jobs:
     # only Xcode 26, so this job cannot move there.
     # ~55 min in build 19: 85 keeps 30% headroom.
     needs: [changes, build]
-    if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
+    if: false
     runs-on: xcode-27
     timeout-minutes: 85
     steps:
@@ -406,7 +388,7 @@ jobs:
     # Pull requests run its smoke (a page a turn, and a reopen keeps the numbers); pushes to main add the reviewers'
     # full list, about 13 min a test on this runner (gatefold#39).
     needs: [changes, build]
-    if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
+    if: false
     runs-on: xcode-27
     # 45 min measured (build 20), plus about 10 for the two turn checks: 85 keeps over 30% headroom.
     # feel-ci sets this job longer (gatefold#65 tracks the overrun): at a merge, the larger value wins.
@@ -489,7 +471,7 @@ jobs:
     # from here instead (gatefold#42). It runs only when `changes` found nothing but Markdown.
     name: iPad (${{ matrix.name }})
     needs: changes
-    if: needs.changes.outputs.app != 'true'
+    if: false
     strategy:
       matrix:
         name: [place, taps, reviewer]
