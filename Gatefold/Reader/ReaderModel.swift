@@ -2055,6 +2055,9 @@ final class ReaderModel {
         defer { if freed, strayBack?.jump == jump { strayBack = nil } }
         // A touch during the hang brought no report: a tap, not a swipe of the page it lands on. And
         // whatever the layout did meanwhile, the place written here is his.
+        // Nothing may suspend between the jump coming back and this reset (`JumpLanding.land` returns an
+        // overtaken landing with no beat): the late jump's own report would run first, with the swallowed
+        // tap still counted, and be kept as a swipe of his (run 42614139141).
         if freed {
             touchesSinceLocation = 0
             layoutOnly = false
