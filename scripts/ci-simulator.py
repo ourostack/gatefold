@@ -122,10 +122,15 @@ def unready(udid, runtimes, devices):
     return None
 
 
+def setting(name, default):
+    """A number from the environment; unset or empty means the default."""
+    return float(os.environ.get(name) or default)
+
+
 BEGAN = time.time()
 # The seconds this run may take: the step's own limit less a margin, from the workflow. Past it the step would be
 # killed with no clear error, so what is left is checked before each bounded call (gatefold#74).
-BUDGET = float(os.environ.get("CI_SIMULATOR_BUDGET", "inf"))
+BUDGET = setting("CI_SIMULATOR_BUDGET", "inf")
 MARGIN = 30  # kept to print the outcome and exit
 
 
@@ -155,7 +160,7 @@ def out_of_time(udid, doing):
 
 
 LIST_TRIES = 2  # a list that has not answered in this many tries says nothing about the device
-LIST_TIMEOUT = float(os.environ.get("CI_SIMULATOR_LIST_TIMEOUT", "120"))  # the offline test shortens it
+LIST_TIMEOUT = setting("CI_SIMULATOR_LIST_TIMEOUT", "120")  # the offline test shortens it
 
 
 def listing(what):
@@ -189,11 +194,17 @@ def export(udid):
             f.write(f"UDID={udid}\nDESTINATION=platform=iOS Simulator,arch={platform.machine()},id={udid}\n")
 
 
-# One full boot-sim.sh attempt: its 420 s bootstatus, 90 s second bootstatus and a listing. A fresh device never
-# starts with less (it would be killed mid-attempt). The offline test shortens both.
-BOOT_ATTEMPT = float(os.environ.get("CI_SIMULATOR_BOOT_ATTEMPT", "540"))
-# What must be left to try a fresh device at all: one attempt, plus removing the old device and picking a runtime.
-RETRY_RESERVE = float(os.environ.get("CI_SIMULATOR_RETRY_RESERVE", "600"))
+# One full boot-sim.sh attempt, the slowest that passes: bootstatus 420 s + its kill grace 5 + the listing 60 + the
+# second bootstatus 90 + its grace 5 = 580 s, rounded up. A fresh device never starts with less (it would be killed
+# mid-attempt). What must be left to try one at all: that, plus the two `quietly` calls (60 s each) and the runtime
+# listing (120 s): 600 + 240 = 840 s. The offline test shortens both.
+# They fit the workflow's budgets less the 30 s margin. The wait step (1740 s, so 1710): the boot is read at up to
+# 1200 s and the check takes up to 2 listings x 2 tries x 120 s = 480 s, so a fresh device fits when the first boot
+# and its check took up to 1710 - 840 = 870 s, as a typical 3 to 10 min boot does; past that it fails, out of time,
+# with its own message. The erase (1800 s, so 1770): a typical erase and check (about 130 s), a fresh device (840 s)
+# and its own erase and check (about 130 s) take about 1100 s; the worst case (1140 s of erase calls) fails the same way.
+BOOT_ATTEMPT = setting("CI_SIMULATOR_BOOT_ATTEMPT", "600")
+RETRY_RESERVE = setting("CI_SIMULATOR_RETRY_RESERVE", "840")
 
 
 def quietly(*args):
@@ -301,7 +312,7 @@ def main(argv):
                     print(f"::warning title=Infrastructure retry::After the erase, {said}. Erasing a fresh device.")
                     quietly("shutdown", udid)
                     quietly("delete", udid)
-                    udid, said = again(name, 600)
+                    udid, said = again(name, BOOT_ATTEMPT)
                     if said == "booted":
                         said = erase(udid)
             except OutOfTime:

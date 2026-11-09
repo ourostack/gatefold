@@ -132,6 +132,8 @@ case "$1 $2" in
     echo "Device already booted, nothing to do." ;;
   "simctl list")
     if [ "${3:-}" = devices ] && [ "${4:-}" = -j ]; then
+      n=$(( $(cat "$FAKE/lists" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$FAKE/lists"
+      for u in ${FAKE_LIST_HANGS:-}; do [ "$u" = "$n" ] && exec /bin/sleep 30; done
       list=""; for f in "$FAKE"/state-*; do [ -e "$f" ] || continue; u="${f##*/state-}"
         list="$list${list:+,}{\"udid\":\"$u\",\"state\":\"$(state "$u")\"}"; done
       echo "{\"devices\":{\"iOS-27-1\":[$list]}}"
@@ -139,17 +141,19 @@ case "$1 $2" in
   *) echo "fake xcrun: unexpected $*" >&2; exit 64 ;;
 esac
 FAKE
-printf '#!/usr/bin/env bash\nexec /bin/sleep "$(( ${1%%.*} > 3 ? 3 : ${1%%.*} ))"\n' > "$real/bin/sleep"
+# Whole seconds cap at 3 (the service restart's 20 s); fractions (within's 0.2 s poll) pass through.
+printf '#!/usr/bin/env bash\ncase "$1" in *.*) exec /bin/sleep "$1" ;; esac\nexec /bin/sleep "$(( $1 > 3 ? 3 : $1 ))"\n' > "$real/bin/sleep"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$real/bin/killall"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$real/bin/xcodebuild"
 chmod +x "$real/bin/"*
 # real_case <name> <hanging bootstatus calls> <devices that never boot> <expected UDID> <expected log text> \
-#   <text the log must not have> [a line the fake's call log must have]
+#   <text the log must not have> [a line the fake's call log must have]. $FAKE_LIST_HANGS: device listings that hang.
+# Under /bin/bash, as the macOS runner runs it (3.2 there; the core job's container has bash 5).
 real_case() {
   local d="$real/$(echo "$1" | tr -c 'a-zA-Z0-9\n' -)"; mkdir -p "$d/fake"
   local began got code took; began=$(date +%s)
   got="$(PATH="$real/bin:$PATH" FAKE="$d/fake" FAKE_HANGS="$2" FAKE_NO_BOOT="$3" BOOT_SIM_BOOTSTATUS_LIMIT=2 \
-    BOOT_SIM_RECHECK_LIMIT=2 BOOT_SIM_LIST_LIMIT=5 bash "${BOOT_SIM_UNDER_TEST:-$here/../.github/scripts/boot-sim.sh}" gatefold-ipad iPad-Pro-13 iOS-27-1 2>"$d/err")"; code=$?
+    BOOT_SIM_RECHECK_LIMIT=2 BOOT_SIM_LIST_LIMIT=2 /bin/bash "${BOOT_SIM_UNDER_TEST:-$here/../.github/scripts/boot-sim.sh}" gatefold-ipad iPad-Pro-13 iOS-27-1 2>"$d/err")"; code=$?
   took=$(( $(date +%s) - began ))
   # The script's last background process is gone once it returns (nothing of a watchdog left to act).
   if [ "$code" = 0 ] && [ "$got" = "$4" ] && grep -qF -- "$5" "$d/err" && ! grep -qF -- "$6" "$d/err" \
@@ -168,8 +172,21 @@ real_case "bootstatus hangs, and again on the second: shut down, the next attemp
   "1 2" "" dev2 "dev1 is listed Booted, but its second bootstatus did not finish clean" "dev2 is booted; its second" "shutdown dev1"
 real_case "bootstatus hangs on a device that never booted: shut down, the next attempt's device" \
   "1" "dev1" dev2 "dev1 never booted" "dev1 is booted" "shutdown dev1"
+# A device listing that does not answer (run 42502520118): after a clean bootstatus it does not throw the device away;
+# after a hang it is asked once more, and if it still does not answer the device is taken as not booted.
+FAKE_LIST_HANGS="1" real_case "a clean bootstatus, then the listing hangs: that device, and it says so" \
+  "" "" dev1 "dev1: bootstatus finished clean; the device listing did not answer" "did not boot"
+FAKE_LIST_HANGS="1" real_case "bootstatus hangs, the listing hangs once, then answers Booted: rechecked, that device" \
+  "1" "" dev1 "dev1 is booted; its second bootstatus finished" "state unknown"
+FAKE_LIST_HANGS="1 2" real_case "bootstatus hangs, the listing hangs twice: state unknown, shut down, the next device" \
+  "1" "" dev2 "dev1: state unknown (the device listing did not answer twice); taken as not booted" "dev1 never booted" "shutdown dev1"
 # The watchdog of a bootstatus that finished must not wake: the old one logged a false hang on most boots.
 for n in 1 2 3 4 5; do real_case "a clean boot logs no hang (run $n of 5)" "" "" dev1 "Device already booted" "hung"; done
+
+# An override that is set but empty means the default, not a crash.
+if CI_SIMULATOR_BUDGET= CI_SIMULATOR_LIST_TIMEOUT= CI_SIMULATOR_BOOT_ATTEMPT= CI_SIMULATOR_RETRY_RESERVE= \
+   python3 -I "$here/ci-simulator.py" --selftest >/dev/null 2>"$work/empty-err"; then echo "ok   empty overrides mean the defaults"
+else echo "FAIL empty overrides: $(tail -1 "$work/empty-err")"; fails=$((fails + 1)); fi
 
 echo "$fails failed"
 [ "$fails" = 0 ]

@@ -13,23 +13,28 @@ set -uo pipefail
 name="$1" type="$2" runtime="$3"
 # Limits, in seconds; the offline test (scripts/test-ci-simulator.sh) shortens them.
 BOOTSTATUS_LIMIT="${BOOT_SIM_BOOTSTATUS_LIMIT:-420}" RECHECK_LIMIT="${BOOT_SIM_RECHECK_LIMIT:-90}" LIST_LIMIT="${BOOT_SIM_LIST_LIMIT:-60}"
-# within <seconds> <command...>: the command's own exit code, or 124 if it ran out of time and was killed. The
-# watchdog is stopped by a trap that kills its sleep and exits, so once the command finishes nothing of it runs on
-# (joined with `;`, a subshell whose sleep was killed went on to log a false "hung" on most boots, and could still
-# act). No pkill, so the offline test in the core job's swift:6.2 container needs no procps.
+# within <seconds> <command...>: the command's own exit code, or 124 if it ran out of time; then it is killed (TERM,
+# then KILL 5 s later) and this logs "hung". This shell watches the command itself, every 0.2 s, so no watchdog
+# process exists to race or outlive it: a watchdog subshell could be stopped between forking its sleep and noting its
+# PID, and the orphaned sleep then held `$(... 2>&1)` open for the whole limit (#74 review). No pkill or temp files,
+# so it runs the same on macOS's /bin/bash 3.2 and in the core job's swift:6.2 container.
 within() {
   local secs="$1"; shift
   "$@" &
-  local pid=$!
-  ( fired=0; trap 'kill "$nap" 2>/dev/null; exit "$fired"' TERM
-    sleep "$secs" & nap=$!; wait "$nap" || exit 0
-    fired=124; echo "$* hung past $secs s" >&2; kill "$pid" 2>/dev/null
-    sleep 5 & nap=$!; wait "$nap"; kill -9 "$pid" 2>/dev/null; exit 124 ) >/dev/null &
-  local watchdog=$!
-  wait "$pid"; local code=$?
-  kill "$watchdog" 2>/dev/null; wait "$watchdog"; local fired=$?
-  [[ $fired == 124 ]] && return 124
-  return "$code"
+  local pid=$! ticks=$(( secs * 5 ))
+  while kill -0 "$pid" 2>/dev/null; do
+    if (( ticks-- <= 0 )); then
+      echo "$* hung past $secs s" >&2
+      kill "$pid" 2>/dev/null
+      local grace=25
+      while kill -0 "$pid" 2>/dev/null && (( grace-- > 0 )); do sleep 0.2; done
+      kill -9 "$pid" 2>/dev/null
+      wait "$pid" 2>/dev/null
+      return 124
+    fi
+    sleep 0.2
+  done
+  wait "$pid"
 }
 # "True", "False", or "Unknown" when the listing did not answer in time (run 42502520118).
 booted() {
@@ -46,7 +51,9 @@ try_boot() {
     # Listed Booted is not ready: the data migration runs after that, and bootstatus is what waits for it (#57). So a
     # device that is up gets one more bounded bootstatus; it passes only if that one finishes clean (gatefold#132:
     # the old watchdog shut down a device that had booted, and the attempt failed with it).
-    if [[ "$(booted "$1")" == "True" ]]; then
+    local state; state="$(booted "$1")"
+    [[ $state == Unknown ]] && state="$(booted "$1")"
+    if [[ $state == True ]]; then
       status="$(within "$RECHECK_LIMIT" xcrun simctl bootstatus "$1" -b 2>&1)"
       if [[ $? != 124 ]] && ! grep -q "Failed" <<<"$status"; then
         echo "$status" | tail -3 >&2
@@ -54,6 +61,8 @@ try_boot() {
         return 0
       fi
       echo "$1 is listed Booted, but its second bootstatus did not finish clean" >&2
+    elif [[ $state == Unknown ]]; then
+      echo "$1: state unknown (the device listing did not answer twice); taken as not booted" >&2
     else
       echo "$1 never booted" >&2
     fi
@@ -61,7 +70,14 @@ try_boot() {
     return 1
   fi
   echo "$status" | tail -3 >&2
-  [[ "$(booted "$1")" == "True" ]] && ! grep -q "Failed" <<<"$status"
+  grep -q "Failed" <<<"$status" && return 1
+  # bootstatus finished clean, which is the stronger word: a listing that did not answer does not undo it (as
+  # ci-simulator.py since 8b144cf; a healthy device was thrown away over one, run 42502520118).
+  case "$(booted "$1")" in
+    True) return 0 ;;
+    Unknown) echo "$1: bootstatus finished clean; the device listing did not answer, so that stands" >&2; return 0 ;;
+    *) return 1 ;;
+  esac
 }
 diagnose() {
   echo "--- migration lines for $1" >&2
