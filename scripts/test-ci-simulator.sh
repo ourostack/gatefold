@@ -34,6 +34,8 @@ cat > "$work/boot-sim.sh" <<'FAKE'
 # Fake boot-sim.sh: a new UDID each call; exits $FAKE_BOOT_EXIT.
 n=$(( $(cat "$FAKE/boots" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$FAKE/boots"
 echo "booting $1 ($2 on $3)" >&2
+# Boot N hangs, holding a child (as bootstatus and the watchdog are), when N is $FAKE_BOOT_HANG_ON.
+if [ "$n" = "${FAKE_BOOT_HANG_ON:-}" ]; then /bin/sleep 60 & echo $! > "$FAKE/child"; wait; fi
 # Like the real one's watchdog: a sleep that outlives this script holding stderr (only the subshell is killed).
 ( sleep 20; echo "watchdog" >&2 ) >/dev/null & w=$!; sleep 1; kill "$w"
 [ "${FAKE_BOOT_EXIT:-0}" = 0 ] || exit "$FAKE_BOOT_EXIT"
@@ -89,25 +91,44 @@ erase_case "bootstatus fails on the fresh device too" "" 1 - "1 2"
 erase_case "the check's listing times out on a healthy device: kept, not replaced (run 42502520118)" "" 0 dev0 "" "1 2"
 erase_case "one listing times out, the next answers: the answer decides" "" 0 dev0 "" "1"
 # The step's budget (CI_SIMULATOR_BUDGET, less ci-simulator.py's 30 s margin) is a few seconds: never killed by the step.
-erase_case "the step's time runs out mid-check: the device kept, with its own warning" "" 0 dev0 "" "1 2" 32 "Simulator check out of time"
-erase_case "the runtime went but no time is left for a fresh device: kept, with its own warning" "1" 0 dev0 "" "" 40 "Simulator check out of time"
-# The real boot-sim.sh against a fake xcrun: a bootstatus that hangs on a device that did boot (gatefold#132, job
-# 128961815446: the watchdog shut the booted device down, then called it not booted, and the second device ran the
-# wait out of time). `sleep` here caps at 3 s, so the 7 min watchdog fires at once; killall and xcodebuild are fakes,
-# so nothing touches this machine's simulators.
+# Out of time, the step fails with its own warning unless the device was last seen ready (it never is by then).
+erase_case "the step's time runs out mid-check: fails, with its own warning" "" 1 - "" "1 2" 32 "Simulator check out of time"
+erase_case "the runtime went but no time is left for a fresh device: fails, with its own warning" "1" 1 - "" "" 40 "Simulator check out of time"
+# The wait path's fresh device: boot-sim.sh hangs. Its whole process group is ended at the timeout (not only its
+# bash, which left its children running), and the timeout reported is the one that applied. With less left than one
+# boot attempt, no fresh device is tried, and it says so.
+fresh_case() {
+  local d="$work/fresh-$1"; mkdir -p "$d/fake" "$d/tmp"; : > "$d/env"
+  local out code
+  out="$(PATH="$work/bin:$PATH" FAKE="$d/fake" FAKE_UNAVAIL_CALLS="2" FAKE_BOOT_HANG_ON=2 CI_SIMULATOR_BUDGET=42 \
+    CI_SIMULATOR_RETRY_RESERVE=5 CI_SIMULATOR_BOOT_ATTEMPT="$2" CI_SIMULATOR_BOOT_SIM="$work/boot-sim.sh" \
+    RUNNER_TEMP="$d/tmp" GITHUB_ENV="$d/env" bash -c 'python3 -I "$0/ci-simulator.py" start gatefold-ipad "iPad Pro 13-inch" \
+    && python3 -I "$0/ci-simulator.py" wait gatefold-ipad "iPad Pro 13-inch" 30' "$here" 2>&1)"; code=$?
+  local alive=no; [ -s "$d/fake/child" ] && kill -0 "$(cat "$d/fake/child")" 2>/dev/null && alive=yes
+  if [ "$code" = 1 ] && grep -qE -- "$3" <<<"$out" && [ "$alive" = no ]; then echo "ok   wait: $1"; else
+    echo "FAIL wait: $1: exit $code (want 1), text /$3/, its child still running: $alive"; echo "$out" | tail -6; fails=$((fails + 1)); fi
+}
+fresh_case "the fresh device hangs: its whole process group ended, the timeout that applied reported" 3 \
+  "the fresh device did not boot within [0-9]+ s"
+fresh_case "less left than one boot attempt: no fresh device, and it says so" 60 \
+  "only [0-9]+ s left, less than one boot attempt \\(60 s\\), so no fresh device"
+
+# The real boot-sim.sh against a fake xcrun. Bootstatus call N hangs when N is in $FAKE_HANGS; a device in
+# $FAKE_NO_BOOT never comes up. Its limits are cut to seconds and `sleep` caps at 3 s; killall and xcodebuild are
+# fakes, so nothing touches this machine's simulators.
 real="$work/real"; mkdir -p "$real/bin"
 cat > "$real/bin/xcrun" <<'FAKE'
 #!/usr/bin/env bash
 state() { cat "$FAKE/state-$1" 2>/dev/null || echo Shutdown; }
 case "$1 $2" in
   "simctl create") n=$(( $(cat "$FAKE/created" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$FAKE/created"; echo "dev$n" ;;
-  "simctl boot") echo Booted > "$FAKE/state-$3" ;;
+  "simctl boot") for u in ${FAKE_NO_BOOT:-}; do [ "$u" = "$3" ] && exit 0; done; echo Booted > "$FAKE/state-$3" ;;
   "simctl shutdown") [ "$3" = all ] || echo Shutdown > "$FAKE/state-$3"; echo "shutdown $3" >> "$FAKE/calls" ;;
   "simctl delete") echo "delete $3" >> "$FAKE/calls" ;;
   "simctl bootstatus")
     n=$(( $(cat "$FAKE/bootstatus" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$FAKE/bootstatus"
-    # The first one hangs, as on the runner, though the device is up.
-    if [ "$n" = 1 ]; then echo "Monitoring boot status for $3."; exec /bin/sleep 30; fi
+    echo "bootstatus $3" >> "$FAKE/calls"
+    for u in ${FAKE_HANGS:-}; do [ "$u" = "$n" ] && { echo "Monitoring boot status for $3."; exec /bin/sleep 30; }; done
     echo "Device already booted, nothing to do." ;;
   "simctl list")
     if [ "${3:-}" = devices ] && [ "${4:-}" = -j ]; then
@@ -122,16 +143,33 @@ printf '#!/usr/bin/env bash\nexec /bin/sleep "$(( ${1%%.*} > 3 ? 3 : ${1%%.*} ))
 printf '#!/usr/bin/env bash\nexit 0\n' > "$real/bin/killall"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$real/bin/xcodebuild"
 chmod +x "$real/bin/"*
-mkdir -p "$real/fake"
-began=$(date +%s)
-got="$(PATH="$real/bin:$PATH" FAKE="$real/fake" bash "$here/../.github/scripts/boot-sim.sh" gatefold-ipad iPad-Pro-13 iOS-27-1 2>"$real/err")"; code=$?
-took=$(( $(date +%s) - began ))
-if [ "$code" = 0 ] && [ "$got" = dev1 ] && ! grep -q "did not boot" "$real/err" && [ "$took" -lt 20 ]; then
-  echo "ok   boot-sim.sh: a bootstatus that hangs on a booted device keeps that device (gatefold#132)"
-else
-  echo "FAIL boot-sim.sh: a bootstatus that hangs on a booted device: exit $code (want 0), printed '$got' (want dev1), took ${took}s (want under 20)"
-  tail -8 "$real/err"; fails=$((fails + 1))
-fi
+# real_case <name> <hanging bootstatus calls> <devices that never boot> <expected UDID> <expected log text> \
+#   <text the log must not have> [a line the fake's call log must have]
+real_case() {
+  local d="$real/$(echo "$1" | tr -c 'a-zA-Z0-9\n' -)"; mkdir -p "$d/fake"
+  local began got code took; began=$(date +%s)
+  got="$(PATH="$real/bin:$PATH" FAKE="$d/fake" FAKE_HANGS="$2" FAKE_NO_BOOT="$3" BOOT_SIM_BOOTSTATUS_LIMIT=2 \
+    BOOT_SIM_RECHECK_LIMIT=2 BOOT_SIM_LIST_LIMIT=5 bash "${BOOT_SIM_UNDER_TEST:-$here/../.github/scripts/boot-sim.sh}" gatefold-ipad iPad-Pro-13 iOS-27-1 2>"$d/err")"; code=$?
+  took=$(( $(date +%s) - began ))
+  # The script's last background process is gone once it returns (nothing of a watchdog left to act).
+  if [ "$code" = 0 ] && [ "$got" = "$4" ] && grep -qF -- "$5" "$d/err" && ! grep -qF -- "$6" "$d/err" \
+     && { [ -z "${7:-}" ] || grep -qxF -- "$7" "$d/fake/calls"; } && [ "$took" -lt 40 ]; then
+    echo "ok   boot-sim.sh: $1"
+  else
+    echo "FAIL boot-sim.sh: $1: exit $code (want 0), printed '$got' (want $4), log has '$5', not '$6'${7:+, calls have '$7'}, took ${took}s"
+    tail -8 "$d/err"; fails=$((fails + 1))
+  fi
+}
+# gatefold#132 (job 128961815446): bootstatus hung on a device that was up; the old watchdog shut it down.
+real_case "bootstatus hangs on a booted device, its second bootstatus finishes: that device (gatefold#132)" \
+  "1" "" dev1 "dev1 is booted; its second bootstatus finished" "did not boot"
+# Listed Booted while the migration still runs (#57): the second bootstatus hangs too, so not that device.
+real_case "bootstatus hangs, and again on the second: shut down, the next attempt's device (#57)" \
+  "1 2" "" dev2 "dev1 is listed Booted, but its second bootstatus did not finish clean" "dev2 is booted; its second" "shutdown dev1"
+real_case "bootstatus hangs on a device that never booted: shut down, the next attempt's device" \
+  "1" "dev1" dev2 "dev1 never booted" "dev1 is booted" "shutdown dev1"
+# The watchdog of a bootstatus that finished must not wake: the old one logged a false hang on most boots.
+for n in 1 2 3 4 5; do real_case "a clean boot logs no hang (run $n of 5)" "" "" dev1 "Device already booted" "hung"; done
 
 echo "$fails failed"
 [ "$fails" = 0 ]

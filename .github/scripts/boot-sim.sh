@@ -11,27 +11,56 @@
 # Usage: boot-sim.sh <name> <device type id> <runtime id>
 set -uo pipefail
 name="$1" type="$2" runtime="$3"
-booted() { xcrun simctl list devices -j | python3 -c 'import json,sys; print(any(d["udid"]==sys.argv[1] and d["state"]=="Booted" for v in json.load(sys.stdin)["devices"].values() for d in v))' "$1"; }
+# Limits, in seconds; the offline test (scripts/test-ci-simulator.sh) shortens them.
+BOOTSTATUS_LIMIT="${BOOT_SIM_BOOTSTATUS_LIMIT:-420}" RECHECK_LIMIT="${BOOT_SIM_RECHECK_LIMIT:-90}" LIST_LIMIT="${BOOT_SIM_LIST_LIMIT:-60}"
+# within <seconds> <command...>: the command's own exit code, or 124 if it ran out of time and was killed. The
+# watchdog is stopped by a trap that kills its sleep and exits, so once the command finishes nothing of it runs on
+# (joined with `;`, a subshell whose sleep was killed went on to log a false "hung" on most boots, and could still
+# act). No pkill, so the offline test in the core job's swift:6.2 container needs no procps.
+within() {
+  local secs="$1"; shift
+  "$@" &
+  local pid=$!
+  ( fired=0; trap 'kill "$nap" 2>/dev/null; exit "$fired"' TERM
+    sleep "$secs" & nap=$!; wait "$nap" || exit 0
+    fired=124; echo "$* hung past $secs s" >&2; kill "$pid" 2>/dev/null
+    sleep 5 & nap=$!; wait "$nap"; kill -9 "$pid" 2>/dev/null; exit 124 ) >/dev/null &
+  local watchdog=$!
+  wait "$pid"; local code=$?
+  kill "$watchdog" 2>/dev/null; wait "$watchdog"; local fired=$?
+  [[ $fired == 124 ]] && return 124
+  return "$code"
+}
+# "True", "False", or "Unknown" when the listing did not answer in time (run 42502520118).
+booted() {
+  within "$LIST_LIMIT" xcrun simctl list devices -j | python3 -c '
+import json, sys
+try: print(any(d["udid"] == sys.argv[1] and d["state"] == "Booted" for v in json.load(sys.stdin)["devices"].values() for d in v))
+except ValueError: print("Unknown")' "$1"
+}
 try_boot() {
   xcrun simctl boot "$1" >&2 || true
-  # A bootstatus that hangs is ended after 7 min, so the next attempt still runs. The device is shut down only if it
-  # never booted: on gatefold#132 (job 128961815446) bootstatus hung on a device that was up, the shutdown then took it
-  # down, and the attempt was called failed with the device it had just booted.
-  local out; out="$(mktemp)"
-  xcrun simctl bootstatus "$1" -b >"$out" 2>&1 &
-  local waiter=$!
-  ( sleep 420; echo "bootstatus for $1 hung past 7 min" >&2
-    [[ "$(booted "$1")" == "True" ]] || xcrun simctl shutdown "$1" >/dev/null 2>&1
-    kill "$waiter" 2>/dev/null ) >/dev/null &
-  local watchdog=$!
-  wait "$waiter" 2>/dev/null || true
-  # The subshell's sleep too, so nothing outlives this script holding its stderr open.
-  pkill -P "$watchdog" 2>/dev/null || true
-  kill "$watchdog" 2>/dev/null || true
-  wait "$watchdog" 2>/dev/null || true
-  status="$(cat "$out")"
+  status="$(within "$BOOTSTATUS_LIMIT" xcrun simctl bootstatus "$1" -b 2>&1)"
+  if [[ $? == 124 ]]; then
+    echo "$status" | tail -3 >&2
+    # Listed Booted is not ready: the data migration runs after that, and bootstatus is what waits for it (#57). So a
+    # device that is up gets one more bounded bootstatus; it passes only if that one finishes clean (gatefold#132:
+    # the old watchdog shut down a device that had booted, and the attempt failed with it).
+    if [[ "$(booted "$1")" == "True" ]]; then
+      status="$(within "$RECHECK_LIMIT" xcrun simctl bootstatus "$1" -b 2>&1)"
+      if [[ $? != 124 ]] && ! grep -q "Failed" <<<"$status"; then
+        echo "$status" | tail -3 >&2
+        echo "$1 is booted; its second bootstatus finished" >&2
+        return 0
+      fi
+      echo "$1 is listed Booted, but its second bootstatus did not finish clean" >&2
+    else
+      echo "$1 never booted" >&2
+    fi
+    within "$LIST_LIMIT" xcrun simctl shutdown "$1" >/dev/null 2>&1
+    return 1
+  fi
   echo "$status" | tail -3 >&2
-  # The device's own state decides, read after the watchdog has finished, not the bootstatus exit.
   [[ "$(booted "$1")" == "True" ]] && ! grep -q "Failed" <<<"$status"
 }
 diagnose() {

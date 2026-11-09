@@ -28,6 +28,7 @@ A prefix that is a whole device name ("iPhone Duo") picks that device only, neve
 import json
 import os
 import platform
+import signal
 import subprocess
 import sys
 import tempfile
@@ -145,7 +146,12 @@ def bounded(seconds):
 
 
 def out_of_time(udid, doing):
-    print(f"::warning title=Simulator check out of time::The step's time ran out {doing}; keeping {udid}.")
+    """The step's time ran out before the device was seen ready: it fails, with its own warning, never a kill.
+    (A device is passed only on a check that answered Booted with its runtime available; no path runs out of
+    time after such an answer, so out of time is always a failure, gatefold#74 review.)"""
+    print(f"::warning title=Simulator check out of time::The step's time ran out {doing}; "
+          f"{udid or 'the device'} was not seen Booted with its runtime available.")
+    return f"the step's time ran out {doing}"
 
 
 LIST_TRIES = 2  # a list that has not answered in this many tries says nothing about the device
@@ -167,12 +173,8 @@ def listing(what):
 def check(udid):
     """None when the device is ready, else why not. Only an answer can say a device is not ready: a list that
     times out after a clean boot is the machine being slow (run 42502520118 replaced a healthy iPad over one), so
-    the device is kept, with a warning. So it is when the step's time runs out."""
-    try:
-        runtimes, devices = listing("runtimes"), listing("devices")
-    except OutOfTime:
-        out_of_time(udid, "while checking it")
-        return None
+    the device is kept, with a warning. When the step's time runs out it raises OutOfTime."""
+    runtimes, devices = listing("runtimes"), listing("devices")
     if runtimes is None or devices is None:
         print(f"::warning title=Simulator check unanswered::simctl list did not answer in {LIST_TRIES} tries; "
               f"keeping {udid}, whose boot finished.")
@@ -187,7 +189,11 @@ def export(udid):
             f.write(f"UDID={udid}\nDESTINATION=platform=iOS Simulator,arch={platform.machine()},id={udid}\n")
 
 
-RETRY_RESERVE = 300  # the least a fresh device gets, past the limit if need be; the wait step allows for it
+# One full boot-sim.sh attempt: its 420 s bootstatus, 90 s second bootstatus and a listing. A fresh device never
+# starts with less (it would be killed mid-attempt). The offline test shortens both.
+BOOT_ATTEMPT = float(os.environ.get("CI_SIMULATOR_BOOT_ATTEMPT", "540"))
+# What must be left to try a fresh device at all: one attempt, plus removing the old device and picking a runtime.
+RETRY_RESERVE = float(os.environ.get("CI_SIMULATOR_RETRY_RESERVE", "600"))
 
 
 def quietly(*args):
@@ -215,18 +221,33 @@ def again(name, limit):
         runtime, kind = pick(json.loads(listing)["runtimes"], plan["prefix"], plan["sdk"])
     except (SystemExit, OSError, subprocess.SubprocessError, ValueError, KeyError) as e:
         print(f"Could not pick a runtime afresh ({e}); trying {runtime} again.")
-    print(f"Booting a fresh {kind} on {runtime}")
+    timeout = bounded(limit)
+    if timeout < BOOT_ATTEMPT:
+        return "", f"only {int(timeout)} s left, less than one boot attempt ({int(BOOT_ATTEMPT)} s), so no fresh device"
+    print(f"Booting a fresh {kind} on {runtime}, within {int(timeout)} s")
     log = d / f"{name}-2.log"
-    try:
-        with open(log, "ab") as err:
-            out = subprocess.run([str(BOOT_SIM), f"{name}-2", kind, runtime], stdout=subprocess.PIPE, stderr=err,
-                                 stdin=subprocess.DEVNULL, timeout=bounded(limit))
-    except subprocess.TimeoutExpired:
-        print(log.read_text(errors="replace")[-4000:] if log.exists() else "")
-        return "", f"the fresh device did not boot within {int(limit)} s"
+    with open(log, "ab") as err:
+        # Its own process group, so a timeout ends its bootstatus and watchdog too, not only its bash.
+        proc = subprocess.Popen([str(BOOT_SIM), f"{name}-2", kind, runtime], stdout=subprocess.PIPE, stderr=err,
+                                stdin=subprocess.DEVNULL, start_new_session=True)
+        try:
+            stdout, _ = proc.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            for sig in (signal.SIGTERM, signal.SIGKILL):
+                try:
+                    os.killpg(proc.pid, sig)
+                except ProcessLookupError:
+                    break
+                try:
+                    proc.wait(timeout=5)
+                    break
+                except subprocess.TimeoutExpired:
+                    pass
+            print(log.read_text(errors="replace")[-4000:] if log.exists() else "")
+            return "", f"the fresh device did not boot within {int(timeout)} s"
     print(log.read_text(errors="replace")[-4000:] if log.exists() else "")
-    udid = out.stdout.decode(errors="replace").strip()
-    return udid, outcome(out.returncode, udid, limit)
+    udid = stdout.decode(errors="replace").strip()
+    return udid, outcome(proc.returncode, udid, int(timeout))
 
 
 ERASE_STEPS = [(("shutdown",), 120), (("erase",), 300), (("boot",), 300), (("bootstatus", "-b"), 420)]
@@ -275,9 +296,8 @@ def main(argv):
             try:
                 said = erase(udid)
                 if said != "ready" and left() < RETRY_RESERVE:
-                    out_of_time(udid, f"for a fresh device (after the erase, {said})")
-                    said = "ready"
-                if said != "ready":
+                    said = out_of_time(udid, f"for a fresh device (after the erase, {said})")
+                elif said != "ready":
                     print(f"::warning title=Infrastructure retry::After the erase, {said}. Erasing a fresh device.")
                     quietly("shutdown", udid)
                     quietly("delete", udid)
@@ -285,8 +305,7 @@ def main(argv):
                     if said == "booted":
                         said = erase(udid)
             except OutOfTime:
-                out_of_time(udid, "during the erase")
-                said = "ready"
+                said = out_of_time(udid, "during the erase")
         if said == "ready":
             export(udid)
             print(udid)
@@ -301,16 +320,19 @@ def main(argv):
         said = outcome(code, udid, limit)
         log = state_dir() / f"{name}.log"
         print(log.read_text(errors="replace")[-4000:] if log.exists() else "(no boot-sim.sh log)")
+        try:
+            problem = check(udid) if said == "booted" else None
+        except OutOfTime:
+            said = out_of_time(udid, "while checking it")
         if said == "booted":
-            problem = check(udid)
             if problem is None:
                 export(udid)
                 print(f"{udid} booted, and its runtime is available")
                 return 0
             if left() < RETRY_RESERVE:
-                out_of_time(udid, f"for a fresh device (booted, but {problem})")
-                export(udid)
-                return 0
+                print(f"::error title=Simulator did not boot::"
+                      f"{out_of_time(udid, f'for a fresh device (booted, but {problem})')}. No app code ran.")
+                return 1
             # The machine, not the app: one fresh device, on whatever time is left (gatefold#71).
             print(f"::warning title=Infrastructure retry::Booted, but {problem}. Booting a fresh device.")
             quietly("shutdown", udid)
@@ -322,7 +344,10 @@ def main(argv):
             except OutOfTime:
                 udid, said = "", "the step's time ran out booting a fresh device"
             if said == "booted":
-                problem = check(udid)
+                try:
+                    problem = check(udid)
+                except OutOfTime:
+                    problem = out_of_time(udid, "while checking the fresh device")
                 if problem is None:
                     export(udid)
                     print(f"{udid} booted on the second try, and its runtime is available")
