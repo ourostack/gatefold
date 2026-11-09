@@ -850,7 +850,8 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         let surface = WebSpread(host: self, anchor: anchor, text: text)
         guard await SpreadSettler.keepOnLeft(surface, current: current, purpose: purpose) == true, current() else { return nil }
         let visible = await visibleRange()
-        readerLog.notice("spread: words placed on the left page; \(surface.moves, privacy: .public) moves")
+        // The settler also ends here when its passes run out with the words still off the left page.
+        readerLog.notice("spread: words placed on the left page; \(surface.moves, privacy: .public) moves (last read side \(surface.lastSide.map { String($0.rawValue) } ?? "nil", privacy: .public))")
         return visible
     }
 
@@ -893,6 +894,8 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         private let anchor: ReadingAnchor
         private let text: String
         private(set) var moves = 0
+        /// Where the words were at the last look.
+        private(set) var lastSide: WordsSide?
 
         init(host: ReaderHostController, anchor: ReadingAnchor, text: String) {
             self.host = host
@@ -907,6 +910,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         func wordsSide() async -> WordsSide? {
             let side = await number(ReaderJS.sideOf(text)).flatMap(WordsSide.init(rawValue:))
             readerLog.notice("spread: the sentence starts on side \(side.map { String($0.rawValue) } ?? "nil", privacy: .public)")
+            lastSide = side
             return side
         }
 

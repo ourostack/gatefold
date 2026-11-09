@@ -564,6 +564,7 @@ final class ScriptedPage: ReaderPage {
         await f.model.acceptSuggestion()
         let landed = try #require(f.page.currentLocation?.href.string)
         #expect(landed != left, "the Cloud's place is in another chapter")
+        try #require(f.page.landingSettles.count == 1, "the Cloud's place had words for the landing to settle")
         #expect(f.page.landingSettles == [landed], "the landing settle's words resolved to \(f.page.landingSettles), not \(landed)")
         f.model.close()
     }
