@@ -76,6 +76,8 @@ jobs:
       - name: The simulator boot and wait logic passes its selftest (#78)
         run: python3 -I scripts/ci-simulator.py --selftest
       - uses: ./.github/actions/select-xcode
+      - name: The test-step stopper passes its selftest (#126)
+        run: python3 -I scripts/ci-within.py --selftest
       - id: name
         name: Name the build by commit and Xcode version
         run: echo "artifact=gatefold-tests-${{ github.sha }}-xcode-$(xcodebuild -version | tr -s ' \n' '-' | sed 's/-$//; s/^Xcode-//; s/-Build-version-/-/')" >> "$GITHUB_OUTPUT"
@@ -175,9 +177,9 @@ jobs:
     runs-on: xcode-27
     timeout-minutes: ${{ matrix.timeout }}
     steps:
-      - uses: actions/checkout@v4
       - name: Note when the job began, so each test step can stop in time to upload its logs (gatefold#126)
         run: echo "JOB_START=$(date +%s)" >> "$GITHUB_ENV"
+      - uses: actions/checkout@v4
       - uses: ./.github/actions/select-xcode
       - name: Start an iPad Pro 13-inch booting
         run: python3 -I scripts/ci-simulator.py start gatefold-ipad "iPad Pro 13-inch"
@@ -229,6 +231,7 @@ jobs:
         # left, so a hang still uploads its logs.
         timeout-minutes: ${{ fromJSON(steps.left_cold.outputs.minutes || '65') }}
         env:
+          STEP_MINUTES: ${{ steps.left_cold.outputs.minutes || '55' }}
           # The runner draws the spread two to four times slower than a Mac (up to 50 s seen): 90 s
           # still fails a page left stuck for good.
           TEST_RUNNER_GATEFOLD_SPREAD_FLOOR: "90"
@@ -248,7 +251,7 @@ jobs:
           nohup sh -c 'xcrun simctl spawn "$0" log stream --style compact --predicate "process == \"runningboardd\" AND eventMessage CONTAINS \"bot.ouro.gatefold\"" 2>/dev/null \
             | grep --line-buffered -i -E "termin|kill|jetsam|exit|reason|invalidat|memory|highwater|limit" >> "$1"' "$udid" "$RUNNER_TEMP/rb.log" >/dev/null 2>&1 &
           echo "$(date -u +%T) booted; testing"
-          xcodebuild test-without-building -xctestrun "$XCTESTRUN" \
+          python3 -I scripts/ci-within.py "$STEP_MINUTES" -- xcodebuild test-without-building -xctestrun "$XCTESTRUN" \
             -destination "$DESTINATION" \
             -only-testing:GatefoldUITests/RotationRepro \
             -only-testing:GatefoldUITests/RotationMidTransitionUITests \
@@ -263,9 +266,10 @@ jobs:
         with:
           limit: ${{ matrix.timeout }}
       - name: ${{ matrix.title }}
-        # Ends 10 min before the job's limit: a job cut off at its limit skips every later step and uploads nothing.
+        # Ends 12 min before the job's limit: a job cut off at its limit skips every later step and uploads nothing.
         timeout-minutes: ${{ fromJSON(steps.left.outputs.minutes) }}
         env:
+          STEP_MINUTES: ${{ steps.left.outputs.minutes }}
           TESTS: ${{ needs.changes.outputs.full != 'false' && matrix.tests || matrix.pr_tests || matrix.tests }}
           # Five rounds of the controls-then-numbers reopen (about 2 min each); 30 locally.
           TEST_RUNNER_GATEFOLD_REOPEN_ROUNDS: "5"
@@ -275,7 +279,7 @@ jobs:
           for t in $TESTS; do only+=("-only-testing:GatefoldUITests/$t"); done
           # Each test's result prints as it finishes: a job cut off at its limit still names the slow test
           # (run 42393941976's reviewer leg printed nothing, since this read the log only at the end).
-          xcodebuild test-without-building -xctestrun "$XCTESTRUN" \
+          python3 -I scripts/ci-within.py "$STEP_MINUTES" -- xcodebuild test-without-building -xctestrun "$XCTESTRUN" \
             -destination "$DESTINATION" "${only[@]}" \
             -resultBundlePath "$RUNNER_TEMP/ipad.xcresult" 2>&1 | tee "$RUNNER_TEMP/ipad.log" \
             | grep --line-buffered -E "Test Case .*(started|passed|failed|skipped)|TEST (SUCCEEDED|FAILED)|REPRO (round|SUMMARY)|TAPRATE|PLACEHOLDER|REVIEWER|WINDOWFIT|REOPEN round [0-9]+:|\.swift:[0-9]+: error" \
@@ -283,6 +287,7 @@ jobs:
           exit ${PIPESTATUS[0]}
       - name: The app did not crash, and the system did not end it for memory (gatefold#76)
         if: ${{ !cancelled() }}
+        timeout-minutes: 2
         run: sh scripts/ci-crashes.sh check
       - name: Why each failed test failed (from the result bundles, text withheld)
         if: failure() || cancelled()
@@ -298,12 +303,13 @@ jobs:
           pkill -f "log stream --style compact" || true
           wc -l < "$RUNNER_TEMP/place.log" || true
       - uses: actions/upload-artifact@v4
-        # Every run, so a green run can be audited too (gatefold#127): kept 3 days when green, the default when not.
+        # Every run, so a green run can be audited too (gatefold#127): kept 3 days unless the job failed.
         if: always()
+        # A green job stays green if the artifact store has a bad moment.
+        continue-on-error: true
         with:
           name: ipad-${{ matrix.name }}-results
-          retention-days: ${{ job.status == 'success' && 3 || 0 }}
-          compression-level: 9
+          retention-days: ${{ job.status == 'failure' && 0 || 3 }}
           path: |
             ${{ runner.temp }}/place.log
             ${{ runner.temp }}/rb.log
@@ -324,9 +330,9 @@ jobs:
     runs-on: xcode-27
     timeout-minutes: 85
     steps:
-      - uses: actions/checkout@v4
       - name: Note when the job began, so each test step can stop in time to upload its logs (gatefold#126)
         run: echo "JOB_START=$(date +%s)" >> "$GITHUB_ENV"
+      - uses: actions/checkout@v4
       - uses: ./.github/actions/select-xcode
       - name: Start an iPhone Duo booting
         run: python3 -I scripts/ci-simulator.py start gatefold-duo "iPhone Duo"
@@ -371,9 +377,11 @@ jobs:
           limit: "85" # the job's timeout-minutes
       - name: Unit tests
         timeout-minutes: ${{ fromJSON(steps.left_unit.outputs.minutes) }}
+        env:
+          STEP_MINUTES: ${{ steps.left_unit.outputs.minutes }}
         run: |
           set -o pipefail
-          xcodebuild test-without-building -xctestrun "$XCTESTRUN" \
+          python3 -I scripts/ci-within.py "$STEP_MINUTES" -- xcodebuild test-without-building -xctestrun "$XCTESTRUN" \
             -destination "$DESTINATION" \
             -only-testing:GatefoldTests \
             -resultBundlePath "$RUNNER_TEMP/unit.xcresult" 2>&1 | tail -200
@@ -383,10 +391,12 @@ jobs:
           limit: "85" # the job's timeout-minutes
       - name: Reading position survives posture and font changes; every Fine-Tune tap lands (UI tests)
         timeout-minutes: ${{ fromJSON(steps.left_ui.outputs.minutes) }}
+        env:
+          STEP_MINUTES: ${{ steps.left_ui.outputs.minutes }}
         run: |
           set -o pipefail
           sh scripts/ci-crashes.sh mark
-          xcodebuild test-without-building -xctestrun "$XCTESTRUN" \
+          python3 -I scripts/ci-within.py "$STEP_MINUTES" -- xcodebuild test-without-building -xctestrun "$XCTESTRUN" \
             -destination "$DESTINATION" \
             -only-testing:GatefoldUITests/PositionUITests \
             -only-testing:GatefoldUITests/FineTuneTapUITests \
@@ -396,18 +406,20 @@ jobs:
           exit ${status:-0}
       - name: The app did not crash, and the system did not end it for memory (gatefold#76)
         if: ${{ !cancelled() }}
+        timeout-minutes: 2
         run: sh scripts/ci-crashes.sh check
       - name: Why each failed test failed (from the result bundles, text withheld)
         if: failure() || cancelled()
         timeout-minutes: 5
         run: python3 -I scripts/ci-failures.py "$RUNNER_TEMP"/unit.xcresult "$RUNNER_TEMP"/ui.xcresult
       - uses: actions/upload-artifact@v4
-        # Every run, so a green run can be audited too (gatefold#127): kept 3 days when green.
+        # Every run, so a green run can be audited too (gatefold#127): kept 3 days unless the job failed.
         if: always()
+        # A green job stays green if the artifact store has a bad moment.
+        continue-on-error: true
         with:
           name: xcresults
-          retention-days: ${{ job.status == 'success' && 3 || 0 }}
-          compression-level: 9
+          retention-days: ${{ job.status == 'failure' && 0 || 3 }}
           path: |
             ${{ runner.temp }}/unit.xcresult
             ${{ runner.temp }}/ui.xcresult
@@ -426,9 +438,9 @@ jobs:
     # 45 min measured (build 20): 65 keeps 30% headroom.
     timeout-minutes: 65
     steps:
-      - uses: actions/checkout@v4
       - name: Note when the job began, so each test step can stop in time to upload its logs (gatefold#126)
         run: echo "JOB_START=$(date +%s)" >> "$GITHUB_ENV"
+      - uses: actions/checkout@v4
       - uses: ./.github/actions/select-xcode
       - name: Start an iPhone Duo booting
         run: python3 -I scripts/ci-simulator.py start gatefold-duo "iPhone Duo"
@@ -470,12 +482,13 @@ jobs:
       - name: The reviewers' checks on the Duo
         timeout-minutes: ${{ fromJSON(steps.left.outputs.minutes) }}
         env:
+          STEP_MINUTES: ${{ steps.left.outputs.minutes }}
           FULL: ${{ needs.changes.outputs.full }}
         run: |
           set -o pipefail
           only=(-only-testing:GatefoldUITests/PageNumberUITests/testEveryTurnMovesOnAPageAndAReopenKeepsTheNumbers)
           if [ "$FULL" != false ]; then only+=(-only-testing:GatefoldUITests/ReviewerChecksUITests); fi
-          xcodebuild test-without-building -xctestrun "$XCTESTRUN" \
+          python3 -I scripts/ci-within.py "$STEP_MINUTES" -- xcodebuild test-without-building -xctestrun "$XCTESTRUN" \
             -destination "$DESTINATION" "${only[@]}" \
             -resultBundlePath "$RUNNER_TEMP/duo.xcresult" 2>&1 | tee "$RUNNER_TEMP/duo.log" \
             | grep --line-buffered -E "Test Case .*(started|passed|failed|skipped)|TEST (SUCCEEDED|FAILED)|REVIEWER|\.swift:[0-9]+: error" \
@@ -483,6 +496,7 @@ jobs:
           exit ${PIPESTATUS[0]}
       - name: The app did not crash, and the system did not end it for memory (gatefold#76)
         if: ${{ !cancelled() }}
+        timeout-minutes: 2
         run: sh scripts/ci-crashes.sh check
       - name: Why each failed test failed (from the result bundles, text withheld)
         if: failure() || cancelled()
@@ -498,12 +512,13 @@ jobs:
           pkill -f "log stream --style compact" || true
           wc -l < "$RUNNER_TEMP/place.log" || true
       - uses: actions/upload-artifact@v4
-        # Every run, so a green run can be audited too (gatefold#127): kept 3 days when green, the default when not.
+        # Every run, so a green run can be audited too (gatefold#127): kept 3 days unless the job failed.
         if: always()
+        # A green job stays green if the artifact store has a bad moment.
+        continue-on-error: true
         with:
           name: duo-reviewer-results
-          retention-days: ${{ job.status == 'success' && 3 || 0 }}
-          compression-level: 9
+          retention-days: ${{ job.status == 'failure' && 0 || 3 }}
           path: |
             ${{ runner.temp }}/place.log
             ${{ runner.temp }}/rb.log

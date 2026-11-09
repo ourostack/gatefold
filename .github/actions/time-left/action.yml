@@ -10,7 +10,7 @@ inputs:
     required: true
   reserve:
     description: Minutes kept for the steps after the test step (failure summary, place log, upload).
-    default: "10"
+    default: "12"
   cap:
     description: The most this step may have, whatever is left.
     default: "600"
