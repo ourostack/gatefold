@@ -212,6 +212,8 @@ import Testing
         #expect(f.page.currentLocation?.href == his.href, "Back went to another chapter")
         #expect(abs(at - want) < 0.005, "Back came back to \(at), not his page at \(want)")
         #expect(f.page.dropsPlaceInFile == 0, "the dropped jump was never tried")
+        await Self.settle { abs((Self.kept(f) ?? -1) - want) < 0.001 }
+        #expect(abs((Self.kept(f) ?? -1) - want) < 0.001, "the place kept is \(Self.kept(f) ?? -1), not his page at \(want)")
         f.model.close()
     }
 
