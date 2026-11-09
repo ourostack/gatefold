@@ -17,16 +17,20 @@ import WebKit
         return view.subviews.flatMap(webViews)
     }
 
-    /// The first web view's height once it has one and its spread has laid out; nil after 2 min (a hang guard).
-    private static func webHeight(in view: UIView) async throws -> CGFloat? {
-        for _ in 0..<1200 {
-            if let web = webViews(in: view).first, web.bounds.height > 0 { return web.bounds.height }
+    /// The navigator's web view height once its spread has loaded (Readium answers scripts only then, after
+    /// it has set the page's insets) and a layout pass has applied them; nil after 50 s (a hang guard).
+    private static func webHeight(of navigator: EPUBNavigatorViewController) async throws -> CGFloat? {
+        for _ in 0..<500 {
+            if case .success = await navigator.evaluateJavaScript("1") {
+                navigator.view.layoutIfNeeded()
+                if let web = webViews(in: navigator.view).first, web.bounds.height > 0 { return web.bounds.height }
+            }
             try await Task.sleep(for: .milliseconds(100))
         }
         return nil
     }
 
-    @Test func aStandbyPageIsLaidOutInThePagesOwnBands() async throws {
+    @Test(.timeLimit(.minutes(3))) func aStandbyPageIsLaidOutInThePagesOwnBands() async throws {
         let publication = try await HighlightTests.publication()
         let scene = try #require(UIApplication.shared.connectedScenes.first as? UIWindowScene)
         let window = UIWindow(windowScene: scene)
@@ -50,7 +54,7 @@ import WebKit
         root.view.addSubview(host.view)
         host.didMove(toParent: root)
 
-        let page = try #require(try await Self.webHeight(in: host.navigator.view), "the page made a web view")
+        let page = try #require(try await Self.webHeight(of: host.navigator), "the page made a web view")
         let bands = try #require(host.navigatorContentInset(host.navigator), "a regular page takes the tablet bands")
         #expect(abs(page - (host.navigator.view.bounds.height - bands.top - bands.bottom)) < 1, "the page itself sits in its bands")
 
@@ -62,7 +66,7 @@ import WebKit
         host.prepareStandby(at: locator)
         let standby = try #require(host.standbyPage, "a standby page is loading")
         await standby.ready.value
-        let behind = try #require(try await Self.webHeight(in: standby.navigator.view), "the standby made a web view")
+        let behind = try #require(try await Self.webHeight(of: standby.navigator), "the standby made a web view")
         #expect(abs(behind - page) < 1, "the standby page is \(behind) pt tall, the page \(page) pt: laid out for another page")
     }
 }
