@@ -217,6 +217,39 @@ import Testing
         f.model.close()
     }
 
+    /// A place write still on its way for an older move never lands over a newer move's place. On CI at
+    /// c4c3b6a the Contents jump's write, slow to map its position, landed after Back's and kept the
+    /// jump's page (0.6996) as his place once Back had brought him home.
+    @Test func aSlowWriteForAnOlderMoveNeverLandsOverANewerOnesPlace() async throws {
+        let f = try await S.make(remote: { _, _ in nil }, startAt: 0.05)
+        await f.model.load()
+        let his = try #require(f.page.currentLocation)
+        await f.model.locationDidChange(his)
+        // The next write (the jump's) is held inside, before it maps its position, until the test lets it go.
+        final class Gate { var armed = true; var held: CheckedContinuation<Void, Never>? }
+        let gate = Gate()
+        f.model.placeWriteWait = {
+            guard gate.armed else { return }
+            gate.armed = false
+            await withCheckedContinuation { gate.held = $0 }
+        }
+        await f.model.go(toProgression: 0.7, rememberBack: true)
+        for _ in 0..<10_000 where gate.held == nil { await Task.yield() }
+        try #require(gate.held != nil, "the jump's write was never on its way")
+        f.model.backBeat = { await Task.yield() }
+        f.page.dropsPlaceInFile = 1
+        await f.model.goBack()
+        let want = his.locations.totalProgression ?? -1
+        await Self.settle { abs((Self.kept(f) ?? -1) - want) < 0.001 }
+        #expect(abs((Self.kept(f) ?? -1) - want) < 0.001, "Back's own write never kept his page")
+        // The jump's write lands now, after Back's.
+        gate.held?.resume()
+        gate.held = nil
+        await Self.settle { abs((Self.kept(f) ?? -1) - want) >= 0.001 }
+        #expect(abs((Self.kept(f) ?? -1) - want) < 0.001, "the place kept is \(Self.kept(f) ?? -1), not his page at \(want)")
+        f.model.close()
+    }
+
     /// Back never takes its own pill down while it goes back: on the Duo, a pill taken down under his
     /// finger and put up again never showed, so going back could not be undone. A second tap meanwhile
     /// is not a second jump.

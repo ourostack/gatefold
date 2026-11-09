@@ -1789,6 +1789,7 @@ final class ReaderModel {
         }
         if let json = try? here.jsonString() {
             let now = Date()
+            await placeWriteWait()
             let exact = await mapper?.position(for: BookLocation(here), at: now)
             if LaunchOptions.isUITest { savedWordsProbe = here.text.highlight.map(ReaderJS.normalize) ?? "" }
             readerLog.notice("place write [r\(self.readerNumber, privacy: .public)]: his move (\(fresh != nil ? "his first words" : "Readium's boundary", privacy: .public)) \(Self.placeTag(here), privacy: .public); reported \(Self.placeTag(locator), privacy: .public); move \(self.moves, privacy: .public), touched \(self.touchedSinceLocation, privacy: .public), layoutOnly \(self.layoutOnly, privacy: .public)")
@@ -2104,6 +2105,9 @@ final class ReaderModel {
     /// One beat of the wait for Back's jump (a sleep, counted as `JumpLanding` counts its reads):
     /// `JumpLanding.reads` of them free Back again.
     @ObservationIgnored var backBeat: () async -> Void = { try? await Task.sleep(for: .milliseconds(200)) }
+    /// Tests: a wait inside a place write, before it maps its position (a busy runner's slow mapper), so
+    /// a newer move can be kept while an older one's write is still on its way.
+    @ObservationIgnored var placeWriteWait: () async -> Void = {}
 
     /// The place a jump leaves, held until the jump has moved the page: "Back to page" offered while
     /// the old page was still up (3.6 to 8.8 s on a cold Contents jump in build 19) read as a jump that
