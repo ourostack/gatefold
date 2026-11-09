@@ -1757,12 +1757,14 @@ final class ReaderModel {
         // its words found the move not yet kept, and both wrote (build 20's loop saved two places for one
         // jump, 0.3 s apart, from one reader).
         let keptMeanwhile = moves == recordedMoves && !hisMove && !touchedAtReport
+        print("BACKPROBE report at=\(locator.locations.totalProgression ?? -1) hisMove=\(hisMove) hasMoved=\(hasMoved) readerMoved=\(readerMoved) keptMeanwhile=\(keptMeanwhile) fromLayout=\(fromLayout) claimed=\(claimedByEarlier) alreadyKept=\(alreadyKept)")
         guard hasMoved, readerMoved, !keptMeanwhile, !fromLayout, !isWarming else {
             // No write: the move is the next report's to keep, from now, not after the wait below.
             if let claim, claimedMove == claim { claimedMove = nil }
             return refreshBookmarkState(await page?.visibleRange())
         }
         // Kept as of now, before any further wait.
+        print("BACKPROBE write at=\(locator.locations.totalProgression ?? -1) hisMove=\(hisMove) moves=\(moves)")
         recordedMoves = moves
         // The first words on screen make the place exact; Readium's progression is a page boundary.
         // Only words captured on this very page count; a capture a reflow cut short leaves the last page's.
@@ -2028,6 +2030,7 @@ final class ReaderModel {
                 await self.backBeat()
             }
             guard let self, self.goingBack == trip else { return }
+            print("BACKPROBE timer freed trip \(trip)")
             readerLog.notice("back: trip \(trip, privacy: .public) ran out of reads; Back is free again")
             self.goingBack = nil
             self.strayBack = (jump, back.href)
@@ -2061,6 +2064,8 @@ final class ReaderModel {
         // returns), the place is settled here, once, from what the page shows.
         // Its mark stays until that is done: its report can come while the page is being put back.
         let freed = strayBack?.jump == jump
+        print("BACKPROBE after veil freed=\(freed) landed=\(backLanded) sends=\(sends) stepsEq=\(steps == jump) movesEq=\(moves == move) going=\(goingBack.map(String.init) ?? "nil") trip=\(trip) at=\(page?.currentLocation?.locations.totalProgression ?? -1)")
+        defer { print("BACKPROBE end trip=\(trip) recorded=\(recordedMoves) moves=\(moves)") }
         defer { if freed, strayBack?.jump == jump { strayBack = nil } }
         // A touch during the hang brought no report: a tap, not a swipe of the page it lands on. And
         // whatever the layout did meanwhile, the place written here is his.
