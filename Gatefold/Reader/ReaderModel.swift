@@ -4,6 +4,13 @@ import Observation
 import ReadiumNavigator
 import ReadiumShared
 import SwiftUI
+import CryptoKit
+
+/// Probe only: a 6-byte hash of words, never the words.
+func probeHash(_ s: String?) -> String {
+    guard let s, !s.isEmpty else { return "none" }
+    return SHA256.hash(data: Data(s.utf8)).prefix(6).map { String(format: "%02x", $0) }.joined()
+}
 
 /// A table-of-contents row.
 struct TOCEntry: Identifiable, Hashable {
@@ -1268,6 +1275,7 @@ final class ReaderModel {
         if let words = locator.text.highlight.map(ReaderJS.normalize), !words.isEmpty {
             let his = hisMoves, step = steps
             let anchor = ReadingAnchor(href: locator.href.string, progression: locator.locations.progression ?? 0, text: words)
+            readerLog.notice("landing probe: Cloud words h\(probeHash(words), privacy: .public) @\(locator.locations.progression ?? -1, privacy: .public)")
             // A reflow's restore owns the page once it begins (one settler at a time), and a swipe of his
             // takes a step without counting a move.
             settlingLanding = (move, locator)
@@ -1320,6 +1328,7 @@ final class ReaderModel {
         let chosen = LandingPlace.choose(settled: settled, target: target, at: now)
         let landedAt = target?.totalProgression ?? here.locations.totalProgression
         let json = try? settledLocator.jsonString()
+        readerLog.notice("landing probe: saved words h\(probeHash(settledLocator.text.highlight), privacy: .public) fresh \(fresh != nil, privacy: .public)")
         // The landed page is the place now: until he turns, jumps or touches, a later report is the
         // layout settling (build 20's loop rewrote it to the chapter's first page and reopened beside him).
         layoutOnly = true
@@ -1858,6 +1867,7 @@ final class ReaderModel {
         readerLog.notice("anchor \(anchor.text ?? "nil", privacy: .private)")
         keeper.userSettled(on: anchor)
         if keeper.anchor == anchor { anchorLocator = anchorLoc }
+        readerLog.notice("landing probe: first words h\(probeHash(anchor.text), privacy: .public) @\(anchor.progression, privacy: .public) kept \(self.keeper.anchor == anchor, privacy: .public)")
         // The first place taken says "ready", whether or not a reflow (an unfolded Duo's first layout)
         // came before it.
         if !anchorReady, anchor.text != nil {
@@ -2154,8 +2164,15 @@ final class ReaderModel {
     /// place skipped (`ReaderJS.anchor`) from a page that skipped his place (`ReopenMatch`).
     private(set) var savedWordsProbe = ""
 
-    private func refreshBookmarkState(_ visible: VisibleRange?) {
-        if LaunchOptions.isUITest, reopenPicture == nil, let text = visible?.text { visibleTextProbe = String(text.prefix(2400)) }
+    private func refreshBookmarkState(_ visible: VisibleRange?, why: String = #function, line: Int = #line) {
+        if LaunchOptions.isUITest, reopenPicture == nil, let text = visible?.text {
+            let next = String(text.prefix(2400))
+            if next != visibleTextProbe, let v = visible {
+                let file = v.href.split(separator: "/").last.map(String.init) ?? v.href
+                readerLog.notice("landing probe: screen h\(probeHash(next), privacy: .public) \(file, privacy: .public) \(v.start, privacy: .public)..\(v.end, privacy: .public) from \(why, privacy: .public):\(line, privacy: .public)")
+            }
+            visibleTextProbe = next
+        }
         guard let location else { return }
         let here = location.href.string
         let p = location.locations.progression ?? 0

@@ -901,9 +901,11 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
                             current: () -> Bool) async -> VisibleRange? {
         guard let text = anchor.text?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else { return nil }
         let surface = WebSpread(host: self, anchor: anchor, text: text)
+        readerLog.notice("spread: placing words h\(probeHash(text), privacy: .public) @\(anchor.progression, privacy: .public) for \(String(describing: purpose), privacy: .public)")
         guard await SpreadSettler.keepOnLeft(surface, current: current, purpose: purpose) == true, current() else { return nil }
         let visible = await visibleRange()
         // The settler also ends here when its passes run out with the words still off the left page.
+        readerLog.notice("spread: after placing, screen h\(probeHash(visible?.text.map { String($0.prefix(2400)) }), privacy: .public) \(visible?.start ?? -1, privacy: .public)..\(visible?.end ?? -1, privacy: .public)")
         readerLog.notice("spread: words placed on the left page; \(surface.moves, privacy: .public) moves (last read side \(surface.lastSide.map { String($0.rawValue) } ?? "nil", privacy: .public))")
         return visible
     }
