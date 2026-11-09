@@ -188,7 +188,19 @@ jobs:
       - uses: ./.github/actions/select-xcode
       - name: Start an iPad Pro 13-inch booting
         run: python3 -I scripts/ci-simulator.py start gatefold-ipad "iPad Pro 13-inch"
-      - uses: actions/download-artifact@v4
+      - id: fetch
+        # Usually 4 s, but 13 of 144 took over 2 min and one 10.6 min (gatefold#144), in bunches across jobs: the
+        # artifact store, not the runner. A download cut off at 4 min tries once more, rather than eating the tests' time.
+        uses: actions/download-artifact@v4
+        timeout-minutes: 4
+        continue-on-error: true
+        with:
+          name: ${{ needs.build.outputs.artifact }}
+          path: ${{ runner.temp }}
+      - name: Download the build again (the first try failed or ran past 4 min; gatefold#144)
+        if: steps.fetch.outcome != 'success'
+        uses: actions/download-artifact@v4
+        timeout-minutes: 6
         with:
           name: ${{ needs.build.outputs.artifact }}
           path: ${{ runner.temp }}
@@ -225,6 +237,9 @@ jobs:
         uses: ./.github/actions/time-left
         with:
           limit: ${{ matrix.timeout }}
+          # The logs' 12 min and 41 for the next test step, the most it has taken green (gatefold#144), so a slow
+          # setup ends this step rather than starving that one. Every green place job's cold step has ended by then.
+          reserve: "53"
           cap: "65"
       - name: Turned on its side cold (an erased iPad), the spread always comes whole and keeps his place
         # An erased simulator, not a new one: build 19 left the old page under a frozen leaf in 3 of 9
@@ -365,7 +380,19 @@ jobs:
           set -o pipefail
           xcodebuild build -project Gatefold.xcodeproj -scheme Gatefold -configuration Release \
             -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO 2>&1 | tail -50
-      - uses: actions/download-artifact@v4
+      - id: fetch
+        # Usually 4 s, but 13 of 144 took over 2 min and one 10.6 min (gatefold#144), in bunches across jobs: the
+        # artifact store, not the runner. A download cut off at 4 min tries once more, rather than eating the tests' time.
+        uses: actions/download-artifact@v4
+        timeout-minutes: 4
+        continue-on-error: true
+        with:
+          name: ${{ needs.build.outputs.artifact }}
+          path: ${{ runner.temp }}
+      - name: Download the build again (the first try failed or ran past 4 min; gatefold#144)
+        if: steps.fetch.outcome != 'success'
+        uses: actions/download-artifact@v4
+        timeout-minutes: 6
         with:
           name: ${{ needs.build.outputs.artifact }}
           path: ${{ runner.temp }}
@@ -467,7 +494,19 @@ jobs:
       - uses: ./.github/actions/select-xcode
       - name: Start an iPhone Duo booting
         run: python3 -I scripts/ci-simulator.py start gatefold-duo "iPhone Duo"
-      - uses: actions/download-artifact@v4
+      - id: fetch
+        # Usually 4 s, but 13 of 144 took over 2 min and one 10.6 min (gatefold#144), in bunches across jobs: the
+        # artifact store, not the runner. A download cut off at 4 min tries once more, rather than eating the tests' time.
+        uses: actions/download-artifact@v4
+        timeout-minutes: 4
+        continue-on-error: true
+        with:
+          name: ${{ needs.build.outputs.artifact }}
+          path: ${{ runner.temp }}
+      - name: Download the build again (the first try failed or ran past 4 min; gatefold#144)
+        if: steps.fetch.outcome != 'success'
+        uses: actions/download-artifact@v4
+        timeout-minutes: 6
         with:
           name: ${{ needs.build.outputs.artifact }}
           path: ${{ runner.temp }}
