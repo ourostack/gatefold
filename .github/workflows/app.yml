@@ -256,7 +256,7 @@ jobs:
             -only-testing:GatefoldUITests/RotationRepro \
             -only-testing:GatefoldUITests/RotationMidTransitionUITests \
             -resultBundlePath "$RUNNER_TEMP/cold.xcresult" 2>&1 | tee "$RUNNER_TEMP/cold.log" \
-            | grep --line-buffered -E "Test Case .*(started|passed|failed|skipped)|TEST (SUCCEEDED|FAILED)|REPRO (setup|jump|round|SUMMARY|visibleSettleMove)|MIDTURN|\.swift:[0-9]+: error" \
+            | grep --line-buffered -E "Test Case .*(started|passed|failed|skipped)|TEST (SUCCEEDED|FAILED)|REPRO (setup|jump|round|SUMMARY|visibleSettleMove)|MIDTURN|\.swift:[0-9]+: error|::error::" \
             | awk '{ if (match($0, /XCTAssert[A-Za-z]* failed/)) $0 = substr($0, 1, RSTART + RLENGTH - 1) " (text withheld)"; print; fflush() }'
           status=${PIPESTATUS[0]}
           echo "$(date -u +%T) done ($status)"
@@ -282,7 +282,7 @@ jobs:
           python3 -I scripts/ci-within.py "$STEP_MINUTES" -- xcodebuild test-without-building -xctestrun "$XCTESTRUN" \
             -destination "$DESTINATION" "${only[@]}" \
             -resultBundlePath "$RUNNER_TEMP/ipad.xcresult" 2>&1 | tee "$RUNNER_TEMP/ipad.log" \
-            | grep --line-buffered -E "Test Case .*(started|passed|failed|skipped)|TEST (SUCCEEDED|FAILED)|REPRO (round|SUMMARY)|TAPRATE|PLACEHOLDER|REVIEWER|WINDOWFIT|REOPEN round [0-9]+:|\.swift:[0-9]+: error" \
+            | grep --line-buffered -E "Test Case .*(started|passed|failed|skipped)|TEST (SUCCEEDED|FAILED)|REPRO (round|SUMMARY)|TAPRATE|PLACEHOLDER|REVIEWER|WINDOWFIT|REOPEN round [0-9]+:|\.swift:[0-9]+: error|::error::" \
             | awk '{ if (match($0, /XCTAssert[A-Za-z]* failed/)) $0 = substr($0, 1, RSTART + RLENGTH - 1) " (text withheld)"; print; fflush() }'
           exit ${PIPESTATUS[0]}
       - name: The app did not crash, and the system did not end it for memory (gatefold#76)
@@ -309,7 +309,7 @@ jobs:
         continue-on-error: true
         with:
           name: ipad-${{ matrix.name }}-results
-          retention-days: ${{ job.status == 'failure' && 0 || 3 }}
+          retention-days: ${{ job.status != 'failure' && 3 || 0 }} # 0: the repository's default
           path: |
             ${{ runner.temp }}/place.log
             ${{ runner.temp }}/rb.log
@@ -419,7 +419,7 @@ jobs:
         continue-on-error: true
         with:
           name: xcresults
-          retention-days: ${{ job.status == 'failure' && 0 || 3 }}
+          retention-days: ${{ job.status != 'failure' && 3 || 0 }} # 0: the repository's default
           path: |
             ${{ runner.temp }}/unit.xcresult
             ${{ runner.temp }}/ui.xcresult
@@ -491,7 +491,7 @@ jobs:
           python3 -I scripts/ci-within.py "$STEP_MINUTES" -- xcodebuild test-without-building -xctestrun "$XCTESTRUN" \
             -destination "$DESTINATION" "${only[@]}" \
             -resultBundlePath "$RUNNER_TEMP/duo.xcresult" 2>&1 | tee "$RUNNER_TEMP/duo.log" \
-            | grep --line-buffered -E "Test Case .*(started|passed|failed|skipped)|TEST (SUCCEEDED|FAILED)|REVIEWER|\.swift:[0-9]+: error" \
+            | grep --line-buffered -E "Test Case .*(started|passed|failed|skipped)|TEST (SUCCEEDED|FAILED)|REVIEWER|\.swift:[0-9]+: error|::error::" \
             | awk '{ if (match($0, /XCTAssert[A-Za-z]* failed/)) $0 = substr($0, 1, RSTART + RLENGTH - 1) " (text withheld)"; print; fflush() }'
           exit ${PIPESTATUS[0]}
       - name: The app did not crash, and the system did not end it for memory (gatefold#76)
@@ -518,7 +518,7 @@ jobs:
         continue-on-error: true
         with:
           name: duo-reviewer-results
-          retention-days: ${{ job.status == 'failure' && 0 || 3 }}
+          retention-days: ${{ job.status != 'failure' && 3 || 0 }} # 0: the repository's default
           path: |
             ${{ runner.temp }}/place.log
             ${{ runner.temp }}/rb.log
