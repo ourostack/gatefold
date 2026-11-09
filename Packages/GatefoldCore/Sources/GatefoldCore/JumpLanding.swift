@@ -22,12 +22,17 @@ public enum JumpLanding {
     /// With `reported` (where the navigator says it is), that place must be on the same page too: the page
     /// can show the target before Readium's own report has caught up, and a landing taken then is kept at
     /// the report's place, the file start the jump passed through (gatefold#83).
+    ///
+    /// `stillWanted`: false once the landing has been overtaken (he moved meanwhile): it stops at once and
+    /// sends nothing more, so his newer page is never pulled back.
     public static func land(target: ReadingAnchor, go: () async -> Bool, visible: () async -> VisibleRange?,
-                            reported: (() -> ReadingAnchor?)? = nil, beat: () async -> Void) async -> Bool {
+                            reported: (() -> ReadingAnchor?)? = nil, stillWanted: () -> Bool = { true },
+                            beat: () async -> Void) async -> Bool {
         let place = ReadingAnchor(href: target.href, progression: target.progression, text: nil)
         var taken = await go()
         for read in 1...reads {
             await beat()
+            guard stillWanted() else { return false }
             if taken, let range = await visible(), range.contains(place),
                reported.map({ $0().map(range.contains) ?? false }) ?? true { return true }
             if !taken || read % resendEvery == 0 { taken = await go() }

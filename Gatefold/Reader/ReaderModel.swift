@@ -2031,7 +2031,21 @@ final class ReaderModel {
         // showed, and going back could not be undone).
         let undo = rememberPlace(at: page?.currentLocation, keepingTheWayBack: true)
         defer { publishBack(undo) }
-        await veiled(step: jump) { _ = await self.page?.go(to: back) }
+        // Sent again until his page is on screen: a web view still loading takes the jump at its file's
+        // first page and drops the place inside it (CI's iPad at 8c5f294: Back came back to the chapter's
+        // start). Never once he has moved on or the trip was given up.
+        await veiled(step: jump) {
+            guard let inFile = back.locations.progression, inFile > 0 else { _ = await self.page?.go(to: back); return }
+            _ = await JumpLanding.land(
+                target: ReadingAnchor(href: back.href.string, progression: inFile, text: nil),
+                go: { [weak self] in await self?.page?.go(to: back) == true },
+                visible: { [weak self] in await self?.page?.pageRange() },
+                reported: { [weak self] in
+                    self?.page?.currentLocation.map { ReadingAnchor(href: $0.href.string, progression: $0.locations.progression ?? 0, text: nil) }
+                },
+                stillWanted: { [weak self] in self.map { $0.goingBack == trip && $0.moves == move && !$0.isClosed } ?? false },
+                beat: { [weak self] in await self?.backBeat() })
+        }
         // Freed by its count: whatever its reports did meanwhile (Readium can report before the jump
         // returns), the place is settled here, once, from what the page shows.
         // Its mark stays until that is done: its report can come while the page is being put back.
