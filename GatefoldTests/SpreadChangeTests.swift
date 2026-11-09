@@ -22,6 +22,16 @@ import WebKit
         return view.subviews.flatMap(webViews)
     }
 
+    /// What the reader's page holds, in counts only (never the book's words), for a precondition that fails.
+    private static func state(of host: ReaderHostController) async -> String {
+        let webs = webViews(in: host.navigator.view)
+        let probe = "JSON.stringify([typeof window.gatefold, (document.body && document.body.innerText || '').length, location.pathname.split('/').pop()])"
+        let page = (try? await host.navigator.evaluateJavaScript(probe).get()) as? String ?? "no answer"
+        let anchor = (try? await host.navigator.evaluateJavaScript(ReaderJS.anchor(column: 0)).get()) as? String
+        return "location \(host.navigator.currentLocation?.href.string ?? "none"), \(webs.count) web views (\(webs.filter(\.isLoading).count) loading), "
+            + "page [gatefold, body chars, file] \(page), anchor json \(anchor?.count ?? -1) chars, frame \(host.navigator.view.frame)"
+    }
+
     @Test func anAnchorAskedAsItsPageIsReplacedComesFromThePageThatReplacedIt() async throws {
         let publication = try await HighlightTests.publication()
         let order = publication.readingOrder
@@ -50,13 +60,22 @@ import WebKit
             host.removeFromParent()
         }
 
-        // Until the first page answers with its words; 2 min is only a hang guard.
+        // The book opens on its cover, a picture with no words: first a chapter with words. 2 min is only a hang guard.
+        var shown = false
+        for _ in 0..<1200 where !shown {
+            shown = host.navigator.currentLocation != nil && !Self.webViews(in: host.navigator.view).contains { $0.isLoading }
+            if !shown { try await Task.sleep(for: .milliseconds(100)) }
+        }
+        let notShown = shown ? "" : await Self.state(of: host)
+        try #require(shown, "the first page loaded: \(notShown)")
+        _ = await host.navigator.go(to: order[3], options: .init(animated: false))
         var opened = false
         for _ in 0..<1200 where !opened {
             opened = await host.currentAnchor()?.0.text != nil
             if !opened { try await Task.sleep(for: .milliseconds(100)) }
         }
-        try #require(opened, "the first page answered with its words")
+        let notOpened = opened ? "" : await Self.state(of: host)
+        try #require(opened, "a chapter's page answered with its words: \(notOpened)")
 
         // A jump to a chapter, and the anchor asked while its page is still loading (only the page on
         // screen is loaded here, so the jump makes a new one).
