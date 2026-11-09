@@ -213,6 +213,42 @@ final class NavigationPlaceUITests: XCTestCase {
         XCTAssertTrue(shelf.exists, "Close on the opening cover goes back to the shelf")
     }
 
+    /// The Cloud's offer, shown while the first page is still loading behind the opening cover, takes
+    /// his tap: Catch up was drawn beneath the cover, which took the tap as a call for the controls, so
+    /// the offer was never taken and the book stayed on its wordless cover (#46 at c8d3084, CI's iPad:
+    /// ReopenAfterControls round 1, no words for 120 s after Catch up). Judged in reads, never seconds.
+    func testTheCloudsOfferOverTheOpeningCoverTakesHisTap() {
+        app.launchArguments = common + ["-GatefoldHoldOpeningLoad", "2400", "-GatefoldReset", "YES", "-GatefoldDownloadAll", "YES",
+                                        "-GatefoldNoLatency", "YES", "-GatefoldOpenBook", "gutenberg-pride-and-prejudice"]
+        app.launch()
+        let held = app.descendants(matching: .any)["reader.loadingHeld"]
+        let cover = app.descendants(matching: .any)["reader.opening"]
+        let ready = app.descendants(matching: .any)["reader.pageReady"]
+        XCTAssertTrue(held.waitForExistence(timeout: 60), "the first page's load is held open")
+        XCTAssertTrue(cover.waitForExistence(timeout: 10), "the opening cover is up")
+        let offer = app.buttons["banner.jump"], tab = app.descendants(matching: .any)["banner.tab"]
+        // Unanswered for 10 s the offer folds into its tab: the tab opens it again.
+        let up = Date().addingTimeInterval(60)
+        while !(offer.exists && offer.isHittable), Date() < up {
+            if tab.exists, tab.isHittable { tab.tap() }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+        }
+        XCTAssertTrue(offer.exists, "the Cloud's place is offered while the first page loads")
+        guard offer.exists else { return }
+        offer.tap()
+        // Taken: the offer and its tab are gone at once. Missed: the offer stays, or folds into its tab.
+        var reads = 0, taken = false
+        while reads < 10 {
+            reads += 1
+            if !offer.exists, !tab.exists { taken = true; break }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        }
+        let stillLoading = held.exists && (ready.value as? String) == "0"
+        print("PLACEHOLDER offer taken=\(taken) after \(reads) reads; still loading=\(stillLoading)")
+        XCTAssertTrue(stillLoading, "the page was still loading when the tap was judged")
+        XCTAssertTrue(taken, "Catch up over the opening cover takes the tap")
+    }
+
     func testAScrubberJumpKeepsThePlace() {
         let first = openFresh()
         showChrome()
