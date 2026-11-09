@@ -39,22 +39,29 @@ enum CurlRelease {
         _ = await step(mirrored)
     }
 
-    /// Reads of the page a spring back left before an unreadable page counts as a miss.
-    static let readsBeforeJumpingAgain = 1
+    /// Reads of the page a spring back left before an unreadable page counts as a miss: a file just reloaded
+    /// names its document a few reads after the jump lands. Counted in reads, never time; then a covered jump.
+    static let readsBeforeJumpingAgain = 20
 
     /// What a spring back's check found: the page read live (nil if never read), and whether it took a second jump.
     struct Confirmation: Equatable { var page: ClosedRange<Double>?; var jumpedAgain: Bool; var reads: Int }
 
     /// Checks the page a spring back left against `target`, by `read` (the page in the start's document, nil when
-    /// it can't be read there). One more `jump` when it's elsewhere.
+    /// it can't be read there yet), reading again while it can't. One more `jump` when it's elsewhere or never read.
     @MainActor static func confirm(_ target: Double, read: () async -> ClosedRange<Double>?,
                                    jump: () async -> Void) async -> Confirmation {
-        var reads = 1
-        var page = await read()
+        var reads = 0
+        func readable() async -> ClosedRange<Double>? {
+            for _ in 0..<readsBeforeJumpingAgain {
+                reads += 1
+                if let page = await read() { return page }
+            }
+            return nil
+        }
+        var page = await readable()
         guard !(page.map { isOn(target, page: $0) } ?? false) else { return Confirmation(page: page, jumpedAgain: false, reads: reads) }
         await jump()
-        reads += 1
-        page = await read()
+        page = await readable()
         return Confirmation(page: page, jumpedAgain: true, reads: reads)
     }
 }

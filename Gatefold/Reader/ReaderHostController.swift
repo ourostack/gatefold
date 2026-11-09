@@ -1656,6 +1656,8 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             return
         }
         func here() async -> ClosedRange<Double>? {
+            // One read per frame: the reloaded document gets a frame to name itself between reads.
+            await nextFrame()
             _ = await navigator.evaluateJavaScript(ReaderJS.install)
             guard let json = (try? await navigator.evaluateJavaScript(ReaderJS.pageRange).get()) as? String,
                   let data = json.data(using: .utf8) else { return nil }
