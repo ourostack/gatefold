@@ -1,0 +1,37 @@
+name: Minutes left for a test step
+description: >-
+  The minutes a test step may run so that, if it hangs, the job still has time to report why and upload its logs
+  before the job's own limit ends it (gatefold#126). A job-level limit cancels the whole job and skips every later
+  step, uploads included; a step-level limit fails only the step. Needs JOB_START (epoch seconds), set as the job
+  begins.
+inputs:
+  limit:
+    description: The job's timeout-minutes.
+    required: true
+  reserve:
+    description: Minutes kept for the steps after the test step (failure summary, place log, upload).
+    default: "10"
+  cap:
+    description: The most this step may have, whatever is left.
+    default: "600"
+outputs:
+  minutes:
+    description: Whole minutes, at least 1.
+    value: ${{ steps.left.outputs.minutes }}
+runs:
+  using: composite
+  steps:
+    - id: left
+      shell: bash
+      env:
+        LIMIT: ${{ inputs.limit }}
+        RESERVE: ${{ inputs.reserve }}
+        CAP: ${{ inputs.cap }}
+      run: |
+        set -eu
+        [ -n "${JOB_START:-}" ] || { echo "::error::JOB_START is not set; the job notes it as it begins"; exit 1; }
+        left=$(( (JOB_START + (LIMIT - RESERVE) * 60 - $(date +%s)) / 60 ))
+        [ "$left" -le "$CAP" ] || left=$CAP
+        [ "$left" -ge 1 ] || left=1
+        echo "$left min for this step: the job's limit is $LIMIT min, $RESERVE kept for its logs"
+        echo "minutes=$left" >> "$GITHUB_OUTPUT"
