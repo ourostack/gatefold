@@ -207,6 +207,11 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         readerLog.notice("standby: loading the Cloud place's page behind this one")
     }
 
+    /// For tests: the standby page and its load, while one is behind the page.
+    var standbyPage: (navigator: EPUBNavigatorViewController, ready: Task<Void, Never>)? {
+        standby.map { ($0.navigator, $0.ready) }
+    }
+
     /// A book opened ahead of a tap that won't be shown: stop its pages loading, so a book the reader
     /// did tap gets the whole CPU (an abandoned warm page went on loading for seconds behind a cold open).
     func halt() {
