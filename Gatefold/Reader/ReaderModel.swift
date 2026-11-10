@@ -1685,6 +1685,17 @@ final class ReaderModel {
         // is owed: the reflow's end records it, or the place he went to is never kept (build 17 reopened
         // a book jumped to during that reflow at its start, then landed on the Cloud's older place).
         // A reader warmed behind the shelf has no place of his to owe.
+        // A scroll or swipe of his while the reflow lays out (a touch, and the page moved since the last
+        // report) is his move too: the restore gives way to it and his page is owed, never put back under
+        // him (gatefold#171: switching to Scroll on a slow iPad, six swipes, then the restore brought the
+        // words from before the switch back).
+        if keeper.reflowing != nil, !leaving, !duringTurn, !isWarming, touchedSinceLocation, let before = reportedBefore,
+           before.href != locator.href || before.locations.progression != locator.locations.progression {
+            hisMoves += 1
+            hasMoved = true
+            moves += 1
+            readerLog.notice("reflow: a scroll of his while it lays out; the restore gives way (reported \(Self.placeTag(locator), privacy: .public))")
+        }
         if keeper.reflowing != nil, !leaving, hasMoved, moves != recordedMoves, !duringTurn, !isWarming {
             if !placeOwed { readerLog.notice("place: owed by a reflow, at \(locator.locations.totalProgression ?? -1, privacy: .public) moves \(self.moves, privacy: .public) recorded \(self.recordedMoves, privacy: .public)") }
             placeOwed = true
