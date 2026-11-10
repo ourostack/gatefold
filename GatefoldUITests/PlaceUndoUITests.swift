@@ -118,13 +118,13 @@ final class PlaceUndoUITests: XCTestCase {
         XCTAssertTrue(app.buttons["reader.contents"].waitForExistence(timeout: 5), "after Back a tap no longer shows the controls")
     }
 
-    /// A touch resting on the scrubber, and a short wobble on it, never move the page.
     /// Back to a chapter still loading waits for it, veiled, and takes him back: on CI's iPad (job
     /// 129949744000, gatefold#170) Back gave up after its 150 reads, the veil let go while the chapter
     /// still loaded, and he stayed where he had jumped to. Every jump's load is held open
-    /// (`-GatefoldHoldChapterLoad`) for longer than those reads; judged in samples of the held load.
+    /// (`-GatefoldHoldChapterLoad`; each look of the veil spends two, so 1600 is 800 looks, past those
+    /// reads on any runner); judged in samples of the held load.
     func testBackToAChapterStillLoadingWaitsForItAndTakesHimBack() {
-        let first = openFresh(["-GatefoldHoldChapterLoad", "800"])
+        let first = openFresh(["-GatefoldHoldChapterLoad", "1600"])
         let held = el("reader.loadingHeld"), veil = el("reader.veil")
         contentsJump(to: "Chapter XL")
         XCTAssertTrue(veil.waitForExistence(timeout: 10) && veil.waitForNonExistence(timeout: 240), "the jump's veil lifts")
@@ -150,6 +150,7 @@ final class PlaceUndoUITests: XCTestCase {
         XCTAssertNotEqual(back.label, "Couldn't go back. Try again")
     }
 
+    /// A touch resting on the scrubber, and a short wobble on it, never move the page.
     func testATouchOnTheScrubberNeverJumps() {
         let first = openFresh()
         showChrome()

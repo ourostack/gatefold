@@ -382,7 +382,7 @@ import Testing
         let trip = Task { await f.model.goBack() }
         for _ in 0..<(JumpLanding.reads * 4) where !f.model.isGoingBack { await Task.yield() }
         // Well past the reads a trip may spend on a page that isn't loading.
-        for _ in 0..<(JumpLanding.reads * 4) where f.model.isGoingBack { await Task.yield() }
+        for _ in 0..<(JumpLanding.reads * 2) where f.model.isGoingBack { await Task.yield() }
         #expect(f.model.isGoingBack, "Back gave up while its chapter was still loading")
         // The load comes in.
         f.page.loadingChapter = false
@@ -396,16 +396,18 @@ import Testing
         f.model.close()
     }
 
-    /// A Back that does give up (a load that died: no load under way, or one that never ends) says so on
-    /// the pill and leaves it up, so one more tap tries again; it never just stops (gatefold#170).
-    @Test(arguments: ["hung, not loading", "loading forever"]) func aBackThatGivesUpSaysSoAndStaysUp(how: String) async throws {
+    /// A Back that does give up (a load that died: no load under way, or one that never ends, or a jump
+    /// that comes back but never shows his page) says so on the pill and leaves it up, pointing at his
+    /// page, so one more tap tries again; it never just stops (gatefold#170).
+    @Test(arguments: ["hung, not loading", "loading forever", "came back short"]) func aBackThatGivesUpSaysSoAndStaysUp(how: String) async throws {
         let f = try await S.make(remote: { _, _ in nil }, startAt: 0.05)
         await f.model.load()
         await f.model.locationDidChange(try #require(f.page.currentLocation))
         await f.model.go(toProgression: 0.7, rememberBack: true)
         let wayBack = try #require(f.model.backLocator)
         f.model.backBeat = { await Task.yield() }
-        f.page.holdsJumps = true
+        // Came back short: every jump opens its file's first page, never his page in it.
+        if how == "came back short" { f.page.dropsPlaceInFile = 100_000 } else { f.page.holdsJumps = true }
         f.page.loadingChapter = how == "loading forever"
         let hung = Task { await f.model.goBack() }
         for _ in 0..<(JumpLanding.reads * 4) where !f.model.isGoingBack { await Task.yield() }
@@ -413,6 +415,12 @@ import Testing
         #expect(!f.model.isGoingBack, "a Back whose load died was never given up")
         #expect(f.model.backLabel == "Couldn't go back. Try again", "Back gave up without saying so")
         #expect(f.model.showJumpBack && f.model.backLocator == wayBack, "the way back went away when Back gave up")
+        if how == "came back short" {
+            await hung.value
+            #expect(f.model.backLabel == "Couldn't go back. Try again", "a Back that never showed his page said it got there")
+            #expect(f.model.backLocator == wayBack, "the way back now points at the page Back was left on")
+            f.page.dropsPlaceInFile = 0
+        }
         // One more tap tries again, and the pill says where it goes once more.
         f.page.loadingChapter = false
         f.page.holdsJumps = false
