@@ -1262,6 +1262,7 @@ final class ReaderModel {
         // landing of ours that only took long is where the page belongs.
         guard watch.letGo, hisSteps != his else { return jump }
         overtakenJumps.insert(jump)
+        if let here = page?.currentLocation, !lateLandings.contains(where: { Self.samePage($0, here) }) { lateLandings.append(here) }
         if newestHasLanded, host?.isTurning != true, !isClosed, let newest = lastLanded {
             readerLog.notice("veil: jump \(jump, privacy: .public) came back after a move of his; page put back")
             jumpsPutBack += 1
@@ -1270,6 +1271,19 @@ final class ReaderModel {
             if steps == restore, !isClosed, let here = page?.currentLocation { await locationDidChange(here, hisMove: true) }
         }
         return jump
+    }
+    /// Pages overtaken jumps landed on since his place was last kept: Readium's report of one, with no
+    /// touch or turn of his, while Readium already names another page (the newer move's) and that move
+    /// isn't kept, is the overtaken jump's late report, not his move (a second jump made while the first
+    /// was past its veil: the first's report claimed the second's move and was kept).
+    @ObservationIgnored private var lateLandings: [Locator] = []
+    private func isLateLandingReport(_ l: Locator) -> Bool {
+        guard recordedMoves < moves, lateLandings.contains(where: { Self.samePage(l, $0) }),
+              let now = page?.currentLocation, !Self.samePage(now, l) else { return false }
+        return true
+    }
+    private static func samePage(_ a: Locator, _ b: Locator) -> Bool {
+        a.href == b.href && abs((a.locations.progression ?? -1) - (b.locations.progression ?? -1)) < 0.000_1
     }
     /// A veiled jump's watch: whether it is back, and whether its veil let go first.
     @MainActor private final class VeilWatch { var back = false; var letGo = false }
@@ -1448,6 +1462,7 @@ final class ReaderModel {
             }
             if let json {
                 self.recordedMoves = self.moves
+                self.lateLandings = []
                 self.newestWrittenMove = max(self.newestWrittenMove, self.moves)
                 readerLog.notice("place write [r\(self.readerNumber, privacy: .public)]: landing (\(fresh != nil ? "his first words" : "Readium's boundary", privacy: .public)) \(Self.placeTag(settledLocator), privacy: .public); kept total \(chosen?.totalProgression ?? here.locations.totalProgression ?? 0, privacy: .public); move \(self.moves, privacy: .public)")
                 self.app.library.recordPlace(
@@ -1750,6 +1765,10 @@ final class ReaderModel {
     func locationDidChange(_ locator: Locator, duringTurn: Bool = false, hisMove: Bool = false, placeOnly: Bool = false,
                            leaving: Bool = false) async {
         guard !isClosed || leaving else { return }
+        if !hisMove, !duringTurn, !leaving, !touchedSinceLocation, isLateLandingReport(locator) {
+            readerLog.notice("place: a late report of a page an overtaken jump landed on (\(Self.placeTag(locator), privacy: .public)); not his move, nothing kept")
+            return
+        }
         let reportedBefore = lastReported
         lastReported = locator
         if !placeOnly {
@@ -1879,6 +1898,7 @@ final class ReaderModel {
         }
         // Kept as of now, before any further wait.
         recordedMoves = moves
+        lateLandings = []
         let keeping = moves
         newestWrittenMove = max(newestWrittenMove, keeping)
         // The first words on screen make the place exact; Readium's progression is a page boundary.
