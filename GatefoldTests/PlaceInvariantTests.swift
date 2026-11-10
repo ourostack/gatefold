@@ -408,7 +408,6 @@ import Testing
         f.model.close()
     }
 
-    /// The place kept for the book, as a total progression.
     /// A report of the page he has left, delivered late (after his jump's page is on screen, before the
     /// jump's own report), is not his move: his jump's page is the place kept. On CI's iPad (job
     /// 130027739780) a report of the book's first file came 36 ms after a jump landed at 0.309 and was
@@ -430,22 +429,43 @@ import Testing
         f.model.close()
     }
 
-    /// The late-report rule (gatefold#174) never drops a real move of his. It names only the exact page a
-    /// jump left, while Readium names another, before the jump is kept, with no touch:
-    /// - "turn": a turn of his right after the jump, its report in before the page's geometry has caught
-    ///   up (`pageRange` still on the page he left);
-    /// - "new file": the jump's first report is its new file, geometry still on the old page;
-    /// - "scroll": a scroll of his (a touch, then reports, as scroll mode sends them) after the jump;
-    /// - "scroll back": a scroll of his straight back to the exact page the jump left.
-    @Test(arguments: ["turn", "new file", "scroll", "scroll back"]) func aMoveOfHisAfterAJumpIsStillKept(how: String) async throws {
+    /// Two jumps before the first is kept: a late report of the first page he left still isn't his move.
+    @Test func aLateReportOfThePageLeftBeforeTwoJumpsIsNotKept() async throws {
         let f = try await S.make(remote: { _, _ in nil }, startAt: 0.05)
+        await f.model.load()
+        let left = try #require(f.page.currentLocation)
+        await f.model.locationDidChange(left)
+        f.page.reportsOnGo = false
+        await f.model.go(toProgression: 0.4, rememberBack: true)
+        await f.model.go(toProgression: 0.7, rememberBack: true)
+        let landed = try #require(f.page.currentLocation)
+        await f.model.locationDidChange(left)
+        await f.model.locationDidChange(landed)
+        let at = landed.locations.totalProgression ?? -1
+        await Self.settle { abs((Self.kept(f) ?? -1) - at) < 0.001 }
+        #expect(abs((Self.kept(f) ?? -1) - at) < 0.001, "a late report of the first page left was kept, at \(Self.kept(f) ?? -1)")
+        f.model.close()
+    }
+
+    /// The late-report rule (gatefold#174) never drops a real move of his. It names only an exact page a
+    /// jump left, while Readium names another, before the jump is kept, with no touch. Each case has the
+    /// page's own geometry (`pageRange`) lagging on the page he left:
+    /// - "turn": a turn of his right after the jump, reported before the geometry caught up;
+    /// - "new file": the jump's first report is its new file;
+    /// - "scroll": scroll mode, his touch and its report, then a report with no touch, as momentum sends;
+    /// - "scroll back": scroll mode, his scroll straight back to the exact page the jump left;
+    /// - "Readium names it": no touch, and Readium itself names the page left (a jump that stayed on it),
+    ///   so only the rule's own check on Readium's page keeps it.
+    @Test(arguments: ["turn", "new file", "scroll", "scroll back", "Readium names it"])
+    func aMoveOfHisAfterAJumpIsStillKept(how: String) async throws {
+        let f = try await S.make(remote: { _, _ in nil }, startAt: 0.05)
+        if how.hasPrefix("scroll") { f.model.setPreferences { $0.pageTurn = .scroll } }
         await f.model.load()
         let left = try #require(f.page.currentLocation)
         await f.model.locationDidChange(left)
         f.page.reportsOnGo = false
         await f.model.go(toProgression: 0.7, rememberBack: true)
         let landed = try #require(f.page.currentLocation)
-        // The page's own geometry lags on the page he left.
         f.page.shownLocation = left
         let want: Locator
         switch how {
@@ -459,14 +479,21 @@ import Testing
             want = landed
             await f.model.locationDidChange(landed)
         case "scroll":
-            want = try #require(await S.locate(f.publication, 0.72))
-            f.page.currentLocation = want
+            let first = try #require(await S.locate(f.publication, 0.72))
+            want = try #require(await S.locate(f.publication, 0.73))
+            f.page.currentLocation = first
             f.model.noteInteraction()
+            await f.model.locationDidChange(first)
+            f.page.currentLocation = want
             await f.model.locationDidChange(want)
-        default:
+        case "scroll back":
             want = left
             f.page.currentLocation = left
             f.model.noteInteraction()
+            await f.model.locationDidChange(left)
+        default:
+            want = left
+            f.page.currentLocation = left
             await f.model.locationDidChange(left)
         }
         let at = want.locations.totalProgression ?? -1
@@ -475,6 +502,7 @@ import Testing
         f.model.close()
     }
 
+    /// The place kept for the book, as a total progression.
     private static func kept(_ f: S.Fixture) -> Double? {
         f.app.library.book(S.frankenstein.fastHash)?.locatorJSON.flatMap { try? Locator(jsonString: $0) }?.locations.totalProgression
     }
