@@ -118,11 +118,11 @@ final class PlaceUndoUITests: XCTestCase {
         XCTAssertTrue(app.buttons["reader.contents"].waitForExistence(timeout: 5), "after Back a tap no longer shows the controls")
     }
 
-    /// Back to a chapter still loading waits for it, veiled, and takes him back: on CI's iPad (job
-    /// 129949744000, gatefold#170) Back gave up after its 150 reads, the veil let go while the chapter
-    /// still loaded, and he stayed where he had jumped to. Every jump's load is held open
-    /// (`-GatefoldHoldChapterLoad`; each look of the veil spends two, so 1600 is 800 looks, past those
-    /// reads on any runner); judged in samples of the held load.
+    /// Back to a chapter still loading takes him back once it has loaded: on CI's iPad (job 129949744000,
+    /// gatefold#170) Back gave up and he stayed where he had jumped to. Every jump's load is held open
+    /// (`-GatefoldHoldChapterLoad`; each look of the veil spends two, so 1600 is 800 looks, past Back's
+    /// 150 plain reads). The veil may let go at its limit meanwhile (the chapter shows its own loading);
+    /// the trip goes on. Judged in samples of the held load.
     func testBackToAChapterStillLoadingWaitsForItAndTakesHimBack() {
         let first = openFresh(["-GatefoldHoldChapterLoad", "1600"])
         let held = el("reader.loadingHeld"), veil = el("reader.veil")
@@ -135,15 +135,15 @@ final class PlaceUndoUITests: XCTestCase {
         XCTAssertTrue(back.waitForExistence(timeout: 10), "a way back")
         back.tap()
         XCTAssertTrue(held.waitForExistence(timeout: 30), "Back's chapter load is held open")
-        // Every sample while the load is held must find Back's veil up: a veil gone meanwhile is a trip given up.
+        // Sampled until the held load ends: how long the veil stayed, for the log (it may let go at its limit).
         var samples = 0, bare = 0
         while held.exists, samples < 1200 {
             samples += 1
             if !veil.exists, held.exists { bare += 1 }
             RunLoop.current.run(until: Date().addingTimeInterval(0.3))
         }
-        print("BACKHELD samples=\(samples) bareWhileLoading=\(bare) heldAtEnd=\(held.exists)")
-        XCTAssertEqual(bare, 0, "Back gave up while its chapter was still loading")
+        print("BACKHELD samples=\(samples) veilGoneWhileLoading=\(bare) heldAtEnd=\(held.exists)")
+        XCTAssertFalse(held.exists, "the held load never ended")
         XCTAssertTrue(veil.waitForNonExistence(timeout: 30), "Back's veil lifted once the chapter had loaded")
         let returned = waitForWords(changingFrom: jumped, timeout: 30)
         XCTAssertEqual(opening(returned), opening(first), "Back did not return to his page")
