@@ -78,6 +78,16 @@ private final class ColdPage {
         #expect(page.reads <= JumpLanding.reads + JumpLanding.loadingReads)
     }
 
+    /// A move of his before the first send (Back's trip, while the old page is still being pictured)
+    /// means the jump is no longer wanted: it is never sent, so it can't take him off his new page.
+    @Test func aLandingNoLongerWantedAtItsStartSendsNothing() async {
+        let page = ColdPage(loadsAfterReads: nil)
+        let landed = await JumpLanding.land(target: page.place(0.62), go: { page.go(0.62) }, visible: { page.visible() },
+                                            stillWanted: { false }, beat: {})
+        #expect(!landed)
+        #expect(page.jumps == 0, "sent \(page.jumps) jumps nobody wanted")
+    }
+
     /// Run 42418233954: a jump to 0.31 counted the chapter's file start, 0.3003, as landed, within the
     /// old 0.015 of the book. Here the target is just past the file's first page, so the file start is
     /// the page right before it, and it is sent again until its own page is up.
