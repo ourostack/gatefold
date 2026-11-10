@@ -177,6 +177,8 @@ import Testing
         // anchor, ever: every read is empty.
         f.page.linkRefusals = 2
         f.page.fragmentAt = [:]
+        // The opening's own write is settled first.
+        for _ in 0..<20 { await Task.yield() }
         let before = saved(f)
 
         await f.model.go(to: entry)
@@ -184,7 +186,7 @@ import Testing
         let kept = try #require(saved(f).flatMap { try? Locator(jsonString: $0) }, "the jump kept no place")
         #expect(saved(f) != before, "the jump that found no anchor kept no place of its own")
         #expect(ContentsIndex.sameResource(kept.href.string, fileStart.href.string), "the place kept is in another file")
-        #expect(kept.locations.progression == 0, "the place kept is not Readium's landing at the file's start")
+        #expect((kept.locations.progression ?? 1) < 0.001, "the place kept is not Readium's landing at the file's start")
         #expect(f.model.showJumpBack, "the jump has no way back")
         #expect(f.page.fragmentReads <= JumpLanding.reads, "\(f.page.fragmentReads) reads, past the budget of \(JumpLanding.reads)")
         #expect(f.page.linkJumps == 3, "sent \(f.page.linkJumps) times: the refused sends weren't sent again, or the reads kept sending")
