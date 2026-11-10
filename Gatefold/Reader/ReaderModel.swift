@@ -1820,8 +1820,7 @@ final class ReaderModel {
         // Only this landing's own veil (an older jump still out names `strayJump` too, and a touch under
         // the new veil still counts), and never a report of the chapter it is bound for: a touch that went
         // nowhere makes the landing's own report look touched (gatefold#173 re-review).
-        let swipePastVeil = landing && touchedSinceLocation && (strayJump.map { $0.jump >= landingStep } ?? false)
-            && !isStrayChapter(locator)
+        let swipePastVeil = landing && touchedSinceLocation && strayJump != nil
         guard !landing || swipePastVeil, !launchJumpInFlight else { return }
         // Mid-turn the navigator has moved under the overlay; the turn records the place when it lands.
         // A move reported mid-reflow (a turn or a jump while an iPad's first layout is still settling)
