@@ -430,6 +430,51 @@ import Testing
         f.model.close()
     }
 
+    /// The late-report rule (gatefold#174) never drops a real move of his. It names only the exact page a
+    /// jump left, while Readium names another, before the jump is kept, with no touch:
+    /// - "turn": a turn of his right after the jump, its report in before the page's geometry has caught
+    ///   up (`pageRange` still on the page he left);
+    /// - "new file": the jump's first report is its new file, geometry still on the old page;
+    /// - "scroll": a scroll of his (a touch, then reports, as scroll mode sends them) after the jump;
+    /// - "scroll back": a scroll of his straight back to the exact page the jump left.
+    @Test(arguments: ["turn", "new file", "scroll", "scroll back"]) func aMoveOfHisAfterAJumpIsStillKept(how: String) async throws {
+        let f = try await S.make(remote: { _, _ in nil }, startAt: 0.05)
+        await f.model.load()
+        let left = try #require(f.page.currentLocation)
+        await f.model.locationDidChange(left)
+        f.page.reportsOnGo = false
+        await f.model.go(toProgression: 0.7, rememberBack: true)
+        let landed = try #require(f.page.currentLocation)
+        // The page's own geometry lags on the page he left.
+        f.page.shownLocation = left
+        let want: Locator
+        switch how {
+        case "turn":
+            want = try #require(await S.locate(f.publication, 0.71))
+            f.page.currentLocation = want
+            f.model.userTurnedPage()
+            await f.model.locationDidChange(want)
+        case "new file":
+            #expect(landed.href != left.href, "the jump stayed in the file he left")
+            want = landed
+            await f.model.locationDidChange(landed)
+        case "scroll":
+            want = try #require(await S.locate(f.publication, 0.72))
+            f.page.currentLocation = want
+            f.model.noteInteraction()
+            await f.model.locationDidChange(want)
+        default:
+            want = left
+            f.page.currentLocation = left
+            f.model.noteInteraction()
+            await f.model.locationDidChange(left)
+        }
+        let at = want.locations.totalProgression ?? -1
+        await Self.settle { abs((Self.kept(f) ?? -1) - at) < 0.001 }
+        #expect(abs((Self.kept(f) ?? -1) - at) < 0.001, "his \(how) wasn't kept: \(Self.kept(f) ?? -1), not \(at)")
+        f.model.close()
+    }
+
     private static func kept(_ f: S.Fixture) -> Double? {
         f.app.library.book(S.frankenstein.fastHash)?.locatorJSON.flatMap { try? Locator(jsonString: $0) }?.locations.totalProgression
     }
