@@ -321,6 +321,7 @@ import Testing
         // in sleeps: each beat is a yield, so a sleep spends the whole loading budget and Back rightly
         // gives up.
         for _ in 0..<(JumpLanding.reads * 20) where f.model.tripsPastTheVeil < 1 { await Task.yield() }
+        try #require(f.model.tripsPastTheVeil >= 1, "the trip never got past its veil's limit")
         #expect(f.model.isGoingBack, "Back gave up while its chapter was still loading")
         #expect(f.model.tripsPastTheVeil == 1, "the veil held the screen past its limit")
         // The load comes in.
@@ -473,6 +474,41 @@ import Testing
         #expect(f.model.jumpsPutBack == 0, "a landing nobody overtook was put back")
         #expect(abs((f.page.currentLocation?.locations.totalProgression ?? -1) - 0.7) < 0.03, "the landing didn't stand")
         f.model.close()
+    }
+
+    /// A touch that went nowhere while a catch-up is past its veil (no tap, no swipe) leaves the landing's
+    /// own report looking touched. Readium reporting the landed page before the jump returns is still the
+    /// landing's, not a swipe of his: nothing is put back and its way back is offered (gatefold#173 re-review).
+    @Test func aStrayTouchPastTheVeilLeavesTheCatchUpItsOwnReport() async throws {
+        let f = try await S.make(remote: { _, _ in ReadingPosition(cfi: nil, totalProgression: 0.7, updated: Date(), source: .pocketBookNative) },
+                                 book: { $0.totalProgression = 0.05; $0.lastOpened = Date().addingTimeInterval(-600) },
+                                 startAt: 0.05, jumpBeat: { await Task.yield() })
+        defer { f.model.close() }
+        await f.model.load()
+        await f.model.locationDidChange(try #require(f.page.currentLocation))
+        await f.model.checkRemote()
+        try #require(f.model.suggestion != nil, "the Cloud's place is offered")
+        f.model.forceReady()
+        for _ in 0..<1_000 where !f.model.pageReady { try? await Task.sleep(for: .milliseconds(10)) }
+        try #require(f.model.pageReady, "the first page never showed")
+        f.page.dropStandby()
+        f.page.reportsBeforeReturn = true
+        f.page.holdsJumps = true
+        f.page.loadingChapter = true
+        let taking = Task { await f.model.acceptSuggestion() }
+        await Self.settle { f.model.jumpsPastTheVeil >= 1 }
+        try #require(f.model.jumpsPastTheVeil == 1, "the catch-up wasn't on its way past the veil's limit")
+        // A touch that began and went nowhere: no tap clears it, no swipe reports it.
+        f.model.noteInteraction()
+        f.page.loadingChapter = false
+        f.page.holdsJumps = false
+        f.page.releaseJumps()
+        await taking.value
+        await Self.settle { abs((Self.kept(f) ?? -1) - 0.7) < 0.03 }
+        #expect(f.model.jumpsPutBack == 0, "the catch-up's own report was taken for a swipe of his and the page put back")
+        #expect(abs((f.page.currentLocation?.locations.totalProgression ?? -1) - 0.7) < 0.03, "the catch-up didn't stand")
+        #expect(abs((Self.kept(f) ?? -1) - 0.7) < 0.03, "the place kept isn't the catch-up's: \(Self.kept(f) ?? -1)")
+        #expect(f.model.showJumpBack, "the catch-up landed but offers no way back")
     }
 
     /// A catch-up overtaken by a turn or a swipe of his while it is past the veil's limit offers no way
