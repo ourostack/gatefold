@@ -195,7 +195,8 @@ enum ReaderJS {
           // file not laid out yet (CI, run 42852464361: a jump took 0 for an anchor 0.79 into its file).
           if (!columns) {
             const r = el.getBoundingClientRect();
-            return r.top < window.innerHeight && r.left < window.innerWidth ? 0 : null;
+            const onScreen = r.width + r.height > 0 && r.right > 0 && r.bottom > 0 && r.left < window.innerWidth && r.top < window.innerHeight;
+            return onScreen ? 0 : null;
           }
           const rect = el.getBoundingClientRect();
           return Math.max(0, Math.min(1, (rect.left + Math.abs(se.scrollLeft)) / se.scrollWidth));

@@ -2342,12 +2342,16 @@ final class ReaderModel {
         await page?.go(to: link)
         let href = link.url().removingFragment().string
         let wanted = { [weak self] in self.map { $0.moves == move && !$0.isClosed } ?? false }
-        var target: Double?
+        var target: Double?, lastRead: Double?
         var absent = false
         for read in 1...JumpLanding.reads where target == nil && !absent && wanted() {
             if let here = page?.currentLocation, ContentsIndex.sameResource(here.href.string, href) {
-                // -1: laid out, and no such element (a broken anchor): Readium's landing stands.
-                if let p = await page?.progression(ofFragment: fragment) { if p < 0 { absent = true } else { target = p } }
+                // -1: laid out, and no such element (a broken anchor): Readium's landing stands. A place is
+                // taken once two reads agree: a layout still settling (its columns not final) can read
+                // another (CI run 42852464361 took 0 for a place 0.79 into its file).
+                if let p = await page?.progression(ofFragment: fragment) {
+                    if p < 0 { absent = true } else if let last = lastRead, abs(last - p) < 0.001 { target = p } else { lastRead = p }
+                } else { lastRead = nil }
             } else if read % JumpLanding.resendEvery == 0 {
                 // Refused while a web view loaded (the page never reached the file): asked again.
                 await page?.go(to: link)
