@@ -217,6 +217,32 @@ import Testing
         f.model.close()
     }
 
+    /// Back goes to the page he was reading, even when "where he is" still names the chapter's start
+    /// (gatefold#143: on CI a slow opening landed on his page while `location` stayed at the chapter's
+    /// first page, so Back remembered that start and took him there).
+    @Test func backGoesToThePageOnScreenWhenWhereHeIsLagsAtTheChaptersStart() async throws {
+        let f = try await S.make(remote: { _, _ in nil }, startAt: 0.05)
+        await f.model.load()
+        let his = try #require(f.page.currentLocation)
+        try #require((his.locations.progression ?? 0) > 0.05, "his page is partway through its chapter")
+        // Readium first names the chapter's start, then the page settles on his without a move of his.
+        let start = his.copy(locations: { $0.progression = 0; $0.totalProgression = nil; $0.position = nil })
+        f.page.currentLocation = start
+        await f.model.locationDidChange(start)
+        f.page.currentLocation = his
+        await f.model.locationDidChange(his)
+        let lagging = f.model.location?.locations.progression ?? -1
+        try #require(lagging < 0.001, "where he is lags at the chapter's start (it reads \(lagging))")
+        await f.model.go(toProgression: 0.7, rememberBack: true)
+        f.model.backBeat = { await Task.yield() }
+        await f.model.goBack()
+        let want = his.locations.progression ?? -1
+        let at = f.page.currentLocation?.locations.progression ?? -2
+        #expect(f.page.currentLocation?.href == his.href, "Back went to another chapter")
+        #expect(abs(at - want) < 0.005, "Back came back to \(at) in the chapter, not his page at \(want)")
+        f.model.close()
+    }
+
     /// A place write still on its way for an older move never lands over a newer move's place. On CI at
     /// c4c3b6a the Contents jump's write, slow to map its position, landed after Back's and kept the
     /// jump's page (0.6996) as his place once Back had brought him home.
