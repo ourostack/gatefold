@@ -384,8 +384,13 @@ final class ReaderModel {
     var countingPages: Bool {
         pageReady && screenNumbers == nil && screenLayout != nil && !countGaveUp && !countStalled
     }
-    /// Your Page is open: he is still tuning the page (gatefold#162).
-    @ObservationIgnored var tuning = false
+    /// Your Page is open: he is still tuning the page, so no count starts behind it (gatefold#162). Each
+    /// Justify tap in a landscape spread began a count (four to six hidden web views) that the next tap
+    /// threw away before it counted a chapter, and making them held the page for seconds a tap. Closing it
+    /// counts the layout he chose.
+    @ObservationIgnored var tuning = false {
+        didSet { if oldValue, !tuning { Task { await refreshScreenNumbers(recount: true) } } }
+    }
     /// No chapter counted, and no count begun, for a minute.
     private(set) var countStalled = false
     @ObservationIgnored private var stallTimer: Task<Void, Never>?
@@ -480,7 +485,7 @@ final class ReaderModel {
     private func startCounting() {
         // Never during a reflow: a second web view loading then holds up the reflow's own look at the
         // page and loses his place (a posture change on the Duo). The reflow's end starts it.
-        guard pageReady, reopenPicture == nil, keeper.reflowing == nil,
+        guard pageReady, reopenPicture == nil, keeper.reflowing == nil, !tuning,
               let map = screenPages, !map.uncounted.isEmpty else { return }
         let key = map.layout
         countGaveUp = false
