@@ -79,8 +79,6 @@ jobs:
           # shellcheck disable=SC2016
           nohup sh -c 'while :; do echo "== $(date -u +%T) $(sysctl -n vm.loadavg)"; ps -Aceo pcpu=,rss=,comm= -r | head -8; sleep 20; done' \
             >> "$RUNNER_TEMP/load.log" 2>&1 &
-      - name: Start the ${{ inputs.device }} booting
-        run: python3 -I scripts/ci-simulator.py start "${{ inputs.sim }}" "${{ inputs.device }}"
       - id: fetch
         # Usually 4 s, but 13 of 144 took over 2 min and one 10.6 min (gatefold#144), in bunches across jobs: the
         # artifact store, not the runner. A download cut off at 4 min tries once more, rather than eating the tests' time.
@@ -115,6 +113,8 @@ jobs:
           want="gatefold-tests-$GITHUB_SHA-xcode-$(xcodebuild -version | tr -s ' \n' '-' | sed 's/-$//; s/^Xcode-//; s/-Build-version-/-/')"
           [ "$want" = "$ARTIFACT" ] || { echo "::error::Built as $ARTIFACT, but this job's Xcode makes $want"; exit 1; }
           echo "XCTESTRUN=$(ls "$RUNNER_TEMP"/dd/Build/Products/*.xctestrun | head -1)" >> "$GITHUB_ENV"
+      - name: Start the ${{ inputs.device }} booting (diagnostic, gatefold#150, after the unpack, so the boot has the VM to itself)
+        run: python3 -I scripts/ci-simulator.py start "${{ inputs.sim }}" "${{ inputs.device }}"
       - name: The ${{ inputs.device }} finished booting
         # boot-sim.sh retries a boot that fails or hangs (#57); this step waits for it with a limit.
         # 1200 s for the boot, the check's listings, and 900 s for one fresh device when the first boot left room
