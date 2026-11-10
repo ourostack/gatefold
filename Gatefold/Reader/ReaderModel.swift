@@ -2158,7 +2158,7 @@ final class ReaderModel {
     /// had already happened. An earlier jump's way back goes down meanwhile; it isn't this jump's.
     private func rememberPlace(at here: Locator? = nil, keepingTheWayBack: Bool = false) -> Int {
         backJumps += 1
-        let stale = here == nil ? lagsBehindThePage() : nil
+        let stale: Locator? = nil
         let remembered = here ?? stale ?? location
         // No page number: the counted one can still be the page before a jump within the chapter, and
         // Readium's positions aren't his pages. The pill says where it goes in words.
