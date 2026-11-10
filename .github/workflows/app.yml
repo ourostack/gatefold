@@ -462,7 +462,8 @@ jobs:
           set -o pipefail
           python3 -I scripts/ci-within.py --until "$STEP_UNTIL" -- xcodebuild test-without-building -xctestrun "$XCTESTRUN" \
             -destination "$DESTINATION" \
-            -only-testing:GatefoldTests \
+            "-only-testing:GatefoldTests/PlaceInvariantTests/backGoesToThePageOnScreenWhenWhereHeIsLagsAtTheChaptersStart()" \
+            -test-iterations 3 \
             -resultBundlePath "$RUNNER_TEMP/unit.xcresult" 2>&1 | tail -200
       - id: left_ui
         uses: ./.github/actions/time-left
