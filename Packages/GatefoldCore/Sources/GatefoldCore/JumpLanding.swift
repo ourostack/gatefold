@@ -48,6 +48,8 @@ public enum JumpLanding {
                             reported: (() -> ReadingAnchor?)? = nil, stillWanted: () -> Bool = { true },
                             loading: () -> Bool = { false }, beat: () async -> Void) async -> Bool {
         let place = ReadingAnchor(href: target.href, progression: target.progression, text: nil)
+        // A move of his before the first send: the jump is never sent over his new page.
+        guard stillWanted() else { return false }
         var taken = await go()
         var budget = Budget(), read = 0
         while budget.take(loading: loading()) {

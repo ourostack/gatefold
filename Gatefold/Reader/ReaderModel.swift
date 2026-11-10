@@ -2082,8 +2082,10 @@ final class ReaderModel {
             var budget = JumpLanding.Budget(), beats = 0
             while let self, self.goingBack == trip, !self.isClosed {
                 guard self.moves == move, self.steps == jump else {
-                    // Its jump back already: the landing sees the move and stops by itself.
-                    guard self.backGoOut == trip else { return }
+                    // No jump of it out (none sent yet, or one between re-sends): the landing sees the move
+                    // and sends nothing more. Still watched, so a jump already on its way that hangs is
+                    // ended here, never left holding Back.
+                    guard self.backGoOut == trip else { await self.backBeat(); continue }
                     readerLog.notice("back: trip \(trip, privacy: .public) overtaken by a move of his after \(beats, privacy: .public) beats; ended quietly")
                     self.goingBack = nil
                     self.strayBack = (jump, back.href)
@@ -2127,6 +2129,8 @@ final class ReaderModel {
         var sends = 0, backLanded = false
         await veiled(step: jump) {
             guard let inFile = back.locations.progression, inFile > 0 else {
+                // Not over a move of his made while the old page was pictured.
+                guard self.goingBack == trip, self.moves == move, self.steps == jump, !self.isClosed else { return }
                 self.backGoOut = trip
                 _ = await self.page?.go(to: back)
                 if self.backGoOut == trip { self.backGoOut = nil }
