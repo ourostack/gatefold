@@ -1,15 +1,16 @@
 name: App
 
-# Two tiers. Every pull request runs the seven required checks: the place, taps and unit legs in full, and a smoke of
-# the reviewers' checks (the last page's number, #30; the window fit; a Duo turn-and-reopen). Every push to main runs
-# the reviewers' full lists. A red main is fixed by whoever merged the change that turned it red (AGENTS.md, "CI").
+# Two tiers. Every pull request runs the nine required checks: the place, rotation, undo, taps and unit legs in full,
+# and a smoke of the reviewers' checks (the last page's number, #30; the window fit; a Duo turn-and-reopen). Every push
+# to main runs the reviewers' full lists. A red main is fixed by whoever merged the change that turned it red
+# (AGENTS.md, "CI").
 #
 # Build once: `build` makes the app and its tests for the simulator (build-for-testing) and uploads them, named by
 # commit and Xcode version; every simulator job boots its simulator while it downloads them and runs
 # test-without-building, so no job compiles the app again (gatefold#39: each job spent 10 to 16 min building).
 #
 # A pull request that changes only Markdown still gets every required check: `changes` says so, the jobs below skip,
-# and `ipad-docs` reports the three iPad checks (a skipped matrix job reports under its unexpanded name; gatefold#42).
+# and `ipad-docs` reports the five iPad checks (a skipped matrix job reports under its unexpanded name; gatefold#42).
 # The jobs run unless `changes` said "only Markdown", and a failed `build` turns them red at the download instead of
 # letting them skip, which would count as a pass. A failed `changes` leaves `full` empty, which runs the full lists.
 #
@@ -140,7 +141,7 @@ jobs:
     # The spread on rotation and the iPad's slow launch reflow are iPad paths: a rotation that
     # reopened a page early (build 17) and a jump lost in the launch reflow. No retry: a red here is
     # a real miss. The Duo job's posture test skips on the folded cover; this one runs it on a spread.
-    # Three jobs side by side, each with at least 30% headroom (one job took 94 of 100 min in build
+    # Jobs side by side, each with at least 30% headroom (one job took 94 of 100 min in build
     # 19). Measured on a hosted runner: about 13 min to set up and build, then the tests' own time.
     # Each limit is that plus the 12 min the time-left action keeps after the tests for the logs, so the
     # tests keep the time they had before the logs were kept (gatefold#141): green place jobs took up to
@@ -150,15 +151,20 @@ jobs:
       matrix:
         include:
           - name: place
-            # 48 min measured with the erased-iPad rotation at 23; it has taken 38, so 63 / 0.7. Green runs now take up to
-            # 79 min (gatefold#141), so the headroom is down to about 12% (gatefold#39).
-            timeout: 102 # 90 for the job, 12 for the logs
-            # Rotation first, on an erased iPad (the cold step), then the rest on the same one.
-            cold: true
+            # The jumps, on their own since the erased-iPad rotation moved to its own leg (gatefold#39: one leg
+            # with both took up to 83.5 min and two simulator boots). Six green place jobs (2026-11-08 to 11-10)
+            # spent up to 41 min outside the rotation step: 41 / 0.7 is 59.
+            timeout: 71 # 59 for the job, 12 for the logs
             title: Jumps keep his place; the number's slot is never blank
             tests: >-
               NavigationPlaceUITests PositionUITests/testEveryPostureKeepsThePlace
               CountingPlaceholderUITests
+          - name: rotation
+            # The erased-iPad rotation (the cold step), on its own leg. The same six green place jobs spent up to
+            # 51 min on the setup and this step: 51 / 0.7 is 72.
+            timeout: 84 # 72 for the job, 12 for the logs
+            # Rotation on an erased iPad, and nothing else on this leg.
+            cold: true
           - name: undo
             # Every jump's one-tap Back (#46), on its own: in the place leg it pushed a slow host past that job's
             # limit (c4c3b6a, gatefold#39). 9 min of tests at c8d3084 plus about 13 to set up and build: 31 / 0.7.
@@ -298,8 +304,9 @@ jobs:
           limit: ${{ matrix.timeout }}
       - name: ${{ matrix.title }}
         # A miss in the cold step still lets the rest report: one failure must not hide the others.
-        # Not without the app or a booted iPad, which would only add a misleading red.
-        if: ${{ !cancelled() && steps.unpack.outcome == 'success' && steps.boot.outcome == 'success' }}
+        # Not without the app or a booted iPad, which would only add a misleading red. Not on the rotation leg, which has
+        # only the cold step.
+        if: ${{ !cancelled() && matrix.tests && steps.unpack.outcome == 'success' && steps.boot.outcome == 'success' }}
         # Ends 12 min before the job's limit: a job cut off at its limit skips every later step and uploads nothing.
         timeout-minutes: ${{ fromJSON(steps.left.outputs.minutes) }}
         env:
@@ -644,7 +651,7 @@ jobs:
     if: needs.changes.outputs.app != 'true'
     strategy:
       matrix:
-        name: [place, taps, reviewer]
+        name: [place, rotation, undo, taps, reviewer]
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
