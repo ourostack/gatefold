@@ -113,6 +113,7 @@ final class ReaderModel {
         isWarming = false
         askedAt = Date()
         readerLog.notice("open: tapped a warm book; page ready \(self.pageReady, privacy: .public)")
+        hostController?.becameTheOpenBook()
         if pageReady { readerLog.notice("first page ready after 0 s (opened ahead of the tap)") }
         activation?.resume()
         activation = nil

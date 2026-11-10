@@ -342,19 +342,80 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
                                          columnsPerScreen: columns, verso: found.verso, pinned: found.pinned))
     }
 
+    /// One book counts at a time, the book on screen first (gatefold#113): three books opened ahead of a
+    /// tap counted behind the shelf at once, eighteen web views, and the app stopped answering for minutes.
+    static let countingTurns = CountingTurns()
+
     /// Counts each chapter in a second navigator behind this one, laid out as this one is (no verso,
-    /// no pin), so the numbers are a clean layout's. It waits out turns, so a turn never shares the CPU.
+    /// no pin), so the numbers are a clean layout's. It waits out turns, so a turn never shares the CPU,
+    /// and its turn among the books (`countingTurns`).
     func countPages(_ hrefs: [String], record: @escaping @MainActor (String, Int) -> Void, finished: @escaping @MainActor () -> Void) {
-        stopCounting()
+        stopCounters()
+        // What this count has recorded: a count that gave way to the book he opened starts again with the rest.
+        let counted = CountedHrefs()
+        countAsk = counted
+        let recording: @MainActor (String, Int) -> Void = { href, columns in
+            counted.hrefs.insert(href)
+            record(href, columns)
+        }
+        let opened = weakModel?.isWarming != true
+        Self.countingTurns.ask(self, opened: opened, start: { [weak self] in
+            guard let self else { return }
+            counted.started = true
+            guard counted.waited else { self.beginCounting(hrefs, record: recording, finished: finished); return }
+            // A turn that comes later (a count ending, or his tap on a warm book) can land on the zoom's
+            // frames: its counters are made once the zoom is over, if the turn is still this book's.
+            counted.starts += 1
+            let start = counted.starts
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .milliseconds(600))
+                // Nor in a turn: the count's own wait for turns starts only once its counters exist.
+                while let host = self, !host.closed, host.countAsk === counted, counted.starts == start, host.isTurning || host.lastTurnEnded.map({ ContinuousClock.now - $0 < .milliseconds(1500) }) == true {
+                    try? await Task.sleep(for: .milliseconds(250))
+                }
+                // Not when a newer count of this book has been asked for, or a later turn of this one has come.
+                guard let self, !self.closed, self.countAsk === counted, counted.starts == start,
+                      Self.countingTurns.counting == ObjectIdentifier(self) else { return }
+                let rest = hrefs.filter { !counted.hrefs.contains($0) }
+                readerLog.notice("pages: \(self.weakModel?.bookID ?? "?", privacy: .public) takes its turn to count (\(rest.count, privacy: .public) of \(hrefs.count, privacy: .public) chapters)")
+                self.beginCounting(rest, record: recording, finished: finished)
+            }
+        }, yield: { [weak self] in
+            readerLog.notice("pages: \(self?.weakModel?.bookID ?? "?", privacy: .public) gives way to the book on screen")
+            counted.waited = true
+            self?.stopCounters()
+        })
+        if !counted.started {
+            counted.waited = true
+            readerLog.notice("pages: \(self.weakModel?.bookID ?? "?", privacy: .public) waits its turn to count")
+        }
+    }
+
+    /// He tapped this book while it waited open behind the shelf: its count goes ahead of the others'.
+    func becameTheOpenBook() {
+        Self.countingTurns.opened(self)
+    }
+
+    /// The newest count asked for, so a turn arriving late never starts an older one.
+    private var countAsk: CountedHrefs?
+
+    @MainActor private final class CountedHrefs { var hrefs: Set<String> = []; var waited = false; var started = false; var starts = 0 }
+
+    private func beginCounting(_ hrefs: [String], record: @escaping @MainActor (String, Int) -> Void, finished: @escaping @MainActor () -> Void) {
+        stopCounters()
         // Every way out says so, or the slot keeps promising a number.
-        guard !closed, isViewLoaded, preferences.scroll != true, !hrefs.isEmpty else { finished(); return }
+        guard !closed, isViewLoaded, preferences.scroll != true, !hrefs.isEmpty else {
+            Self.countingTurns.done(self)
+            finished()
+            return
+        }
         let links = hrefs.compactMap { href in publication.readingOrder.first { $0.url().removingFragment().string == href } }
         // A chapter's cost is its web view loading (about 3 s each, one after another, in build 17), not
         // its measuring: several counters behind the page take chapters from one queue at once.
         let workers = (0..<min(LaunchOptions.counters ?? Self.counters, links.count)).compactMap { _ in
             try? Self.makeNavigator(publication: publication, at: nil, preferences: preferences)
         }
-        guard !workers.isEmpty else { finished(); return }
+        guard !workers.isEmpty else { Self.countingTurns.done(self); finished(); return }
         // The page's own bands (`navigatorContentInset`): without them a tablet counter laid its words out
         // 276 pt taller than the page and counted about a fifth too few columns.
         let insets = CountingInsets { [weak self] in
@@ -469,7 +530,14 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         navigator.removeFromParent()
     }
 
+    /// Stops the count and hands the turn to the next book waiting to count.
     func stopCounting() {
+        stopCounters()
+        Self.countingTurns.done(self)
+    }
+
+    /// Stops the count, keeping its turn (a new count starting, or one giving way).
+    private func stopCounters() {
         guard let old = counter else { return }
         counter = nil
         old.task.cancel()
