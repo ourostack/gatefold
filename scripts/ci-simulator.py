@@ -19,7 +19,8 @@ bounds each bootstatus at 7 min so a hang falls through to its next attempt; the
 Before it passes, `wait` checks that the device is still Booted and its runtime is still listed as available: a
 runtime that fails to mount ("Malformed bundle") can vanish after the boot, and the test launch then fails with
 "runtime path not found" (gatefold#71). If not, it runs boot-sim.sh once more for a fresh device, on the time left.
-`erase <name> <udid>` is the cold step's erase: shutdown, erase, boot and bootstatus, each bounded, then the same
+`erase <name> <udid>` was the cold step's erase, unused by the workflow since gatefold#150 (kept for a quick way back;
+follow-up to remove it): shutdown, erase, boot and bootstatus, each bounded, then the same
 check; if the runtime went, one fresh device erased the same way. It prints the UDID to test on.
 Offline test: bash scripts/test-ci-simulator.sh (a fake xcrun and boot-sim.sh; no simulator).
 
@@ -311,8 +312,9 @@ def main(argv):
         return 0
     if len(argv) == 3 and argv[0] == "erase":
         # The cold step: erase the booted device and boot it again, each simctl call bounded, then the same check.
-        # If its runtime went (gatefold#71), one fresh device, erased the same way, so the test still runs on an
-        # erased iPad (the bug showed after an erase, never on a new simulator). Prints the UDID; fails otherwise.
+        # If its runtime went (gatefold#71), one fresh device, erased the same way. Prints the UDID; fails otherwise.
+        # Unused by the workflow since gatefold#150: a just-created simulator is at least as cold (build 19: RotationRepro
+        # green in 0 of 3 rounds on one, 6 of 9 after an erase), so the cold step tests on the job's own new iPad.
         name, udid = argv[1], argv[2]
         with redirect_stdout(sys.stderr):
             try:

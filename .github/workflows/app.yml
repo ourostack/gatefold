@@ -150,7 +150,7 @@ jobs:
       matrix:
         include:
           - name: place
-            # The jumps, on their own since the erased-iPad rotation moved to its own leg (gatefold#39: one leg
+            # The jumps, on their own since the cold rotation moved to its own leg (gatefold#39: one leg
             # with both took up to 83.5 min and two simulator boots). Six green place jobs (2026-11-08 to 11-10)
             # spent up to 41 min outside the rotation step: 41 / 0.7 is 59.
             timeout: 71 # 59 for the job, 12 for the logs
@@ -159,10 +159,10 @@ jobs:
               NavigationPlaceUITests PositionUITests/testEveryPostureKeepsThePlace
               CountingPlaceholderUITests
           - name: rotation
-            # The erased-iPad rotation (the cold step), on its own leg. The same six green place jobs spent up to
+            # The cold rotation (the cold step), on its own leg. The same six green place jobs spent up to
             # 51 min on the setup and this step: 51 / 0.7 is 73.
             timeout: 85 # 73 for the job, 12 for the logs
-            # Rotation on an erased iPad, and nothing else on this leg.
+            # Rotation on the leg's new iPad, and nothing else on this leg.
             cold: true
             title: Nothing after the rotation on this leg
           - name: undo
@@ -253,8 +253,8 @@ jobs:
           limit: ${{ matrix.timeout }}
           cap: "65"
       - name: Turned on its side cold (a new iPad), the spread always comes whole and keeps his place
-        # On the iPad this leg created and booted, with nothing run on it yet: as cold as an erased one, and colder in
-        # build 19's own runs (RotationRepro green 0 of 3 rounds on a just-created simulator, 6 of 9 after an erase;
+        # On the iPad this leg created and booted, with nothing run on it yet: as cold as an erased one (build 19's own
+        # runs: RotationRepro green in 0 of 3 rounds on a just-created simulator, one run, and 6 of 9 after an erase;
         # delight-build19 review). It used to erase that iPad and boot it again, and that second boot is where the
         # runner hung (gatefold#150: jobs 129883824568, 129919854207). The boot and its retries are the boot step's
         # (boot-sim.sh, #57). Once a run, before anything warms it.
