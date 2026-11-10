@@ -90,6 +90,7 @@ final class CountingPlaceholderUITests: XCTestCase {
     func testRedProofReadsRunOutOnAProbeThatNeverComes() {
         app.launchArguments = ["-GatefoldUITest", "YES", "-GatefoldFakeCloud", "YES", "-GatefoldSkipWelcome", "YES",
                                "-GatefoldSignedIn", "YES", "-GatefoldReset", "YES"]
+        continueAfterFailure = true  // an expected failure still stops the test otherwise, and the second wait never runs
         app.launch()
         let never = app.descendants(matching: .any)["reader.noSuchProbe"].firstMatch
         for (reads, guardS) in [(20, 60.0), (1200, 300.0)] {
