@@ -19,6 +19,19 @@ final class CountingPlaceholderUITests: XCTestCase {
 
     private var visibleText: String { (app.descendants(matching: .any)["reader.visibleText"].value as? String) ?? "" }
 
+    /// Waits are judged in reads of the app, never seconds (gatefold#94, as FineTuneTap in #121): each read is a round
+    /// trip to the app, so a starved runner makes reads slower instead of failing what landed late. Each read waits
+    /// at least 0.1 s, so `reads` sets the floor a fast runner gets (the old seconds); `hangGuard` only catches a hang.
+    private func readsUntil(reads: Int, hangGuard: TimeInterval, _ done: () -> Bool) -> (ok: Bool, reads: Int, hung: Bool) {
+        let hung = Date().addingTimeInterval(hangGuard)
+        for read in 1...reads {
+            if done() { return (true, read, false) }
+            if Date() > hung { return (false, read, true) }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        }
+        return (false, reads, false)
+    }
+
     private func freshOpenNeverLeavesTheSlotBlank() {
         app.launchArguments = [
             "-GatefoldUITest", "YES", "-GatefoldFakeCloud", "YES", "-GatefoldSkipWelcome", "YES",
@@ -32,8 +45,11 @@ final class CountingPlaceholderUITests: XCTestCase {
         // From the moment the page is up, the slot holds the placeholder or the number. Only cheap reads
         // while sampling (the page's text takes seconds to read).
         let ready = app.descendants(matching: .any)["reader.pageReady"].firstMatch
-        XCTAssertEqual(XCTWaiter.wait(for: [expectation(for: NSPredicate(format: "value == '1'"), evaluatedWith: ready)], timeout: 120),
-                       .completed, "the page shows")
+        let shows = readsUntil(reads: 1200, hangGuard: 300) { (ready.value as? String) == "1" }
+        print("PLACEHOLDER page ready=\(shows.ok) after \(shows.reads) reads\(shows.hung ? " (hang guard)" : "")")
+        XCTAssertTrue(shows.ok, shows.hung ? "the page shows (the hang guard ran out after \(shows.reads) reads)"
+                                           : "the page shows (not in \(shows.reads) reads)")
+        guard shows.ok else { return }
         var sawCounting = false, samples = 0, words = ""
         let deadline = Date().addingTimeInterval(300)
         while !number.exists, Date() < deadline {
@@ -54,7 +70,10 @@ final class CountingPlaceholderUITests: XCTestCase {
             RunLoop.current.run(until: Date().addingTimeInterval(0.3))
         }
         XCTAssertTrue(number.exists, "the number comes")
-        XCTAssertTrue(counting.waitForNonExistence(timeout: 2), "and the placeholder goes")
+        let goes = readsUntil(reads: 20, hangGuard: 60) { !counting.exists }
+        print("PLACEHOLDER gone=\(goes.ok) after \(goes.reads) reads\(goes.hung ? " (hang guard)" : "")")
+        XCTAssertTrue(goes.ok, goes.hung ? "and the placeholder goes (the hang guard ran out after \(goes.reads) reads)"
+                                         : "and the placeholder goes (not in \(goes.reads) reads)")
         print("PLACEHOLDER saw counting=\(sawCounting) samples=\(samples) app drew it=\((app.descendants(matching: .any)["reader.countingShown"].firstMatch.value as? String) ?? "?")")
         // A reset leaves nothing counted, so a fresh open always has a moment before its number. On a
         // slow runner one accessibility read can outlast that moment, so the app's own record counts too.
