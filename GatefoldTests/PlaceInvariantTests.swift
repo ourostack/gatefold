@@ -248,6 +248,31 @@ import Testing
         f.model.close()
     }
 
+    /// gatefold#143's root: after the slow launch landing, a report that isn't his move put "where he
+    /// is" back on words read on the chapter's start while his page stayed on screen. The running head,
+    /// the scrubber and the Cloud's "here" (`JumpSuggestion.isAhead`) all read `location`, so all three
+    /// named the chapter's start. They follow the page on screen.
+    @Test func whereHeIsFollowsThePageOnScreenAfterTheSlowLaunchLanding() async throws {
+        let f = try await S.make(remote: { _, _ in nil }, startAt: 0.05)
+        await f.model.load()
+        let his = try #require(f.page.currentLocation)
+        try #require((his.locations.progression ?? 0) > 0.05, "his page is partway through its chapter")
+        let head = f.model.runningHead
+        // The same stand-in as Back's test above: words read on the chapter's start, then his page with no move.
+        let start = S.boundary(of: his)
+        f.page.anchorText = "words-on-the-chapter-start"
+        f.page.currentLocation = start
+        await f.model.locationDidChange(start, hisMove: true)
+        f.page.currentLocation = his
+        await f.model.locationDidChange(his)
+        let want = his.locations.totalProgression ?? -1
+        #expect(f.model.location?.href == his.href, "where he is names another chapter")
+        #expect((f.model.location?.locations.progression ?? 0) > 0.01, "where he is lags at the chapter's start")
+        #expect(abs(f.model.totalProgression - want) < 0.005, "the scrubber and the Cloud's here read \(f.model.totalProgression), not his page at \(want)")
+        #expect(f.model.runningHead == head, "the running head names the chapter's start, not his page")
+        f.model.close()
+    }
+
     /// A place write still on its way for an older move never lands over a newer move's place. On CI at
     /// c4c3b6a the Contents jump's write, slow to map its position, landed after Back's and kept the
     /// jump's page (0.6996) as his place once Back had brought him home.
