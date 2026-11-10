@@ -554,9 +554,13 @@ import Testing
         let second = Task { await f.model.go(toProgression: 0.5, rememberBack: true) }
         await Self.settle { f.model.jumpsPastTheVeil == 2 }
         try #require(f.model.jumpsPastTheVeil == 2, "the jumps weren't both past the veil's limit")
-        // The next write (the first jump's late report) is held before it maps its position.
+        // The next write (the first jump's late report) is held before it maps its position. The page
+        // can't be measured, so that write keeps its own report (0.7) rather than taking the second
+        // jump's as the page on screen: only the write order can stop it.
+        f.page.pageUnmeasured = true
         final class Gate { var armed = true; var held: CheckedContinuation<Void, Never>? }
         let gate = Gate()
+        defer { gate.held?.resume(); f.model.close() }
         f.model.placeWriteWait = {
             guard gate.armed else { return }
             gate.armed = false
@@ -575,7 +579,6 @@ import Testing
         await Self.settle { abs((Self.kept(f) ?? -1) - 0.5) >= 0.03 }
         #expect(abs((f.page.currentLocation?.locations.totalProgression ?? -1) - 0.5) < 0.03, "the second jump's page didn't stand")
         #expect(abs((Self.kept(f) ?? -1) - 0.5) < 0.03, "the slow late write kept \(Self.kept(f) ?? -1) over the second jump")
-        f.model.close()
     }
 
     /// A bookmark's jump ended quietly by a move of his offers no way back, as any other jump
