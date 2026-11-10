@@ -479,10 +479,14 @@ import Testing
     /// A touch that went nowhere while a catch-up is past its veil (no tap, no swipe) leaves the landing's
     /// own report looking touched. Readium reporting the landed page before the jump returns is still the
     /// landing's, not a swipe of his: nothing is put back and its way back is offered (gatefold#173 re-review).
-    @Test func aStrayTouchPastTheVeilLeavesTheCatchUpItsOwnReport() async throws {
-        let f = try await S.make(remote: { _, _ in ReadingPosition(cfi: nil, totalProgression: 0.7, updated: Date(), source: .pocketBookNative) },
-                                 book: { $0.totalProgression = 0.05; $0.lastOpened = Date().addingTimeInterval(-600) },
-                                 startAt: 0.05, jumpBeat: { await Task.yield() })
+    /// "exact, two steps": the jump first names its file's first page (Readium on a loading web view), then
+    /// the place; both reports are the landing's.
+    @Test(arguments: ["percent", "exact, two steps"]) func aStrayTouchPastTheVeilLeavesTheCatchUpItsOwnReport(place: String) async throws {
+        let f = try await S.make(remote: { pub, mapper in
+            place == "percent" ? ReadingPosition(cfi: nil, totalProgression: 0.7, updated: Date(), source: .pocketBookNative)
+                : try await S.inkPadPlace(pub, mapper, index: 12, percent: 40)
+        }, book: { $0.totalProgression = 0.05; $0.lastOpened = Date().addingTimeInterval(-600) },
+           startAt: 0.05, jumpBeat: { await Task.yield() })
         defer { f.model.close() }
         await f.model.load()
         await f.model.locationDidChange(try #require(f.page.currentLocation))
@@ -493,6 +497,9 @@ import Testing
         try #require(f.model.pageReady, "the first page never showed")
         f.page.dropStandby()
         f.page.reportsBeforeReturn = true
+        // Readium reports the start of the page it lands on: here, the place itself.
+        f.page.pageStartsBefore = 0
+        if place != "percent" { f.page.dropsPlaceInFile = 1 }
         f.page.holdsJumps = true
         f.page.loadingChapter = true
         let taking = Task { await f.model.acceptSuggestion() }
@@ -504,11 +511,63 @@ import Testing
         f.page.holdsJumps = false
         f.page.releaseJumps()
         await taking.value
-        await Self.settle { abs((Self.kept(f) ?? -1) - 0.7) < 0.03 }
-        #expect(f.model.jumpsPutBack == 0, "the catch-up's own report was taken for a swipe of his and the page put back")
-        #expect(abs((f.page.currentLocation?.locations.totalProgression ?? -1) - 0.7) < 0.03, "the catch-up didn't stand")
-        #expect(abs((Self.kept(f) ?? -1) - 0.7) < 0.03, "the place kept isn't the catch-up's: \(Self.kept(f) ?? -1)")
-        #expect(f.model.showJumpBack, "the catch-up landed but offers no way back")
+        let aim = try #require(f.page.jumps.last?.locations.totalProgression, "the catch-up sent no jump")
+        await Self.settle { abs((Self.kept(f) ?? -1) - aim) < 0.03 }
+        #expect(f.model.jumpsPutBack == 0, "the catch-up's own report was taken for a swipe of his and the page put back (\(place))")
+        #expect(abs((f.page.currentLocation?.locations.totalProgression ?? -1) - aim) < 0.03, "the catch-up didn't stand (\(place))")
+        #expect(abs((Self.kept(f) ?? -1) - aim) < 0.03, "the place kept isn't the catch-up's: \(Self.kept(f) ?? -1) (\(place))")
+        #expect(f.model.showJumpBack, "the catch-up landed but offers no way back (\(place))")
+    }
+
+    /// The common catch-up: the Cloud's place three pages on in the file he is reading. Past its veil, a
+    /// swipe of his one page on is his move, not the landing's own report: his page stands and is kept,
+    /// and no way back is offered (gatefold#173 re-review: a bound in fractions of the book swallowed it).
+    @Test func aSwipeAPageOnPastACatchUpThreePagesAheadIsHis() async throws {
+        let f = try await S.make(remote: { pub, mapper in
+            nonisolated(unsafe) let p = pub
+            let positions = try await p.positions().get()
+            let k = try #require(positions.firstIndex { ($0.locations.totalProgression ?? 0) > 0.05 })
+            let aim = positions[k + 2]
+            let made = try #require(await mapper.position(for: BookLocation(href: aim.href.string, progression: aim.locations.progression ?? 0), at: Date()))
+            return ReadingPosition(cfi: try #require(made.cfi), pointer: "pbr:/external##" + (made.cfi ?? ""),
+                                   totalProgression: aim.locations.totalProgression ?? 0, updated: Date(), source: .pocketBookNative)
+        }, book: { $0.totalProgression = 0.05; $0.lastOpened = Date().addingTimeInterval(-600) },
+           startAt: 0.05, jumpBeat: { await Task.yield() })
+        defer { f.model.close() }
+        await f.model.load()
+        await f.model.locationDidChange(try #require(f.page.currentLocation))
+        await f.model.checkRemote()
+        try #require(f.model.suggestion != nil, "the Cloud's place is offered")
+        nonisolated(unsafe) let p = f.publication
+        let positions = try await p.positions().get()
+        let here = try #require(f.page.currentLocation)
+        let at = try #require(positions.lastIndex { ($0.locations.totalProgression ?? 0) <= (here.locations.totalProgression ?? 0) })
+        let next = positions[at + 1]
+        let aim = positions[at + 3]
+        try #require(next.href == here.href && aim.href == here.href, "his page, the next and the Cloud's aren't one file")
+        f.model.forceReady()
+        for _ in 0..<1_000 where !f.model.pageReady { try? await Task.sleep(for: .milliseconds(10)) }
+        try #require(f.model.pageReady, "the first page never showed")
+        f.page.dropStandby()
+        f.page.holdsJumps = true
+        f.page.loadingChapter = true
+        let taking = Task { await f.model.acceptSuggestion() }
+        await Self.settle { f.model.jumpsPastTheVeil >= 1 }
+        try #require(f.model.jumpsPastTheVeil == 1, "the catch-up wasn't on its way past the veil's limit")
+        // He swipes a page on: Readium moves itself and tells the reader.
+        f.page.currentLocation = next
+        f.model.noteInteraction()
+        await f.model.locationDidChange(next)
+        f.page.loadingChapter = false
+        f.page.holdsJumps = false
+        f.page.pageStartsBefore = 0
+        f.page.releaseJumps()
+        await taking.value
+        let mine = next.locations.totalProgression ?? 0
+        await Self.settle { abs((f.page.currentLocation?.locations.totalProgression ?? -1) - mine) < 0.00001 }
+        #expect(abs((f.page.currentLocation?.locations.totalProgression ?? -1) - mine) < 0.00001, "the late catch-up moved the page off his swipe")
+        #expect(abs((Self.kept(f) ?? -1) - mine) < 0.001, "the place kept isn't his swipe: \(Self.kept(f) ?? -1), his \(mine), the Cloud's \(aim.locations.totalProgression ?? -1)")
+        #expect(!f.model.showJumpBack, "a way back is offered for a catch-up he never saw land")
     }
 
     /// A catch-up overtaken by a turn or a swipe of his while it is past the veil's limit offers no way
