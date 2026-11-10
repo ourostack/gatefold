@@ -1544,6 +1544,7 @@ final class ReaderModel {
 
     func reflowDidBegin() {
         reflowCount += 1
+        reflowTouches = 0
         landingChecks = 0
         anchorCheck = "settling \(reflowCount)"
     }
@@ -1689,11 +1690,15 @@ final class ReaderModel {
         // report) is his move too: the restore gives way to it and his page is owed, never put back under
         // him (gatefold#171: switching to Scroll on a slow iPad, six swipes, then the restore brought the
         // words from before the switch back).
-        if keeper.reflowing != nil, !leaving, !duringTurn, !isWarming, touchedSinceLocation, let before = reportedBefore,
-           before.href != locator.href || before.locations.progression != locator.locations.progression {
+        // Only a touch made after the reflow began counts (one from before it, such as holding the iPad as
+        // it turns, would hand the restore's place to the layout's page boundary), and each touch once.
+        if keeper.reflowing != nil, !leaving, !duringTurn, !isWarming, reflowTouches > 0, Self.pageMoved(reportedBefore, locator) {
+            reflowTouches = 0
             hisMoves += 1
             hasMoved = true
             moves += 1
+            // Reading on after a jump, as a turn is (the report's own step sees this move as overtaken).
+            readOnAfterJump()
             readerLog.notice("reflow: a scroll of his while it lays out; the restore gives way (reported \(Self.placeTag(locator), privacy: .public))")
         }
         if keeper.reflowing != nil, !leaving, hasMoved, moves != recordedMoves, !duringTurn, !isWarming {
@@ -1777,8 +1782,7 @@ final class ReaderModel {
         // A swipe or a scroll of his that moved the page is reading on, as a turn is (slide and scroll
         // never call `userTurnedPage`). A jump's own landing brings no touch, nor does a tap that only
         // shows the controls.
-        let swiped = touchedAtReport && readerMoved && !fromLayout
-            && reportedBefore.map({ $0.href != locator.href || $0.locations.progression != locator.locations.progression }) ?? true
+        let swiped = touchedAtReport && readerMoved && !fromLayout && Self.pageMoved(reportedBefore, locator)
         if swiped && noMoveOfOurs { readOnAfterJump() }
         // A swipe is a move of the page too (a late Back after it puts the page back here). A Back freed
         // by its count never reported its move, so with one out a swipe counts without a report since;
@@ -1861,12 +1865,20 @@ final class ReaderModel {
     /// only shows the controls changes no location, so it moves nothing.
     func noteInteraction() {
         touchesSinceLocation += 1
+        if keeper.reflowing != nil { reflowTouches += 1 }
         // A slide or scroll (no move counted) makes his page the place, not an unreached jump's target.
         owedJumpTarget = nil
     }
     /// Touches on the page since the last location report; a tap that only shows or hides the controls
     /// clears them.
     @ObservationIgnored private var touchesSinceLocation = 0
+    /// Touches on the page since the reflow under way began and not yet counted as a move of his
+    /// (gatefold#171); a tap that only shows or hides the controls clears them.
+    @ObservationIgnored private var reflowTouches = 0
+    /// The page moved between two reports (no report before counts as a move).
+    private static func pageMoved(_ before: Locator?, _ now: Locator) -> Bool {
+        before.map { $0.href != now.href || $0.locations.progression != now.locations.progression } ?? true
+    }
     private var touchedSinceLocation: Bool { touchesSinceLocation > 0 }
     /// `moves` at the last location report: a report with none since is no turn or jump of his.
     @ObservationIgnored private var movesAtLastReport = 0
@@ -1977,6 +1989,7 @@ final class ReaderModel {
         // a move of his, and the next layout report moved his place (2 in 20 reopens). A swipe that a
         // tap follows before Readium reports it is the rarer case and is left to that report.
         touchesSinceLocation = 0
+        reflowTouches = 0
         readerLog.notice("controls: \(visible ? "up" : "down", privacy: .public) by a tap")
         setChrome(visible)
     }
