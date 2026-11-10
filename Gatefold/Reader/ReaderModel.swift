@@ -1156,9 +1156,11 @@ final class ReaderModel {
         for _ in 0..<Self.catchUpReadyLooks where !pageReady && !isClosed { try? await Task.sleep(for: .milliseconds(50)) }
         guard !isClosed else { return }
         // The pages riffle past on the way, the way a thumb finds a place in a real book.
-        await veiled(riffle: true, forward: s.targetProgression >= totalProgression) {
+        let jump = await veiled(riffle: true, forward: s.targetProgression >= totalProgression) {
             await self.land(on: locator, progression: s.targetProgression, target: aim, cloud: cloud, rememberBack: !own)
         }
+        // Overtaken past its veil by a move of his: it didn't land where he sees it, so no success.
+        if endedQuietly(jump, back: nil) { return }
         UINotificationFeedbackGenerator().notificationOccurred(.success)
         if let locator {
             host?.underline(locator, color: theme.palette.accent)
@@ -1235,18 +1237,20 @@ final class ReaderModel {
             }
             self.landed(jump, at: self.page?.currentLocation)
         }
-        // Every jump but Back's (its trip keeps its own watch), and not one inside another's veil: a load
-        // that never ends must not hold the screen behind the veil (gatefold#173). At the veil's old limit
-        // it lets go, the chapter shows its own loading, and the jump goes on and lands when the load comes in.
-        if step == nil, veilDepth == 0 { watchVeil(jump: jump, toward: toward, watch) }
-        veilDepth += 1
-        // Behind the cover placeholder there's nothing to veil.
-        if let host, pageReady {
-            await host.veiledJump(riffle: riffle && !reduceMotion && pageTurn == .curl, forward: forward, jump: jump, tracked)
-        } else {
-            await tracked()
+        // Every jump but Back's (its trip keeps its own watch), and not one made inside another's veil (a
+        // landing's own percent step): a load that never ends must not hold the screen behind the veil
+        // (gatefold#173). At the veil's old limit it lets go, the chapter shows its own loading, and the
+        // jump goes on and lands when the load comes in. Inside, not alongside: a jump of his made while a
+        // hung one is still out is watched too.
+        if step == nil, !Self.insideVeil { watchVeil(jump: jump, toward: toward, watch) }
+        await Self.$insideVeil.withValue(true) {
+            // Behind the cover placeholder there's nothing to veil.
+            if let host, pageReady {
+                await host.veiledJump(riffle: riffle && !reduceMotion && pageTurn == .curl, forward: forward, jump: jump, tracked)
+            } else {
+                await tracked()
+            }
         }
-        veilDepth -= 1
         watch.back = true
         if strayJump?.jump == jump { strayJump = nil }
         // Past its veil, a move of his meanwhile (a turn, a swipe, another jump) ended it quietly: the
@@ -1257,14 +1261,16 @@ final class ReaderModel {
         if newestHasLanded, host?.isTurning != true, !isClosed, let newest = lastLanded {
             readerLog.notice("veil: jump \(jump, privacy: .public) came back after a move of his; page put back")
             let restore = await veiled { _ = await self.page?.go(to: newest) }
+            overtakenJumps.remove(restore)
             if steps == restore, !isClosed, let here = page?.currentLocation { await locationDidChange(here, hisMove: true) }
         }
         return jump
     }
     /// A veiled jump's watch: whether it is back, and whether its veil let go first.
     @MainActor private final class VeilWatch { var back = false; var letGo = false }
-    /// Veils under way, one inside another's (a landing's own percent step): only the outer one is watched.
-    @ObservationIgnored private var veilDepth = 0
+    /// Set for the work inside a veil (a landing's own percent step runs there): only the outer veil is
+    /// watched. Task-local, so a jump started alongside one still out is not taken as inside it.
+    @TaskLocal private static var insideVeil = false
     /// A jump past its veil's limit, still out: its step and the chapter it goes to (if known). A swipe
     /// meanwhile is a step of his; a report from that chapter may be the jump landing.
     @ObservationIgnored private var strayJump: (jump: Int, href: AnyURL?)?
@@ -1837,7 +1843,7 @@ final class ReaderModel {
         // returns). Whatever such a report kept, the trip's return writes his place again (`goBack`),
         // unless a newer move still on its way does.
         if swiped && (noMoveOfOurs || strayBack != nil || strayJump != nil) && !isStrayChapter(locator) {
-            if !noMoveOfOurs { hisSteps += 1 }
+            hisSteps += 1
             landed(takeStep(), at: locator)
         }
         // Only the reader moves the place. Readium reopening a page boundary off from the saved one is
@@ -2043,7 +2049,9 @@ final class ReaderModel {
     // MARK: Jumps
 
     /// `his`: false for a landing's own percent step (the Cloud's place), which is not a move of his.
-    func go(toProgression progression: Double, rememberBack: Bool, his: Bool = true) async {
+    /// True when a move of his ended it quietly while it was past its veil (`endedQuietly`).
+    @discardableResult
+    func go(toProgression progression: Double, rememberBack: Bool, his: Bool = true) async -> Bool {
         if his { hisMoves += 1 }
         hasMoved = true
         moves += 1
@@ -2051,7 +2059,7 @@ final class ReaderModel {
         defer { publishBack(back) }
         if let locator = await publication.locate(progression: progression) {
             let jump = await veiled(toward: locator.href) { _ = await self.page?.go(to: locator) }
-            if endedQuietly(jump, back: back) { return }
+            if endedQuietly(jump, back: back) { return true }
             await captureAnchor()
             // Behind the cover nothing hides a chapter still loading, so keep the cover up until the
             // words are there.
@@ -2060,6 +2068,7 @@ final class ReaderModel {
                 await captureAnchor()
             }
         }
+        return false
     }
 
     /// VoiceOver's adjust on the scrubber: a swipe jumps a hundredth of the book, a jump like any other
@@ -2106,7 +2115,8 @@ final class ReaderModel {
     func go(to bookmark: Bookmark) async {
         let back = rememberPlace()
         defer { publishBack(back) }
-        await go(toProgression: bookmark.totalProgression, rememberBack: false)
+        // Ended quietly by a move of his: no way back for it, as for any other jump.
+        if await go(toProgression: bookmark.totalProgression, rememberBack: false), pendingBack?.jump == back { pendingBack = nil }
     }
 
     /// Back is a jump too: the page it leaves gets its own way back, so a stray tap on it is undone
@@ -2235,6 +2245,7 @@ final class ReaderModel {
             if pendingBack?.jump == undo { pendingBack = nil }
             guard newestHasLanded, host?.isTurning != true, !isClosed, let newest = lastLanded else { return }
             let restore = await veiled { _ = await self.page?.go(to: newest) }
+            overtakenJumps.remove(restore)
             if steps == restore, !isClosed, let here = page?.currentLocation { await locationDidChange(here, hisMove: true) }
             return
         }

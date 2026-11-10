@@ -1878,6 +1878,9 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
                 readerLog.notice("veil: jump \(jump, privacy: .public) pictured its page \(ReaderModel.ms(since: jumpTapped), privacy: .public) ms after it began, \(self?.lastSnapshotLooks ?? -1, privacy: .public) looks")
                 return page
             }
+            // Leaves stopped by a veil let go at its limit (his turns are his again) still return only once
+            // the jump is back: the model's put-back and its words wait on the landing, not on the leaves.
+            await travel.value
             readerLog.notice("veil: jump \(jump, privacy: .public) lifted \(ReaderModel.ms(since: jumpTapped), privacy: .public) ms after it began")
             cover.removeFromSuperview()
             if veil === cover { veil = nil; veilJump = nil }
