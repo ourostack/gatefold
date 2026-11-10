@@ -77,7 +77,23 @@ final class ScriptedPage: ReaderPage {
     /// Readium reports where a jump took it on its own (off: a test sends the reports itself, in order).
     var reportsOnGo = true
 
-    func go(to link: ReadiumShared.Link) async {}
+    /// Where a jump to a contents link opens, as Readium does on a web view still laying out: its file's
+    /// first page, reported there, the fragment inside the file dropped (gatefold#166). Nil: the link isn't
+    /// followed.
+    var linkOpens: Locator?
+    /// Where each fragment of the file on screen starts, once the file is laid out.
+    var fragmentAt: [String: Double] = [:]
+
+    func go(to link: ReadiumShared.Link) async {
+        guard let opens = linkOpens else { return }
+        currentLocation = opens
+        visibleText = "the file's first page"
+        if let model, reportsJumps, reportsOnGo { Task { await model.locationDidChange(opens) } }
+    }
+
+    /// The file is laid out and has no element for the fragment (a broken contents anchor).
+    var fragmentAbsent = false
+    func progression(ofFragment id: String) async -> Double? { fragmentAbsent ? -1 : fragmentAt[id] }
 
     /// The place loading behind the page (`prepareStandby`), and every one swapped in.
     private(set) var standby: Locator?

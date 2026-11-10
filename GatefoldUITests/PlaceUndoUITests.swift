@@ -390,6 +390,9 @@ final class PlaceUndoUITests: XCTestCase {
         XCTAssertTrue(contents.exists, "the tap under the veil was swallowed (the controls it would have put down are up)")
         let chosen = settledWords()
         XCTAssertNotEqual(opening(chosen), opening(first))
+        // Judged against the entry he chose: Chapter XL starts 0.80 into its file, and a landing on the
+        // file's first page (an earlier chapter) was kept as his place (gatefold#166, #254).
+        XCTAssertTrue(keptAtChapterXL(), "the tapped jump didn't keep the chapter he chose")
         // The same jump again, untouched, from his first page: the page it lands on is where he chose.
         app.buttons["reader.back"].tap()
         let back = landed(from: chosen, reads: 1200)
@@ -401,6 +404,21 @@ final class PlaceUndoUITests: XCTestCase {
         let untouched = landed(from: back.words, reads: 1200)
         print("UNDO untouched jump: veil up after \(again.reads) reads, landed after \(untouched.reads) reads")
         XCTAssertTrue(untouched.ok, "the untouched jump's veil lifts")
-        XCTAssertEqual(opening(settledWords()), opening(chosen), "a tap during the jump moved the page off where he chose")
+        // The untouched jump is judged first on its own: on #254 it, not the tapped one, stopped on its
+        // file's first page.
+        XCTAssertTrue(keptAtChapterXL(), "the untouched jump didn't keep the chapter he chose")
+        XCTAssertEqual(opening(settledWords()), opening(chosen), "the tapped and the untouched jump to the same chapter landed on different pages")
+    }
+
+    /// The place a move of his last kept is Chapter XL's page, in reads: its anchor is 0.80 of the way into
+    /// its file's text (the file's start is an earlier chapter), and the page holding it starts within a
+    /// page before. A number from the app's probe, never the book's words.
+    private func keptAtChapterXL(reads: Int = 40) -> Bool {
+        let probe = el("reader.savedPlace")
+        for _ in 0..<reads {
+            if let p = Double((probe.value as? String) ?? ""), abs(p - 0.79) < 0.08 { return true }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        }
+        return false
     }
 }

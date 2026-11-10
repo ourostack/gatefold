@@ -128,6 +128,84 @@ import Testing
         f.model.close()
     }
 
+    /// A contents entry partway through its file lands on its own page, and that page is the place kept:
+    /// never the file's first page, which a web view still laying out opens instead (gatefold#166: "Chapter
+    /// XL", 0.80 into its file, was kept at the file's start, an earlier chapter).
+    @Test func aContentsJumpLandsOnTheChapterInsideItsFile() async throws {
+        let f = try await S.make(remote: { _, _ in nil }, startAt: 0.05)
+        await f.model.load()
+        await f.model.locationDidChange(try #require(f.page.currentLocation))
+        let entry = try #require(f.model.toc.last(where: { $0.progression > 0.3 && $0.link.url().fragment != nil }))
+        let fragment = try #require(entry.link.url().fragment)
+        nonisolated(unsafe) let publication = f.publication
+        let opened = try #require(await publication.locate(entry.link))
+        let fileStart = opened.copy(locations: { $0.fragments = []; $0.progression = 0 }, text: { $0 = Locator.Text() })
+        f.page.linkOpens = fileStart
+        f.page.fragmentAt[fragment] = 0.6
+
+        await f.model.go(to: entry)
+        // The write runs in its own task after the report: waited on as an event, counted.
+        for _ in 0..<200 where (saved(f).flatMap { try? Locator(jsonString: $0) }?.locations.progression ?? 0) < 0.5 {
+            await Task.yield()
+        }
+
+        let kept = try #require(saved(f).flatMap { try? Locator(jsonString: $0) }, "the jump kept no place")
+        #expect(ContentsIndex.sameResource(kept.href.string, fileStart.href.string), "the place is in another file")
+        #expect((kept.locations.progression ?? 0) > 0.5, "the place kept is the file's start, not the chapter he chose")
+        #expect((f.page.currentLocation?.locations.progression ?? 0) > 0.5, "the page stayed on the file's start")
+        #expect(f.model.showJumpBack, "the jump has no way back")
+        f.model.close()
+    }
+
+    /// A contents jump inside its file can be overtaken while its file is still laying out (another jump
+    /// of his, from the veil's moment): the newer move's page is the place, never the file's first page the
+    /// contents jump passed through.
+    @Test func aMoveMadeWhileAContentsJumpIsOnItsWayKeepsItsOwnPlace() async throws {
+        let f = try await S.make(remote: { _, _ in nil }, startAt: 0.05)
+        await f.model.load()
+        await f.model.locationDidChange(try #require(f.page.currentLocation))
+        let entry = try #require(f.model.toc.last(where: { $0.progression > 0.3 && $0.link.url().fragment != nil }))
+        nonisolated(unsafe) let publication = f.publication
+        let opened = try #require(await publication.locate(entry.link))
+        let fileStart = opened.copy(locations: { $0.fragments = []; $0.progression = 0 }, text: { $0 = Locator.Text() })
+        // The file never finishes laying out on its own: the fragment's place is not found.
+        f.page.linkOpens = fileStart
+
+        let jump = Task { await f.model.go(to: entry) }
+        for _ in 0..<200 where f.page.currentLocation?.href != fileStart.href { await Task.yield() }
+        let far = try #require(await S.locate(f.publication, 0.15))
+        await f.model.go(to: far, rememberBack: true)
+        await jump.value
+        for _ in 0..<200 where saved(f) == nil { await Task.yield() }
+
+        let kept = try #require(saved(f).flatMap { try? Locator(jsonString: $0) }, "no place kept")
+        #expect(ContentsIndex.sameResource(kept.href.string, far.href.string), "the place kept is the overtaken contents jump's, not his newer move's")
+        f.model.close()
+    }
+
+    /// A contents anchor the file doesn't have: Readium's landing stands at once, without waiting out
+    /// the reads behind the veil.
+    @Test func aContentsAnchorTheFileLacksKeepsReadiumsLanding() async throws {
+        let f = try await S.make(remote: { _, _ in nil }, startAt: 0.05)
+        await f.model.load()
+        await f.model.locationDidChange(try #require(f.page.currentLocation))
+        let entry = try #require(f.model.toc.last(where: { $0.progression > 0.3 && $0.link.url().fragment != nil }))
+        nonisolated(unsafe) let publication = f.publication
+        let opened = try #require(await publication.locate(entry.link))
+        let fileStart = opened.copy(locations: { $0.fragments = []; $0.progression = 0 }, text: { $0 = Locator.Text() })
+        f.page.linkOpens = fileStart
+        f.page.fragmentAbsent = true
+        let jumps = f.page.jumps.count
+
+        await f.model.go(to: entry)
+        for _ in 0..<200 where saved(f) == nil { await Task.yield() }
+
+        #expect(f.page.jumps.count == jumps, "the page was sent on from Readium's landing")
+        let kept = try #require(saved(f).flatMap { try? Locator(jsonString: $0) }, "no place kept")
+        #expect(ContentsIndex.sameResource(kept.href.string, fileStart.href.string), "the jump's file isn't the place")
+        f.model.close()
+    }
+
     /// The way back stays until he reads on (a few turns), not for a few seconds: a jump he didn't
     /// notice is still one tap to undo when he does.
     @Test func theWayBackStaysUntilHeReadsOn() async throws {
