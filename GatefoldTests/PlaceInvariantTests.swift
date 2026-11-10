@@ -227,7 +227,9 @@ import Testing
         try #require((his.locations.progression ?? 0) > 0.05, "his page is partway through its chapter")
         // His words are read on the chapter's start; then the page settles on his with no move of his,
         // and "where he is" goes back to those words (`locationDidChange`'s report that isn't his move).
-        let start = his.copy(locations: { $0.progression = 0; $0.position = nil })
+        // Here through the layout path ("his words still first on screen"); on CI it was a report inside
+        // a reflow's window: both lag `location` the same way.
+        let start = S.boundary(of: his)
         f.page.anchorText = "words-on-the-chapter-start"
         f.page.currentLocation = start
         await f.model.locationDidChange(start, hisMove: true)
@@ -241,6 +243,7 @@ import Testing
         let want = his.locations.totalProgression ?? -1
         let at = f.page.currentLocation?.locations.totalProgression ?? -2
         #expect(f.page.currentLocation?.href == his.href, "Back went to another chapter")
+        #expect((f.page.currentLocation?.locations.progression ?? 0) > 0.01, "Back landed on the chapter's start")
         #expect(abs(at - want) < 0.005, "Back came back to \(at), not his page at \(want)")
         f.model.close()
     }
