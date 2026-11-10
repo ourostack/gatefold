@@ -2,7 +2,7 @@ name: UI test shard
 
 # One shard of App's UI tests, called by app.yml: download the build `build` made once, boot the simulator meanwhile,
 # run this shard's tests with test-without-building. The shards of one required check report through that check's
-# gate job in app.yml (`iPad (place)`, `iPad (taps)`, `iPad (reviewer)`, `Duo (the reviewers' checks)`).
+# gate job in app.yml (`iPad (place)`, `iPad (undo)`, `iPad (taps)`, `iPad (reviewer)`, `Duo (the reviewers' checks)`).
 # scripts/ci-shards.py checks the lists in app.yml: every listed test exists, and none runs in two shards of a tier.
 
 on:

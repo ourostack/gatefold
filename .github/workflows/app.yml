@@ -1,7 +1,7 @@
 name: App
 
-# Two tiers. Every pull request runs the eight required checks: the place, undo, taps and unit legs in full, and a smoke of
-# the reviewers' checks (the last page's number, #30; the window fit; a Duo turn-and-reopen). Every push to main runs
+# Two tiers. Every pull request runs the required checks (the eighth, Real unfold, is real-unfold.yml's): the place,
+# undo, taps and unit legs in full, and a smoke of the reviewers' checks (the last page's number, #30; the window fit; a Duo turn-and-reopen). Every push to main runs
 # the reviewers' full lists. A red main is fixed by whoever merged the change that turned it red (AGENTS.md, "CI").
 #
 # Build once: `build` makes the app and its tests for the simulator (build-for-testing) and uploads them, named by
@@ -166,7 +166,7 @@ jobs:
             tests: >-
               RotationRepro/testRotateThenLeaveWithoutTurning
             cold: true
-            timeout: 56 # (9 + 4 + 10.1) / 0.7 = 34, + 10 + 12
+            timeout: 55 # (9 + 4 + 10.1) / 0.7 = 33, + 10 + 12
             skip: ""
             pr_tests: ""
           - shard: ipad-place-cold-stalled
@@ -460,7 +460,7 @@ jobs:
               ReviewerChecksUITests/testEveryReopenReturnsTheSameWords
             pr_tests: >-
               none
-            timeout: 59 # (9 + 23.2) / 0.7 = 47, + 12
+            timeout: 58 # (9 + 23.2) / 0.7 = 46, + 12
             cold: false
     uses: ./.github/workflows/ui-tests.yml
     with:
