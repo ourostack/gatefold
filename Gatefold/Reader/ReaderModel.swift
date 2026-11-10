@@ -1214,20 +1214,49 @@ final class ReaderModel {
     @discardableResult
     private func veiled(riffle: Bool = false, forward: Bool = true, step: Int? = nil, _ body: @escaping () async -> Void) async -> Int {
         let jump = step ?? takeStep()
+        let watch = VeilWatch()
         // Where the newest move left the page, noted the moment its jump is back: a jump overtaken
         // meanwhile (a Back freed by its count) that lands late is put back there.
         let tracked: () async -> Void = { [weak self] in
             await body()
+            watch.back = true
             guard let self else { return }
             self.landed(jump, at: self.page?.currentLocation)
         }
+        // Every jump but Back's (its trip keeps its own watch): a load that never ends must not hold
+        // the screen behind the veil (gatefold#173). At the veil's old limit it lets go, the chapter
+        // shows its own loading, and the jump goes on and lands when the load comes in.
+        if step == nil { watchVeil(jump: jump, watch) }
         // Behind the cover placeholder there's nothing to veil.
         if let host, pageReady {
             await host.veiledJump(riffle: riffle && !reduceMotion && pageTurn == .curl, forward: forward, jump: jump, tracked)
         } else {
             await tracked()
         }
+        watch.back = true
+        // Past its veil, a move of his meanwhile (a turn, a swipe, another jump) ended it quietly: the
+        // late jump moved the page, so it goes back where his newest move left it, and that is kept.
+        if watch.letGo, steps != jump, newestHasLanded, host?.isTurning != true, !isClosed, let newest = lastLanded {
+            readerLog.notice("veil: jump \(jump, privacy: .public) came back after a move of his; page put back")
+            let restore = await veiled { _ = await self.page?.go(to: newest) }
+            if steps == restore, !isClosed, let here = page?.currentLocation { await locationDidChange(here, hisMove: true) }
+        }
         return jump
+    }
+    /// A veiled jump's watch: whether it is back, and whether its veil let go first.
+    @MainActor private final class VeilWatch { var back = false; var letGo = false }
+    private func watchVeil(jump: Int, _ watch: VeilWatch) {
+        Task { [weak self] in
+            for _ in 0..<JumpLanding.reads {
+                guard let self, !watch.back, !self.isClosed else { return }
+                await self.jumpBeat()
+            }
+            guard let self, !watch.back, !self.isClosed else { return }
+            watch.letGo = true
+            self.jumpsPastTheVeil += 1
+            readerLog.notice("veil: jump \(jump, privacy: .public) still on its way after \(JumpLanding.reads, privacy: .public) beats; the veil lets go, the jump goes on")
+            self.host?.abandonVeil(jump: jump)
+        }
     }
     /// Every move of the page, his or ours: a jump, a turn, a swipe. Only the newest one's landing is
     /// where the page belongs.
