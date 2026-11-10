@@ -90,12 +90,12 @@ final class CountingTallyPage: ReaderPage {
     /// Opening Your Page and closing it with nothing changed leaves the count it found alone.
     @Test func closingYourPageWithNothingChangedStartsNoCount() async throws {
         let (model, page) = try await opened()
-        let before = page.countsStarted
+        let before = page.countsStarted, stoppedBefore = page.countsStopped
         model.tuning = true
         model.tuning = false
         for _ in 0..<50 { await Task.yield() }
         #expect(page.countsStarted == before, "closing an untouched Your Page started \(page.countsStarted - before) counts")
-        #expect(page.countsStopped == 0, "closing an untouched Your Page stopped the count")
+        #expect(page.countsStopped == stoppedBefore, "closing an untouched Your Page stopped the count")
         model.close()
     }
 
