@@ -409,13 +409,14 @@ import Testing
         let jump = Task { await f.model.go(toProgression: 0.7, rememberBack: true) }
         await Self.settle { f.model.jumpsPastTheVeil == 1 }
         #expect(f.model.jumpsPastTheVeil == 1, "the jump wasn't still on its way past the veil's limit")
-        // He moves on meanwhile: Readium moves itself and tells the reader.
+        // He moves on meanwhile: Readium moves itself and tells the reader. A tap first reports the page
+        // he is still on (it moves nothing).
         let next = try #require(await S.locate(f.publication, 0.06))
+        if how == "tap, then swipe" { await f.model.locationDidChange(try #require(f.page.currentLocation)) }
         f.page.currentLocation = next
         if how == "turn" {
             f.model.userTurnedPage()
         } else {
-            if how == "tap, then swipe" { await f.model.locationDidChange(try #require(f.page.currentLocation)) }
             f.model.noteInteraction()
             await f.model.locationDidChange(next)
         }
@@ -444,6 +445,9 @@ import Testing
         await f.model.locationDidChange(try #require(f.page.currentLocation))
         await f.model.checkRemote()
         try #require(f.model.suggestion != nil, "the Cloud's place is offered")
+        // The first page shown, as the host's reveal does: no host here, so a catch-up would otherwise
+        // wait out the cover's bound before it goes.
+        f.model.forceReady()
         f.page.holdsJumps = true
         f.page.loadingChapter = true
         let taking = Task { await f.model.acceptSuggestion() }
@@ -473,6 +477,9 @@ import Testing
         await f.model.locationDidChange(try #require(f.page.currentLocation))
         await f.model.checkRemote()
         try #require(f.model.suggestion != nil, "the Cloud's place is offered")
+        // The first page shown, as the host's reveal does: no host here, so a catch-up would otherwise
+        // wait out the cover's bound before it goes.
+        f.model.forceReady()
         f.page.holdsJumps = true
         f.page.loadingChapter = true
         let taking = Task { await f.model.acceptSuggestion() }
