@@ -159,6 +159,12 @@ jobs:
             tests: >-
               NavigationPlaceUITests PositionUITests/testEveryPostureKeepsThePlace
               CountingPlaceholderUITests
+          - name: undo
+            # Every jump's one-tap Back (#46), on its own: in the place leg it pushed a slow host past that job's
+            # limit (c4c3b6a, gatefold#39). 9 min of tests at c8d3084 plus about 13 to set up and build: 31 / 0.7.
+            timeout: 57 # 45 for the job, 12 for the logs
+            title: Every jump that isn't a turn is one tap to undo
+            tests: PlaceUndoUITests
           - name: taps
             # 53 min measured (a 10 min simulator boot among them); measured / 0.7 keeps 30% headroom.
             timeout: 92 # 80 for the job, 12 for the logs
@@ -205,6 +211,7 @@ jobs:
           name: ${{ needs.build.outputs.artifact }}
           path: ${{ runner.temp }}
       - name: Unpack the app and its tests (built once, for this commit and Xcode)
+        id: unpack
         env:
           ARTIFACT: ${{ needs.build.outputs.artifact }}
         run: |
@@ -216,6 +223,7 @@ jobs:
           [ "$want" = "$ARTIFACT" ] || { echo "::error::Built as $ARTIFACT, but this job's Xcode makes $want"; exit 1; }
           echo "XCTESTRUN=$(ls "$RUNNER_TEMP"/dd/Build/Products/*.xctestrun | head -1)" >> "$GITHUB_ENV"
       - name: The iPad finished booting
+        id: boot
         # boot-sim.sh retries a boot that fails or hangs (#57); this step waits for it with a limit.
         # 1200 s for the boot, the check's listings, and 900 s for one fresh device when the first boot left room
         # (gatefold#71; the sums are in scripts/ci-simulator.py at BOOT_ATTEMPT).
@@ -227,7 +235,7 @@ jobs:
         run: |
           sh scripts/ci-crashes.sh mark
           nohup sh -c 'xcrun simctl spawn "$0" log stream --style compact --predicate "subsystem == \"bot.ouro.gatefold\"" 2>/dev/null \
-            | grep --line-buffered -E "place (read|write)|place:|location |reflow|landing|landed|reopen|tapped|warm:|open:|first page|pages:|turn:|spread:|veil:|settle [0-9]" \
+            | grep --line-buffered -E "place (read|write)|place:|location |reflow|landing|landed|reopen|tapped|warm:|open:|first page|pages:|turn:|spread:|veil:|settle [0-9]|snapshot:|back:" \
             | grep --line-buffered -v -E "text:|\] visible|anchor" >> "$1"' "$UDID" "$RUNNER_TEMP/place.log" >/dev/null 2>&1 &
           # Why the system ended the app, when it did (gatefold#76): runningboardd's lines about it, no page text.
           nohup sh -c 'xcrun simctl spawn "$0" log stream --style compact --predicate "process == \"runningboardd\" AND eventMessage CONTAINS \"bot.ouro.gatefold\"" 2>/dev/null \
@@ -266,7 +274,7 @@ jobs:
           DESTINATION="platform=iOS Simulator,arch=$(uname -m),id=$udid"
           # The erase ended the place log's stream; take it up again.
           nohup sh -c 'xcrun simctl spawn "$0" log stream --style compact --predicate "subsystem == \"bot.ouro.gatefold\"" 2>/dev/null \
-            | grep --line-buffered -E "place (read|write)|place:|location |reflow|landing|landed|reopen|tapped|warm:|open:|first page|pages:|turn:|spread:|veil:|settle [0-9]|REPRO" \
+            | grep --line-buffered -E "place (read|write)|place:|location |reflow|landing|landed|reopen|tapped|warm:|open:|first page|pages:|turn:|spread:|veil:|settle [0-9]|REPRO|snapshot:|back:" \
             | grep --line-buffered -v -E "text:|\] visible|anchor" >> "$1"' "$udid" "$RUNNER_TEMP/place.log" >/dev/null 2>&1 &
           # Why the system ended the app, when it did (gatefold#76): runningboardd's lines about it, no page text.
           nohup sh -c 'xcrun simctl spawn "$0" log stream --style compact --predicate "process == \"runningboardd\" AND eventMessage CONTAINS \"bot.ouro.gatefold\"" 2>/dev/null \
@@ -283,10 +291,15 @@ jobs:
           echo "$(date -u +%T) done ($status)"
           exit $status
       - id: left
+        # Its minutes are the next step's limit, and that step runs after a cold-step miss too.
+        if: ${{ !cancelled() }}
         uses: ./.github/actions/time-left
         with:
           limit: ${{ matrix.timeout }}
       - name: ${{ matrix.title }}
+        # A miss in the cold step still lets the rest report: one failure must not hide the others.
+        # Not without the app or a booted iPad, which would only add a misleading red.
+        if: ${{ !cancelled() && steps.unpack.outcome == 'success' && steps.boot.outcome == 'success' }}
         # Ends 12 min before the job's limit: a job cut off at its limit skips every later step and uploads nothing.
         timeout-minutes: ${{ fromJSON(steps.left.outputs.minutes) }}
         env:
@@ -303,7 +316,7 @@ jobs:
           python3 -I scripts/ci-within.py --until "$STEP_UNTIL" -- xcodebuild test-without-building -xctestrun "$XCTESTRUN" \
             -destination "$DESTINATION" "${only[@]}" \
             -resultBundlePath "$RUNNER_TEMP/ipad.xcresult" 2>&1 | tee "$RUNNER_TEMP/ipad.log" \
-            | grep --line-buffered -E "Test Case .*(started|passed|failed|skipped)|TEST (SUCCEEDED|FAILED)|REPRO (round|SUMMARY)|TAPRATE|PLACEHOLDER|REVIEWER|WINDOWFIT|REOPEN round [0-9]+:|\.swift:[0-9]+: error|::error::" \
+            | grep --line-buffered -E "Test Case .*(started|passed|failed|skipped)|TEST (SUCCEEDED|FAILED)|REPRO (round|SUMMARY)|TAPRATE|PLACEHOLDER|REVIEWER|OLDPAGEHELD|WINDOWFIT|REOPEN round [0-9]+:|\.swift:[0-9]+: error|::error::" \
             | awk '{ if (match($0, /XCTAssert[A-Za-z]* failed/)) $0 = substr($0, 1, RSTART + RLENGTH - 1) " (text withheld)"; print; fflush() }'
           exit ${PIPESTATUS[0]}
       - name: The app did not crash, and the system did not end it for memory (gatefold#76)
@@ -376,7 +389,33 @@ jobs:
         run: |
           set -o pipefail
           xcodebuild build -project Gatefold.xcodeproj -scheme Gatefold -configuration Release \
-            -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO 2>&1 | tail -50
+            -destination 'generic/platform=iOS' -derivedDataPath "$RUNNER_TEMP/release" CODE_SIGNING_ALLOWED=NO 2>&1 | tail -50
+      - name: The shipped app can't move his place by itself (test-only launch jumps are compiled out)
+        run: |
+          binary="$RUNNER_TEMP/release/Build/Products/Release-iphoneos/Gatefold.app/Gatefold"
+          test -f "$binary"
+          # Swift keeps literals of 15 bytes or fewer inline, where strings can't see them, so the check
+          # looks for the launch jump's 34-byte marker (LaunchOptions.goToMarker), whose prefix is the key.
+          marker="GatefoldGoTo/test-only-launch-jump"
+          if ! grep -q "\"$marker\"" Gatefold/Design/Design.swift; then
+            echo "::error::LaunchOptions.goToMarker no longer reads $marker; update this check with it"
+            exit 1
+          fi
+          # The key itself is too short for strings to see, so the app may only read it through the marker.
+          if git grep -n '"GatefoldGoTo"' -- Gatefold; then
+            echo "::error::The app reads GatefoldGoTo directly, where this check can't see it; read it through LaunchOptions.goToMarker"
+            exit 1
+          fi
+          # Canary: a launch key of 16 bytes that Release keeps must be visible, or a miss proves nothing.
+          if ! strings -a "$binary" | grep -q "GatefoldOpenBook"; then
+            echo "::error::This check can't see the Release app's launch keys, so it can't vouch for it"
+            exit 1
+          fi
+          if strings -a "$binary" | grep -q "$marker"; then
+            echo "::error::The Release app reads -GatefoldGoTo: a launch jump could move his place"
+            exit 1
+          fi
+          echo "No launch jump in the Release app"
       - id: fetch
         # Usually 4 s, but 13 of 144 took over 2 min and one 10.6 min (gatefold#144), in bunches across jobs: the
         # artifact store, not the runner. A download cut off at 4 min tries once more, rather than eating the tests' time.
@@ -476,14 +515,17 @@ jobs:
   duo-reviewer:
     name: Duo (the reviewers' checks)
     # The reviewers' standing checks on the Duo: reopen by hash, true numbers and reader-wide toggles
-    # (density is the iPad's), and a page a turn with a reopen keeping its numbers.
+    # (density is the iPad's), and a page a turn with a reopen keeping its numbers. Then the folded
+    # Duo's turn checks (#61), on pull requests too: a tap at either edge turns within 12 reads and
+    # 24 looks, with a TURNWAIT line of counts for each.
     # Pull requests run its smoke (a page a turn, and a reopen keeps the numbers); pushes to main add the reviewers'
     # full list, about 13 min a test on this runner (gatefold#39).
     needs: [changes, build]
     if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
     runs-on: xcode-27
-    # 45 min measured (build 20): 65 keeps 30% headroom.
-    timeout-minutes: 77 # 65 for the job, 12 for the logs after the tests (gatefold#141)
+    # 45 min measured (build 20), plus about 10 for the two turn checks; 47 min at c4c3b6a with both.
+    # feel-ci sets this job longer (gatefold#65 tracks the overrun): at a merge, the larger value wins.
+    timeout-minutes: 85 # 73 for the tests, 12 for the logs after them (gatefold#141)
     steps:
       - name: Note when the job began, so each test step can stop in time to upload its logs (gatefold#126)
         run: echo "JOB_START=$(date +%s)" >> "$GITHUB_ENV"
@@ -529,7 +571,7 @@ jobs:
         run: |
           sh scripts/ci-crashes.sh mark
           nohup sh -c 'xcrun simctl spawn "$0" log stream --style compact --predicate "subsystem == \"bot.ouro.gatefold\"" 2>/dev/null \
-            | grep --line-buffered -E "place (read|write)|place:|location |reflow|landing|landed|reopen|tapped|warm:|open:|first page|pages:|turn:|spread:|veil:|settle [0-9]" \
+            | grep --line-buffered -E "place (read|write)|place:|location |reflow|landing|landed|reopen|tapped|warm:|open:|first page|pages:|turn:|spread:|veil:|settle [0-9]|snapshot:|back:" \
             | grep --line-buffered -v -E "text:|\] visible|anchor" >> "$1"' "$UDID" "$RUNNER_TEMP/place.log" >/dev/null 2>&1 &
           # Why the system ended the app, when it did (gatefold#76): runningboardd's lines about it, no page text.
           nohup sh -c 'xcrun simctl spawn "$0" log stream --style compact --predicate "process == \"runningboardd\" AND eventMessage CONTAINS \"bot.ouro.gatefold\"" 2>/dev/null \
@@ -537,7 +579,7 @@ jobs:
       - id: left
         uses: ./.github/actions/time-left
         with:
-          limit: "77" # the job's timeout-minutes
+          limit: "85" # the job's timeout-minutes
       - name: The reviewers' checks on the Duo
         timeout-minutes: ${{ fromJSON(steps.left.outputs.minutes) }}
         env:
@@ -545,12 +587,14 @@ jobs:
           FULL: ${{ needs.changes.outputs.full }}
         run: |
           set -o pipefail
-          only=(-only-testing:GatefoldUITests/PageNumberUITests/testEveryTurnMovesOnAPageAndAReopenKeepsTheNumbers)
+          only=(-only-testing:GatefoldUITests/PageNumberUITests/testEveryTurnMovesOnAPageAndAReopenKeepsTheNumbers
+            -only-testing:GatefoldUITests/PlaceUndoUITests/testATapAtTheLeftEdgeTurnsBackPromptly
+            -only-testing:GatefoldUITests/PlaceUndoUITests/testATapAtTheLeftEdgeTurnsBackPromptlyWithinAChapter)
           if [ "$FULL" != false ]; then only+=(-only-testing:GatefoldUITests/ReviewerChecksUITests); fi
           python3 -I scripts/ci-within.py --until "$STEP_UNTIL" -- xcodebuild test-without-building -xctestrun "$XCTESTRUN" \
             -destination "$DESTINATION" "${only[@]}" \
             -resultBundlePath "$RUNNER_TEMP/duo.xcresult" 2>&1 | tee "$RUNNER_TEMP/duo.log" \
-            | grep --line-buffered -E "Test Case .*(started|passed|failed|skipped)|TEST (SUCCEEDED|FAILED)|REVIEWER|\.swift:[0-9]+: error|::error::" \
+            | grep --line-buffered -E "Test Case .*(started|passed|failed|skipped)|TEST (SUCCEEDED|FAILED)|REVIEWER|TURNWAIT|\.swift:[0-9]+: error|::error::" \
             | awk '{ if (match($0, /XCTAssert[A-Za-z]* failed/)) $0 = substr($0, 1, RSTART + RLENGTH - 1) " (text withheld)"; print; fflush() }'
           exit ${PIPESTATUS[0]}
       - name: The app did not crash, and the system did not end it for memory (gatefold#76)

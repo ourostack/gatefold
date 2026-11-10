@@ -98,11 +98,11 @@ struct ReaderChrome: View {
         HStack(alignment: .bottom, spacing: 12) {
             VStack(spacing: 8) {
                 // After a Jump the way back stays up for a while, with or without the controls.
-                if let back = model.backLocator, model.backPage != nil, model.chromeVisible || model.showJumpBack {
+                if model.backLocator != nil, model.chromeVisible || model.showJumpBack {
                     Button {
                         Task { await model.goBack() }
                     } label: {
-                        Label("Back to page \(model.backPage ?? 0)", systemImage: "arrow.uturn.backward")
+                        Label(model.backLabel, systemImage: "arrow.uturn.backward")
                             .font(.subheadline.weight(.medium))
                             .padding(.horizontal, 14)
                             .frame(minHeight: 36)
@@ -110,7 +110,8 @@ struct ReaderChrome: View {
                     .frame(minHeight: 44)
                     .buttonStyle(.glass(.regular.tint(model.theme.background.opacity(0.7))))
                     .accessibilityIdentifier("reader.back")
-                    .id(back.locations.totalProgression)
+                    // One pill for every way back (no identity per place): Back leaves a way back of
+                    // its own, and a new identity tore the tapped pill out from under his finger.
                     .transition(.scale.combined(with: .opacity))
                 }
                 if model.chromeVisible && !showAppearance {
@@ -260,13 +261,17 @@ struct Scrubber: View {
             .frame(height: 24)
             .contentShape(Rectangle())
             .gesture(
-                DragGesture(minimumDistance: 0)
+                // Only a deliberate sideways drag jumps, on lift: a touch resting on the bar, or one
+                // that wobbles, leaves the page where it is (build 20 jumped on a tap).
+                DragGesture(minimumDistance: ScrubberIntent.minimumDrag)
                     .onChanged { g in
+                        guard dragging != nil || ScrubberIntent.isDeliberate(translation: g.translation) else { return }
                         let next = min(1, max(0, g.location.x / max(1, width)))
                         if let d = dragging, model.chapterMap.crossesChapter(from: d, to: next) { crossings += 1 }
                         withAnimation(.interactiveSpring) { dragging = next }
                     }
                     .onEnded { _ in
+                        // Only a drag that became deliberate has a target; it lands where he lifts.
                         guard let target = dragging else { return }
                         pending = target
                         dragging = nil
@@ -283,9 +288,7 @@ struct Scrubber: View {
         .accessibilityLabel("Progress")
         .accessibilityValue(model.pageLabel.isEmpty ? "\(Int((model.totalProgression * 100).rounded())) percent" : "Page \(model.pageLabel)")
         .accessibilityAdjustableAction { direction in
-            let step = 0.01
-            let target = model.totalProgression + (direction == .increment ? step : -step)
-            Task { await model.go(toProgression: min(1, max(0, target)), rememberBack: false) }
+            Task { await model.adjustScrubber(forward: direction == .increment) }
         }
         .accessibilityIdentifier("reader.scrubber")
     }

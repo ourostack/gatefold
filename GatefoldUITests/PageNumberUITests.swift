@@ -44,7 +44,7 @@ final class PageNumberUITests: XCTestCase {
     }
 
     private func turnForward() {
-        app.descendants(matching: .any)["reader.page"].coordinate(withNormalizedOffset: CGVector(dx: 0.92, dy: 0.5)).tap()
+        app.descendants(matching: .any)["reader.page"].coordinate(withNormalizedOffset: CGVector(dx: 0.97, dy: 0.5)).tap()
     }
 
     func testEveryTurnMovesOnAPageAndAReopenKeepsTheNumbers() {

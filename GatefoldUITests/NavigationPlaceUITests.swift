@@ -121,6 +121,57 @@ final class NavigationPlaceUITests: XCTestCase {
         XCTAssertNotEqual(opening(words), opening(first), "the jump moved the page")
     }
 
+    /// A Contents jump made while the page he leaves is still loading starts at once: the old page is
+    /// pictured as it is, never waited on (the wait held the jump back about 60 s on CI's iPad, and the
+    /// page never moved in time: gatefold#73). Judged in probe reads against the same jump from a
+    /// loaded page, on the same runner: the held load (1200 looks, about a minute) may add at most 10
+    /// reads to the jump, and Back follows within 10 more.
+    func testAJumpFromAPageStillLoadingStartsAtOnce() {
+        let plain = contentsJumpReads([])
+        let held = contentsJumpReads(["-GatefoldHoldOldPageLoad", "1200"])
+        print("OLDPAGEHELD reads to move: loaded \(plain.move), still loading \(held.move); to Back: loaded \(plain.back), still loading \(held.back)")
+        // At once, everywhere: neither jump may take more than `jumpReadCeiling` reads, whatever the
+        // runner. Baselines on CI's iPad: loaded 9 and 81, still loading 12 (runs 42484222632 and
+        // 42490481581); the 81 was a 37 s jump, which is not at once.
+        XCTAssertLessThanOrEqual(plain.move, Self.jumpReadCeiling, "the jump from a loaded page moved the page only after \(plain.move) reads")
+        XCTAssertLessThanOrEqual(held.move, Self.jumpReadCeiling, "the jump from a page still loading moved the page only after \(held.move) reads")
+        XCTAssertLessThanOrEqual(held.move, plain.move + 10, "a jump from a page still loading moved the page only after \(held.move) reads (\(plain.move) from a loaded one)")
+        XCTAssertLessThanOrEqual(held.back, plain.back + 10, "the jump from a page still loading put up Back only after \(held.back) reads (\(plain.back) from a loaded one)")
+        XCTAssertLessThanOrEqual(held.back, Self.jumpReadCeiling, "the jump from a page still loading put up Back only after \(held.back) reads")
+    }
+
+    private static let jumpReadLimit = 400
+    /// About 30 s of probe reads on CI's iPad (about 0.5 s a read there).
+    private static let jumpReadCeiling = 60
+
+    /// Opens fresh, jumps to chapter XXX through Contents, and counts probe reads from the tap until
+    /// the words change, then until Back is up (the limit when they never do).
+    private func contentsJumpReads(_ extra: [String]) -> (move: Int, back: Int) {
+        let first = openFresh(extra)
+        showChrome()
+        app.buttons["reader.contents"].tap()
+        let row = app.buttons.matching(NSPredicate(format: "label CONTAINS[c] %@", "Chapter XXX")).firstMatch
+        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label CONTAINS[c] %@", "Chapter I")).firstMatch.waitForExistence(timeout: 10),
+                      "the contents opened")
+        for _ in 0..<20 where !(row.exists && row.isHittable) { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(row.exists && row.isHittable, "the contents list chapter XXX")
+        row.tap()
+        // Both counted from the tap: the reads until the words change, and until Back is up.
+        var reads = 0, move: Int?, back: Int?
+        while reads < Self.jumpReadLimit, move == nil || back == nil {
+            reads += 1
+            let now = visibleText
+            if move == nil, !now.isEmpty, opening(now) != opening(first) { move = reads }
+            if back == nil, app.buttons["reader.back"].exists { back = reads }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        }
+        if extra.contains("-GatefoldHoldOldPageLoad") {
+            XCTAssertTrue(app.descendants(matching: .any)["reader.oldPageHeld"].exists, "the old page's held load armed")
+        }
+        app.quit()
+        return (move ?? reads, back ?? reads)
+    }
+
     /// While the first page is still loading behind the opening cover, a tap still brings up the
     /// controls and Close still closes the book (#104): the cover took every tap, Close among them, for
     /// over a minute while a load hung (#94). The load is held open (`-GatefoldHoldOpeningLoad`), and
@@ -162,18 +213,60 @@ final class NavigationPlaceUITests: XCTestCase {
         XCTAssertTrue(shelf.exists, "Close on the opening cover goes back to the shelf")
     }
 
+    /// The Cloud's offer, shown while the first page is still loading behind the opening cover, takes
+    /// his tap: Catch up was drawn beneath the cover, which took the tap as a call for the controls, so
+    /// the offer was never taken and the book stayed on its wordless cover (#46 at c8d3084, CI's iPad:
+    /// ReopenAfterControls round 1, no words for 120 s after Catch up). Judged in reads, never seconds.
+    func testTheCloudsOfferOverTheOpeningCoverTakesHisTap() {
+        app.launchArguments = common + ["-GatefoldHoldOpeningLoad", "2400", "-GatefoldReset", "YES", "-GatefoldDownloadAll", "YES",
+                                        "-GatefoldNoLatency", "YES", "-GatefoldOpenBook", "gutenberg-pride-and-prejudice",
+                                        // This host's queries take seconds; the offer mustn't fold between seeing it and the tap.
+                                        "-GatefoldOfferFoldSeconds", "600"]
+        app.launch()
+        let held = app.descendants(matching: .any)["reader.loadingHeld"]
+        let cover = app.descendants(matching: .any)["reader.opening"]
+        let ready = app.descendants(matching: .any)["reader.pageReady"]
+        let offer = app.buttons["banner.jump"], tab = app.descendants(matching: .any)["banner.tab"]
+        // If it is folded into its tab anyway, the tab opens it again.
+        let up = Date().addingTimeInterval(90)
+        while !offer.exists, Date() < up {
+            if tab.exists { tab.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap() }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        }
+        XCTAssertTrue(offer.exists, "the Cloud's place is offered while the first page loads")
+        guard offer.exists else { return }
+        let coverUp = cover.exists
+        offer.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        // Taken: the offer and its tab are gone at once. Missed: the offer stays, or folds into its tab.
+        var reads = 0, taken = false
+        while reads < 10 {
+            reads += 1
+            if !offer.exists, !tab.exists { taken = true; break }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        }
+        let stillLoading = held.exists && (ready.value as? String) == "0"
+        print("PLACEHOLDER offer taken=\(taken) after \(reads) reads; cover up=\(coverUp); still loading=\(stillLoading)")
+        XCTAssertTrue(coverUp, "the opening cover was up when Catch up was tapped")
+        XCTAssertTrue(stillLoading, "the page was still loading when the tap was judged")
+        XCTAssertTrue(taken, "Catch up over the opening cover takes the tap")
+        // And it lands: once the page shows, it is on words (the round that missed showed none for 120 s).
+        XCTAssertFalse(waitForWords(timeout: 180).isEmpty, "the page never showed words after Catch up")
+    }
+
     func testAScrubberJumpKeepsThePlace() {
         let first = openFresh()
         showChrome()
         let scrubber = app.descendants(matching: .any)["reader.scrubber"]
         XCTAssertTrue(scrubber.waitForExistence(timeout: 5))
-        scrubber.coordinate(withNormalizedOffset: CGVector(dx: 0.62, dy: 0.5)).tap()
+        // A deliberate drag along the bar: a tap on it never jumps (PlaceUndoUITests).
+        let from = scrubber.coordinate(withNormalizedOffset: CGVector(dx: 0.1, dy: 0.5))
+        from.press(forDuration: 0.1, thenDragTo: scrubber.coordinate(withNormalizedOffset: CGVector(dx: 0.62, dy: 0.5)))
         _ = waitForWords(changingFrom: first, timeout: 20)
         leaveAndReturn(expecting: first, "scrubber jump")
     }
 
     private func turn(forward: Bool) {
-        app.descendants(matching: .any)["reader.page"].coordinate(withNormalizedOffset: CGVector(dx: forward ? 0.92 : 0.08, dy: 0.5)).tap()
+        app.descendants(matching: .any)["reader.page"].coordinate(withNormalizedOffset: CGVector(dx: forward ? 0.97 : 0.03, dy: 0.5)).tap()
     }
 
     private func leaveAndRelaunch() {
@@ -281,7 +374,22 @@ final class NavigationPlaceUITests: XCTestCase {
     /// Scroll mode: a scroll is his move even after the launch reflow, through all of a long scroll's
     /// reports, so a reopen shows where he scrolled to, not where the scroll began.
     func testScrolledAfterTheLaunchReflowThenLeftKeepsWhereHeScrolled() {
-        let first = openFresh()
+        var first = openFresh()
+        // A fresh install offers the Cloud's place and never lands on it (#46): the book opens on its
+        // cover, which has no words to scroll through. He takes the offer, as he would. Unanswered for
+        // 10 s the offer folds into its tab, so by now it may be the tab: opened again, then taken.
+        if first.isEmpty {
+            let offer = app.buttons["banner.jump"], tab = app.descendants(matching: .any)["banner.tab"].firstMatch
+            let up = Date().addingTimeInterval(30)
+            while !offer.exists, Date() < up {
+                if tab.exists, tab.isHittable { tab.tap() }
+                RunLoop.current.run(until: Date().addingTimeInterval(0.5))
+            }
+            XCTAssertTrue(offer.exists, "a fresh install on the cover offers the Cloud's place")
+            if offer.exists { offer.tap() }
+            first = waitForWords(changingFrom: first)
+        }
+        XCTAssertFalse(first.isEmpty, "the page he scrolls from shows words")
         showChrome()
         app.buttons["reader.appearance"].tap()
         let turnStyle = app.descendants(matching: .any)["appearance.pageTurn"].firstMatch

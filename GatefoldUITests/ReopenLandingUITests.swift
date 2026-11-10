@@ -34,7 +34,7 @@ final class ReopenLandingUITests: XCTestCase {
     }
 
     private func turnForward() {
-        app.descendants(matching: .any)["reader.page"].coordinate(withNormalizedOffset: CGVector(dx: 0.92, dy: 0.5)).tap()
+        app.descendants(matching: .any)["reader.page"].coordinate(withNormalizedOffset: CGVector(dx: 0.97, dy: 0.5)).tap()
     }
 
     /// A small deterministic generator, so a failing run can be replayed exactly.

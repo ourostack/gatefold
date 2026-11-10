@@ -55,7 +55,7 @@ final class LiveSyncUITests: XCTestCase {
         shot("live-06-opened")
 
         for _ in 0..<6 {
-            opened.coordinate(withNormalizedOffset: CGVector(dx: 0.93, dy: 0.5)).tap()
+            opened.coordinate(withNormalizedOffset: CGVector(dx: 0.97, dy: 0.5)).tap()
             sleep(2)
         }
         waitForSettled()
@@ -117,7 +117,7 @@ final class LiveSyncUITests: XCTestCase {
         // Read on three pages: the shelf and the Cloud must not fall below the InkPad's percent.
         let page = element("reader.page")
         for _ in 0..<3 {
-            page.coordinate(withNormalizedOffset: CGVector(dx: 0.92, dy: 0.6)).tap()
+            page.coordinate(withNormalizedOffset: CGVector(dx: 0.97, dy: 0.6)).tap()
             sleep(2)
         }
         shot("live-10b-read-on")
@@ -203,11 +203,12 @@ final class LiveSyncUITests: XCTestCase {
         XCTAssertTrue(page.waitForExistence(timeout: 30))
         waitForSettled()
         page.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
-        // A tap near the scrubber's start jumps there: back into the first letters.
+        // A drag to the scrubber's start jumps there: back into the first letters.
         let scrubber = element("reader.scrubber")
         XCTAssertTrue(scrubber.waitForExistence(timeout: 5))
         print("LIVE before jumping back: \(scrubber.value as? String ?? "")")
-        scrubber.coordinate(withNormalizedOffset: CGVector(dx: 0.04, dy: 0.5)).tap()
+        scrubber.coordinate(withNormalizedOffset: CGVector(dx: 0.3, dy: 0.5))
+            .press(forDuration: 0.1, thenDragTo: scrubber.coordinate(withNormalizedOffset: CGVector(dx: 0.04, dy: 0.5)))
         sleep(3)
         waitForSettled()
         let words = element("reader.visibleText").value as? String ?? ""
@@ -238,7 +239,7 @@ final class LiveSyncUITests: XCTestCase {
         print("LIVE clean start page: \(words.prefix(160))")
         XCTAssertTrue(normalize(words).contains(normalize(expected)), "landed on the jumped-back page: \(words.prefix(200))")
         for _ in 0..<2 {
-            page.coordinate(withNormalizedOffset: CGVector(dx: 0.92, dy: 0.6)).tap()
+            page.coordinate(withNormalizedOffset: CGVector(dx: 0.97, dy: 0.6)).tap()
             sleep(2)
         }
         shot("live-20-read-on-after-clean-start")

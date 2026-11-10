@@ -63,6 +63,10 @@ struct ReaderScreen: View {
             let liftNeeded = chromeLift.anchorY != 0.5
             // The opening cover is up or fading (no reopen picture over it): the controls sit above it.
             let controlsOverCover = !model.coverLifted && model.reopenPicture == nil
+            // The Cloud's offer sits above the opening cover with the controls, so his tap on it is never
+            // taken for the cover's. Not above the reopen picture: a landing taken there would jump under a
+            // picture whose lift doesn't wait for it, and the picture covers the offer whole meanwhile.
+            let slipOverCover = controlsOverCover
             ZStack(alignment: .topLeading) {
                 model.theme.background
 
@@ -122,6 +126,13 @@ struct ReaderScreen: View {
                 .zIndex(controlsOverCover ? 3.5 : 0)
 
                 if showAppearance {
+                    // A tap anywhere off the panel closes it, and nothing else: it never reaches the page,
+                    // where a tap in a margin would turn it (the M4 iPad review's tap above the panel).
+                    Color.clear
+                        .contentShape(.rect)
+                        .onTapGesture { showAppearance = false }
+                        .accessibilityHidden(true)
+                        .zIndex(4)
                     // Low over the page (or the spread), inside the safe area, the top of the page in view.
                     SettingsPanel(model: model, width: proxy.size.width) { showAppearance = false }
                         .frame(maxWidth: 560)
@@ -144,7 +155,9 @@ struct ReaderScreen: View {
                     AheadTab(label: tab, theme: model.theme) { model.unfoldSlip() }
                         .offset(x: layout.pageFrame.minX + 16, y: layout.pageFrame.minY + pageTopClearance(layout, clearance: clearance) - 22)
                         .transition(reduceMotion ? .opacity : .move(edge: .top).combined(with: .opacity))
-                        .zIndex(2)
+                        // The offer can come while the first page loads: the cover took his tap on it as a
+                        // call for the controls, and the offer was never taken (#46 at c8d3084).
+                        .zIndex(slipOverCover ? 3.6 : 2)
                 }
 
                 if let slip = model.slip, let kind = model.slipKind, !model.slipFolded {
@@ -166,7 +179,8 @@ struct ReaderScreen: View {
                     )
                     .animation(Motion.chrome, value: model.chromeVisible)
                     .transition(reduceMotion ? .opacity : .move(edge: kind == .landed ? .bottom : .top).combined(with: .opacity))
-                    .zIndex(2)
+                    // Catch up over the opening cover takes his tap, as the tab does.
+                    .zIndex(slipOverCover ? 3.6 : 2)
                 }
 
                 if let picture = model.reopenPicture {
@@ -351,6 +365,12 @@ struct ReaderScreen: View {
                 .accessibilityIdentifier("reader.numberDelay")
                 .accessibilityValue(model.firstNumberDelay.map { String(format: "%.2f", $0) } ?? "")
                 .allowsHitTesting(false)
+            Text("turn wait")
+                .font(.system(size: 1))
+                .opacity(0.01)
+                .accessibilityIdentifier("reader.turnWait")
+                .accessibilityValue(model.turnWaitProbe)
+                .allowsHitTesting(false)
             Text("counting shown")
                 .font(.system(size: 1))
                 .opacity(0.01)
@@ -406,20 +426,23 @@ struct ReaderScreen: View {
                 .accessibilityIdentifier("reader.posture")
                 .accessibilityLabel(layout.posture.rawValue)
                 .allowsHitTesting(false)
-            // UI tests switch posture at runtime, so one test can walk every posture.
+            // UI tests switch posture at runtime, so one test can walk every posture. Top-centre, at the
+            // top of the page frame: never in a turn zone, where they swallowed a test's edge taps on
+            // a short spread (the unfolded Duo's mid-height sat inside them).
+            let switches = TestPostureSwitches.frame(pageFrame: layout.pageFrame, count: Posture.allCases.count)
             HStack(spacing: 0) {
                 ForEach(Posture.allCases, id: \.self) { posture in
                     Button {
                         readerLog.notice("debug posture \(posture.rawValue, privacy: .public)")
                         forced = posture
                     } label: {
-                        Color.clear.frame(width: 44, height: 44).contentShape(Rectangle())
+                        Color.clear.frame(width: TestPostureSwitches.button, height: TestPostureSwitches.button).contentShape(Rectangle())
                     }
                     .accessibilityLabel(posture.rawValue)
                     .accessibilityIdentifier("debug.posture.\(posture.rawValue)")
                 }
             }
-            .offset(y: layout.pageFrame.height * 0.45)
+            .offset(x: switches.minX, y: switches.minY)
         }
     }
 

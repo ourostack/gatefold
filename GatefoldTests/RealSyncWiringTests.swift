@@ -23,6 +23,9 @@ actor StubSync: SyncService {
     func queueLibrary(_ results: [Result<[CloudBook], any Error>]) { libraryQueue = results }
     func setEmptyAccountReads(_ n: Int) { emptyAccountReads = n }
     func setRemote(_ position: ReadingPosition?) { remote = position }
+    /// How long the Cloud takes to answer where the other device is (a phone's real round trip).
+    var remoteDelay: Duration = .zero
+    func setRemoteDelay(_ delay: Duration) { remoteDelay = delay }
 
     var account: CloudAccount? {
         if emptyAccountReads > 0 { emptyAccountReads -= 1; return nil }
@@ -42,6 +45,7 @@ actor StubSync: SyncService {
     func delete(_ book: CloudBook) async throws {}
     func remotePosition(for book: CloudBook) async throws -> ReadingPosition? {
         remoteReads += 1
+        if remoteDelay > .zero { try? await Task.sleep(for: remoteDelay) }
         return remote
     }
     func push(_ position: ReadingPosition, for book: CloudBook) async { pushed.append((position, book.fastHash)) }

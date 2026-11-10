@@ -43,6 +43,22 @@ final class ReopenAfterControlsUITests: XCTestCase {
         XCTAssertTrue(el("reader.page").waitForExistence(timeout: 60), "the book opened")
     }
 
+    /// A fresh install offers the Cloud's place and never lands on it (#46): the book opens on its
+    /// cover, which has no words. He takes the offer, as he would, so the round has words to keep.
+    private func takeTheOffer() {
+        let offer = app.buttons["banner.jump"], tab = el("banner.tab")
+        let up0 = Date().addingTimeInterval(60)
+        // Unanswered for 10 s the offer folds into its tab: the tab opens it again.
+        while words.isEmpty, !offer.exists, Date() < up0 {
+            if tab.exists, tab.isHittable { tab.tap() }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+        }
+        guard offer.exists, words.isEmpty else { return }
+        offer.tap()
+        let up = Date().addingTimeInterval(60)
+        while words.isEmpty, Date() < up { RunLoop.current.run(until: Date().addingTimeInterval(0.3)) }
+    }
+
     private func toShelf() {
         let close = app.buttons["reader.close"].firstMatch
         for _ in 0..<4 where !(close.exists && close.isHittable) {
@@ -87,6 +103,7 @@ final class ReopenAfterControlsUITests: XCTestCase {
                                    "-GatefoldReset", "YES", "-GatefoldDownloadAll", "YES"]
             app.relaunch()
             open()
+            takeTheOffer()
             let opened = settle()
             numbersOn()
             // The number takes the "Counting pages…" slot: the layout report this guards against.

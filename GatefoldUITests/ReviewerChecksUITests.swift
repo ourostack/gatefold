@@ -149,6 +149,23 @@ final class ReviewerChecksUITests: XCTestCase {
         sleep(2)
     }
 
+    /// The Cloud's place offered on a first open here: take it (the tab brings back an offer that folded).
+    private func takeTheOffer() {
+        let offer = app.buttons["banner.jump"], tab = el("banner.tab")
+        let up0 = Date().addingTimeInterval(60)
+        while words.isEmpty, !offer.exists, Date() < up0 {
+            if tab.exists, tab.isHittable { tab.tap() }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+        }
+        guard offer.exists, words.isEmpty else {
+            if words.isEmpty { note("no Cloud offer on a page with no words") }
+            return
+        }
+        offer.tap()
+        let up = Date().addingTimeInterval(60)
+        while words.isEmpty, Date() < up { RunLoop.current.run(until: Date().addingTimeInterval(0.3)) }
+    }
+
     private func numbersShown(_ timeout: TimeInterval = 120) -> Bool {
         el("reader.pageNumber").waitForExistence(timeout: timeout)
     }
@@ -229,12 +246,16 @@ final class ReviewerChecksUITests: XCTestCase {
 
         openFromShelf("gutenberg-pride-and-prejudice")
         XCTAssertNotNil(counted(), "the second book was counted")
+        // Opened here for the first time, it shows its start (a cover, no words) and offers the Cloud's place.
+        takeTheOffer()
         let before = settle()
+        XCTAssertGreaterThan(before.count, 0, "the page has words")
         XCTAssertTrue(numbersOff(), "off by default in a second book")
         setPageNumbers(true)
         XCTAssertTrue(numbersShown(), "on where he turned it on")
         let after = settle()
         note("words with numbers on: \(Self.hash(before)) then \(Self.hash(after)) numbers=\(numbers) chars=\(before.count)")
+        XCTAssertGreaterThan(after.count, 0, "the page has words with numbers on")
         XCTAssertEqual(Self.hash(after), Self.hash(before), "turning numbers on moved no words")
         backToShelf()
 
@@ -255,9 +276,11 @@ final class ReviewerChecksUITests: XCTestCase {
         XCTAssertTrue(numbersOff(), "off in the book where he had turned it on")
         let again = settle()
         note("words back in the first book: \(Self.hash(before)) then \(Self.hash(again))")
+        XCTAssertGreaterThan(again.count, 0, "the page has words on return")
         XCTAssertEqual(Self.hash(again), Self.hash(before), "and its words are where they were")
         let back = leaveAndRelaunch()
         note("words after a relaunch: \(Self.hash(back))")
+        XCTAssertGreaterThan(back.count, 0, "the page has words after a relaunch")
         XCTAssertNotNil(counted(), "counted after a relaunch")
         XCTAssertTrue(numbersOff(), "still off after a relaunch")
         XCTAssertEqual(Self.hash(back), Self.hash(before), "on his page after a relaunch")

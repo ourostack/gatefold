@@ -115,6 +115,32 @@ private final class ColdPage {
         #expect(reportReads == 5)
     }
 
+    /// A landing no longer wanted (he moved, or the trip was given up) stops at once: no jump is sent
+    /// again, so his newer page is never pulled back to it.
+    @Test func aLandingNoLongerWantedSendsNoMore() async {
+        let page = ColdPage(loadsAfterReads: nil)
+        var wanted = true
+        let landed = await JumpLanding.land(target: page.place(0.62), go: { page.go(0.62) }, visible: { page.visible() },
+                                            stillWanted: { wanted }, beat: { if page.reads >= 3 { wanted = false } })
+        #expect(!landed)
+        #expect(page.jumps == 1, "sent \(page.jumps) times after it was no longer wanted")
+        #expect(page.reads <= 4)
+    }
+
+    /// A landing overtaken while its jump was out (a Back freed by its count, then a turn of his) returns
+    /// the moment the jump comes back, with no beat first: a beat lets the late jump's own report run while
+    /// the caller has not yet settled the trip, and it was kept as a swipe of his (CI run 42614139141,
+    /// PlaceInvariantTests, "turn, then a swallowed tap").
+    @Test func aLandingOvertakenWhileItsJumpWasOutReturnsWithoutABeat() async {
+        let page = ColdPage(loadsAfterReads: 0)
+        var wanted = true, beats = 0
+        let landed = await JumpLanding.land(target: page.place(0.62), go: { wanted = false; return page.go(0.62) },
+                                            visible: { page.visible() }, stillWanted: { wanted }, beat: { beats += 1 })
+        #expect(!landed)
+        #expect(beats == 0, "beat \(beats) times after the jump came back no longer wanted")
+        #expect(page.jumps == 1)
+    }
+
     /// A navigator that reports nothing is not landed.
     @Test func noReportIsNotALanding() async {
         let page = ColdPage(loadsAfterReads: 0)

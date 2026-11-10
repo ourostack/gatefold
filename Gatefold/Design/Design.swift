@@ -95,9 +95,36 @@ enum LaunchOptions {
     /// Debug only: a jump's chapter counts as still loading (Readium's spinner up) for this many looks,
     /// so a test can hold the load open as a slow device does and watch the veil (#38).
     static var holdChapterLoadLooks: Int? { defaults.object(forKey: "GatefoldHoldChapterLoad") == nil ? nil : defaults.integer(forKey: "GatefoldHoldChapterLoad") }
+    /// Debug only: when a jump starts, the page it leaves counts as still loading (Readium's spinner
+    /// up) for this many looks, as a page still loading on a slow device does (gatefold#73).
+    static var holdOldPageLoadLooks: Int? {
+        #if DEBUG
+        defaults.object(forKey: "GatefoldHoldOldPageLoad") == nil ? nil : defaults.integer(forKey: "GatefoldHoldOldPageLoad")
+        #else
+        nil
+        #endif
+    }
+    /// Tests only: how many counters count pages behind the page (0 counts none), for an A/B of what
+    /// counting costs a turn.
+    static var counters: Int? {
+        #if DEBUG
+        defaults.object(forKey: "GatefoldCounters") == nil ? nil : defaults.integer(forKey: "GatefoldCounters")
+        #else
+        nil
+        #endif
+    }
     /// Tests only: the first page counts as still loading for this many looks, so the opening cover
     /// stays up as it does on a slow device or a stuck load (#94), and a test can tap through it (#104).
     static var holdOpeningLoadLooks: Int? { defaults.object(forKey: "GatefoldHoldOpeningLoad") == nil ? nil : defaults.integer(forKey: "GatefoldHoldOpeningLoad") }
+    /// Tests only: seconds an unanswered offer waits before it folds into its tab (10 by default), so
+    /// a test on a slow host can tap Catch up without racing the fold.
+    static var offerFoldSeconds: Double {
+        #if DEBUG
+        defaults.object(forKey: "GatefoldOfferFoldSeconds") == nil ? 10 : defaults.double(forKey: "GatefoldOfferFoldSeconds")
+        #else
+        10
+        #endif
+    }
     static var unfoldPaintDelay: Double? { defaults.object(forKey: "GatefoldUnfoldPaintDelay") == nil ? nil : defaults.double(forKey: "GatefoldUnfoldPaintDelay") }
     /// Book IDs to open and close one after another, as taps would (see `RootView.openTour`).
     /// Seconds an open tour rests on the shelf between books (the warm books reopen meanwhile).
@@ -118,7 +145,21 @@ enum LaunchOptions {
     }
     /// Tests: the first launch's type size, in place of the one Dynamic Type gives.
     static var fontScale: Double? { defaults.object(forKey: "GatefoldFontScale") == nil ? nil : defaults.double(forKey: "GatefoldFontScale") }
-    static var goTo: Double? { defaults.object(forKey: "GatefoldGoTo") == nil ? nil : defaults.double(forKey: "GatefoldGoTo") }
+    #if DEBUG
+    /// The launch jump's key is this marker's first 12 bytes (`-GatefoldGoTo`). Swift keeps literals of
+    /// 15 bytes or fewer inline, out of reach of `strings`, so the key alone can't be found in a binary;
+    /// app.yml's Release check looks for this marker instead.
+    private static let goToMarker = "GatefoldGoTo/test-only-launch-jump"
+    #endif
+    /// Tests only: a launch jump. Compiled out of Release, so a shipped app can never move his place by itself.
+    static var goTo: Double? {
+        #if DEBUG
+        let key = String(goToMarker.prefix(12))
+        return defaults.object(forKey: key) == nil ? nil : defaults.double(forKey: key)
+        #else
+        return nil
+        #endif
+    }
     static var forcedPosture: Posture? { defaults.string(forKey: "GatefoldForcePosture").flatMap(Posture.init(rawValue:)) }
     /// Tests: every book shows its page numbers, position and pages left (all off by default).
     static var pageFurniture: Bool { defaults.bool(forKey: "GatefoldPageFurniture") }

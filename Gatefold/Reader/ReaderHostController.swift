@@ -59,6 +59,8 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         willSet { if isTurning, !newValue { lastTurnEnded = .now } }
     }
     private var lastTurnEnded: ContinuousClock.Instant?
+    /// Turns that pictured the page beneath (the turn-wait probe's count).
+    private var turnsPictured = 0
     /// A count stopped for a turn, to take up again once turns go quiet.
     private var countPausedForTurns = false
     /// Under test, each turn's frames: whether a count behind the page costs the turn any.
@@ -172,6 +174,15 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         dropStandby()
         guard !closed, isViewLoaded, let next = try? Self.makeNavigator(publication: publication, at: locator, preferences: preferences) else { return }
         let started = ContinuousClock.now
+        // The page's own bands (`navigatorContentInset`), as the counters have them, before its view loads.
+        // Without them it laid out for a taller page, and once swapped in Readium asked for the bands and
+        // laid it out again under him: the landing's words ended a page on (#46, the web view 944 pt, then 758).
+        let insets = CountingInsets { [weak self] in
+            guard let self else { return nil }
+            return self.navigatorContentInset(self.navigator)
+        }
+        standbyInsets = insets
+        next.delegate = insets
         addChild(next)
         next.view.frame = navigator.view.frame
         next.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
@@ -203,6 +214,11 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         }
         standby = (next, locator, ready)
         readerLog.notice("standby: loading the Cloud place's page behind this one")
+    }
+
+    /// For tests: the standby page and its load, while one is behind the page.
+    var standbyPage: (navigator: EPUBNavigatorViewController, ready: Task<Void, Never>)? {
+        standby.map { ($0.navigator, $0.ready) }
     }
 
     /// A book opened ahead of a tap that won't be shown: stop its pages loading, so a book the reader
@@ -246,6 +262,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     func dropStandby() {
         guard let old = standby else { return }
         standby = nil
+        standbyInsets = nil
         old.ready.cancel()
         Self.retire(old.navigator)
     }
@@ -282,6 +299,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         next.navigator.view.accessibilityElementsHidden = false
         navigator = next.navigator
         wire(navigator)
+        standbyInsets = nil
         Self.retire(old)
         weakModel?.highlights.navigatorChanged()
         if let here = navigator.currentLocation { self.navigator(navigator, locationDidChange: here) }
@@ -294,6 +312,8 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     private var counter: (navigators: [EPUBNavigatorViewController], task: Task<Void, Never>)?
     /// The counters' delegate, held here (a navigator holds its delegate weakly).
     private var countingInsets: CountingInsets?
+    /// The standby page's delegate until it is the page (a navigator holds its delegate weakly).
+    private var standbyInsets: CountingInsets?
 
     func screenGeometry() async -> (href: String, geometry: ScreenPageGeometry)? {
         await Self.geometry(of: navigator, columns: columns)
@@ -331,7 +351,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         let links = hrefs.compactMap { href in publication.readingOrder.first { $0.url().removingFragment().string == href } }
         // A chapter's cost is its web view loading (about 3 s each, one after another, in build 17), not
         // its measuring: several counters behind the page take chapters from one queue at once.
-        let workers = (0..<min(Self.counters, links.count)).compactMap { _ in
+        let workers = (0..<min(LaunchOptions.counters ?? Self.counters, links.count)).compactMap { _ in
             try? Self.makeNavigator(publication: publication, at: nil, preferences: preferences)
         }
         guard !workers.isEmpty else { finished(); return }
@@ -901,7 +921,8 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         let surface = WebSpread(host: self, anchor: anchor, text: text)
         guard await SpreadSettler.keepOnLeft(surface, current: current, purpose: purpose) == true, current() else { return nil }
         let visible = await visibleRange()
-        readerLog.notice("spread: words placed on the left page; \(surface.moves, privacy: .public) moves")
+        // The settler also ends here when its passes run out with the words still off the left page.
+        readerLog.notice("spread: words placed on the left page; \(surface.moves, privacy: .public) moves (last read side \(surface.lastSide.map { String($0.rawValue) } ?? "nil", privacy: .public))")
         return visible
     }
 
@@ -916,12 +937,36 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         }
     }
 
+    /// A jump to a place with words (the Cloud's, his own offered back) lands where Readium puts its
+    /// progression, which can leave the words mid-column or on the right page; a reopen of the place it
+    /// keeps restores them to the top of a left page. Settled here the way that restore will, so the
+    /// spread he lands on is the one every reopen shows. Behind the jump's veil when it is still up;
+    /// after it lifted (`abandonVeil`), each move is held behind a picture (`SpreadSettler.keepOnLeft`).
+    func settleLanding(_ anchor: ReadingAnchor, stillWanted: @escaping @MainActor () -> Bool) async {
+        guard columns == 2 else { return }
+        guard stillWanted() else {
+            readerLog.notice("spread: a landing left unsettled (overtaken before it began)")
+            return
+        }
+        guard !lateSettling, placingGeneration == -1 else {
+            readerLog.notice("spread: a landing left unsettled (a late look \(self.lateSettling, privacy: .public), a restore placing \(self.placingGeneration != -1, privacy: .public))")
+            return
+        }
+        lateSettling = true
+        defer { lateSettling = false }
+        if await keepOnLeft(anchor, purpose: .restore, current: stillWanted) != nil {
+            readerLog.notice("spread: a landing settled the way a reopen of its place will (veil \(self.veil != nil, privacy: .public))")
+        }
+    }
+
     /// The reader's page as `SpreadSettler` moves it.
     private final class WebSpread: SpreadSurface {
         private unowned let host: ReaderHostController
         private let anchor: ReadingAnchor
         private let text: String
         private(set) var moves = 0
+        /// Where the words were at the last look.
+        private(set) var lastSide: WordsSide?
 
         init(host: ReaderHostController, anchor: ReadingAnchor, text: String) {
             self.host = host
@@ -936,6 +981,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         func wordsSide() async -> WordsSide? {
             let side = await number(ReaderJS.sideOf(text)).flatMap(WordsSide.init(rawValue:))
             readerLog.notice("spread: the sentence starts on side \(side.map { String($0.rawValue) } ?? "nil", privacy: .public)")
+            lastSide = side
             return side
         }
 
@@ -1391,7 +1437,12 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
 
     private func handleTap(at point: CGPoint) -> Bool {
         let width = navigator.view.bounds.width
-        let edge = width * 0.25
+        // While a jump's veil is up the page beneath is on its way somewhere: a tap then would turn
+        // from wherever the jump has got to, and the place he chose is lost.
+        guard veil == nil, !jumpStarting else { return true }
+        let edge = TapZones.edge(viewWidth: width, spread: model.layout.columns == .two)
+        let zone = point.x < edge ? "back" : point.x > width - edge ? "forward" : "middle"
+        readerLog.notice("tap: \(zone, privacy: .public) at x \(Int(point.x), privacy: .public) of \(Int(width), privacy: .public), controls \(self.model.chromeVisible, privacy: .public)")
         if model.chromeVisible {
             model.controlsTapped(visible: false)
             return true
@@ -1451,9 +1502,11 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     private func prepareTurn(forward: Bool, startingAt point: CGPoint) async -> Bool {
         guard !isTurning, weakModel != nil else { return false }
         isTurning = true
+        let t0 = ContinuousClock.now
         let size = navigator.view.bounds.size
         // The page on screen now; a black or bare capture (seen in spreads) is retried.
         let top = await renderedSnapshot(afterChange: false)
+        readerLog.notice("turn: \(forward ? "forward" : "back", privacy: .public) page pictured at \(ReaderModel.ms(since: t0), privacy: .public) ms")
         curl.size = size
         curl.style = model.pageTurn == .fade ? .fade : .curl
         curl.isSpread = model.layout.posture == .spread
@@ -1471,10 +1524,11 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         curl.isActive = true
         await nextFrame()
 
+        let chapterBefore = navigator.currentLocation?.href.string.split(separator: "#").first
         let moved = forward
             ? await navigator.goForward(options: .init(animated: false))
             : await navigator.goBackward(options: .init(animated: false))
-        readerLog.notice("turn moved=\(moved, privacy: .public)")
+        readerLog.notice("turn moved=\(moved, privacy: .public) at \(ReaderModel.ms(since: t0), privacy: .public) ms")
         guard moved, weakModel != nil else {
             curl.reset()
             isTurning = false
@@ -1488,6 +1542,12 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         // columns; caught halfway it ghosts).
         curl.beneath = await renderedSnapshot(afterChange: true)
         beneathFrames = lastSnapshotFrames
+        // Counted from the tap, not after it: a test's tap waits for the app to go idle, which hides the wait.
+        // Judged once the page beneath has painted, when the navigator reports the chapter it shows.
+        let crossed = navigator.currentLocation?.href.string.split(separator: "#").first != chapterBefore
+        turnsPictured += 1
+        readerLog.notice("turn: \(self.turnsPictured, privacy: .public) waited \(self.lastSnapshotLooks, privacy: .public) looks for the page beneath, \(crossed ? "into another chapter" : "within the chapter", privacy: .public)")
+        if LaunchOptions.isUITest { weakModel?.turnWaitProbe = "\(turnsPictured) \(lastSnapshotLooks) \(crossed ? 1 : 0)" }
         #if DEBUG
         if ProcessInfo.processInfo.environment["GATEFOLD_DUMP_SNAPSHOTS"] != nil || UserDefaults.standard.bool(forKey: "GatefoldDumpSnapshots") {
             let dir = URL.temporaryDirectory
@@ -1637,7 +1697,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
         if gestureRecognizer is TouchNoticer { return true }
         guard let pan = gestureRecognizer as? UIPanGestureRecognizer else { return true }
-        guard model.pageTurn == .curl || model.pageTurn == .fade, !isTurning else { return false }
+        guard model.pageTurn == .curl || model.pageTurn == .fade, !isTurning, veil == nil, !jumpStarting else { return false }
         let v = pan.velocity(in: view)
         return abs(v.x) > abs(v.y) * 1.2
     }
@@ -1677,13 +1737,37 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     // MARK: Jumps
 
     private var veil: UIView?
+    /// A jump has begun (its old page is being pictured for the veil): no tap or swipe turns meanwhile.
+    private var jumpStarting = false
 
     /// Runs a jump with the old page left on screen, dimmed to 60 %, until the new page has painted;
     /// then the old page cross-fades away over 0.2 s (no blank page, no spinner). With `riffle`, a few
     /// leaves flick past first.
-    func veiledJump(riffle: Bool, forward: Bool, _ body: @escaping () async -> Void) async {
-        guard veil == nil, !isTurning, view.window != nil else { return await body() }
-        let old = await renderedSnapshot(afterChange: false)
+    func veiledJump(riffle: Bool, forward: Bool, jump: Int, _ body: @escaping () async -> Void) async {
+        guard veil == nil, !jumpStarting, !isTurning, view.window != nil else { return await body() }
+        jumpStarting = true
+        veilJump = jump
+        let jumpTapped = ContinuousClock.now
+        // UI tests: the old page reads as still loading (spinner up, page bare) while it is pictured.
+        let heldBefore = heldLoadLooks
+        if LaunchOptions.isUITest, let looks = LaunchOptions.holdOldPageLoadLooks, looks > 0 {
+            heldLoadLooks = max(heldLoadLooks, looks)
+            if oldPageHeldMarker == nil {
+                let marker = UIView(frame: CGRect(x: 0, y: 0, width: 1, height: 1))
+                marker.isAccessibilityElement = true
+                marker.accessibilityIdentifier = "reader.oldPageHeld"
+                view.addSubview(marker)
+                oldPageHeldMarker = marker
+            }
+        }
+        // The jump he chose starts now: the old page is pictured as it is, never waited on while it
+        // loads (its spinner held the jump back up to 60 s, and the page never moved: gatefold#73).
+        let old = await renderedSnapshot(afterChange: false, waitsForLoad: false)
+        if LaunchOptions.isUITest, LaunchOptions.holdOldPageLoadLooks != nil { heldLoadLooks = heldBefore }
+        jumpStarting = false
+        readerLog.notice("veil: jump \(jump, privacy: .public) pictured the old page in \(ReaderModel.ms(since: jumpTapped), privacy: .public) ms, \(self.lastSnapshotLooks, privacy: .public) looks")
+        // Let go of while its old page was being pictured (`abandonVeil`): no cover goes up.
+        guard veilJump == jump else { return await body() }
         // The old page, opaque, with a wash of paper over it: it reads as dimmed to 60 %, and nothing
         // of the new page shows through until the cross-fade.
         let cover = UIView(frame: navigator.view.frame)
@@ -1704,8 +1788,8 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             holdChapterLoadForTest()
         }
         // The running head stays with the page on screen: it changes chapter as the new page is revealed.
+        // Let go only while the cover is still this jump's: an abandoned one leaves a newer jump's head.
         weakModel?.heldRunningHead = .some(weakModel?.chapterTitle)
-        defer { weakModel?.heldRunningHead = nil }
         if riffle {
             // The thumb starts riffling at once and keeps going while the far chapter loads, so the
             // wait is the riffle, never a dimmed page.
@@ -1713,33 +1797,60 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             let travel = Task { @MainActor in
                 await body()
                 arrived = true
+                readerLog.notice("veil: jump \(jump, privacy: .public) arrived \(ReaderModel.ms(since: jumpTapped), privacy: .public) ms after it began (riffle)")
             }
-            await riffleLeaves(from: old, forward: forward, arrived: { arrived }) { [weak self] in
+            await riffleLeaves(from: old, cover: cover, forward: forward, arrived: { arrived }) { [weak self] in
                 await travel.value
-                return await self?.renderedSnapshot(afterChange: true) ?? old
+                let page = await self?.renderedSnapshot(afterChange: true) ?? old
+                readerLog.notice("veil: jump \(jump, privacy: .public) pictured its page \(ReaderModel.ms(since: jumpTapped), privacy: .public) ms after it began, \(self?.lastSnapshotLooks ?? -1, privacy: .public) looks")
+                return page
             }
+            readerLog.notice("veil: jump \(jump, privacy: .public) lifted \(ReaderModel.ms(since: jumpTapped), privacy: .public) ms after it began")
             cover.removeFromSuperview()
-            veil = nil
+            if veil === cover { veil = nil; veilJump = nil }
             return
         }
         let dim = UIViewPropertyAnimator(duration: 0.15, curve: .easeOut) { wash.alpha = 0.4 }
         dim.startAnimation()
         await body()
+        readerLog.notice("veil: jump \(jump, privacy: .public) arrived \(ReaderModel.ms(since: jumpTapped), privacy: .public) ms after it began")
         _ = await renderedSnapshot(afterChange: true)
+        readerLog.notice("veil: jump \(jump, privacy: .public) pictured its page \(ReaderModel.ms(since: jumpTapped), privacy: .public) ms after it began, \(self.lastSnapshotLooks, privacy: .public) looks")
         // The head changes chapter with the page, cross-fading as the veil lifts.
-        withAnimation(.easeInOut(duration: 0.2)) { weakModel?.heldRunningHead = nil }
+        if veil === cover { withAnimation(.easeInOut(duration: 0.2)) { weakModel?.heldRunningHead = nil } }
         await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
             UIView.animate(withDuration: 0.2, delay: 0, options: [.curveEaseInOut, .beginFromCurrentState]) {
                 cover.alpha = 0
             } completion: { _ in done.resume() }
         }
         cover.removeFromSuperview()
+        readerLog.notice("veil: jump \(jump, privacy: .public) lifted \(ReaderModel.ms(since: jumpTapped), privacy: .public) ms after it began")
+        // Its own cover only: one abandoned meanwhile (`abandonVeil`) may have made way for a newer one.
+        if veil === cover { veil = nil; veilJump = nil }
+    }
+    /// The jump whose veil is up, or whose old page is being pictured for one.
+    private var veilJump: Int?
+
+    /// Lifts the veil of a jump that never came back (a Back freed by its count): the reader gets the
+    /// page and his taps back, and the next jump puts up a veil of its own. The hung jump, if it ever
+    /// returns, takes down only its own cover.
+    /// Only `jump`'s own veil: a jump that ran unveiled under another's leaves that one alone.
+    func abandonVeil(jump: Int) {
+        guard veilJump == jump else { return }
+        veilJump = nil
+        guard let cover = veil else {
+            readerLog.notice("veil: a jump that never came back puts up no cover")
+            return
+        }
+        readerLog.notice("veil: a jump that never came back lets go of the page")
         veil = nil
+        withAnimation(.easeInOut(duration: 0.2)) { weakModel?.heldRunningHead = nil }
+        UIView.animate(withDuration: 0.2, animations: { cover.alpha = 0 }, completion: { _ in cover.removeFromSuperview() })
     }
 
     /// Fast leaves curl away, like a thumb riffling to a place: at least three, more while the far
     /// page is still on its way, and the last one uncovers it.
-    private func riffleLeaves(from old: UIImage, forward: Bool, arrived: @escaping () -> Bool, fresh: @escaping () async -> UIImage) async {
+    private func riffleLeaves(from old: UIImage, cover: UIView, forward: Bool, arrived: @escaping () -> Bool, fresh: @escaping () async -> UIImage) async {
         guard let model = weakModel else { return }
         isTurning = true
         defer { isTurning = false }
@@ -1769,11 +1880,12 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         let last = 0.28
         let head = Task { @MainActor in
             try? await Task.sleep(for: .seconds(last * 0.4))
+            guard self.veil === cover else { return }
             withAnimation(.easeInOut(duration: last * 0.6)) { model.heldRunningHead = nil }
         }
         await leaf(top: old, beneath: page ?? old, index: i, size: size, forward: forward, duration: last)
         await head.value
-        veil?.alpha = 0
+        cover.alpha = 0
         curl.reset()
     }
 
@@ -1959,6 +2071,8 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     /// Looks left in a load held open for a test (`-GatefoldHoldChapterLoad`), and its marker.
     private var heldLoadLooks = 0
     private var heldLoadMarker: UIView?
+    /// UI tests: up once a jump's old page has been held as loading, so a test knows the hold armed.
+    private var oldPageHeldMarker: UIView?
 
     private func holdChapterLoadForTest() {
         guard let looks = LaunchOptions.holdChapterLoadLooks, looks > 0 else { return }
@@ -1982,15 +2096,41 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             if heldLoadLooks == 0 { heldLoadMarker?.removeFromSuperview(); heldLoadMarker = nil }
             return true
         }
+        return readiumSpinner != nil
+    }
+
+    /// Readium's spinner in view, if one is up, and where: the frame in the navigator's view.
+    private var readiumSpinner: CGRect? {
         let host = navigator.view!
-        func spinning(_ v: UIView) -> Bool {
-            guard !v.isHidden, v.alpha > 0.01 else { return false }
+        func spinning(_ v: UIView) -> CGRect? {
+            guard !v.isHidden, v.alpha > 0.01 else { return nil }
             if let a = v as? UIActivityIndicatorView {
-                return a.isAnimating && a.convert(a.bounds, to: host).intersects(host.bounds)
+                let frame = a.convert(a.bounds, to: host)
+                return a.isAnimating && frame.intersects(host.bounds) ? frame : nil
             }
-            return v.subviews.contains(where: spinning)
+            for sub in v.subviews { if let f = spinning(sub) { return f } }
+            return nil
         }
         return spinning(host)
+    }
+
+    /// Where Readium's spinner is and what the page is, for a log line: no words, only geometry and
+    /// the chapter's file. Which web view it sits in (one per spread) says what is loading.
+    private func spinnerReport() -> String {
+        let host = navigator.view!
+        let at = readiumSpinner.map { "\(Int($0.minX)),\(Int($0.minY)) \(Int($0.width))x\(Int($0.height))" } ?? "gone"
+        var webs: [String] = []
+        func walk(_ v: UIView) {
+            if let w = v as? WKWebView {
+                let f = w.convert(w.bounds, to: host)
+                if f.intersects(host.bounds) { webs.append("\(Int(f.minX)),\(Int(f.minY)) \(Int(f.width))x\(Int(f.height)) loading \(w.isLoading)") }
+                return
+            }
+            v.subviews.forEach(walk)
+        }
+        walk(host)
+        let file = navigator.currentLocation?.href.string.split(separator: "/").last.map(String.init) ?? "none"
+        return "spinner at \(at) of \(Int(host.bounds.width))x\(Int(host.bounds.height)); web views in view [\(webs.joined(separator: "; "))]; at \(file) @\(navigator.currentLocation?.locations.progression ?? -1)"
     }
 
     /// The page as the web views draw it. `drawHierarchy` misplaces a paginated web view's content
@@ -2040,6 +2180,8 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     /// Where the web views sat in the host for the last snapshot: the turn's leaf and the page beneath
     /// are drawn from them, so the live page must be at the same place when the overlay lifts.
     private(set) var lastSnapshotFrames: [CGRect] = []
+    /// How many looks (about 50 ms each, counted, not timed) the last `renderedSnapshot` took.
+    private(set) var lastSnapshotLooks = 0
     private var landedTurns = 0
 
     /// The visible web views' frames in the host now.
@@ -2189,7 +2331,9 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         weakModel?.turnPlacement = line
     }
 
-    func renderedSnapshot(afterChange: Bool) async -> UIImage {
+    /// With `waitsForLoad` false the page is pictured as it is, a few tries at most, however long
+    /// Readium's spinner stays up: a jump's old page.
+    func renderedSnapshot(afterChange: Bool, waitsForLoad: Bool = true) async -> UIImage {
         let paper = PageSignature.rgb(weakModel?.theme.uiBackground ?? .white)
         var last: (UIImage, PageSignature)?
         // A turn or a jump into a chapter still loading holds the old page until it has: as long as
@@ -2198,16 +2342,24 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         // took over 25 s, and the veil lifted onto a blank page and a spinner.
         var loadingLooks = 0
         var attempt = 0
-        while attempt < 40 {
+        defer { lastSnapshotLooks = loadingLooks + attempt }
+        let attempts = waitsForLoad ? 40 : 10
+        while attempt < attempts {
             if afterChange || attempt > 0 || loadingLooks > 0 { try? await Task.sleep(for: .milliseconds(attempt == 0 && loadingLooks == 0 ? 60 : 50)) }
-            if isLoadingPage {
+            if attempt == 0, loadingLooks == 0, heldLoadLooks == 0, readiumSpinner != nil {
+                readerLog.notice("snapshot: Readium's spinner is up \(afterChange ? "on the page beneath" : "on the page in view", privacy: .public): \(self.spinnerReport(), privacy: .public)")
+            }
+            if waitsForLoad, isLoadingPage {
                 await unveilPlacedPages()
                 if isLoadingPage, loadingLooks < Self.loadingLooks { loadingLooks += 1; last = nil; continue }
             }
             defer { attempt += 1 }
             let image = await snapshot()
             guard let signature = PageSignature(image) else { return image }
-            let usable = !signature.isBlack(paper: paper) && !signature.isBare(paper: paper)
+            // A test's held load (`holdOldPageLoadLooks`) pictures the old page as a bare one, the
+            // way a page still loading looks, so the few tries and the fallback below are what run.
+            let heldBare = !waitsForLoad && !afterChange && heldLoadLooks > 0
+            let usable = !heldBare && !signature.isBlack(paper: paper) && !signature.isBare(paper: paper)
             if usable, !afterChange { return image }
             if usable, let (_, previous) = last, previous.matches(signature) { return image }
             if usable { last = (image, signature) }
@@ -2215,7 +2367,17 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         }
         if loadingLooks > 0 { readerLog.notice("veil: held the old page \(loadingLooks, privacy: .public) looks while the chapter loaded") }
         if let last { return last.0 }
-        return await snapshot()
+        let final = await snapshot()
+        // A page pictured as it is never shows black under a jump's veil: an empty picture lets the
+        // veil's paper show instead.
+        if !waitsForLoad, let signature = PageSignature(final), signature.isBlack(paper: paper) {
+            let color = weakModel?.theme.uiBackground ?? .white
+            return UIGraphicsImageRenderer(size: CGSize(width: 1, height: 1)).image { context in
+                color.setFill()
+                context.fill(CGRect(x: 0, y: 0, width: 1, height: 1))
+            }
+        }
+        return final
     }
 
     /// How many looks (about 50 ms each) the old page is held while Readium's spinner is up.
