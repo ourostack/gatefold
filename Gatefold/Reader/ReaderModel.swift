@@ -2128,15 +2128,29 @@ final class ReaderModel {
     /// The place a jump leaves, held until the jump has moved the page: "Back to page" offered while
     /// the old page was still up (3.6 to 8.8 s on a cold Contents jump in build 19) read as a jump that
     /// had already happened. An earlier jump's way back goes down meanwhile; it isn't this jump's.
+    /// The page on screen, when "where he is" names an earlier place in its chapter: his words are the
+    /// first on the page, never before its start, so a `location` before it is a report the page has
+    /// since moved past (gatefold#143: a slow opening landed on his page while `location` stayed on the
+    /// chapter's first page, and Back took him there). A page on screen before `location` (Readium
+    /// naming a chapter still loading at its start) is the one that lags, and `location` stands.
+    private func lagsBehindThePage() -> Locator? {
+        guard let location, let shown = page?.currentLocation, shown.href == location.href,
+              let at = location.locations.progression, let start = shown.locations.progression,
+              at < start - 0.000_1 else { return nil }
+        return shown
+    }
+
     private func rememberPlace(at here: Locator? = nil, keepingTheWayBack: Bool = false) -> Int {
         backJumps += 1
+        let stale = here == nil ? lagsBehindThePage() : nil
+        let remembered = here ?? stale ?? location
         // No page number: the counted one can still be the page before a jump within the chapter, and
         // Readium's positions aren't his pages. The pill says where it goes in words.
-        pendingBack = (backJumps, here ?? location)
+        pendingBack = (backJumps, remembered)
         // Where each way back starts, beside the page on screen and the place kept (gatefold#143: a Back
         // saved its chapter's start because the place it remembered was already that start). Tags only.
         let tag: (Locator?) -> String = { $0.map(Self.placeTag) ?? "none" }
-        readerLog.notice("back: jump \(self.backJumps, privacy: .public) remembers \(tag(here ?? self.location), privacy: .public) (from \(here == nil ? "where he is" : "the page on screen", privacy: .public)); on screen \(tag(self.page?.currentLocation), privacy: .public); kept \(tag(self.app.library.book(self.bookID)?.locatorJSON.flatMap { try? Locator(jsonString: $0) }), privacy: .public)")
+        readerLog.notice("back: jump \(self.backJumps, privacy: .public) remembers \(tag(remembered), privacy: .public) (from \(here != nil ? "the page on screen" : stale != nil ? "the page on screen; where he is lagged at \(tag(self.location))" : "where he is", privacy: .public)); on screen \(tag(self.page?.currentLocation), privacy: .public); kept \(tag(self.app.library.book(self.bookID)?.locatorJSON.flatMap { try? Locator(jsonString: $0) }), privacy: .public)")
         if !keepingTheWayBack { backLocator = nil }
         return backJumps
     }
