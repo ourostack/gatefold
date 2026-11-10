@@ -1913,7 +1913,7 @@ final class ReaderModel {
         // A landing records its place once it has settled; the steps on the way are not places. So does a
         // test's launch jump: a report on its way (its file's first page) could finish after the landing and
         // be kept as his move, and Back then went there (gatefold#83). `load()` reports where it ended.
-        guard !landing, !launchJumpInFlight else { return }
+        guard !landing, !launchJumpInFlight, fragmentJumpMove != moves else { return }
         // Mid-turn the navigator has moved under the overlay; the turn records the place when it lands.
         // A move reported mid-reflow (a turn or a jump while an iPad's first layout is still settling)
         // is owed: the reflow's end records it, or the place he went to is never kept (build 17 reopened
@@ -2316,9 +2316,73 @@ final class ReaderModel {
         moves += 1
         let back = rememberPlace()
         defer { publishBack(back) }
-        await veiled { await self.page?.go(to: entry.link) }
+        // Scrolled, Readium's own fragment scroll finds the chapter: only columns lose it.
+        if pageTurn != .scroll, let fragment = entry.link.url().fragment?.removingPercentEncoding, !fragment.isEmpty {
+            let move = moves
+            await veiled { await self.land(on: entry.link, inside: fragment, move: move) }
+        } else {
+            await veiled { await self.page?.go(to: entry.link) }
+        }
         await captureAnchor()
     }
+
+    /// A contents entry that starts partway through its file lands on its own page, kept once.
+    ///
+    /// Readium places a link's fragment with the file's script as the file loads. On a web view still
+    /// laying out, that opens the file's first page and reports it, and the fragment is lost or comes late
+    /// (gatefold#166: "Chapter XL", 0.80 into its file, was kept at the file's start, an earlier chapter).
+    /// Where a fragment's page is exists only once the file is laid out in the page's own columns, so it
+    /// can't be known before the jump: the jump goes to the file, the fragment's place is read there once
+    /// the layout is done, and the page is sent to it (`JumpLanding`). All of it runs under the jump's veil,
+    /// which lifts on the landed page: he sees one move, to the chapter he chose. Readium's reports on the
+    /// way are not places; the place is written once, where the jump ends.
+    private func land(on link: ReadiumShared.Link, inside fragment: String, move: Int) async {
+        fragmentJumpMove = move
+        await page?.go(to: link)
+        let href = link.url().removingFragment().string
+        let wanted = { [weak self] in self.map { $0.moves == move && !$0.isClosed } ?? false }
+        var target: Double?
+        var absent = false
+        for read in 1...JumpLanding.reads where target == nil && !absent && wanted() {
+            if let here = page?.currentLocation, ContentsIndex.sameResource(here.href.string, href) {
+                // -1: laid out, and no such element (a broken anchor): Readium's landing stands.
+                if let p = await page?.progression(ofFragment: fragment) { if p < 0 { absent = true } else { target = p } }
+            } else if read % JumpLanding.resendEvery == 0 {
+                // Refused while a web view loaded (the page never reached the file): asked again.
+                await page?.go(to: link)
+            }
+            if target == nil, !absent { await jumpBeat() }
+        }
+        var landed = false
+        if let target, wanted(), let at = page?.currentLocation {
+            let place = ReadingAnchor(href: at.href.string, progression: target, text: nil)
+            if let shown = await page?.pageRange(), shown.contains(place) {
+                landed = true
+            } else {
+                let locator = at.copy(locations: { $0.fragments = []; $0.progression = target }, text: { $0 = Locator.Text() })
+                landed = await JumpLanding.land(
+                    target: place,
+                    go: { [weak self] in await self?.page?.go(to: locator) == true },
+                    visible: { [weak self] in await self?.page?.pageRange() },
+                    reported: { [weak self] in
+                        self?.page?.currentLocation.map { ReadingAnchor(href: $0.href.string, progression: $0.locations.progression ?? 0, text: nil) }
+                    },
+                    stillWanted: wanted,
+                    beat: jumpBeat)
+            }
+        }
+        readerLog.notice("contents: the jump to \(fragment, privacy: .public) inside its file \(landed ? "landed" : absent ? "has no such place" : target == nil ? "found no place for it" : "ran out of reads", privacy: .public) at \(self.page?.currentLocation.map(Self.placeTag) ?? "none", privacy: .public)")
+        if fragmentJumpMove == move { fragmentJumpMove = nil }
+        // One move, one place: kept where the jump ended. Overtaken (another move of his, or the close),
+        // it writes nothing: reports were held only while this jump was the newest move, so the newer one
+        // keeps its own place.
+        guard moves == move, !isClosed, let here = page?.currentLocation else { return }
+        layoutOnly = false
+        await locationDidChange(here)
+    }
+    /// A contents jump inside its file still on its way: while it is the newest move, its reports are not
+    /// places (`land(on:inside:move:)`).
+    @ObservationIgnored private var fragmentJumpMove: Int?
 
     func follow(_ link: ReadiumShared.Link) async {
         reflowTouches = 0
