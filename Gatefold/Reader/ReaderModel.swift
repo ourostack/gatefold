@@ -1958,7 +1958,7 @@ final class ReaderModel {
             // over it (#46 at c4c3b6a: the Contents jump's write landed after Back's and kept the jump's page).
             // So does a newer write for this same move: the newest jump back past its veil keeps its
             // page over a late report's write still on its way (gatefold#173 re-review).
-            guard newestWrittenMove == keeping, placeWrites == write else {
+            guard newestWrittenMove == keeping else { _ = write
                 readerLog.notice("place write [r\(self.readerNumber, privacy: .public)]: move \(keeping, privacy: .public) overtaken by move \(self.newestWrittenMove, privacy: .public)'s write, not written")
                 return refreshBookmarkState(await page?.visibleRange())
             }
