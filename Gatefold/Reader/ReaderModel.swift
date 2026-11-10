@@ -610,6 +610,7 @@ final class ReaderModel {
         if launchGoTo == nil { markReady() }
         if let goTo = launchGoTo, let locator = await publication.locate(progression: goTo) {
             launchJumpInFlight = true
+            noteLeftBehind()
             hasMoved = true
             moves += 1
             let jumpMove = moves
@@ -1208,11 +1209,29 @@ final class ReaderModel {
         return "Back to where you were"
     }
 
+    /// The page a jump leaves, as Readium last named it, and the moves when it left (the jump's own, or
+    /// the one before it when the jump counts its move inside its veil): a report of exactly that page,
+    /// while Readium names another and the newest move isn't kept, is a late one. A turn back to that
+    /// very page has Readium naming it, so it is never taken for one.
+    @ObservationIgnored private var leftBehind: (moves: Int, page: Locator)?
+    private func noteLeftBehind() {
+        leftBehind = page?.currentLocation.map { (moves, $0) }
+    }
+    private func isLateReportOfThePageLeft(_ l: Locator) -> Bool {
+        guard let left = leftBehind, moves >= left.moves, recordedMoves < moves,
+              Self.samePage(l, left.page), let now = page?.currentLocation, !Self.samePage(now, left.page) else { return false }
+        return true
+    }
+    private static func samePage(_ a: Locator, _ b: Locator) -> Bool {
+        a.href == b.href && abs((a.locations.progression ?? -1) - (b.locations.progression ?? -1)) < 0.000_1
+    }
+
     /// A jump keeps the old page on screen, dimmed, until the new one has painted, then cross-fades.
     /// Returns the jump's step; `step` is one the caller took for it beforehand.
     @discardableResult
     private func veiled(riffle: Bool = false, forward: Bool = true, step: Int? = nil, _ body: @escaping () async -> Void) async -> Int {
         let jump = step ?? takeStep()
+        noteLeftBehind()
         // Where the newest move left the page, noted the moment its jump is back: a jump overtaken
         // meanwhile (a Back freed by its count) that lands late is put back there.
         let tracked: () async -> Void = { [weak self] in
@@ -1663,6 +1682,14 @@ final class ReaderModel {
     func locationDidChange(_ locator: Locator, duringTurn: Bool = false, hisMove: Bool = false, placeOnly: Bool = false,
                            leaving: Bool = false) async {
         guard !isClosed || leaving else { return }
+        // A late report of the page a jump left, once the page has moved on and before the jump's move is
+        // kept, is that page's, not a move of his: kept, it took the jump's move and his place was saved
+        // as the page he had left; the jump's own report then found it kept (gatefold#174, CI's iPad: the
+        // book's first file written 36 ms after a jump landed at 0.309).
+        if !hisMove, !duringTurn, !leaving, !touchedSinceLocation, isLateReportOfThePageLeft(locator) {
+            readerLog.notice("place: a late report of the page a jump left (\(Self.placeTag(locator), privacy: .public)); not his move, nothing kept")
+            return
+        }
         let reportedBefore = lastReported
         lastReported = locator
         if !placeOnly {
@@ -1789,6 +1816,7 @@ final class ReaderModel {
         }
         // Kept as of now, before any further wait.
         recordedMoves = moves
+        leftBehind = nil
         let keeping = moves
         newestWrittenMove = max(newestWrittenMove, keeping)
         // The first words on screen make the place exact; Readium's progression is a page boundary.
