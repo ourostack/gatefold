@@ -22,7 +22,7 @@ final class CatchUpTabUITests: XCTestCase {
         XCTAssertTrue(page.waitForExistence(timeout: 60))
         XCTAssertTrue(app.descendants(matching: .any)["banner"].waitForExistence(timeout: 60), "the InkPad's place was offered")
         // Reading on folds the offer into its tab.
-        page.coordinate(withNormalizedOffset: CGVector(dx: 0.93, dy: 0.5)).tap()
+        page.coordinate(withNormalizedOffset: CGVector(dx: 0.97, dy: 0.5)).tap()
         let tab = app.descendants(matching: .any)["banner.tab"]
         XCTAssertTrue(tab.waitForExistence(timeout: 20), "the catch-up tab is up")
         let statusBar = app.descendants(matching: .any)["reader.statusBar"]

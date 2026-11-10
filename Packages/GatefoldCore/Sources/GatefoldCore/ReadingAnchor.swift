@@ -69,8 +69,25 @@ public struct AnchorKeeper: Sendable {
         anchor = location
     }
 
-    public mutating func reflowWillBegin(_ reason: ReflowReason) {
+    /// The reader's move count when the open reflow began (`reflowWillBegin(_:move:)`).
+    public private(set) var reflowMove = 0
+
+    /// `move`: the reader's move count now (his turns, jumps and landings). A restore of this reflow may move
+    /// the page only while it is unchanged (`restoreMayMove`).
+    public mutating func reflowWillBegin(_ reason: ReflowReason, move: Int = 0) {
         reflowing = reason
+        reflowMove = move
+    }
+
+    /// False once he has moved since the reflow began: the page is his again, and a restore still running
+    /// (the 12 s watchdog's retry on a page it showed him) must not bring the old place back.
+    public func restoreMayMove(move: Int) -> Bool {
+        reflowing != nil && move == reflowMove
+    }
+
+    /// The restore gave way to his move: the reflow ends without it, and his own place is taken again.
+    public mutating func restoreGaveWay() {
+        reflowing = nil
     }
 
     /// The navigator finished laying out. Returns the jump that brings the anchor back on screen.

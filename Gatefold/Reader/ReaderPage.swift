@@ -31,10 +31,13 @@ protocol ReaderPage: AnyObject {
     /// Puts `anchor`'s words back on the spread's left page if a late layout moved them; `stillWanted`
     /// turns false once the reader has moved or the page is gone.
     func keepWordsOnLeft(_ anchor: ReadingAnchor, stillWanted: @escaping @MainActor () -> Bool) async
+    /// A jump's landing put on the spread a restore of its place would show (`SpreadSettler`, `.restore`).
+    func settleLanding(_ anchor: ReadingAnchor, stillWanted: @escaping @MainActor () -> Bool) async
 }
 
 extension ReaderPage {
     func keepWordsOnLeft(_ anchor: ReadingAnchor, stillWanted: @escaping @MainActor () -> Bool) async {}
+    func settleLanding(_ anchor: ReadingAnchor, stillWanted: @escaping @MainActor () -> Bool) async {}
     func prepareStandby(at locator: Locator) {}
     func dropStandby() {}
     func promoteStandby(for locator: Locator) async -> Bool { false }

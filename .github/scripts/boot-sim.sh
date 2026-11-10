@@ -11,16 +11,90 @@
 # Usage: boot-sim.sh <name> <device type id> <runtime id>
 set -uo pipefail
 name="$1" type="$2" runtime="$3"
-booted() { xcrun simctl list devices -j | python3 -c 'import json,sys; print(any(d["udid"]==sys.argv[1] and d["state"]=="Booted" for v in json.load(sys.stdin)["devices"].values() for d in v))' "$1"; }
+# Limits, in whole seconds; the offline test (scripts/test-ci-simulator.sh) shortens them. An override that is empty
+# means the default; a fraction is rounded down; anything else is refused.
+limit() {
+  local v="${1:-$2}"; v="${v%%.*}"
+  [[ $v =~ ^[0-9]+$ ]] || { echo "boot-sim.sh: a limit must be a number of seconds, not '$1'" >&2; exit 2; }
+  echo "$v"
+}
+BOOTSTATUS_LIMIT="$(limit "${BOOT_SIM_BOOTSTATUS_LIMIT:-}" 420)" || exit 2
+RECHECK_LIMIT="$(limit "${BOOT_SIM_RECHECK_LIMIT:-}" 90)" || exit 2
+LIST_LIMIT="$(limit "${BOOT_SIM_LIST_LIMIT:-}" 60)" || exit 2
+# within <seconds> <command...>: the command's own exit code, or 124 if it ran out of time; then it is killed (TERM,
+# then KILL 5 s later) and this logs "hung". (A command that exits 124 by itself reads as a hang too; simctl does
+# not.) The limit is measured on the clock ($SECONDS), not by counting polls, which run slow on a busy runner.
+# This shell watches the command itself, every 0.2 s, so no watchdog
+# process exists to race or outlive it: a watchdog subshell could be stopped between forking its sleep and noting its
+# PID, and the orphaned sleep then held `$(... 2>&1)` open for the whole limit (#74 review). No pkill or temp files,
+# so it runs the same on macOS's /bin/bash 3.2 and in the core job's swift:6.2 container.
+within() {
+  local secs="$1"; shift
+  "$@" &
+  local pid=$! end=$(( SECONDS + secs ))
+  while kill -0 "$pid" 2>/dev/null; do
+    # Past the end, not at it: $SECONDS counts whole seconds, so this fires between secs and secs + 1, never early.
+    if (( SECONDS > end )); then
+      echo "$* hung past $secs s" >&2
+      kill "$pid" 2>/dev/null
+      local grace=$(( SECONDS + 5 ))
+      while kill -0 "$pid" 2>/dev/null && (( SECONDS < grace )); do sleep 0.2; done
+      kill -9 "$pid" 2>/dev/null
+      wait "$pid" 2>/dev/null
+      return 124
+    fi
+    sleep 0.2
+  done
+  wait "$pid"
+}
+# "True", "False", or "Unknown" when the listing did not answer in time (run 42502520118).
+booted() {
+  within "$LIST_LIMIT" xcrun simctl list devices -j | python3 -c '
+import json, sys
+try: print(any(d["udid"] == sys.argv[1] and d["state"] == "Booted" for v in json.load(sys.stdin)["devices"].values() for d in v))
+except ValueError: print("Unknown")' "$1"
+}
 try_boot() {
   xcrun simctl boot "$1" >&2 || true
-  # A bootstatus that hangs is shut down after 7 min, so the next attempt still runs.
-  ( sleep 420; echo "bootstatus for $1 hung past 7 min" >&2; xcrun simctl shutdown "$1" >/dev/null 2>&1 ) >/dev/null &
-  local watchdog=$!
-  status="$(xcrun simctl bootstatus "$1" -b 2>&1)" || true
-  kill "$watchdog" 2>/dev/null || true
+  status="$(within "$BOOTSTATUS_LIMIT" xcrun simctl bootstatus "$1" -b 2>&1)"
+  local code=$?
+  if [[ $code == 124 ]]; then
+    echo "$status" | tail -3 >&2
+    # Listed Booted is not ready: the data migration runs after that, and bootstatus is what waits for it (#57). So a
+    # device that is up gets one more bounded bootstatus; it passes only if that one finishes clean (gatefold#132:
+    # the old watchdog shut down a device that had booted, and the attempt failed with it).
+    local state; state="$(booted "$1")"
+    [[ $state == Unknown ]] && state="$(booted "$1")"
+    if [[ $state == True ]]; then
+      status="$(within "$RECHECK_LIMIT" xcrun simctl bootstatus "$1" -b 2>&1)"
+      if [[ $? != 124 ]] && ! grep -q "Failed" <<<"$status"; then
+        echo "$status" | tail -3 >&2
+        echo "$1 is booted; its second bootstatus finished" >&2
+        return 0
+      fi
+      echo "$1 is listed Booted, but its second bootstatus did not finish clean" >&2
+    elif [[ $state == Unknown ]]; then
+      echo "$1: state unknown (the device listing did not answer twice); taken as not booted" >&2
+    else
+      echo "$1 never booted" >&2
+    fi
+    within "$LIST_LIMIT" xcrun simctl shutdown "$1" >/dev/null 2>&1
+    return 1
+  fi
   echo "$status" | tail -3 >&2
-  [[ "$(booted "$1")" == "True" ]] && ! grep -q "Failed" <<<"$status"
+  grep -q "Failed" <<<"$status" && return 1
+  # A bootstatus that exited 0 is the stronger word: a listing that did not answer does not undo it (as
+  # ci-simulator.py since 8b144cf; a healthy device was thrown away over one, run 42502520118). One that exited
+  # otherwise is not trusted on an unanswered listing (both happen when CoreSimulatorService is failing).
+  case "$(booted "$1")" in
+    True) return 0 ;;
+    Unknown)
+      if [[ $code == 0 ]]; then
+        echo "$1: bootstatus finished clean; the device listing did not answer, so that stands" >&2; return 0
+      fi
+      echo "$1: bootstatus exited $code and the device listing did not answer; taken as not booted" >&2; return 1 ;;
+    *) return 1 ;;
+  esac
 }
 diagnose() {
   echo "--- migration lines for $1" >&2

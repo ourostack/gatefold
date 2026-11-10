@@ -28,7 +28,7 @@ final class DemoUITests: XCTestCase {
         page.coordinate(withNormalizedOffset: CGVector(dx: 0.04, dy: 0.5)).press(forDuration: 0.05, thenDragTo: page.coordinate(withNormalizedOffset: CGVector(dx: 0.8, dy: 0.55)), withVelocity: 500, thenHoldForDuration: 0.2)
         sleep(2)
         // Taps on the edge turn too.
-        page.coordinate(withNormalizedOffset: CGVector(dx: 0.93, dy: 0.5)).tap()
+        page.coordinate(withNormalizedOffset: CGVector(dx: 0.97, dy: 0.5)).tap()
         sleep(3)
     }
 

@@ -20,9 +20,39 @@ final class ScriptedPage: ReaderPage {
 
     init(at location: Locator) { currentLocation = location }
 
+    /// Whether a jump reports its page (a test holds the report back to act before Readium's).
+    var reportsJumps = true
+    /// Called as each jump starts, so a test can see the reader mid-jump.
+    var onGo: (() -> Void)?
+    /// Jumps that never come back until released (a load that hangs).
+    var holdsJumps = false
+    /// Reports a jump's page before the jump returns, as Readium can.
+    var reportsBeforeReturn = false
+    private var held: [CheckedContinuation<Void, Never>] = []
+    func releaseJumps() { let h = held; held = []; h.forEach { $0.resume() } }
+
+    /// Jumps a loading web view takes at its file's first page, dropping the place inside it (Readium on
+    /// CI's iPad: Back to a page mid-chapter opened the chapter's start, 8c5f294).
+    var dropsPlaceInFile = 0
+
     @discardableResult
     func go(to locator: Locator) async -> Bool {
         jumps.append(locator)
+        onGo?()
+        if holdsJumps { await withCheckedContinuation { held.append($0) } }
+        if dropsPlaceInFile > 0, let inFile = locator.locations.progression, inFile > 0 {
+            dropsPlaceInFile -= 1
+            currentLocation = locator.copy(
+                locations: {
+                    $0.progression = 0
+                    $0.totalProgression = max(0, ($0.totalProgression ?? 0) - inFile / 50)
+                },
+                text: { $0 = Locator.Text() }
+            )
+            visibleText = "the chapter's first page"
+            if let model, reportsJumps, reportsOnGo, let here = currentLocation { Task { await model.locationDidChange(here) } }
+            return true
+        }
         let before = pageStartsBefore
         let landed = locator.copy(
             locations: {
@@ -35,7 +65,9 @@ final class ScriptedPage: ReaderPage {
         if let words = locator.text.highlight {
             visibleText = showsWords(locator) ? "the lines above the place. " + words + " and on down the page" : "a page of something else entirely"
         }
-        if reportsOnGo, let model { Task { await model.locationDidChange(landed) } }
+        if let model, reportsJumps, reportsOnGo {
+            if reportsBeforeReturn { await model.locationDidChange(landed) } else { Task { await model.locationDidChange(landed) } }
+        }
         return true
     }
 
@@ -84,12 +116,22 @@ final class ScriptedPage: ReaderPage {
         currentLocation?.locations.progression.map { $0 + 0.01 }
     }
 
+    /// The chapter each landing settle's words resolved to, as the host's moves look them up.
+    private(set) var landingSettles: [String?] = []
+    func settleLanding(_ anchor: ReadingAnchor, stillWanted: @escaping @MainActor () -> Bool) async {
+        landingSettles.append(model?.locator(for: anchor)?.href.string)
+    }
+
     /// A capture a stalled reflow cuts short: no first words to be had.
     var withholdAnchor = false
 
     /// How long reading the first words on screen takes (the web view answers in its own time).
     var anchorDelay: Duration = .zero
 
+    /// The web view answers its scripts in the order they were asked, so two captures in flight end in
+    /// that order too. Two sleeps side by side can wake in either order on a loaded machine (a report
+    /// during a jump's write once failed that way, the boundary's capture ending first).
+    private var anchorQueue: Task<Void, Never>?
     /// Reads of the first words on screen so far.
     private(set) var anchorReads = 0
     /// The next read waits until `releaseAnchor()`: two reports' reads can come back out of order.
@@ -107,7 +149,12 @@ final class ScriptedPage: ReaderPage {
             holdNextAnchor = false
             await withCheckedContinuation { heldAnchor = $0 }
         }
-        if anchorDelay > .zero { try? await Task.sleep(for: anchorDelay) }
+        if anchorDelay > .zero {
+            let before = anchorQueue, delay = anchorDelay
+            let mine = Task { await before?.value; try? await Task.sleep(for: delay) }
+            anchorQueue = mine
+            await mine.value
+        }
         guard !withholdAnchor, let here = taken else { return nil }
         let anchor = ReadingAnchor(href: here.href.string, progression: here.locations.progression ?? 0, text: nil)
         return (anchor, here)
@@ -160,17 +207,23 @@ final class ScriptedPage: ReaderPage {
         return ReadingPosition(cfi: cfi, pointer: "pbr:/external##" + cfi, totalProgression: percent / 100, updated: updated, source: .pocketBookNative)
     }
 
+    /// `listed`: the shelf's listing already carries the Cloud place, as every real listing does (each
+    /// book comes with its position, and `merge` keeps it). Off, the place arrives only from the reader's
+    /// own fetch: a book on a shelf kept from an earlier listing, opened before the next one returns.
     static func make(remote: @MainActor (Publication, PositionMapper) async throws -> ReadingPosition?,
                      book change: (inout LibraryBook) -> Void = { _ in },
-                     startAt: Double = 0) async throws -> Fixture {
+                     startAt: Double = 0, listed: Bool = true) async throws -> Fixture {
         let sync = StubSync()
-        await sync.setLibrary(.success([frankenstein]))
         let app = AppModel(sync: sync, libraryRoot: URL.temporaryDirectory.appending(path: "reader-sync-\(UUID().uuidString)"))
-        await app.library.refresh()
-        app.library.update(frankenstein.fastHash, change)
         let publication = try await publication()
         let mapper = try #require(await Self.mapper(publication))
-        await sync.setRemote(try await remote(publication, mapper))
+        let place = try await remote(publication, mapper)
+        var cloudBook = frankenstein
+        if listed { cloudBook.position = place }
+        await sync.setLibrary(.success([cloudBook]))
+        await app.library.refresh()
+        app.library.update(frankenstein.fastHash, change)
+        await sync.setRemote(place)
         let book = try #require(app.library.book(frankenstein.fastHash))
         let initial = book.locatorJSON.flatMap { try? Locator(jsonString: $0) }
         let start: Locator
@@ -234,45 +287,72 @@ final class ScriptedPage: ReaderPage {
     /// first open lands on it and must keep the page it shows as his place: build 20's reopen loop found
     /// no place kept at all, so each reopen landed on the percent afresh and Readium's spread could
     /// fall on the page beside the one he left (3 in 19).
-    @Test func aPercentLandingKeepsThePageItShows() async throws {
-        let f = try await Self.make(remote: { _, _ in
-            ReadingPosition(cfi: nil, totalProgression: 0.42, updated: Date(), source: .pocketBookNative)
-        })
+    /// A place the Cloud has only as a whole percent can be pages from his real one: a first open
+    /// offers it and shows the book's own page, never lands on it (build 20 landed pages away).
+    /// A fresh install (the shelf wiped, the Cloud not) whose own place the Cloud has only as a percent:
+    /// offered like any percent-only place, never dropped (it was ours, so nothing was offered at all).
+    @Test func ourOwnPercentOnlyPlaceOnAFreshInstallIsOffered() async throws {
+        let ours = ReadingPosition(cfi: nil, totalProgression: 0.42, updated: Date(), source: .gatefold)
+        let f = try await Self.make(remote: { _, _ in ours }, book: { $0.remote = ours })
         await f.model.load()
-        let saved = try #require(f.app.library.book(Self.frankenstein.fastHash)?.locatorJSON.flatMap { try? Locator(jsonString: $0) },
-                                 "a percent landing kept no place")
-        let shown = try #require(f.page.currentLocation)
-        #expect(saved.href.string == shown.href.string, "the kept place isn't the page shown")
-        #expect(abs((saved.locations.progression ?? -1) - (shown.locations.progression ?? -2)) < 0.0001, "the kept place isn't the page shown")
+        #expect(f.page.jumps.isEmpty, "a percent-only place was landed on")
+        #expect(f.app.library.book(Self.frankenstein.fastHash)?.locatorJSON == nil, "a place was saved without a move of his")
+        #expect(f.model.suggestion != nil, "his own place on the Cloud was dropped, not offered")
         f.model.close()
     }
 
-    @Test func aPercentLandingBehindTheShelfKeepsItsPageAtTheTap() async throws {
+    /// VoiceOver's adjust on the scrubber is a jump like any other that isn't a turn: one tap undoes it.
+    @Test func aVoiceOverAdjustOnTheScrubberCanBeUndone() async throws {
+        let f = try await Self.make(remote: { _, _ in nil }, startAt: 0.05)
+        await f.model.load()
+        let before = try #require(f.page.currentLocation)
+        await f.model.locationDidChange(before)
+        await f.model.adjustScrubber(forward: true)
+        #expect(f.page.jumps.count == 1, "the adjust didn't jump")
+        #expect(f.model.showJumpBack, "an adjust on the scrubber left no way back")
+        #expect(f.model.backLocator?.locations.totalProgression == before.locations.totalProgression, "Back doesn't go to the page before the adjust")
+        f.model.close()
+    }
+
+    @Test func aPercentOnlyPlaceAtAFirstOpenIsOfferedNotLanded() async throws {
         let f = try await Self.make(remote: { _, _ in
             ReadingPosition(cfi: nil, totalProgression: 0.42, updated: Date(), source: .pocketBookNative)
-        })
+        }, book: { $0.remote = ReadingPosition(cfi: nil, totalProgression: 0.42, updated: Date(), source: .pocketBookNative) })
+        await f.model.load()
+        #expect(f.page.jumps.isEmpty, "a percent-only place was landed on")
+        #expect(f.app.library.book(Self.frankenstein.fastHash)?.locatorJSON == nil, "a place was saved without a move of his")
+        #expect(f.model.suggestion != nil, "the percent place is offered")
+        // The cover gives way once the check has answered (it was held for a landing): counted in reads.
+        for _ in 0..<100 where !f.model.pageReady { try await Task.sleep(for: .milliseconds(20)) }
+        #expect(f.model.pageReady, "the cover never gave way to the page")
+        f.model.close()
+    }
+
+    /// Behind the shelf too: nothing moves and nothing is kept, and the offer waits for the tap.
+    @Test func aPercentOnlyPlaceBehindTheShelfIsOfferedAtTheTap() async throws {
+        let f = try await Self.make(remote: { _, _ in
+            ReadingPosition(cfi: nil, totalProgression: 0.42, updated: Date(), source: .pocketBookNative)
+        }, book: { $0.remote = ReadingPosition(cfi: nil, totalProgression: 0.42, updated: Date(), source: .pocketBookNative) })
         f.model.warm()
         for _ in 0..<200 where !f.model.pageReady { try await Task.sleep(for: .milliseconds(25)) }
-        // The spread settling behind the shelf reports a page: the layout, not him.
-        let opening = try #require(f.page.currentLocation)
-        await f.model.locationDidChange(Self.boundary(of: opening))
-        try await Task.sleep(for: .milliseconds(300))
-        #expect(f.app.library.book(Self.frankenstein.fastHash)?.locatorJSON == nil, "a warm open kept a place before the tap")
+        #expect(f.page.jumps.isEmpty, "a warm open landed on a percent")
         f.model.activate()
-        for _ in 0..<200 where f.app.library.book(Self.frankenstein.fastHash)?.locatorJSON == nil {
-            try await Task.sleep(for: .milliseconds(25))
-        }
-        let saved = try #require(f.app.library.book(Self.frankenstein.fastHash)?.locatorJSON.flatMap { try? Locator(jsonString: $0) },
-                                 "the tap kept no place for a percent landing")
-        let landed = try #require(f.page.currentLocation)
-        #expect(saved.href.string == landed.href.string, "saved \(ReaderModel.placeTag(saved)) shown \(ReaderModel.placeTag(landed))")
-        #expect(abs((saved.locations.progression ?? -1) - (landed.locations.progression ?? -2)) < 0.0001, "the kept place isn't the page shown")
-        // Once kept, the layout reporting the chapter's first page leaves it (build 20's loop rewrote it
-        // and reopened a page early).
-        await f.model.locationDidChange(Self.boundary(of: landed))
-        try await Task.sleep(for: .milliseconds(100))
-        #expect(f.app.library.book(Self.frankenstein.fastHash)?.locatorJSON.flatMap { try? Locator(jsonString: $0) }?.locations.progression == saved.locations.progression,
-                "a layout report moved the saved place")
+        for _ in 0..<200 where f.model.suggestion == nil { try await Task.sleep(for: .milliseconds(25)) }
+        #expect(f.page.jumps.isEmpty)
+        #expect(f.model.suggestion != nil)
+        #expect(f.app.library.book(Self.frankenstein.fastHash)?.locatorJSON == nil, "a place was saved without a move of his")
+        f.model.close()
+    }
+
+    /// His own place in the front matter is still his place: the InkPad's further one is offered.
+    @Test func aPlaceInTheFrontMatterIsKeptAndTheInkPadsOffered() async throws {
+        let f = try await Self.make(remote: { pub, mapper in try await Self.inkPadPlace(pub, mapper, index: 12, percent: 40) },
+                                    book: { $0.totalProgression = 0.003; $0.lastOpened = Date().addingTimeInterval(-3600)
+                                            $0.remote = ReadingPosition(cfi: nil, totalProgression: 0.40, updated: Date(), source: .pocketBookNative) },
+                                    startAt: 0.003)
+        await f.model.load()
+        #expect(f.page.jumps.isEmpty, "the front-matter place was landed over")
+        #expect(f.model.suggestion != nil, "the InkPad's place is offered")
         f.model.close()
     }
 
@@ -394,9 +474,7 @@ final class ScriptedPage: ReaderPage {
     /// boundary only until the layout is still: then the page he sees is the place (build 20's loop
     /// kept the chapter's start under a stalled reflow and reopened a page before him).
     @Test func aLandingOnTheBoundaryTakesHisWordsOnceStill() async throws {
-        let f = try await Self.make(remote: { _, _ in
-            ReadingPosition(cfi: nil, totalProgression: 0.42, updated: Date(), source: .pocketBookNative)
-        })
+        let f = try await Self.make(remote: { pub, mapper in try await Self.inkPadPlace(pub, mapper) })
         f.page.withholdAnchor = true
         await f.model.load()
         let boundary = try #require(f.app.library.book(Self.frankenstein.fastHash)?.locatorJSON.flatMap { try? Locator(jsonString: $0) },
@@ -417,10 +495,8 @@ final class ScriptedPage: ReaderPage {
 
     /// Shape (b) at the model: after the landing is kept, a report from the layout with no turn, jump
     /// or touch of his never moves the saved place.
-    @Test func aLayoutReportAfterAPercentLandingLeavesThePlace() async throws {
-        let f = try await Self.make(remote: { _, _ in
-            ReadingPosition(cfi: nil, totalProgression: 0.42, updated: Date(), source: .pocketBookNative)
-        })
+    @Test func aLayoutReportAfterALandingLeavesThePlace() async throws {
+        let f = try await Self.make(remote: { pub, mapper in try await Self.inkPadPlace(pub, mapper) })
         await f.model.load()
         let before = f.app.library.book(Self.frankenstein.fastHash)?.locatorJSON
         #expect(before != nil)
@@ -479,6 +555,57 @@ final class ScriptedPage: ReaderPage {
         }, book: { $0.totalProgression = 0.301; $0.lastOpened = opened }, startAt: 0.301)
         await f.model.load()
         #expect(f.model.suggestion?.detail.contains("Jump there?") == true)
+    }
+
+    /// Landing on another device's place is a jump he can undo: the Back pill comes up (#49, #46).
+    @Test func aCatchUpLandingPutsUpTheWayBack() async throws {
+        let f = try await Self.make(remote: { pub, mapper in
+            try await Self.inkPadPlace(pub, mapper, index: 12, percent: 40)
+        }, book: { $0.totalProgression = 0.05; $0.lastOpened = Date().addingTimeInterval(-600) }, startAt: 0.05)
+        await f.model.load()
+        #expect(f.model.suggestion != nil)
+        await f.model.acceptSuggestion()
+        #expect(f.model.showJumpBack && f.model.backLocator != nil, "landing on another device's place left no way back")
+        f.model.close()
+    }
+
+    /// Catch up taken while the first page is still loading behind the opening cover (the offer sits
+    /// above the cover since #46 at c8d3084): Readium refuses a jump then, and the landing's few reads
+    /// can't outwait a chapter's load, so the landing waits for the page to show, then goes.
+    @Test func catchUpTakenWhileTheFirstPageLoadsLandsOnceItShows() async throws {
+        let f = try await Self.make(remote: { pub, mapper in
+            try await Self.inkPadPlace(pub, mapper, index: 12, percent: 40)
+        }, book: { $0.totalProgression = 0.05; $0.lastOpened = Date().addingTimeInterval(-600) }, startAt: 0.05)
+        // No load: the first page has not shown, and the Cloud's reply is offered over the cover.
+        await f.model.checkRemote()
+        try #require(f.model.suggestion != nil, "the Cloud's place is offered")
+        try #require(!f.model.pageReady, "the first page is still loading")
+        let taking = Task { await f.model.acceptSuggestion() }
+        for _ in 0..<20 { await Task.yield(); try await Task.sleep(for: .milliseconds(10)) }
+        #expect(f.page.jumps.isEmpty && f.page.promoted.isEmpty, "the landing went while the first page was still loading")
+        #expect(f.model.suggestion == nil, "the offer stayed up after his tap")
+        f.model.forceReady()
+        await taking.value
+        #expect(f.model.pageReady)
+        #expect(!f.page.jumps.isEmpty || !f.page.promoted.isEmpty, "the landing never went once the page showed")
+        f.model.close()
+    }
+
+    /// A landing settle moves the page to its words through the place they resolve to. Resolved to the
+    /// page he left (the last place captured), its moves went nowhere: on CI's iPad the Cloud's words
+    /// stayed pinned off the spread and every reopen showed another one (#46's reviewer leg, 5 of 5).
+    @Test func aLandingSettlesOnTheLandingsChapterNotThePageHeLeft() async throws {
+        let f = try await Self.make(remote: { pub, mapper in
+            try await Self.inkPadPlace(pub, mapper, index: 12, percent: 40)
+        }, book: { $0.totalProgression = 0.05; $0.lastOpened = Date().addingTimeInterval(-600) }, startAt: 0.05)
+        await f.model.load()
+        let left = try #require(f.page.currentLocation?.href.string)
+        await f.model.acceptSuggestion()
+        let landed = try #require(f.page.currentLocation?.href.string)
+        #expect(landed != left, "the Cloud's place is in another chapter")
+        try #require(f.page.landingSettles.count == 1, "the Cloud's place had words for the landing to settle")
+        #expect(f.page.landingSettles == [landed], "the landing settle's words resolved to \(f.page.landingSettles), not \(landed)")
+        f.model.close()
     }
 
     @Test func theCatchUpPageLoadsWhileTheSlipIsUpSoTheTapOnlySwapsItIn() async throws {

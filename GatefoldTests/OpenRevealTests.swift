@@ -2,6 +2,7 @@ import Foundation
 import GatefoldCore
 import ReadiumShared
 import Testing
+import UIKit
 @testable import Gatefold
 
 /// A cold web view: Readium first shows a page by its own progression, which is not the page his
@@ -133,12 +134,15 @@ final class StarvedOpenPage: ReaderPage {
     private(set) var looksWaited = 0
     /// The slow part: the read of his words, or the move to them (looks the move takes).
     let slowMoveLooks: Int?
+    /// Looks the slow read waits for the page to come into view before it answers anyway.
+    let readLooks: Int
 
-    init(guess: Locator, hisPlace: Locator, hisWords: String, slowMoveLooks: Int? = nil) {
+    init(guess: Locator, hisPlace: Locator, hisWords: String, slowMoveLooks: Int? = nil, readLooks: Int = 400) {
         currentLocation = guess
         self.hisPlace = hisPlace
         self.hisWords = hisWords
         self.slowMoveLooks = slowMoveLooks
+        self.readLooks = readLooks
     }
 
     private var inView: Bool { model.map { $0.pageReady && $0.reopenPicture == nil } ?? false }
@@ -169,7 +173,7 @@ final class StarvedOpenPage: ReaderPage {
     func progression(of quote: String) async -> Double? {
         guard slowMoveLooks == nil, let model, !showsHisWords else { return hisPlace.locations.progression }
         if !model.pageReady { model.forceReady() }
-        while !inView, looksWaited < 400 {
+        while !inView, looksWaited < readLooks {
             looksWaited += 1
             try? await Task.sleep(for: .milliseconds(50))
         }
@@ -208,6 +212,17 @@ final class StarvedOpenPage: ReaderPage {
         model.close()
     }
 
+    /// Taking the offer of his own place goes back to his words with no Back pill: the guessed page he
+    /// was shown is not a place to come back to (#49).
+    @Test func takingHisOwnPlacePutsUpNoWayBack() async throws {
+        let (model, page, _) = try await open(slowMoveLooks: nil)
+        #expect(model.suggestion != nil, "his place was not offered")
+        await model.acceptSuggestion()
+        #expect(page.showsHisWords, "the Jump didn't reach his words")
+        #expect(!model.showJumpBack, "taking his own place put up a way back to the guessed page")
+        model.close()
+    }
+
     /// The move to his words began under the cover and is still going when the cover's bound runs out:
     /// the reveal waits for it rather than showing the page mid-move.
     @Test func aMoveBegunUnderTheCoverFinishesBeforeTheReveal() async throws {
@@ -216,6 +231,20 @@ final class StarvedOpenPage: ReaderPage {
         #expect(model.pageReady, "the page never showed")
         #expect(page.showsHisWords, "the open never reached his words")
         #expect(page.movesInView == 0, "the page moved \(page.movesInView) times while in view")
+        model.close()
+    }
+
+    /// A reopen on a starved Duo (#46 at 860599c): the cover's bound forced the page while the settle's
+    /// read was out, the picture of his page then gave way to the page Readium guessed (page 306, not
+    /// his 326), and only then were his words found, so they were offered. The picture is his page: it
+    /// stays while the open settles, the settle moves the page beneath it, and it lifts onto his words.
+    @Test func aReopenPictureStaysUntilTheOpenHasSettledOnHisWords() async throws {
+        let (model, page, _) = try await open(slowMoveLooks: nil, readLooks: 120, picture: true)
+        for _ in 0..<300 where model.reopenPicture != nil { try? await Task.sleep(for: .milliseconds(50)) }
+        #expect(model.reopenPicture == nil, "the picture never gave way to the page")
+        #expect(page.showsHisWords, "the picture lifted onto a page that isn't his")
+        #expect(page.movesInView == 0, "the page moved \(page.movesInView) times while in view")
+        #expect(model.suggestion == nil, "his own place was offered instead of shown")
         model.close()
     }
 
@@ -237,7 +266,8 @@ final class StarvedOpenPage: ReaderPage {
         model.close()
     }
 
-    private func open(slowMoveLooks: Int?, then: (@MainActor (StubSync, Publication) async throws -> Void)? = nil) async throws -> (ReaderModel, StarvedOpenPage, AppModel) {
+    private func open(slowMoveLooks: Int?, readLooks: Int = 400, picture: Bool = false,
+                      then: (@MainActor (StubSync, Publication) async throws -> Void)? = nil) async throws -> (ReaderModel, StarvedOpenPage, AppModel) {
         let sync = StubSync()
         await sync.setLibrary(.success([ReaderSyncTests.frankenstein]))
         await sync.setRemote(nil)
@@ -252,9 +282,10 @@ final class StarvedOpenPage: ReaderPage {
         let book = try #require(app.library.book(ReaderSyncTests.frankenstein.fastHash))
         let guess = Locator(href: href, mediaType: .xhtml, locations: .init(progression: 0.4, totalProgression: 0.30))
         let page = StarvedOpenPage(guess: guess, hisPlace: hisPlace.copy(text: { $0 = Locator.Text() }), hisWords: OpenRevealTests.hisWords,
-                                   slowMoveLooks: slowMoveLooks)
+                                   slowMoveLooks: slowMoveLooks, readLooks: readLooks)
         let model = ReaderModel(book: book, publication: publication, app: app, page: page)
         page.model = model
+        if picture { model.reopenPicture = UIImage() }
         await model.load()
         try await then?(sync, publication)
         return (model, page, app)

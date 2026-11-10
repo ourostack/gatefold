@@ -17,8 +17,11 @@ settings:
     SWIFT_STRICT_CONCURRENCY: complete
 packages:
   Readium:
-    url: https://github.com/readium/swift-toolkit
-    exactVersion: 3.11.1
+    # Our fork's main: 3.11.1 plus the spread view release fix and a cleared spread's spreadNotLoaded (#109,
+    # ourostack/swift-toolkit#1 and #2). Keep
+    # Packages/GatefoldCloud/Package.swift on the same revision: both are the package `swift-toolkit`.
+    url: https://github.com/ourostack/swift-toolkit
+    revision: a0eb21330d0f8c37476859922bd967073e7b73f4
   GatefoldCore:
     path: Packages/GatefoldCore
   GatefoldCloud:
@@ -76,6 +79,8 @@ targets:
     sources: [GatefoldUITests]
     dependencies:
       - target: Gatefold
+      # Pure judgments a UI test shares with the unit tests (`ReopenMatch`).
+      - package: GatefoldCore
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: bot.ouro.gatefold.uitests

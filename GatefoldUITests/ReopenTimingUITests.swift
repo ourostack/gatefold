@@ -33,7 +33,7 @@ final class ReopenTimingUITests: XCTestCase {
         var times: [String] = []
         for _ in 1...5 {
             for _ in 0..<3 {
-                app.descendants(matching: .any)["reader.page"].coordinate(withNormalizedOffset: CGVector(dx: 0.92, dy: 0.5)).tap()
+                app.descendants(matching: .any)["reader.page"].coordinate(withNormalizedOffset: CGVector(dx: 0.97, dy: 0.5)).tap()
                 RunLoop.current.run(until: Date().addingTimeInterval(1.2))
             }
             RunLoop.current.run(until: Date().addingTimeInterval(2))
