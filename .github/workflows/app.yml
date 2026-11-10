@@ -148,8 +148,9 @@ jobs:
   # (gatefold#39). The split follows the slowest pass of each test in ten runs (green 42675099629, 42640941539,
   # 42584275845 and 42570370853, and main's 42673726551, 42666016340, 42656170735, 42605468542, 42605267361 and
   # 42576626603; for the limits, also 42711088472, 42717866316, 42725703725, 42711127428, 42727618551, 42717354081,
-  # 42734914470, 42734917830 and 42744406818): about 10 to 13 min of tests a pull-request shard. A test that alone takes longer has a shard of its
-  # own. Each required check is a gate job below, green only when every one of its shards passed. Shards with
+  # 42734914470, 42734917830 and 42744406818). The split aimed at about 10 to 13 min of tests a pull-request shard
+  # from the first ten runs; under the later runs' load some measure up to 19. A test that alone takes longer has a
+  # shard of its own. Each required check is a gate job below, green only when every one of its shards passed. Shards with
   # `pr_tests: none` run on main and on full-list pull requests only.
   # Each `timeout` is 9 min of setup (job start to booted: median 4.7, p90 8.1 over 89 jobs in 40 runs), plus twice the
   # sum of its tests' slowest passing times, plus 12 for the logs after the tests (gatefold#141); a cold shard adds 4 min
@@ -199,7 +200,7 @@ jobs:
             pr_tests: ""
             cold: false
           - shard: ipad-place-jumps
-            # 227 + 191 + 180 + 153 s
+            # 227 + 191 + 180 + 153 s (first ten runs)
             tests: >-
               NavigationPlaceUITests/testOpenedFromTheShelfThenLeftTwiceWithoutATurnKeepsThePlace
               NavigationPlaceUITests/testAContentsJumpKeepsThePlace
@@ -428,7 +429,7 @@ jobs:
             pr_tests: ""
             cold: false
           - shard: duo-taps-rest
-            # The catch-all for new Fine-Tune tests, and a page a turn: 228 + 105 + 364 s
+            # The catch-all for new Fine-Tune tests, and a page a turn: 228 + 105 + 364 s (first ten runs)
             tests: >-
               FineTuneTapUITests PageNumberUITests/testEveryTurnMovesOnAPageAndAReopenKeepsTheNumbers
             skip: >-
