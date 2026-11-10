@@ -369,6 +369,58 @@ import Testing
         f.model.close()
     }
 
+    /// Any veiled jump, not only Back, under a chapter load that never ends: at the veil's limit
+    /// (`JumpLanding.reads` beats) the veil lets go and the chapter shows its own loading, and the jump
+    /// still lands when the load comes in (gatefold#173: a Contents jump held the screen 43 s and more).
+    @Test func aJumpPastTheVeilsLimitLetsTheVeilGoAndStillLands() async throws {
+        let f = try await S.make(remote: { _, _ in nil }, startAt: 0.05, jumpBeat: { await Task.yield() })
+        await f.model.load()
+        await f.model.locationDidChange(try #require(f.page.currentLocation))
+        f.page.holdsJumps = true
+        f.page.loadingChapter = true
+        let jump = Task { await f.model.go(toProgression: 0.7, rememberBack: true) }
+        for _ in 0..<(JumpLanding.reads * 4) where f.model.jumpsPastTheVeil == 0 { await Task.yield() }
+        #expect(f.model.jumpsPastTheVeil == 1, "the veil held the screen past its limit")
+        // The load comes in.
+        f.page.loadingChapter = false
+        f.page.holdsJumps = false
+        f.page.releaseJumps()
+        await jump.value
+        await Self.settle { abs((Self.kept(f) ?? -1) - 0.7) < 0.03 }
+        #expect(abs((f.page.currentLocation?.locations.totalProgression ?? -1) - 0.7) < 0.03, "the jump never landed")
+        #expect(abs((Self.kept(f) ?? -1) - 0.7) < 0.03, "the place kept isn't where the jump landed")
+        #expect(f.model.showJumpBack, "the jump has no way back")
+        f.model.close()
+    }
+
+    /// A turn of his while a jump is still on its way past the veil's limit ends it quietly: when the
+    /// hung jump comes back at last, his page stands and is the place kept (gatefold#173).
+    @Test func aTurnWhileAJumpIsPastTheVeilsLimitEndsItQuietly() async throws {
+        let f = try await S.make(remote: { _, _ in nil }, startAt: 0.05, jumpBeat: { await Task.yield() })
+        await f.model.load()
+        await f.model.locationDidChange(try #require(f.page.currentLocation))
+        f.page.holdsJumps = true
+        f.page.loadingChapter = true
+        let jump = Task { await f.model.go(toProgression: 0.7, rememberBack: true) }
+        for _ in 0..<(JumpLanding.reads * 4) where f.model.jumpsPastTheVeil == 0 { await Task.yield() }
+        #expect(f.model.jumpsPastTheVeil == 1, "the jump wasn't still on its way past the veil's limit")
+        // He turns to the next page meanwhile: Readium moves itself and tells the reader.
+        let next = try #require(await S.locate(f.publication, 0.06))
+        f.page.currentLocation = next
+        f.model.userTurnedPage()
+        await Self.settle { abs((Self.kept(f) ?? -1) - (next.locations.totalProgression ?? 0)) < 0.001 }
+        // The hung jump comes back at last: his page stands.
+        f.page.loadingChapter = false
+        f.page.holdsJumps = false
+        f.page.pageStartsBefore = 0
+        f.page.releaseJumps()
+        await jump.value
+        await Self.settle { abs((f.page.currentLocation?.locations.totalProgression ?? -1) - (next.locations.totalProgression ?? 0)) < 0.00001 }
+        #expect(abs((f.page.currentLocation?.locations.totalProgression ?? -1) - (next.locations.totalProgression ?? 0)) < 0.00001, "the late jump moved the page off his turn")
+        #expect(abs((Self.kept(f) ?? -1) - (next.locations.totalProgression ?? 0)) < 0.001, "the place kept isn't his turn")
+        f.model.close()
+    }
+
     /// A Back that does give up (a load that died: no load under way, or one that never ends, or a jump
     /// that comes back but never shows his page) says so on the pill and leaves it up, pointing at his
     /// page, so one more tap tries again; it never just stops (gatefold#170).

@@ -215,7 +215,8 @@ final class ScriptedPage: ReaderPage {
     /// own fetch: a book on a shelf kept from an earlier listing, opened before the next one returns.
     static func make(remote: @MainActor (Publication, PositionMapper) async throws -> ReadingPosition?,
                      book change: (inout LibraryBook) -> Void = { _ in },
-                     startAt: Double = 0, listed: Bool = true) async throws -> Fixture {
+                     startAt: Double = 0, listed: Bool = true,
+                     jumpBeat: (() async -> Void)? = nil) async throws -> Fixture {
         let sync = StubSync()
         let app = AppModel(sync: sync, libraryRoot: URL.temporaryDirectory.appending(path: "reader-sync-\(UUID().uuidString)"))
         let publication = try await publication()
@@ -237,7 +238,7 @@ final class ScriptedPage: ReaderPage {
             start = found.copy(locations: { $0.totalProgression = startAt })
         }
         let page = ScriptedPage(at: start)
-        let model = ReaderModel(book: book, publication: publication, app: app, page: page)
+        let model = ReaderModel(book: book, publication: publication, app: app, page: page, jumpBeat: jumpBeat)
         page.model = model
         return Fixture(model: model, page: page, app: app, sync: sync, publication: publication, mapper: mapper)
     }

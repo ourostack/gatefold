@@ -2201,6 +2201,9 @@ final class ReaderModel {
     @ObservationIgnored private var backGoOut: Int?
     /// Back trips whose veil let go at its limit while the trip went on (tests read it; gatefold#170).
     @ObservationIgnored private(set) var tripsPastTheVeil = 0
+    /// Jumps (not Back's trips) whose veil let go at its limit while they were still on their way
+    /// (gatefold#173).
+    @ObservationIgnored private(set) var jumpsPastTheVeil = 0
     /// The last Back trip gave up (its chapter never came): the pill says so until he taps it again,
     /// jumps somewhere else, or reads on until the pill goes.
     private(set) var backGaveUp = false
