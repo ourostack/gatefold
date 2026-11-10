@@ -94,7 +94,8 @@ final class RotationMidTransitionUITests: XCTestCase {
         let limit = max(asked, floor)
         // Judged in screenshots as well as seconds (gatefold#94): the looks keep a 1 s beat from the turn, so a fast
         // runner takes one a second and fails at the limit as before, while a starved runner, whose screenshots take
-        // seconds, still gets one look per second of the limit before it fails. Four times the limit only catches a hang.
+        // seconds, still gets one look per second of the limit before it fails, unless its screenshots take over 4 s
+        // each: four times the limit ends it then.
         let looks = Int(limit.rounded(.up))
         let start = Date()
         let up = start.addingTimeInterval(limit), hung = start.addingTimeInterval(limit * 4)
