@@ -237,8 +237,6 @@ final class ReaderModel {
     /// While a landing settles, the navigator's in-between locations are not places: the landing
     /// records once, when it has settled. Any later move ends it.
     private var landingMove: Int?
-    /// The step the landing in flight began on: the veil it may outlive is its own, or one taken inside it.
-    @ObservationIgnored private var landingStep = 0
     private var landing: Bool { landingMove == moves }
     /// The Cloud place behind the banner, so accepting it records that exact place.
     private var suggestionRemote: ReadingPosition?
@@ -1157,12 +1155,9 @@ final class ReaderModel {
         // landing goes once the page shows, which the cover itself bounds (`forceReady`); counted in looks.
         for _ in 0..<Self.catchUpReadyLooks where !pageReady && !isClosed { try? await Task.sleep(for: .milliseconds(50)) }
         guard !isClosed else { return }
-        // The chapter it is bound for, so a report from there while it is past its veil stays the landing's.
-        let toward: AnyURL? = if let locator { locator.href } else { await publication.locate(progression: s.targetProgression)?.href }
-        guard !isClosed else { return }
         // The pages riffle past on the way, the way a thumb finds a place in a real book.
         var back: Int?
-        let jump = await veiled(riffle: true, forward: s.targetProgression >= totalProgression, toward: toward) {
+        let jump = await veiled(riffle: true, forward: s.targetProgression >= totalProgression) {
             back = await self.land(on: locator, progression: s.targetProgression, target: aim, cloud: cloud,
                                    rememberBack: !own, publishes: false)
         }
@@ -1376,7 +1371,6 @@ final class ReaderModel {
             defer { if publishes { publishBack(back) } }
             let move = moves + 1
             landingMove = move
-            landingStep = steps
             await go(toProgression: progression, rememberBack: false, his: false)
             guard moves == move, hisSteps == hisAtStart, !isClosed else {
                 if landingMove == move { landingMove = nil }
@@ -1405,7 +1399,6 @@ final class ReaderModel {
         let move = moves
         let step = steps
         landingMove = move
-        landingStep = steps
         defer { if landingMove == move { landingMove = nil } }
         let started = ContinuousClock.now
         let ready = await page?.promoteStandby(for: locator) ?? false
@@ -1817,11 +1810,7 @@ final class ReaderModel {
         // But a landing past its veil has let the page go to him: a swipe of his then is his move, not a
         // step of the landing, and the landing gives way to it (gatefold#173: dropped here, his swipe
         // never counted and the late catch-up was kept over his page).
-        // Only this landing's own veil (an older jump still out names `strayJump` too, and a touch under
-        // the new veil still counts), and never a report of the chapter it is bound for: a touch that went
-        // nowhere makes the landing's own report look touched (gatefold#173 re-review).
-        let swipePastVeil = landing && touchedSinceLocation && (strayJump.map { $0.jump >= landingStep } ?? false)
-            && !isStrayChapter(locator)
+        let swipePastVeil = landing && touchedSinceLocation && strayJump != nil
         guard !landing || swipePastVeil, !launchJumpInFlight else { return }
         // Mid-turn the navigator has moved under the overlay; the turn records the place when it lands.
         // A move reported mid-reflow (a turn or a jump while an iPad's first layout is still settling)
