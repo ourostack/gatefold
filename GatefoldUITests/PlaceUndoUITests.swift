@@ -410,13 +410,14 @@ final class PlaceUndoUITests: XCTestCase {
         XCTAssertEqual(opening(settledWords()), opening(chosen), "the tapped and the untouched jump to the same chapter landed on different pages")
     }
 
-    /// The place a move of his last kept is Chapter XL's page, in reads: its anchor is 0.80 of the way into
-    /// its file's text (the file's start is an earlier chapter), and the page holding it starts within a
-    /// page before. A number from the app's probe, never the book's words.
+    /// The place a move of his last kept is Chapter XL's page, in reads: in file h-9, whose anchor for it
+    /// is 0.80 of the way into the file's text (the file's start is an earlier chapter), on the page holding
+    /// it, which starts within a page before. The app's probe gives a file name and a number, never words.
     private func keptAtChapterXL(reads: Int = 40) -> Bool {
         let probe = el("reader.savedPlace")
         for _ in 0..<reads {
-            if let p = Double((probe.value as? String) ?? ""), abs(p - 0.79) < 0.08 { return true }
+            let parts = ((probe.value as? String) ?? "").split(separator: "@")
+            if parts.count == 2, parts[0].contains("-h-9."), let p = Double(parts[1]), abs(p - 0.79) < 0.08 { return true }
             RunLoop.current.run(until: Date().addingTimeInterval(0.25))
         }
         return false

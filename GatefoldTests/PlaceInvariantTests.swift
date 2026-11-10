@@ -174,9 +174,18 @@ import Testing
         let jump = Task { await f.model.go(to: entry) }
         for _ in 0..<200 where f.page.currentLocation?.href != fileStart.href { await Task.yield() }
         let far = try #require(await S.locate(f.publication, 0.15))
-        await f.model.go(to: far, rememberBack: true)
+        // The newer move is still on its way when the contents jump gives way: a write of the contents
+        // jump's page then would stand, since the newer move's report counts as already kept.
+        f.page.holdsJumps = true
+        let newer = Task { await f.model.go(to: far, rememberBack: true) }
+        for _ in 0..<200 where f.page.jumps.last != far { await Task.yield() }
         await jump.value
-        for _ in 0..<200 where saved(f) == nil { await Task.yield() }
+        f.page.holdsJumps = false
+        f.page.releaseJumps()
+        await newer.value
+        for _ in 0..<200 where !(saved(f).flatMap { try? Locator(jsonString: $0) }.map { ContentsIndex.sameResource($0.href.string, far.href.string) } ?? false) {
+            await Task.yield()
+        }
 
         let kept = try #require(saved(f).flatMap { try? Locator(jsonString: $0) }, "no place kept")
         #expect(ContentsIndex.sameResource(kept.href.string, far.href.string), "the place kept is the overtaken contents jump's, not his newer move's")
