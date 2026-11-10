@@ -1832,6 +1832,9 @@ final class ReaderModel {
     /// only shows the controls changes no location, so it moves nothing.
     func noteInteraction() {
         touchesSinceLocation += 1
+        // A touch starts a swipe (Readium's, counted in no move) or a turn that reads the page again: a turn's
+        // correction of Readium's report is for the page it found, never for where a swipe goes.
+        screenCorrection = nil
         // A slide or scroll (no move counted) makes his page the place, not an unreached jump's target.
         owedJumpTarget = nil
     }
@@ -1908,7 +1911,7 @@ final class ReaderModel {
         return corrected
     }
     /// The page on screen a turn found where Readium named its file's start (`onScreen`), for the anchor
-    /// taken until his next move: `stale` is the progression Readium still reports.
+    /// taken until his next move or touch: `stale` is the progression Readium still reports.
     @ObservationIgnored private var screenCorrection: (move: Int, href: String, stale: Double, place: Locator)?
 
     /// Takes the first words on screen as the reader's place, unless a reflow is moving the page.
