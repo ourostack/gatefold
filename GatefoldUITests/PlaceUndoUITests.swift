@@ -125,6 +125,8 @@ final class PlaceUndoUITests: XCTestCase {
     /// The veil may let go at its limit meanwhile (the chapter shows its own loading); the trip goes on.
     /// Judged in samples of the held load.
     func testBackToAChapterStillLoadingWaitsForItAndTakesHimBack() {
+        // Opened inside a chapter (0.31), not at one's start: a Back to a chapter's start sends once, and
+        // the hold would never run out.
         let first = openFresh(["-GatefoldHoldBackSends", "25"])
         let held = el("reader.loadingHeld"), veil = el("reader.veil")
         contentsJump(to: "Chapter XL")
