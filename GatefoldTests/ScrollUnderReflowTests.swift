@@ -9,7 +9,7 @@ import Testing
 /// CI's iPad (job 129949743858): six swipes during a restarted typography reflow, and the restore then
 /// put the words from before the switch back on screen. Judged in reports and reads, never seconds.
 @MainActor @Suite(.serialized) struct ScrollUnderReflowTests {
-    private func open() async throws -> (ReaderModel, TwoStepJumpPage, Publication) {
+    private func open() async throws -> (ReaderModel, TwoStepJumpPage, Publication, AppModel) {
         let sync = StubSync()
         await sync.setLibrary(.success([ReaderSyncTests.frankenstein]))
         await sync.setRemote(nil)
@@ -23,11 +23,15 @@ import Testing
         page.model = model
         await model.load()
         await model.locationDidChange(opening)
-        return (model, page, publication)
+        return (model, page, publication, app)
+    }
+
+    private func savedPlace(_ app: AppModel) -> Locator? {
+        app.library.book(ReaderSyncTests.frankenstein.fastHash)?.locatorJSON.flatMap { try? Locator(jsonString: $0) }
     }
 
     @Test func aScrollOfHisWhileAReflowLaysOutIsHisMove() async throws {
-        let (model, page, publication) = try await open()
+        let (model, page, publication, app) = try await open()
         // The switch to Scroll lays the book out again; its restore would put his words back.
         model.keeper.reflowWillBegin(.typography, move: model.hisMoves)
         model.reflowDidBegin()
@@ -39,18 +43,70 @@ import Testing
         await model.locationDidChange(scrolled)
         #expect(!model.keeper.restoreMayMove(move: model.hisMoves), "the restore would still put his old words back over his scroll")
         #expect(model.placeOwed, "his scroll under the reflow isn't owed: the reflow's end won't keep it")
+
+        // The restore gives way and the reflow ends: the place he scrolled to is the one kept.
+        model.keeper.restoreGaveWay()
+        model.reflowDidFinish(visible: nil)
+        for _ in 0..<200 where model.placeOwed { try await Task.sleep(for: .milliseconds(25)) }
+        #expect(!model.placeOwed, "the reflow's end never paid the scroll it owed")
+        #expect(savedPlace(app)?.locations.progression == scrolled.locations.progression, "the saved place isn't where he scrolled to")
         model.close()
     }
 
     /// The reflow's own reports (no touch of his) are the layout, not a move: the restore keeps his words.
     @Test func theReflowsOwnReportsAreNotHisMove() async throws {
-        let (model, page, publication) = try await open()
+        let (model, page, publication, _) = try await open()
         model.keeper.reflowWillBegin(.typography, move: model.hisMoves)
         model.reflowDidBegin()
         let laidOut = try #require(await ReaderSyncTests.locate(publication, 0.21))
         page.currentLocation = laidOut
         await model.locationDidChange(laidOut)
         #expect(model.keeper.restoreMayMove(move: model.hisMoves), "the layout's own report took the restore away")
+        model.close()
+    }
+
+    /// A touch from before the reflow (holding the iPad as it turns, a tap that went nowhere) is not a
+    /// scroll under it: the reflow's own layout report keeps the restore.
+    @Test func aTouchFromBeforeTheReflowIsNotAScrollUnderIt() async throws {
+        let (model, page, publication, _) = try await open()
+        model.noteInteraction()
+        model.keeper.reflowWillBegin(.rotation, move: model.hisMoves)
+        model.reflowDidBegin()
+        let laidOut = try #require(await ReaderSyncTests.locate(publication, 0.21))
+        page.currentLocation = laidOut
+        await model.locationDidChange(laidOut)
+        #expect(model.keeper.restoreMayMove(move: model.hisMoves), "a touch from before the reflow took its restore away")
+        #expect(!model.placeOwed, "the layout's page boundary is owed as his place")
+        model.close()
+    }
+
+    /// A tap during the reflow that only shows the controls moves nothing.
+    @Test func aTapForTheControlsDuringTheReflowIsNotAScroll() async throws {
+        let (model, page, publication, _) = try await open()
+        model.keeper.reflowWillBegin(.typography, move: model.hisMoves)
+        model.reflowDidBegin()
+        model.noteInteraction()
+        model.controlsTapped(visible: true)
+        let laidOut = try #require(await ReaderSyncTests.locate(publication, 0.21))
+        page.currentLocation = laidOut
+        await model.locationDidChange(laidOut)
+        #expect(model.keeper.restoreMayMove(move: model.hisMoves), "a tap for the controls took the restore away")
+        model.close()
+    }
+
+    /// One swipe is one move, however many reports its scroll brings.
+    @Test func oneSwipeUnderTheReflowIsOneMove() async throws {
+        let (model, page, publication, _) = try await open()
+        model.keeper.reflowWillBegin(.typography, move: model.hisMoves)
+        model.reflowDidBegin()
+        let before = model.hisMoves
+        model.noteInteraction()
+        for p in [0.22, 0.23] {
+            let here = try #require(await ReaderSyncTests.locate(publication, p))
+            page.currentLocation = here
+            await model.locationDidChange(here)
+        }
+        #expect(model.hisMoves == before + 1, "one swipe counted as \(model.hisMoves - before) moves")
         model.close()
     }
 }
