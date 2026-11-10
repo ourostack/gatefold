@@ -1260,6 +1260,7 @@ final class ReaderModel {
         overtakenJumps.insert(jump)
         if newestHasLanded, host?.isTurning != true, !isClosed, let newest = lastLanded {
             readerLog.notice("veil: jump \(jump, privacy: .public) came back after a move of his; page put back")
+            jumpsPutBack += 1
             let restore = await veiled { _ = await self.page?.go(to: newest) }
             overtakenJumps.remove(restore)
             if steps == restore, !isClosed, let here = page?.currentLocation { await locationDidChange(here, hisMove: true) }
@@ -1271,6 +1272,8 @@ final class ReaderModel {
     /// Set for the work inside a veil (a landing's own percent step runs there): only the outer veil is
     /// watched. Task-local, so a jump started alongside one still out is not taken as inside it.
     @TaskLocal private static var insideVeil = false
+    /// Late jumps put back where his newest move left the page (tests read it).
+    @ObservationIgnored private(set) var jumpsPutBack = 0
     /// A jump past its veil's limit, still out: its step and the chapter it goes to (if known). A swipe
     /// meanwhile is a step of his; a report from that chapter may be the jump landing.
     @ObservationIgnored private var strayJump: (jump: Int, href: AnyURL?)?

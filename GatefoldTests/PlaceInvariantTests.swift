@@ -454,7 +454,40 @@ import Testing
         f.page.releaseJumps()
         await taking.value
         #expect(f.model.jumpsPastTheVeil == 1, "one catch-up counted \(f.model.jumpsPastTheVeil) times past the veil")
-        #expect(abs((f.page.currentLocation?.locations.totalProgression ?? -1) - 0.7) < 0.03, "the landing was put back")
+        #expect(f.model.jumpsPutBack == 0, "a landing nobody overtook was put back")
+        #expect(abs((f.page.currentLocation?.locations.totalProgression ?? -1) - 0.7) < 0.03, "the landing didn't stand")
+        f.model.close()
+    }
+
+    /// A catch-up overtaken by a turn of his while it is past the veil's limit offers no way back: he
+    /// never saw it land (gatefold#173 re-review). The Cloud's place as a percent and as exact words.
+    @Test(arguments: ["percent", "exact"]) func aCatchUpEndedQuietlyOffersNoWayBack(place: String) async throws {
+        let f = try await S.make(remote: { pub, mapper in
+            place == "percent" ? ReadingPosition(cfi: nil, totalProgression: 0.7, updated: Date(), source: .pocketBookNative)
+                : try await S.inkPadPlace(pub, mapper, index: 12, percent: 40)
+        }, book: { $0.totalProgression = 0.05; $0.lastOpened = Date().addingTimeInterval(-600) },
+           startAt: 0.05, jumpBeat: { await Task.yield() })
+        await f.model.load()
+        await f.model.locationDidChange(try #require(f.page.currentLocation))
+        await f.model.checkRemote()
+        try #require(f.model.suggestion != nil, "the Cloud's place is offered")
+        f.page.holdsJumps = true
+        f.page.loadingChapter = true
+        let taking = Task { await f.model.acceptSuggestion() }
+        await Self.settle { f.model.jumpsPastTheVeil >= 1 }
+        #expect(f.model.jumpsPastTheVeil == 1, "the catch-up wasn't on its way past the veil's limit")
+        let next = try #require(await S.locate(f.publication, 0.06))
+        f.page.currentLocation = next
+        f.model.userTurnedPage()
+        await Self.settle { abs((Self.kept(f) ?? -1) - (next.locations.totalProgression ?? 0)) < 0.001 }
+        f.page.loadingChapter = false
+        f.page.holdsJumps = false
+        f.page.pageStartsBefore = 0
+        f.page.releaseJumps()
+        await taking.value
+        await Self.settle { abs((f.page.currentLocation?.locations.totalProgression ?? -1) - (next.locations.totalProgression ?? 0)) < 0.00001 }
+        #expect(abs((Self.kept(f) ?? -1) - (next.locations.totalProgression ?? 0)) < 0.001, "the place kept isn't his turn")
+        #expect(!f.model.showJumpBack, "a way back is offered for a catch-up he never saw land")
         f.model.close()
     }
 
@@ -477,6 +510,12 @@ import Testing
         f.page.releaseJumps()
         await first.value
         await second.value
+        // The newer jump's page stands and is kept; the first, overtaken, leaves no way back of its own.
+        await Self.settle { abs((Self.kept(f) ?? -1) - 0.5) < 0.03 }
+        #expect(abs((f.page.currentLocation?.locations.totalProgression ?? -1) - 0.5) < 0.03, "the second jump's page didn't stand")
+        #expect(abs((Self.kept(f) ?? -1) - 0.5) < 0.03, "the place kept isn't the second jump's")
+        #expect(f.model.showJumpBack && abs((f.model.backLocator?.locations.totalProgression ?? -1) - 0.05) < 0.03,
+                "the way back isn't to the page he left")
         f.model.close()
     }
 
