@@ -359,6 +359,34 @@ import Testing
         f.model.close()
     }
 
+    /// The pill's "didn't go" clears once it is out of date: on a new jump of his, and when the given-up
+    /// trip lands late with no move of his since (the next Back is `aBackThatGivesUpSaysSoAndStaysUp`).
+    @Test(arguments: ["a new jump", "the late landing"]) func aGivenUpBacksWordsClear(on what: String) async throws {
+        let f = try await S.make(remote: { _, _ in nil }, startAt: 0.05)
+        await f.model.load()
+        await f.model.locationDidChange(try #require(f.page.currentLocation))
+        await f.model.go(toProgression: 0.7, rememberBack: true)
+        f.model.backBeat = { await Task.yield() }
+        f.page.holdsJumps = true
+        let hung = Task { await f.model.goBack() }
+        for _ in 0..<(JumpLanding.reads * 4) where !f.model.isGoingBack { await Task.yield() }
+        for _ in 0..<(JumpLanding.reads * 20) where f.model.isGoingBack { await Task.yield() }
+        #expect(f.model.backLabel == "Couldn't go back. Try again", "Back gave up without saying so")
+        f.page.holdsJumps = false
+        if what == "a new jump" {
+            await f.model.go(toProgression: 0.4, rememberBack: true)
+            #expect(f.model.backLabel != "Couldn't go back. Try again", "a new jump's way back still said Back didn't go")
+            f.page.releaseJumps()
+            await hung.value
+        } else {
+            f.page.releaseJumps()
+            await hung.value
+            #expect(f.model.backLabel != "Couldn't go back. Try again", "Back got there late and still said it didn't")
+        }
+        #expect(f.model.backLabel != "Couldn't go back. Try again")
+        f.model.close()
+    }
+
     /// A Back freed by its count, then a jump somewhere else, then the hung Back landing at last: the
     /// page ends where the newer jump took it, not on the stale Back's place.
     @Test func aBackThatLandsLateAfterAnotherJumpLeavesThatJumpsPage() async throws {

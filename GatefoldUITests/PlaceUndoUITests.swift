@@ -119,6 +119,37 @@ final class PlaceUndoUITests: XCTestCase {
     }
 
     /// A touch resting on the scrubber, and a short wobble on it, never move the page.
+    /// Back to a chapter still loading waits for it, veiled, and takes him back: on CI's iPad (job
+    /// 129949744000, gatefold#170) Back gave up after its 150 reads, the veil let go while the chapter
+    /// still loaded, and he stayed where he had jumped to. Every jump's load is held open
+    /// (`-GatefoldHoldChapterLoad`) for longer than those reads; judged in samples of the held load.
+    func testBackToAChapterStillLoadingWaitsForItAndTakesHimBack() {
+        let first = openFresh(["-GatefoldHoldChapterLoad", "800"])
+        let held = el("reader.loadingHeld"), veil = el("reader.veil")
+        contentsJump(to: "Chapter XL")
+        XCTAssertTrue(veil.waitForExistence(timeout: 10) && veil.waitForNonExistence(timeout: 240), "the jump's veil lifts")
+        let jumped = waitForWords(changingFrom: first, timeout: 30)
+        XCTAssertNotEqual(opening(jumped), opening(first), "the jump moved the page")
+        if app.buttons["reader.contents"].exists { el("reader.page").coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap() }
+        let back = app.buttons["reader.back"]
+        XCTAssertTrue(back.waitForExistence(timeout: 10), "a way back")
+        back.tap()
+        XCTAssertTrue(held.waitForExistence(timeout: 30), "Back's chapter load is held open")
+        // Every sample while the load is held must find Back's veil up: a veil gone meanwhile is a trip given up.
+        var samples = 0, bare = 0
+        while held.exists, samples < 1200 {
+            samples += 1
+            if !veil.exists, held.exists { bare += 1 }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+        }
+        print("BACKHELD samples=\(samples) bareWhileLoading=\(bare) heldAtEnd=\(held.exists)")
+        XCTAssertEqual(bare, 0, "Back gave up while its chapter was still loading")
+        XCTAssertTrue(veil.waitForNonExistence(timeout: 30), "Back's veil lifted once the chapter had loaded")
+        let returned = waitForWords(changingFrom: jumped, timeout: 30)
+        XCTAssertEqual(opening(returned), opening(first), "Back did not return to his page")
+        XCTAssertNotEqual(back.label, "Couldn't go back. Try again")
+    }
+
     func testATouchOnTheScrubberNeverJumps() {
         let first = openFresh()
         showChrome()
