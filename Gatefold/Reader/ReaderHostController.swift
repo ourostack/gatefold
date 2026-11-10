@@ -1799,6 +1799,11 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     }
 
     func go(to link: ReadiumShared.Link) async {
+        if LaunchOptions.isUITest, LaunchOptions.hangLinkJumps {
+            readerLog.notice("test: a contents jump that never comes back")
+            while !Task.isCancelled { try? await Task.sleep(for: .seconds(3600)) }
+            return
+        }
         _ = await navigator.go(to: link, options: .init(animated: false))
     }
 
