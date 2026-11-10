@@ -493,7 +493,8 @@ final class ReaderModel {
         // page and loses his place (a posture change on the Duo). The reflow's end starts it.
         guard pageReady, reopenPicture == nil, keeper.reflowing == nil,
               let map = screenPages, !map.uncounted.isEmpty else { return }
-        guard !tuning else { countHeldForTuning = true; return }
+        // Held, not stalled: the slot keeps saying "Counting pages…" (never blank) until he closes it.
+        guard !tuning else { countHeldForTuning = true; stallTimer?.cancel(); countStalled = false; return }
         let key = map.layout
         countGaveUp = false
         countMoved()

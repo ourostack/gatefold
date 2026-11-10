@@ -79,6 +79,9 @@ final class CountingTallyPage: ReaderPage {
         // The reflows' own asks for numbers run while it's still open, and start nothing.
         for _ in 0..<50 { await Task.yield() }
         #expect(page.countsStarted == before, "\(page.countsStarted - before) counts started behind the page while he tuned it")
+        // Meanwhile the number's slot is never blank and never the last layout's number: it says it's counting.
+        #expect(model.screenNumbers == nil, "a number from the layout before the change is shown as current")
+        #expect(model.countingPages, "the number's slot is blank while the count waits for Your Page to close")
         let tuned = page.countsStarted
         model.tuning = false
         for _ in 0..<200 where page.countsStarted == tuned { try await Task.sleep(for: .milliseconds(10)) }
