@@ -389,8 +389,14 @@ final class ReaderModel {
     /// threw away before it counted a chapter, and making them held the page for seconds a tap. Closing it
     /// counts the layout he chose.
     @ObservationIgnored var tuning = false {
-        didSet { if oldValue, !tuning { Task { await refreshScreenNumbers(recount: true) } } }
+        didSet {
+            guard oldValue, !tuning, countHeldForTuning else { return }
+            countHeldForTuning = false
+            Task { await refreshScreenNumbers(recount: true) }
+        }
     }
+    /// A count Your Page held back; only then does closing it count (a count still running is left alone).
+    @ObservationIgnored private var countHeldForTuning = false
     /// No chapter counted, and no count begun, for a minute.
     private(set) var countStalled = false
     @ObservationIgnored private var stallTimer: Task<Void, Never>?
@@ -485,8 +491,9 @@ final class ReaderModel {
     private func startCounting() {
         // Never during a reflow: a second web view loading then holds up the reflow's own look at the
         // page and loses his place (a posture change on the Duo). The reflow's end starts it.
-        guard pageReady, reopenPicture == nil, keeper.reflowing == nil, !tuning,
+        guard pageReady, reopenPicture == nil, keeper.reflowing == nil,
               let map = screenPages, !map.uncounted.isEmpty else { return }
+        guard !tuning else { countHeldForTuning = true; return }
         let key = map.layout
         countGaveUp = false
         countMoved()

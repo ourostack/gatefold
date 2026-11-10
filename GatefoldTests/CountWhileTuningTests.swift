@@ -53,6 +53,13 @@ final class CountingTallyPage: ReaderPage {
         // The open's own count, once the page is up (counted in reads of the tally, not waited out).
         for _ in 0..<200 where page.countsStarted == 0 { try await Task.sleep(for: .milliseconds(10)) }
         try #require(page.countsStarted >= 1, "the open never started its count")
+        // The open asks for numbers more than once (the chapters cleaned, the page shown): settle on its
+        // last ask, 60 reads of the tally in a row with no new count.
+        var quiet = 0, seen = page.countsStarted
+        while quiet < 60 {
+            try await Task.sleep(for: .milliseconds(10))
+            if page.countsStarted == seen { quiet += 1 } else { seen = page.countsStarted; quiet = 0 }
+        }
         return (model, page)
     }
 
@@ -69,11 +76,26 @@ final class CountingTallyPage: ReaderPage {
         model.tuning = true
         let before = page.countsStarted
         for _ in 0..<6 { await flipJustify(model) }
+        // The reflows' own asks for numbers run while it's still open, and start nothing.
+        for _ in 0..<50 { await Task.yield() }
         #expect(page.countsStarted == before, "\(page.countsStarted - before) counts started behind the page while he tuned it")
         let tuned = page.countsStarted
         model.tuning = false
         for _ in 0..<200 where page.countsStarted == tuned { try await Task.sleep(for: .milliseconds(10)) }
+        for _ in 0..<50 { await Task.yield() }
         #expect(page.countsStarted == tuned + 1, "closing Your Page started \(page.countsStarted - tuned) counts, not one")
+        model.close()
+    }
+
+    /// Opening Your Page and closing it with nothing changed leaves the count it found alone.
+    @Test func closingYourPageWithNothingChangedStartsNoCount() async throws {
+        let (model, page) = try await opened()
+        let before = page.countsStarted
+        model.tuning = true
+        model.tuning = false
+        for _ in 0..<50 { await Task.yield() }
+        #expect(page.countsStarted == before, "closing an untouched Your Page started \(page.countsStarted - before) counts")
+        #expect(page.countsStopped == 0, "closing an untouched Your Page stopped the count")
         model.close()
     }
 
