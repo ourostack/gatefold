@@ -212,4 +212,26 @@ final class ReloadedPage: ReaderPage {
         t.model.close()
         #expect(anchor.progression < 0.014, "the anchor kept the turn's page (@\(anchor.progression)), not the one he swiped to")
     }
+
+    /// A touch that moves no page (a tap, a drag let go where it began) after a corrected turn: Readium's
+    /// report then, still its file's start, recaptures the anchor, and a rotation keeps the turn's page.
+    /// (A tap for the controls resets the touch, but a recapture with no move, his place offered, takes
+    /// the anchor the same way.)
+    @Test func aTouchThatMovesNoPageAfterACorrectedTurnKeepsTheAnchorOnItsPage() async throws {
+        let t = try await opened()
+        let start = try turnBack(t, words: "words at the top of the page on screen")
+        t.model.userTurnedPage()
+        _ = try await placeOnItsLastPage(closing: false, t)
+        // He touches the page, which stays; Readium reports the file's start again.
+        t.model.noteInteraction()
+        await t.model.locationDidChange(start)
+        t.model.keeper.reflowWillBegin(.rotation)
+        t.model.reflowDidBegin()
+        let anchor = try #require(t.model.keeper.anchor)
+        let jump = try #require(t.model.locator(for: anchor))
+        t.model.close()
+        #expect(anchor.progression >= 0.986428 && anchor.progression <= 1, "a touch put the anchor back on @\(anchor.progression)")
+        let p = jump.locations.progression ?? -1
+        #expect(p >= 0.986428 && p <= 1, "after a touch the restore jumps to @\(p)")
+    }
 }

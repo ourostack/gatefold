@@ -1832,9 +1832,6 @@ final class ReaderModel {
     /// only shows the controls changes no location, so it moves nothing.
     func noteInteraction() {
         touchesSinceLocation += 1
-        // A touch starts a swipe (Readium's, counted in no move) or a turn that reads the page again: a turn's
-        // correction of Readium's report is for the page it found, never for where a swipe goes.
-        screenCorrection = nil
         // A slide or scroll (no move counted) makes his page the place, not an unreached jump's target.
         owedJumpTarget = nil
     }
@@ -1911,7 +1908,7 @@ final class ReaderModel {
         return corrected
     }
     /// The page on screen a turn found where Readium named its file's start (`onScreen`), for the anchor
-    /// taken until his next move or touch: `stale` is the progression Readium still reports.
+    /// taken until his next move, while that page is on screen: `stale` is the progression Readium still reports.
     @ObservationIgnored private var screenCorrection: (move: Int, href: String, stale: Double, place: Locator)?
 
     /// Takes the first words on screen as the reader's place, unless a reflow is moving the page.
@@ -1920,8 +1917,17 @@ final class ReaderModel {
         // The anchor's words are the screen's but its progression is Readium's: while Readium still names the
         // start of a file the turn found on screen at its end, the anchor takes the page on screen, or a
         // rotation restores him to the file's start (gatefold#128).
+        // Only while that page is still on screen, read live: a swipe (Readium's own, counted in no move) can
+        // reach the file's real start, which Readium names the same; a tap for the controls moves nothing.
         if let fix = screenCorrection, fix.move == moves, fix.href == anchor.href, fix.stale == anchor.progression,
            let corrected = fix.place.locations.progression {
+            let live = await page?.pageRange()
+            guard keeper.reflowing == nil else { return }
+            guard let live, ScreenPageGeometry.document(live.href, isChapter: fix.href),
+                  (live.start...live.end).contains(corrected) else {
+                screenCorrection = nil
+                return await captureAnchor()
+            }
             anchor = ReadingAnchor(href: anchor.href, progression: corrected, text: anchor.text)
             anchorLoc = anchorLoc.copy(locations: {
                 $0.progression = corrected; $0.totalProgression = fix.place.locations.totalProgression; $0.position = nil
