@@ -2067,6 +2067,8 @@ final class ReaderModel {
             var budget = JumpLanding.Budget(), beats = 0
             while let self, self.goingBack == trip, !self.isClosed {
                 guard self.moves == move, self.steps == jump else {
+                    // Its jump back already: the landing sees the move and stops by itself.
+                    guard self.backGoOut == trip else { return }
                     readerLog.notice("back: trip \(trip, privacy: .public) overtaken by a move of his after \(beats, privacy: .public) beats; ended quietly")
                     self.goingBack = nil
                     self.strayBack = (jump, back.href)
@@ -2076,7 +2078,8 @@ final class ReaderModel {
                 guard budget.take(loading: self.page?.isLoadingChapter == true) else { break }
                 await self.backBeat()
                 beats += 1
-                if beats == JumpLanding.reads, self.goingBack == trip {
+                // Only while the trip still has reads to wait on the load: one about to give up says so instead.
+                if beats == JumpLanding.reads, budget.waited > 0, self.goingBack == trip {
                     readerLog.notice("back: trip \(trip, privacy: .public) still on its way after \(beats, privacy: .public) beats; the veil lets go, the trip goes on")
                     self.tripsPastTheVeil += 1
                     self.host?.abandonVeil(jump: jump)
@@ -2108,10 +2111,21 @@ final class ReaderModel {
         // A swipe under the veil (slide mode) is a step of his, not a move: that also ends the re-sends.
         var sends = 0, backLanded = false
         await veiled(step: jump) {
-            guard let inFile = back.locations.progression, inFile > 0 else { _ = await self.page?.go(to: back); return }
+            guard let inFile = back.locations.progression, inFile > 0 else {
+                self.backGoOut = trip
+                _ = await self.page?.go(to: back)
+                if self.backGoOut == trip { self.backGoOut = nil }
+                return
+            }
             backLanded = await JumpLanding.land(
                 target: ReadingAnchor(href: back.href.string, progression: inFile, text: nil),
-                go: { [weak self] in sends += 1; return await self?.page?.go(to: back) == true },
+                go: { [weak self] in
+                    sends += 1
+                    self?.backGoOut = trip
+                    let went = await self?.page?.go(to: back) == true
+                    if self?.backGoOut == trip { self?.backGoOut = nil }
+                    return went
+                },
                 visible: { [weak self] in await self?.page?.pageRange() },
                 reported: { [weak self] in
                     self?.page?.currentLocation.map { ReadingAnchor(href: $0.href.string, progression: $0.locations.progression ?? 0, text: nil) }
@@ -2144,6 +2158,9 @@ final class ReaderModel {
             // still on its way, a jump or a turn, lands after and wins), the page goes back to where it
             // left it, and that place is kept again: a report meanwhile may have kept this trip's.
             readerLog.notice("back: trip \(trip, privacy: .public) came back after another move; page put back, its words not taken")
+            // Nor its pill: the way back stays the one he had (a page he left two moves ago is no way back).
+            keepsUndo = false
+            if pendingBack?.jump == undo { pendingBack = nil }
             guard newestHasLanded, host?.isTurning != true, !isClosed, let newest = lastLanded else { return }
             let restore = await veiled { _ = await self.page?.go(to: newest) }
             if steps == restore, !isClosed, let here = page?.currentLocation { await locationDidChange(here, hisMove: true) }
@@ -2176,6 +2193,8 @@ final class ReaderModel {
         // kept, and the landing's own report then read as layout. His page is kept here, once.
         else if !freed, backLanded, sends > 1, steps == jump, !isClosed, let here = page?.currentLocation { await locationDidChange(here, hisMove: true) }
     }
+    /// The Back trip whose jump is out now (sent, not come back): only such a trip is ended by a move of his.
+    @ObservationIgnored private var backGoOut: Int?
     /// Back trips whose veil let go at its limit while the trip went on (tests read it; gatefold#170).
     @ObservationIgnored private(set) var tripsPastTheVeil = 0
     /// The last Back trip gave up (its chapter never came): the pill says so until he taps it again,

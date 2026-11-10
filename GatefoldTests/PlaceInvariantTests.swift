@@ -340,6 +340,7 @@ import Testing
         await f.model.load()
         await f.model.locationDidChange(try #require(f.page.currentLocation))
         await f.model.go(toProgression: 0.7, rememberBack: true)
+        let wayBack = try #require(f.model.backLocator)
         f.model.backBeat = { await Task.yield() }
         f.page.holdsJumps = true
         f.page.loadingChapter = true
@@ -364,6 +365,7 @@ import Testing
         await Self.settle { abs((f.page.currentLocation?.locations.totalProgression ?? -1) - (next.locations.totalProgression ?? 0)) < 0.00001 }
         #expect(abs((f.page.currentLocation?.locations.totalProgression ?? -1) - (next.locations.totalProgression ?? 0)) < 0.00001, "the late Back moved the page off his turn")
         #expect(abs((Self.kept(f) ?? -1) - (next.locations.totalProgression ?? 0)) < 0.001, "the place kept isn't his turn")
+        #expect(f.model.backLocator == wayBack, "the ended trip's late jump put up a way back to a page he had left")
         f.model.close()
     }
 
