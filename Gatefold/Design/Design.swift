@@ -95,6 +95,16 @@ enum LaunchOptions {
     /// Debug only: a jump's chapter counts as still loading (Readium's spinner up) for this many looks,
     /// so a test can hold the load open as a slow device does and watch the veil (#38).
     static var holdChapterLoadLooks: Int? { defaults.object(forKey: "GatefoldHoldChapterLoad") == nil ? nil : defaults.integer(forKey: "GatefoldHoldChapterLoad") }
+    /// Debug only: Back's first this many sends are taken at their chapter's start, the chapter still
+    /// loading meanwhile, as a web view still loading takes a jump (gatefold#170). Counted in sends, not
+    /// looks, so a Back that stops sending stays short. Armed once per launch, by its first Back.
+    static var holdBackSends: Int? {
+        #if DEBUG
+        defaults.object(forKey: "GatefoldHoldBackSends") == nil ? nil : defaults.integer(forKey: "GatefoldHoldBackSends")
+        #else
+        nil
+        #endif
+    }
     /// Debug only: when a jump starts, the page it leaves counts as still loading (Readium's spinner
     /// up) for this many looks, as a page still loading on a slow device does (gatefold#73).
     static var holdOldPageLoadLooks: Int? {
