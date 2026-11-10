@@ -1899,6 +1899,7 @@ final class ReaderModel {
         }
         let reportedBefore = lastReported
         lastReported = locator
+        if LaunchOptions.isUITest { shownPlaceProbe = Self.probeTag(locator) }
         if !placeOnly {
             location = locator
             // The reader turning on: the other device's line has done its job.
@@ -2109,7 +2110,7 @@ final class ReaderModel {
             }
             if LaunchOptions.isUITest {
                 savedWordsProbe = here.text.highlight.map(ReaderJS.normalize) ?? ""
-                savedPlaceProbe = (here.href.string.split(separator: "/").last.map(String.init) ?? "") + String(format: "@%.5f", here.locations.progression ?? -1)
+                savedPlaceProbe = Self.probeTag(here)
             }
             readerLog.notice("place write [r\(self.readerNumber, privacy: .public)]: his move (\(fresh != nil ? "his first words" : "Readium's boundary", privacy: .public)) \(Self.placeTag(here), privacy: .public); reported \(Self.placeTag(locator), privacy: .public); move \(self.moves, privacy: .public), touched \(self.touchedSinceLocation, privacy: .public), layoutOnly \(self.layoutOnly, privacy: .public)")
             placeRecords += 1
@@ -2702,6 +2703,11 @@ final class ReaderModel {
     private(set) var savedWordsProbe = ""
     /// UI tests: the file and the progression in it of the place last written by a move of his (no words).
     private(set) var savedPlaceProbe = ""
+    /// UI tests: the same for the page Readium last reported, written or not.
+    private(set) var shownPlaceProbe = ""
+    private static func probeTag(_ l: Locator) -> String {
+        (l.href.string.split(separator: "/").last.map(String.init) ?? "") + String(format: "@%.5f", l.locations.progression ?? -1)
+    }
 
     private func refreshBookmarkState(_ visible: VisibleRange?) {
         if LaunchOptions.isUITest, reopenPicture == nil, let text = visible?.text { visibleTextProbe = String(text.prefix(2400)) }

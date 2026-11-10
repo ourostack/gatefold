@@ -93,7 +93,13 @@ final class ScriptedPage: ReaderPage {
 
     /// The file is laid out and has no element for the fragment (a broken contents anchor).
     var fragmentAbsent = false
-    func progression(ofFragment id: String) async -> Double? { fragmentAbsent ? -1 : fragmentAt[id] }
+    /// Reads answered before `fragmentAt`, one each: a layout still settling (its columns not final).
+    var fragmentFirstReads: [Double] = []
+    func progression(ofFragment id: String) async -> Double? {
+        if fragmentAbsent { return -1 }
+        if !fragmentFirstReads.isEmpty { return fragmentFirstReads.removeFirst() }
+        return fragmentAt[id]
+    }
 
     /// The place loading behind the page (`prepareStandby`), and every one swapped in.
     private(set) var standby: Locator?

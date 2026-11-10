@@ -131,7 +131,9 @@ import Testing
     /// A contents entry partway through its file lands on its own page, and that page is the place kept:
     /// never the file's first page, which a web view still laying out opens instead (gatefold#166: "Chapter
     /// XL", 0.80 into its file, was kept at the file's start, an earlier chapter).
-    @Test func aContentsJumpLandsOnTheChapterInsideItsFile() async throws {
+    /// Also when the file's layout is still settling as it is first read (CI run 42852464361: one read
+    /// gave 0 for a place 0.79 into the file, and the jump kept the file's start).
+    @Test(arguments: [false, true]) func aContentsJumpLandsOnTheChapterInsideItsFile(settling: Bool) async throws {
         let f = try await S.make(remote: { _, _ in nil }, startAt: 0.05)
         await f.model.load()
         await f.model.locationDidChange(try #require(f.page.currentLocation))
@@ -142,6 +144,7 @@ import Testing
         let fileStart = opened.copy(locations: { $0.fragments = []; $0.progression = 0 }, text: { $0 = Locator.Text() })
         f.page.linkOpens = fileStart
         f.page.fragmentAt[fragment] = 0.6
+        if settling { f.page.fragmentFirstReads = [0] }
 
         await f.model.go(to: entry)
         // The write runs in its own task after the report: waited on as an event, counted.

@@ -351,6 +351,7 @@ final class PlaceUndoUITests: XCTestCase {
         contentsJump(to: "Chapter XL")
         _ = waitForWords(changingFrom: first, timeout: 30)
         XCTAssertTrue(el("reader.veil").waitForNonExistence(timeout: 60), "the veil lifts")
+        XCTAssertTrue(keptAtChapterXL(), "the jump didn't keep the chapter he chose")
         if app.buttons["reader.contents"].exists { el("reader.page").coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap() }
         XCTAssertTrue(app.buttons["reader.contents"].waitForNonExistence(timeout: 5), "the controls are hidden")
         let start = settledWords()
