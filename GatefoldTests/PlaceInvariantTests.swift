@@ -164,7 +164,8 @@ import Testing
     /// jump ends within its reads, keeps Readium's landing in that file and lets its veil go, never a
     /// read loop that outlives its budget (gatefold#172 asked whether 1f50a36's empty reads could hang).
     @Test func aContentsJumpWhoseAnchorIsNeverReadEndsWithinItsReads() async throws {
-        let f = try await S.make(remote: { _, _ in nil }, startAt: 0.05)
+        // Judged in reads: each beat only yields.
+        let f = try await S.make(remote: { _, _ in nil }, startAt: 0.05, jumpBeat: { await Task.yield() })
         await f.model.load()
         await f.model.locationDidChange(try #require(f.page.currentLocation))
         let entry = try #require(f.model.toc.last(where: { $0.progression > 0.3 && $0.link.url().fragment != nil }))
@@ -172,17 +173,21 @@ import Testing
         let opened = try #require(await publication.locate(entry.link))
         let fileStart = opened.copy(locations: { $0.fragments = []; $0.progression = 0 }, text: { $0 = Locator.Text() })
         f.page.linkOpens = fileStart
-        // No place for the anchor, ever: every read is empty.
+        // The first two sends never reach the file (a web view still loading); then no place for the
+        // anchor, ever: every read is empty.
+        f.page.linkRefusals = 2
         f.page.fragmentAt = [:]
+        let before = saved(f)
 
         await f.model.go(to: entry)
-        for _ in 0..<200 where saved(f).flatMap({ try? Locator(jsonString: $0) }).map({ !ContentsIndex.sameResource($0.href.string, fileStart.href.string) }) ?? true {
-            await Task.yield()
-        }
+        for _ in 0..<200 where saved(f) == before { await Task.yield() }
         let kept = try #require(saved(f).flatMap { try? Locator(jsonString: $0) }, "the jump kept no place")
-        #expect(ContentsIndex.sameResource(kept.href.string, fileStart.href.string), "the jump that found no anchor kept no place in its file")
+        #expect(saved(f) != before, "the jump that found no anchor kept no place of its own")
+        #expect(ContentsIndex.sameResource(kept.href.string, fileStart.href.string), "the place kept is in another file")
+        #expect(kept.locations.progression == 0, "the place kept is not Readium's landing at the file's start")
         #expect(f.model.showJumpBack, "the jump has no way back")
-        #expect(f.page.jumps.count <= 1 + JumpLanding.reads / JumpLanding.resendEvery, "the reads ran past their budget")
+        #expect(f.page.fragmentReads <= JumpLanding.reads, "\(f.page.fragmentReads) reads, past the budget of \(JumpLanding.reads)")
+        #expect(f.page.linkJumps == 3, "sent \(f.page.linkJumps) times: the refused sends weren't sent again, or the reads kept sending")
         f.model.close()
     }
 
