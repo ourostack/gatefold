@@ -1,6 +1,6 @@
 name: App
 
-# Two tiers. Every pull request runs the seven required checks: the place, taps and unit legs in full, and a smoke of
+# Two tiers. Every pull request runs the eight required checks: the place, undo, taps and unit legs in full, and a smoke of
 # the reviewers' checks (the last page's number, #30; the window fit; a Duo turn-and-reopen). Every push to main runs
 # the reviewers' full lists. A red main is fixed by whoever merged the change that turned it red (AGENTS.md, "CI").
 #
@@ -205,8 +205,16 @@ jobs:
             skip: ""
             pr_tests: ""
             cold: false
+          - shard: ipad-place-loading
+            # A jump from a page still loading (#46): 236 s
+            tests: >-
+              NavigationPlaceUITests/testAJumpFromAPageStillLoadingStartsAtOnce
+            timeout: 31 # (9 + 3.9) / 0.7 = 19, + 12
+            skip: ""
+            pr_tests: ""
+            cold: false
           - shard: ipad-place-rest
-            # The catch-all for new place tests: 153 + 237 + 131 + 102 s
+            # The catch-all for new place tests: 153 + 237 + 131 + 102 s, and 64 s for the clouds offer (#46)
             tests: >-
               NavigationPlaceUITests PositionUITests/testEveryPostureKeepsThePlace CountingPlaceholderUITests
             skip: >-
@@ -217,7 +225,53 @@ jobs:
               NavigationPlaceUITests/testAContentsJumpKeepsThePlace
               NavigationPlaceUITests/testScrolledAfterTheLaunchReflowThenLeftKeepsWhereHeScrolled
               NavigationPlaceUITests/testAJumpsVeilHoldsWhileTheChapterLoads
-            timeout: 40 # (9 + 10.4) / 0.7 = 28, + 12
+              NavigationPlaceUITests/testAJumpFromAPageStillLoadingStartsAtOnce
+            timeout: 42 # (9 + 11.5) / 0.7 = 30, + 12
+            pr_tests: ""
+            cold: false
+    uses: ./.github/workflows/ui-tests.yml
+    with:
+      artifact: ${{ needs.build.outputs.artifact }}
+      device: "iPad Pro 13-inch"
+      sim: gatefold-ipad
+      shard: ${{ matrix.shard }}
+      tests: ${{ matrix.tests }}
+      skip: ${{ matrix.skip }}
+      pr_tests: ${{ matrix.pr_tests }}
+      full: ${{ needs.changes.outputs.full }}
+      cold: ${{ matrix.cold }}
+      timeout: ${{ matrix.timeout }}
+
+  ipad-undo:
+    # Every jump that isn't a turn is one tap to undo (#46), in two shards.
+    name: iPad undo shard (${{ matrix.shard }})
+    needs: [changes, build]
+    if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - shard: ipad-undo-jumps
+            # 192 + 149 + 71 + 64 s
+            tests: >-
+              PlaceUndoUITests/testAChaptersFirstPageTurnsBackByTapAndBySwipe
+              PlaceUndoUITests/testAJumpIsOneTapToUndoWithTheControlsHidden
+              PlaceUndoUITests/testATapAboveYourPageClosesItAndKeepsThePage
+              PlaceUndoUITests/testATouchOnTheScrubberNeverJumps
+            timeout: 37 # (9 + 7.9) / 0.7 = 25, + 12
+            skip: ""
+            pr_tests: ""
+            cold: false
+          - shard: ipad-undo-rest
+            # The catch-all for new undo tests: 147 + 61 + 56 s, and 40 s for the spread's left edge
+            tests: >-
+              PlaceUndoUITests
+            skip: >-
+              PlaceUndoUITests/testAChaptersFirstPageTurnsBackByTapAndBySwipe
+              PlaceUndoUITests/testAJumpIsOneTapToUndoWithTheControlsHidden
+              PlaceUndoUITests/testATapAboveYourPageClosesItAndKeepsThePage
+              PlaceUndoUITests/testATouchOnTheScrubberNeverJumps
+            timeout: 33 # (9 + 5.1) / 0.7 = 21, + 12
             pr_tests: ""
             cold: false
     uses: ./.github/workflows/ui-tests.yml
@@ -379,6 +433,16 @@ jobs:
             skip: ""
             pr_tests: ""
             cold: false
+          - shard: duo-turnback
+            # The folded Duo's turn checks (#61), on pull requests too: a tap at either edge turns within 12 reads
+            # and 24 looks, with a TURNWAIT line of counts for each. 113 + 161 s
+            tests: >-
+              PlaceUndoUITests/testATapAtTheLeftEdgeTurnsBackPromptly
+              PlaceUndoUITests/testATapAtTheLeftEdgeTurnsBackPromptlyWithinAChapter
+            timeout: 32 # (9 + 4.6) / 0.7 = 20, + 12
+            skip: ""
+            pr_tests: ""
+            cold: false
           - shard: duo-reviewer-reopen
             # 1473 s
             tests: >-
@@ -423,6 +487,23 @@ jobs:
       - env:
           APP: ${{ needs.changes.outputs.app }}
           SHARDS: ${{ needs.ipad-place.result }}
+        run: |
+          if [ "$APP" = false ]; then echo "Only Markdown changed; nothing to test."; exit 0; fi
+          echo "Shards: $SHARDS"
+          [ "$SHARDS" = success ]
+
+  ipad-undo-gate:
+    # The required check for one-tap undo: green when every shard passed, or when only Markdown changed (gatefold#42).
+    # Always runs, so the check reports on every pull request; a failed or cancelled shard turns it red.
+    name: iPad (undo)
+    needs: [changes, ipad-undo]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - env:
+          APP: ${{ needs.changes.outputs.app }}
+          SHARDS: ${{ needs.ipad-undo.result }}
         run: |
           if [ "$APP" = false ]; then echo "Only Markdown changed; nothing to test."; exit 0; fi
           echo "Shards: $SHARDS"
@@ -506,7 +587,33 @@ jobs:
         run: |
           set -o pipefail
           xcodebuild build -project Gatefold.xcodeproj -scheme Gatefold -configuration Release \
-            -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO 2>&1 | tail -50
+            -destination 'generic/platform=iOS' -derivedDataPath "$RUNNER_TEMP/release" CODE_SIGNING_ALLOWED=NO 2>&1 | tail -50
+      - name: The shipped app can't move his place by itself (test-only launch jumps are compiled out)
+        run: |
+          binary="$RUNNER_TEMP/release/Build/Products/Release-iphoneos/Gatefold.app/Gatefold"
+          test -f "$binary"
+          # Swift keeps literals of 15 bytes or fewer inline, where strings can't see them, so the check
+          # looks for the launch jump's 34-byte marker (LaunchOptions.goToMarker), whose prefix is the key.
+          marker="GatefoldGoTo/test-only-launch-jump"
+          if ! grep -q "\"$marker\"" Gatefold/Design/Design.swift; then
+            echo "::error::LaunchOptions.goToMarker no longer reads $marker; update this check with it"
+            exit 1
+          fi
+          # The key itself is too short for strings to see, so the app may only read it through the marker.
+          if git grep -n '"GatefoldGoTo"' -- Gatefold; then
+            echo "::error::The app reads GatefoldGoTo directly, where this check can't see it; read it through LaunchOptions.goToMarker"
+            exit 1
+          fi
+          # Canary: a launch key of 16 bytes that Release keeps must be visible, or a miss proves nothing.
+          if ! strings -a "$binary" | grep -q "GatefoldOpenBook"; then
+            echo "::error::This check can't see the Release app's launch keys, so it can't vouch for it"
+            exit 1
+          fi
+          if strings -a "$binary" | grep -q "$marker"; then
+            echo "::error::The Release app reads -GatefoldGoTo: a launch jump could move his place"
+            exit 1
+          fi
+          echo "No launch jump in the Release app"
 
   unit:
     name: Unit tests (iPhone Duo)
