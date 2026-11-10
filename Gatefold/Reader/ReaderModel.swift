@@ -384,6 +384,8 @@ final class ReaderModel {
     var countingPages: Bool {
         pageReady && screenNumbers == nil && screenLayout != nil && !countGaveUp && !countStalled
     }
+    /// Your Page is open: he is still tuning the page (gatefold#162).
+    @ObservationIgnored var tuning = false
     /// No chapter counted, and no count begun, for a minute.
     private(set) var countStalled = false
     @ObservationIgnored private var stallTimer: Task<Void, Never>?
