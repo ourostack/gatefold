@@ -147,12 +147,15 @@ jobs:
   # UI tests run in shards, each on its own runner from the one build, so a pull request's checks fit the PR clock
   # (gatefold#39). The split follows the slowest pass of each test in ten runs (green 42675099629, 42640941539,
   # 42584275845 and 42570370853, and main's 42673726551, 42666016340, 42656170735, 42605468542, 42605267361 and
-  # 42576626603): about 10 to 13 min of tests a pull-request shard. A test that alone takes longer has a shard of its
+  # 42576626603; for the limits, also 42711088472, 42717866316, 42725703725, 42711127428, 42727618551, 42717354081,
+  # 42734914470 and 42734917830): about 10 to 13 min of tests a pull-request shard. A test that alone takes longer has a shard of its
   # own. Each required check is a gate job below, green only when every one of its shards passed. Shards with
   # `pr_tests: none` run on main and on full-list pull requests only.
-  # Each `timeout` is the shard's measured time / 0.7, plus 12 for the logs after the tests (gatefold#141): 9 min of
-  # setup (job start to booted: median 4.7, p90 8.1 over 89 jobs in 40 runs) plus its tests' slowest passes; a cold
-  # shard adds 4 min for the erase before /0.7 and 10 for one fresh device (gatefold#71).
+  # Each `timeout` is 9 min of setup (job start to booted: median 4.7, p90 8.1 over 89 jobs in 40 runs), plus twice the
+  # sum of its tests' slowest passing times, plus 12 for the logs after the tests (gatefold#141); a cold shard adds 4 min
+  # for the erase and 10 for one fresh device (gatefold#71). Twice, because on these overloaded runners a test that
+  # passes can run 2-3x its usual time (gatefold#39: 351 s and 1053 s for the iPad's every-tap test); a shard that
+  # still hits its limit is a red to fix at its cause, not a limit to raise.
   # scripts/ci-shards.py (in `GatefoldCore tests`) fails when a listed test does not exist or runs in two shards.
   ipad-place:
     name: iPad place shard (${{ matrix.shard }})
@@ -167,7 +170,7 @@ jobs:
             tests: >-
               RotationRepro/testRotateThenLeaveWithoutTurning
             cold: true
-            timeout: 55 # (9 + 4 + 10.1) / 0.7 = 33, + 10 + 12
+            timeout: 58 # (9 + 4) + 2 x 11.3 + 10 + 12
             skip: ""
             pr_tests: ""
           - shard: ipad-place-cold-stalled
@@ -176,13 +179,13 @@ jobs:
             skip: >-
               RotationRepro/testRotateThenLeaveWithoutTurning
             cold: true
-            timeout: 54 # (9 + 4 + 9.1) / 0.7 = 32, + 10 + 12
+            timeout: 60 # (9 + 4) + 2 x 12.1 + 10 + 12
             pr_tests: ""
           - shard: ipad-place-cold-midturn
             tests: >-
               RotationMidTransitionUITests
             cold: true
-            timeout: 58 # (9 + 4 + 11.9) / 0.7 = 36, + 10 + 12
+            timeout: 61 # (9 + 4) + 2 x 12.9 + 10 + 12
             skip: ""
             pr_tests: ""
           - shard: ipad-place-portrait
@@ -191,7 +194,7 @@ jobs:
               NavigationPlaceUITests/testReadInPortraitRotatedThenLeftKeepsHisFirstWords
               NavigationPlaceUITests/testWithPageNumbersOnReadInPortraitRotatedThenLeftKeepsHisFirstWords
               NavigationPlaceUITests/testTheOpeningCoverLetsTheControlsThrough
-            timeout: 43 # (9 + 12.3) / 0.7 = 31, + 12
+            timeout: 52 # 9 + 2 x 15.2 + 12
             skip: ""
             pr_tests: ""
             cold: false
@@ -202,7 +205,7 @@ jobs:
               NavigationPlaceUITests/testAContentsJumpKeepsThePlace
               NavigationPlaceUITests/testScrolledAfterTheLaunchReflowThenLeftKeepsWhereHeScrolled
               NavigationPlaceUITests/testAJumpsVeilHoldsWhileTheChapterLoads
-            timeout: 43 # (9 + 12.5) / 0.7 = 31, + 12
+            timeout: 57 # 9 + 2 x 17.6 + 12
             skip: ""
             pr_tests: ""
             cold: false
@@ -210,7 +213,7 @@ jobs:
             # A jump from a page still loading (#46): 236 s
             tests: >-
               NavigationPlaceUITests/testAJumpFromAPageStillLoadingStartsAtOnce
-            timeout: 31 # (9 + 3.9) / 0.7 = 19, + 12
+            timeout: 29 # 9 + 2 x 3.9 + 12
             skip: ""
             pr_tests: ""
             cold: false
@@ -227,7 +230,7 @@ jobs:
               NavigationPlaceUITests/testScrolledAfterTheLaunchReflowThenLeftKeepsWhereHeScrolled
               NavigationPlaceUITests/testAJumpsVeilHoldsWhileTheChapterLoads
               NavigationPlaceUITests/testAJumpFromAPageStillLoadingStartsAtOnce
-            timeout: 42 # (9 + 11.5) / 0.7 = 30, + 12
+            timeout: 47 # 9 + 2 x 12.6 + 12
             pr_tests: ""
             cold: false
     uses: ./.github/workflows/ui-tests.yml
@@ -259,7 +262,7 @@ jobs:
               PlaceUndoUITests/testAJumpIsOneTapToUndoWithTheControlsHidden
               PlaceUndoUITests/testATapAboveYourPageClosesItAndKeepsThePage
               PlaceUndoUITests/testATouchOnTheScrubberNeverJumps
-            timeout: 37 # (9 + 7.9) / 0.7 = 25, + 12
+            timeout: 37 # 9 + 2 x 7.9 + 12
             skip: ""
             pr_tests: ""
             cold: false
@@ -272,7 +275,7 @@ jobs:
               PlaceUndoUITests/testAJumpIsOneTapToUndoWithTheControlsHidden
               PlaceUndoUITests/testATapAboveYourPageClosesItAndKeepsThePage
               PlaceUndoUITests/testATouchOnTheScrubberNeverJumps
-            timeout: 33 # (9 + 5.1) / 0.7 = 21, + 12
+            timeout: 32 # 9 + 2 x 5.1 + 12
             pr_tests: ""
             cold: false
     uses: ./.github/workflows/ui-tests.yml
@@ -301,14 +304,14 @@ jobs:
           - shard: ipad-taps-landscape
             tests: >-
               FineTuneTapUITests/testEveryTapFlipsItsSwitchLandscape
-            timeout: 50 # (9 + 17.4) / 0.7 = 38, + 12
+            timeout: 56 # 9 + 2 x 17.4 + 12
             skip: ""
             pr_tests: ""
             cold: false
           - shard: ipad-taps-portrait
             tests: >-
               FineTuneTapUITests/testEveryTapFlipsItsSwitchPortrait
-            timeout: 51 # (9 + 18.1) / 0.7 = 39, + 12
+            timeout: 58 # 9 + 2 x 18.1 + 12
             skip: ""
             pr_tests: ""
             cold: false
@@ -318,14 +321,14 @@ jobs:
               FineTuneTapUITests
             skip: >-
               FineTuneTapUITests/testEveryTapFlipsItsSwitchLandscape FineTuneTapUITests/testEveryTapFlipsItsSwitchPortrait
-            timeout: 44 # (9 + 13.0) / 0.7 = 32, + 12
+            timeout: 48 # 9 + 2 x 13.4 + 12
             pr_tests: ""
             cold: false
           - shard: ipad-taps-furniture
             # 141 + 275 + 305 s
             tests: >-
               PageFurnitureUITests
-            timeout: 43 # (9 + 12.0) / 0.7 = 31, + 12
+            timeout: 49 # 9 + 2 x 13.6 + 12
             skip: ""
             pr_tests: ""
             cold: false
@@ -360,7 +363,7 @@ jobs:
               ReopenAfterControlsUITests
             pr_tests: >-
               ReviewerChecksUITests/testTheLastPagesNumberIsTheCount WindowFitUITests
-            timeout: 67 # (9 + 29.4) / 0.7 = 55, + 12
+            timeout: 83 # 9 + 2 x 31.0 + 12
             skip: ""
             cold: false
           - shard: ipad-reviewer-numbers
@@ -370,7 +373,7 @@ jobs:
               PageNumberUITests/testOnASpreadEveryTurnMovesOnTwoPages
             pr_tests: >-
               none
-            timeout: 68 # (9 + 29.5) / 0.7 = 56, + 12
+            timeout: 81 # 9 + 2 x 29.5 + 12
             skip: ""
             cold: false
           - shard: ipad-reviewer-rest
@@ -381,7 +384,7 @@ jobs:
               ReviewerChecksUITests/testPageNumbersAreOnOrOffInEveryBook
             pr_tests: >-
               none
-            timeout: 66 # (9 + 28.7) / 0.7 = 54, + 12
+            timeout: 89 # 9 + 2 x 33.5 + 12
             cold: false
     uses: ./.github/workflows/ui-tests.yml
     with:
@@ -409,10 +412,18 @@ jobs:
       matrix:
         include:
           - shard: duo-taps-portrait
-            # 424 + 253 s
+            # The every-tap test alone: under load it ran 2-3x its usual 424 s, and with a second test in the shard it was
+            # stopped mid-run (runs 42711088472 and 42717866316; gatefold#39).
             tests: >-
-              FineTuneTapUITests/testEveryTapFlipsItsSwitchPortrait FineTuneTapUITests/testAQuickTouchChangesEverySwitchOnce
-            timeout: 41 # (9 + 11.3) / 0.7 = 29, + 12
+              FineTuneTapUITests/testEveryTapFlipsItsSwitchPortrait
+            timeout: 36 # 9 + 2 x 7.4 + 12
+            skip: ""
+            pr_tests: ""
+            cold: false
+          - shard: duo-taps-quick
+            tests: >-
+              FineTuneTapUITests/testAQuickTouchChangesEverySwitchOnce
+            timeout: 30 # 9 + 2 x 4.4 + 12
             skip: ""
             pr_tests: ""
             cold: false
@@ -423,14 +434,14 @@ jobs:
             skip: >-
               FineTuneTapUITests/testEveryTapFlipsItsSwitchPortrait FineTuneTapUITests/testAQuickTouchChangesEverySwitchOnce
               FineTuneTapUITests/testEveryTapFlipsItsSwitchLandscape
-            timeout: 42 # (9 + 11.6) / 0.7 = 30, + 12
+            timeout: 52 # 9 + 2 x 15.1 + 12
             pr_tests: ""
             cold: false
           - shard: duo-position
             # 237 + 173 + 86 + 83 + 79 s, and 65 s for the landscape every-tap test, which skips on the Duo
             tests: >-
               PositionUITests FineTuneTapUITests/testEveryTapFlipsItsSwitchLandscape
-            timeout: 43 # (9 + 12.1) / 0.7 = 31, + 12
+            timeout: 59 # 9 + 2 x 18.7 + 12
             skip: ""
             pr_tests: ""
             cold: false
@@ -440,7 +451,7 @@ jobs:
             tests: >-
               PlaceUndoUITests/testATapAtTheLeftEdgeTurnsBackPromptly
               PlaceUndoUITests/testATapAtTheLeftEdgeTurnsBackPromptlyWithinAChapter
-            timeout: 32 # (9 + 4.6) / 0.7 = 20, + 12
+            timeout: 31 # 9 + 2 x 4.6 + 12
             skip: ""
             pr_tests: ""
             cold: false
@@ -450,7 +461,7 @@ jobs:
               ReviewerChecksUITests/testEveryReopenReturnsTheSameWords
             pr_tests: >-
               none
-            timeout: 60 # (9 + 24.6) / 0.7 = 48, + 12
+            timeout: 71 # 9 + 2 x 24.6 + 12
             skip: ""
             cold: false
           - shard: duo-reviewer-rest
@@ -461,7 +472,7 @@ jobs:
               ReviewerChecksUITests/testEveryReopenReturnsTheSameWords
             pr_tests: >-
               none
-            timeout: 58 # (9 + 23.2) / 0.7 = 46, + 12
+            timeout: 72 # 9 + 2 x 25.2 + 12
             cold: false
     uses: ./.github/workflows/ui-tests.yml
     with:
