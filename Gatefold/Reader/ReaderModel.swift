@@ -1136,8 +1136,11 @@ final class ReaderModel {
     /// The open's settle is moving the page: a forced reveal waits for the move to finish.
     @ObservationIgnored private var openSettleGoing = false
 
+    var diagStage = 0
     func acceptSuggestion() async {
-        guard let s = suggestion, !isClosed else { return }
+        diagStage = 1
+        guard let s = suggestion, !isClosed else { diagStage = -1; return }
+        diagStage = 2
         hisMoves += 1
         withAnimation(Motion.banner) { suggestion = nil }
         hideSlip()
@@ -1155,9 +1158,11 @@ final class ReaderModel {
         // landing goes once the page shows, which the cover itself bounds (`forceReady`); counted in looks.
         for _ in 0..<Self.catchUpReadyLooks where !pageReady && !isClosed { try? await Task.sleep(for: .milliseconds(50)) }
         guard !isClosed else { return }
+        diagStage = 3
         // The pages riffle past on the way, the way a thumb finds a place in a real book.
         var back: Int?
         let jump = await veiled(riffle: true, forward: s.targetProgression >= totalProgression) {
+            self.diagStage = 5
             back = await self.land(on: locator, progression: s.targetProgression, target: aim, cloud: cloud,
                                    rememberBack: !own, publishes: false)
         }
@@ -1260,6 +1265,7 @@ final class ReaderModel {
         // (gatefold#173). At the veil's old limit it lets go, the chapter shows its own loading, and the
         // jump goes on and lands when the load comes in. Inside, not alongside: a jump of his made while a
         // hung one is still out is watched too.
+        if diagStage == 3 { diagStage = 4 }
         if step == nil, !Self.insideVeil { watchVeil(jump: jump, toward: toward, watch) }
         await Self.$insideVeil.withValue(true) {
             // Behind the cover placeholder there's nothing to veil.
@@ -1401,7 +1407,9 @@ final class ReaderModel {
         landingMove = move
         defer { if landingMove == move { landingMove = nil } }
         let started = ContinuousClock.now
+        if diagStage == 5 { diagStage = 6 }
         let ready = await page?.promoteStandby(for: locator) ?? false
+        if diagStage == 6 { diagStage = ready ? 70 : 7 }
         if !ready { await page?.go(to: locator) }
         let went = Self.ms(since: started)
         // Opening another chapter, Readium places the page by progression before the chapter has laid
@@ -2125,7 +2133,9 @@ final class ReaderModel {
         moves += 1
         let back = rememberBack ? rememberPlace() : nil
         defer { publishBack(back) }
+        if diagStage == 5 { diagStage = 8 }
         if let locator = await publication.locate(progression: progression) {
+            if diagStage == 8 { diagStage = 9 }
             let jump = await veiled(toward: locator.href) { _ = await self.page?.go(to: locator) }
             if endedQuietly(jump, back: back) { return true }
             await captureAnchor()

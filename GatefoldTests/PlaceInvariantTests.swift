@@ -466,7 +466,7 @@ import Testing
             try? await Task.sleep(for: .milliseconds(10))
         }
         if f.model.jumpsPastTheVeil >= 1 { pastAt = ReaderModel.ms(since: t0) }
-        Issue.record("DIAG173 offered \(offered) sentAt \(sentAt) pastAt \(pastAt) reads \(reads) jumps \(f.page.jumps.count) ready \(f.model.pageReady) suggestion \(f.model.suggestion != nil)")
+        Issue.record("DIAG173 stage \(f.model.diagStage) offered \(offered) sentAt \(sentAt) pastAt \(pastAt) reads \(reads) jumps \(f.page.jumps.count) ready \(f.model.pageReady) suggestion \(f.model.suggestion != nil)")
         #expect(f.model.jumpsPastTheVeil == 1, "the catch-up wasn't on its way past the veil's limit (jumps sent \(f.page.jumps.count), page ready \(f.model.pageReady))")
         f.page.loadingChapter = false
         f.page.holdsJumps = false
@@ -509,7 +509,7 @@ import Testing
             try? await Task.sleep(for: .milliseconds(10))
         }
         if f.model.jumpsPastTheVeil >= 1 { pastAt = ReaderModel.ms(since: t0) }
-        Issue.record("DIAG173 offered \(offered) sentAt \(sentAt) pastAt \(pastAt) reads \(reads) jumps \(f.page.jumps.count) ready \(f.model.pageReady) suggestion \(f.model.suggestion != nil)")
+        Issue.record("DIAG173 stage \(f.model.diagStage) offered \(offered) sentAt \(sentAt) pastAt \(pastAt) reads \(reads) jumps \(f.page.jumps.count) ready \(f.model.pageReady) suggestion \(f.model.suggestion != nil)")
         #expect(f.model.jumpsPastTheVeil == 1, "the catch-up wasn't on its way past the veil's limit (jumps sent \(f.page.jumps.count), page ready \(f.model.pageReady))")
         let next = try #require(await S.locate(f.publication, 0.06))
         f.page.currentLocation = next
