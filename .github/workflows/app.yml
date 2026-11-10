@@ -184,7 +184,7 @@ jobs:
             pr_tests: >-
               ReviewerChecksUITests/testTheLastPagesNumberIsTheCount WindowFitUITests
     needs: [changes, build]
-    if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
+    if: false # diagnostic only (gatefold#159)
     runs-on: xcode-27
     timeout-minutes: ${{ matrix.timeout }}
     steps:
@@ -477,8 +477,9 @@ jobs:
           sh scripts/ci-crashes.sh mark
           python3 -I scripts/ci-within.py --until "$STEP_UNTIL" -- xcodebuild test-without-building -xctestrun "$XCTESTRUN" \
             -destination "$DESTINATION" \
-            -only-testing:GatefoldUITests/PositionUITests \
-            -only-testing:GatefoldUITests/FineTuneTapUITests \
+            -only-testing:GatefoldUITests/PositionUITests/testBookmarkInTheTopBarBookmarks \
+            -only-testing:GatefoldUITests/PositionUITests/testBookmarkRedProofWithoutATap \
+            -test-iterations 3 \
             -resultBundlePath "$RUNNER_TEMP/ui.xcresult" > "$RUNNER_TEMP/ui.log" 2>&1 || status=$?
           # No retry: a wait that runs out prints how many probe reads it made and the slowest one.
           grep -E "error:|Test Case .*(passed|failed|skipped)|TEST (SUCCEEDED|FAILED)|probe says|probe timing|TAPRATE" "$RUNNER_TEMP/ui.log" | tail -60 || true
@@ -521,7 +522,7 @@ jobs:
     # Pull requests run its smoke (a page a turn, and a reopen keeps the numbers); pushes to main add the reviewers'
     # full list, about 13 min a test on this runner (gatefold#39).
     needs: [changes, build]
-    if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
+    if: false # diagnostic only (gatefold#159)
     runs-on: xcode-27
     # 45 min measured (build 20), plus about 10 for the two turn checks; 47 min at c4c3b6a with both.
     # feel-ci sets this job longer (gatefold#65 tracks the overrun): at a merge, the larger value wins.

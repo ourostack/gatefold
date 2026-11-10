@@ -182,6 +182,22 @@ final class PositionUITests: XCTestCase {
         XCTAssertEqual(bookmark.label, "Remove Bookmark")
     }
 
+    /// Diagnostic only (gatefold#159, not for merge): no tap, so the reads must run out and the judge must fail.
+    func testBookmarkRedProofWithoutATap() {
+        launch()
+        let page = app.descendants(matching: .any)["reader.page"]
+        page.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        let bookmark = app.buttons["reader.bookmark"]
+        XCTAssertTrue(bookmark.waitForExistence(timeout: 5))
+        let started = Date()
+        let (marked, reads, hung) = readsUntilBookmarked(bookmark)
+        print(String(format: "TAPRATE bookmark red proof: marked=%@ after %d reads (%.1f s)%@", "\(marked)", reads,
+                     Date().timeIntervalSince(started), hung ? " (hang guard)" : ""))
+        XCTExpectFailure("no tap, so the bookmark must not show as marked") {
+            XCTAssertTrue(marked, "not bookmarked in \(reads) reads")
+        }
+    }
+
     /// The bookmark is judged in reads of its value, never seconds (gatefold#159, as FineTuneTap in #121): each read
     /// is a round trip to the app, so a starved runner makes reads slower instead of failing a tap that landed late.
     /// A tap that never bookmarks still fails once 40 reads come back without it (about 4 s at the least). The
