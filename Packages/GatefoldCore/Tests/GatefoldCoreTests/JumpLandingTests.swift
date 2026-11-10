@@ -59,6 +59,25 @@ private final class ColdPage {
         #expect(page.reads <= JumpLanding.reads)
     }
 
+    /// A page still loading past the plain reads is waited for, and lands once its load comes in
+    /// (gatefold#170: a slow chapter gave Back up after 150 reads).
+    @Test func aSlowLoadIsWaitedForPastThePlainReads() async {
+        let page = ColdPage(loadsAfterReads: JumpLanding.reads + 100)
+        let landed = await JumpLanding.land(target: page.place(0.62), go: { page.go(0.62) }, visible: { page.visible() },
+                                            loading: { !page.loaded }, beat: {})
+        #expect(landed)
+        #expect(page.start == page.pageStart(0.62))
+    }
+
+    /// A load that never ends still ends the landing: the reads it may wait are counted too.
+    @Test func aLoadThatNeverEndsEndsWithinItsReads() async {
+        let page = ColdPage(loadsAfterReads: nil)
+        let landed = await JumpLanding.land(target: page.place(0.62), go: { page.go(0.62) }, visible: { page.visible() },
+                                            loading: { true }, beat: {})
+        #expect(!landed)
+        #expect(page.reads <= JumpLanding.reads + JumpLanding.loadingReads)
+    }
+
     /// Run 42418233954: a jump to 0.31 counted the chapter's file start, 0.3003, as landed, within the
     /// old 0.015 of the book. Here the target is just past the file's first page, so the file start is
     /// the page right before it, and it is sent again until its own page is up.

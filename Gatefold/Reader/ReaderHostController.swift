@@ -2167,6 +2167,18 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         return readiumSpinner != nil
     }
 
+    /// A load under way, read without spending a held load's looks: a test's held load, Readium's spinner,
+    /// or a web view in view still loading (its document can sit at about:blank for seconds, gatefold#94).
+    var isLoadingChapter: Bool {
+        if heldLoadLooks > 0 || readiumSpinner != nil { return true }
+        let host = navigator.view!
+        func loading(_ v: UIView) -> Bool {
+            if let w = v as? WKWebView { return w.isLoading && w.convert(w.bounds, to: host).intersects(host.bounds) }
+            return v.subviews.contains(where: loading)
+        }
+        return loading(host)
+    }
+
     /// Readium's spinner in view, if one is up, and where: the frame in the navigator's view.
     private var readiumSpinner: CGRect? {
         let host = navigator.view!

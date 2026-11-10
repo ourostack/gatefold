@@ -1204,6 +1204,7 @@ final class ReaderModel {
     /// What the pill says: the start, or just "where you were" (a counted page number could still be the
     /// page before a jump within the chapter, and Readium's positions are not the pages he sees).
     var backLabel: String {
+        if backGaveUp { return "Couldn't go back. Try again" }
         if (backLocator?.locations.totalProgression ?? 1) < 0.005 { return "Back to the start" }
         return "Back to where you were"
     }
@@ -2044,6 +2045,7 @@ final class ReaderModel {
     /// with one more.
     func goBack() async {
         guard let back = backLocator, goingBack == nil else { return }
+        backGaveUp = false
         hisMoves += 1
         backTrips += 1
         let trip = backTrips
@@ -2056,17 +2058,25 @@ final class ReaderModel {
         let move = moves
         // Its own step, apart from the move's: a newer step of any kind means another move came since.
         let jump = takeStep()
+        // Reads while the chapter is still loading come from their own, larger count: a slow load is waited
+        // for (gatefold#170), and only one that has died gives the trip up.
         Task { [weak self] in
-            for _ in 0..<JumpLanding.reads {
-                guard let self, self.goingBack == trip, !self.isClosed else { return }
+            var budget = JumpLanding.Budget()
+            while let self, budget.take(loading: self.page?.isLoadingChapter == true) {
+                guard self.goingBack == trip, !self.isClosed else { return }
                 await self.backBeat()
             }
-            guard let self, self.goingBack == trip else { return }
-            readerLog.notice("back: trip \(trip, privacy: .public) ran out of reads; Back is free again")
+            guard let self, self.goingBack == trip, !self.isClosed else { return }
+            readerLog.notice("back: trip \(trip, privacy: .public) ran out of reads (\(budget.spent, privacy: .public) read, \(budget.waited, privacy: .public) waiting on the load); Back is free again and says so")
             self.goingBack = nil
             self.strayBack = (jump, back.href)
             // Only this trip's own veil, or the one it was about to put up.
             self.host?.abandonVeil(jump: jump)
+            // He sees that it didn't go, and one more tap tries again: the pill stays, its way back kept.
+            withAnimation(Motion.chrome) {
+                self.backGaveUp = true
+                self.showJumpBack = self.backLocator != nil
+            }
         }
         // The page on screen now: a Back tapped right after a jump comes before Readium's report of it.
         // The pill stays up through the jump and turns into this one's way back when it lands, never
@@ -2089,6 +2099,7 @@ final class ReaderModel {
                     self?.page?.currentLocation.map { ReadingAnchor(href: $0.href.string, progression: $0.locations.progression ?? 0, text: nil) }
                 },
                 stillWanted: { [weak self] in self.map { $0.goingBack == trip && $0.moves == move && $0.steps == jump && !$0.isClosed } ?? false },
+                loading: { [weak self] in self?.page?.isLoadingChapter == true },
                 beat: { [weak self] in await self?.backBeat() })
         }
         // Freed by its count: whatever its reports did meanwhile (Readium can report before the jump
@@ -2122,11 +2133,18 @@ final class ReaderModel {
         }
         await captureAnchor()
         // No move since: it is his Back, late, and its place is kept now (its report may have come first).
-        if freed, steps == jump, !isClosed, let here = page?.currentLocation { await locationDidChange(here, hisMove: true) }
+        if freed, steps == jump, !isClosed, let here = page?.currentLocation {
+            // Late, but there: the pill no longer says it didn't go.
+            backGaveUp = false
+            await locationDidChange(here, hisMove: true)
+        }
         // Sent more than once: the dropped try's report (the chapter's start) claimed Back's move and was
         // kept, and the landing's own report then read as layout. His page is kept here, once.
         else if !freed, backLanded, sends > 1, steps == jump, !isClosed, let here = page?.currentLocation { await locationDidChange(here, hisMove: true) }
     }
+    /// The last Back trip gave up (its chapter never came): the pill says so until he taps it again or
+    /// jumps somewhere else.
+    private(set) var backGaveUp = false
     /// The Back trip under way: a second tap meanwhile is not a second jump.
     @ObservationIgnored private var goingBack: Int?
     @ObservationIgnored private var backTrips = 0
@@ -2154,7 +2172,7 @@ final class ReaderModel {
         // saved its chapter's start because the place it remembered was already that start). Tags only.
         let tag: (Locator?) -> String = { $0.map(Self.placeTag) ?? "none" }
         readerLog.notice("back: jump \(self.backJumps, privacy: .public) remembers \(tag(here ?? self.location), privacy: .public) (from \(here == nil ? "where he is" : "the page on screen", privacy: .public)); on screen \(tag(self.page?.currentLocation), privacy: .public); kept \(tag(self.app.library.book(self.bookID)?.locatorJSON.flatMap { try? Locator(jsonString: $0) }), privacy: .public)")
-        if !keepingTheWayBack { backLocator = nil }
+        if !keepingTheWayBack { backLocator = nil; backGaveUp = false }
         return backJumps
     }
     @ObservationIgnored private var backJumps = 0
