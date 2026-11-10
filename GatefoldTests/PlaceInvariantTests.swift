@@ -217,6 +217,21 @@ import Testing
         f.model.close()
     }
 
+    /// Probe (#154): a place write slower than the 2 s wait, checked with main's settle.
+    @Test func aPlaceWriteSlowerThanTwoSecondsIsWaitedFor() async throws {
+        let f = try await S.make(remote: { _, _ in nil }, startAt: 0.05)
+        await f.model.load()
+        await f.model.locationDidChange(try #require(f.page.currentLocation))
+        let next = try #require(await S.locate(f.publication, 0.3))
+        f.model.placeWriteWait = { try? await Task.sleep(for: .milliseconds(2500)) }
+        f.page.currentLocation = next
+        f.model.userTurnedPage()
+        let want = next.locations.totalProgression ?? -1
+        await Self.settle { abs((Self.kept(f) ?? -1) - want) < 0.001 }
+        #expect(abs((Self.kept(f) ?? -1) - want) < 0.001, "the place kept is \(Self.kept(f) ?? -1), not his turn's page at \(want)")
+        f.model.close()
+    }
+
     /// A place write still on its way for an older move never lands over a newer move's place. On CI at
     /// c4c3b6a the Contents jump's write, slow to map its position, landed after Back's and kept the
     /// jump's page (0.6996) as his place once Back had brought him home.
