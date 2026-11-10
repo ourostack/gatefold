@@ -2158,6 +2158,8 @@ final class ReaderModel {
         // kept, and the landing's own report then read as layout. His page is kept here, once.
         else if !freed, backLanded, sends > 1, steps == jump, !isClosed, let here = page?.currentLocation { await locationDidChange(here, hisMove: true) }
     }
+    /// Back trips whose veil let go at its limit while the trip went on (tests read it; gatefold#170).
+    @ObservationIgnored private(set) var tripsPastTheVeil = 0
     /// The last Back trip gave up (its chapter never came): the pill says so until he taps it again,
     /// jumps somewhere else, or reads on until the pill goes.
     private(set) var backGaveUp = false
