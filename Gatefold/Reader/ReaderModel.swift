@@ -2059,13 +2059,30 @@ final class ReaderModel {
         // Its own step, apart from the move's: a newer step of any kind means another move came since.
         let jump = takeStep()
         // Reads while the chapter is still loading come from their own, larger count: a slow load is waited
-        // for (gatefold#170), and only one that has died gives the trip up.
+        // for (gatefold#170), and only one that has died gives the trip up. The veil isn't: at its old
+        // limit (`JumpLanding.reads` beats, about 30 s) it lets go and the chapter shows its own loading,
+        // never a screen frozen for minutes, while the trip goes on and lands when the load comes in.
+        // A move of his meanwhile (a turn, a swipe, a jump) ends the trip quietly: his new page stands.
         Task { [weak self] in
-            var budget = JumpLanding.Budget()
-            while let self, self.goingBack == trip, !self.isClosed, budget.take(loading: self.page?.isLoadingChapter == true) {
+            var budget = JumpLanding.Budget(), beats = 0
+            while let self, self.goingBack == trip, !self.isClosed {
+                guard self.moves == move, self.steps == jump else {
+                    readerLog.notice("back: trip \(trip, privacy: .public) overtaken by a move of his after \(beats, privacy: .public) beats; ended quietly")
+                    self.goingBack = nil
+                    self.strayBack = (jump, back.href)
+                    self.host?.abandonVeil(jump: jump)
+                    return
+                }
+                guard budget.take(loading: self.page?.isLoadingChapter == true) else { break }
                 await self.backBeat()
+                beats += 1
+                if beats == JumpLanding.reads, self.goingBack == trip {
+                    readerLog.notice("back: trip \(trip, privacy: .public) still on its way after \(beats, privacy: .public) beats; the veil lets go, the trip goes on")
+                    self.tripsPastTheVeil += 1
+                    self.host?.abandonVeil(jump: jump)
+                }
             }
-            guard let self, self.goingBack == trip, !self.isClosed else { return }
+            guard let self, self.goingBack == trip, !self.isClosed, self.moves == move, self.steps == jump else { return }
             readerLog.notice("back: trip \(trip, privacy: .public) ran out of reads (\(budget.spent, privacy: .public) read, \(budget.waited, privacy: .public) waiting on the load); Back is free again and says so")
             self.goingBack = nil
             self.strayBack = (jump, back.href)
@@ -2119,9 +2136,9 @@ final class ReaderModel {
         }
         // Overtaken by another move, a Back takes no words: the page is that move's now. One that came
         // back in time is overtaken only by a jump or turn of his (`moves`) and simply stops there. A
-        // freed one, back after its reads ran out, is overtaken by any newer step (a swipe too) and the
+        // freed one, back after its reads ran out, is overtaken by any newer step or move (a swipe, a turn) and the
         // page is put back where that move left it.
-        guard freed ? steps == jump : moves == move else {
+        guard freed ? steps == jump && moves == move : moves == move else {
             guard freed else { return }
             // Readium has moved the page to this trip's place by now. With the newest move landed (one
             // still on its way, a jump or a turn, lands after and wins), the page goes back to where it
@@ -2136,11 +2153,12 @@ final class ReaderModel {
         // go. The pill keeps its way back and says so, and nothing here is taken as his (gatefold#170: the
         // watchdog and the landing count the same reads, so a jump that came back short is freed too).
         let gaveUp = (freed || (!backLanded && (back.locations.progression ?? 0) > 0 && steps == jump))
-        if gaveUp, !(await pageShows(back)) {
+        if gaveUp, !(await pageShows(back, stillWanted: { [weak self] in self.map { $0.steps == jump && !$0.isClosed } ?? false })) {
+            // Read again after the wait: a move of his meanwhile has its own pill, never this trip's words.
+            guard steps == jump, freed || moves == move, !isClosed else { return }
             keepsUndo = false
             if pendingBack?.jump == undo { pendingBack = nil }
             readerLog.notice("back: trip \(trip, privacy: .public) never showed his page; the pill keeps it and says so")
-            guard !isClosed else { return }
             withAnimation(Motion.chrome) {
                 backGaveUp = true
                 showJumpBack = backLocator != nil
@@ -2196,15 +2214,21 @@ final class ReaderModel {
     @ObservationIgnored private var backJumps = 0
     @ObservationIgnored private var pendingBack: (jump: Int, locator: Locator?)?
 
-    /// Offers the way back once its jump has landed (a veiled jump returns once the new page has
-    /// painted), and only for the newest jump: one overtaken by another offers nothing.
-    /// The page on screen holds `place`: in its file, and (mid-file) in the page's range.
-    private func pageShows(_ place: Locator) async -> Bool {
-        guard let inFile = place.locations.progression, inFile > 0 else { return page?.currentLocation?.href == place.href }
-        guard let range = await page?.pageRange() else { return false }
-        return range.contains(ReadingAnchor(href: place.href.string, progression: inFile, text: nil))
+    /// The page on screen holds `place`: in its file, and (mid-file) in the page's range. Read a few
+    /// times: a jump that has only just come back may not have painted yet.
+    private func pageShows(_ place: Locator, reads: Int = JumpLanding.resendEvery, stillWanted: () -> Bool) async -> Bool {
+        for _ in 0..<reads {
+            if let inFile = place.locations.progression, inFile > 0 {
+                if let range = await page?.pageRange(), range.contains(ReadingAnchor(href: place.href.string, progression: inFile, text: nil)) { return true }
+            } else if page?.currentLocation?.href == place.href { return true }
+            guard stillWanted() else { return false }
+            await backBeat()
+        }
+        return false
     }
 
+    /// Offers the way back once its jump has landed (a veiled jump returns once the new page has
+    /// painted), and only for the newest jump: one overtaken by another offers nothing.
     private func publishBack(_ jump: Int?) {
         guard let jump, let pending = pendingBack, pending.jump == jump else {
             if let jump { readerLog.notice("back: jump \(jump, privacy: .public) superseded by \(self.pendingBack?.jump ?? -1, privacy: .public)") }
