@@ -2172,6 +2172,8 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     var isLoadingChapter: Bool {
         if heldLoadLooks > 0 || readiumSpinner != nil { return true }
         let host = navigator.view!
+        // Hidden ones count too: Readium hides a web view still loading by its scroll view's alpha
+        // (`unveilPlacedPages`), so the one on its way is often the hidden one.
         func loading(_ v: UIView) -> Bool {
             if let w = v as? WKWebView { return w.isLoading && w.convert(w.bounds, to: host).intersects(host.bounds) }
             return v.subviews.contains(where: loading)
