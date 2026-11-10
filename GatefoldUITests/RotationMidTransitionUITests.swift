@@ -13,6 +13,17 @@ final class RotationMidTransitionUITests: XCTestCase {
     override func tearDown() async throws { XCUIDevice.shared.orientation = .portrait }
 
     private func el(_ id: String) -> XCUIElement { app.descendants(matching: .any)[id].firstMatch }
+    /// Reads of the app until `done`, never seconds (gatefold#94, as FineTuneTap in #121): each read waits at least
+    /// 0.1 s, so `reads` sets the floor a fast runner gets (the old seconds); `hangGuard` only catches a hang.
+    private func readsUntil(reads: Int, hangGuard: TimeInterval, _ done: () -> Bool) -> (ok: Bool, reads: Int, hung: Bool) {
+        let hung = Date().addingTimeInterval(hangGuard)
+        for read in 1...reads {
+            if done() { return (true, read, false) }
+            if Date() > hung { return (false, read, true) }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        }
+        return (false, reads, false)
+    }
     private var words: String { (el("reader.visibleText").value as? String) ?? "" }
 
     private func settle(_ timeout: TimeInterval) -> String {
@@ -60,10 +71,14 @@ final class RotationMidTransitionUITests: XCTestCase {
 
     private func tapContentsRow() {
         el("reader.page").coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
-        XCTAssertTrue(el("reader.contents").waitForExistence(timeout: 5))
+        let offered = readsUntil(reads: 50, hangGuard: 120) { el("reader.contents").exists }
+        print("MIDTURN contents offered=\(offered.ok) after \(offered.reads) reads\(offered.hung ? " (hang guard)" : "")")
+        XCTAssertTrue(offered.ok, "Contents is offered (not in \(offered.reads) reads\(offered.hung ? ", hang guard" : ""))")
         el("reader.contents").tap()
         let rows = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH 'contents.entry.'"))
-        XCTAssertTrue(rows.firstMatch.waitForExistence(timeout: 15), "the contents list is up")
+        let listed = readsUntil(reads: 150, hangGuard: 180) { rows.firstMatch.exists }
+        print("MIDTURN contents listed=\(listed.ok) after \(listed.reads) reads\(listed.hung ? " (hang guard)" : "")")
+        XCTAssertTrue(listed.ok, "the contents list is up (not in \(listed.reads) reads\(listed.hung ? ", hang guard" : ""))")
         let pick = rows.element(boundBy: min(30, max(0, rows.count - 1)))
         for _ in 0..<6 where !pick.isHittable { app.swipeUp() }
         pick.tap()
@@ -77,10 +92,15 @@ final class RotationMidTransitionUITests: XCTestCase {
         // floor (`GATEFOLD_SPREAD_FLOOR`); the page left stuck for good, the bug this guards, still fails.
         let floor = TimeInterval(ProcessInfo.processInfo.environment["GATEFOLD_SPREAD_FLOOR"] ?? "") ?? 0
         let limit = max(asked, floor)
+        // Judged in screenshots as well as seconds (gatefold#94): a starved runner takes seconds per screenshot, so
+        // the spread gets at least one look per second of the limit before it fails, never fewer because the
+        // runner is slow. A fast runner fails at the limit as before. Four times the limit only catches a hang.
+        let looks = Int(limit.rounded(.up))
         let start = Date()
-        let up = start.addingTimeInterval(limit)
-        var last: (Double, Double)?
-        while Date() < up {
+        let up = start.addingTimeInterval(limit), hung = start.addingTimeInterval(limit * 4)
+        var last: (Double, Double)?, shots = 0
+        while (Date() < up || shots < looks), Date() < hung {
+            shots += 1
             if let i = Self.ink(XCUIScreen.main.screenshot().image) {
                 last = i
                 if i.0 > 0.01, i.1 > 0.01 { break }
@@ -89,8 +109,8 @@ final class RotationMidTransitionUITests: XCTestCase {
         }
         let shot = XCTAttachment(screenshot: XCUIScreen.main.screenshot()); shot.name = "after-\(what)"; shot.lifetime = .keepAlways; add(shot)
         let ok = (last?.0 ?? 0) > 0.01 && (last?.1 ?? 0) > 0.01
-        print("MIDTURN \(what): ink \(last.map { String(format: "%.3f / %.3f", $0.0, $0.1) } ?? "none") \(ok ? "WHOLE" : "STUCK") after \(String(format: "%.1f", Date().timeIntervalSince(start))) s")
-        XCTAssertTrue(ok, "\(what): the spread wasn't whole within \(Int(limit)) s of the turn")
+        print("MIDTURN \(what): ink \(last.map { String(format: "%.3f / %.3f", $0.0, $0.1) } ?? "none") \(ok ? "WHOLE" : "STUCK") after \(String(format: "%.1f", Date().timeIntervalSince(start))) s, \(shots) screenshots")
+        XCTAssertTrue(ok, "\(what): the spread wasn't whole within \(Int(limit)) s and \(looks) screenshots of the turn\(Date() >= hung ? " (hang guard)" : "")")
         XCTAssertFalse(settle(30).isEmpty, "\(what): the page's words are readable")
     }
 
