@@ -451,11 +451,13 @@ import Testing
         // The first page shown, as the host's reveal does: no host here, so a catch-up would otherwise
         // wait out the cover's bound before it goes.
         f.model.forceReady()
+        for _ in 0..<1_000 where !f.model.pageReady { try? await Task.sleep(for: .milliseconds(10)) }
+        try #require(f.model.pageReady, "the first page never showed")
         f.page.holdsJumps = true
         f.page.loadingChapter = true
         let taking = Task { await f.model.acceptSuggestion() }
         await Self.settle { f.model.jumpsPastTheVeil >= 1 }
-        #expect(f.model.jumpsPastTheVeil == 1, "the catch-up wasn't on its way past the veil's limit")
+        #expect(f.model.jumpsPastTheVeil == 1, "the catch-up wasn't on its way past the veil's limit (jumps sent \(f.page.jumps.count), page ready \(f.model.pageReady))")
         f.page.loadingChapter = false
         f.page.holdsJumps = false
         f.page.releaseJumps()
@@ -483,11 +485,13 @@ import Testing
         // The first page shown, as the host's reveal does: no host here, so a catch-up would otherwise
         // wait out the cover's bound before it goes.
         f.model.forceReady()
+        for _ in 0..<1_000 where !f.model.pageReady { try? await Task.sleep(for: .milliseconds(10)) }
+        try #require(f.model.pageReady, "the first page never showed")
         f.page.holdsJumps = true
         f.page.loadingChapter = true
         let taking = Task { await f.model.acceptSuggestion() }
         await Self.settle { f.model.jumpsPastTheVeil >= 1 }
-        #expect(f.model.jumpsPastTheVeil == 1, "the catch-up wasn't on its way past the veil's limit")
+        #expect(f.model.jumpsPastTheVeil == 1, "the catch-up wasn't on its way past the veil's limit (jumps sent \(f.page.jumps.count), page ready \(f.model.pageReady))")
         let next = try #require(await S.locate(f.publication, 0.06))
         f.page.currentLocation = next
         if how == "turn" {
