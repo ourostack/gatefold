@@ -195,4 +195,21 @@ final class ReloadedPage: ReaderPage {
         #expect(p >= 0.986428 && p <= 1, "the restore jumps to @\(p), not the page on screen")
         #expect(jump.text.highlight == "words at the top of the page on screen")
     }
+
+    /// A swipe after a corrected turn (Readium's own, counted in no move) that brings him to the file's real
+    /// start leaves the anchor there: the turn's correction is not his new page's.
+    @Test func aSwipeAfterACorrectedTurnLeavesTheAnchorOnThePageItReaches() async throws {
+        let t = try await opened()
+        let start = try turnBack(t, words: "words at the top of the page on screen")
+        t.model.userTurnedPage()
+        _ = try await placeOnItsLastPage(closing: false, t)
+        // He swipes back through the chapter to its first page, which Readium names as it did before.
+        t.model.noteInteraction()
+        t.page.live = VisibleRange(href: t.previous, start: 0, end: 0.014)
+        t.page.words = "words at the top of the chapter's first page"
+        await t.model.locationDidChange(start)
+        let anchor = try #require(t.model.keeper.anchor)
+        t.model.close()
+        #expect(anchor.progression < 0.014, "the anchor kept the turn's page (@\(anchor.progression)), not the one he swiped to")
+    }
 }
