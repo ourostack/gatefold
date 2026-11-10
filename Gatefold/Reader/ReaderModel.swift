@@ -2137,7 +2137,7 @@ final class ReaderModel {
               let at = location.locations.progression, let start = shown.locations.progression,
               at < start - 0.000_1 else { return nil }
         // His words, when the anchor was read on this page: they carry the words, the page's start doesn't.
-        if let words = anchorLocator, words.href == shown.href, let w = words.locations.progression, w >= start - 0.000_1 { return words }
+        if let words = anchorLocator, words.href == shown.href, let w = words.locations.progression, abs(w - start) < 0.000_1 { return words }
         return shown
     }
 
