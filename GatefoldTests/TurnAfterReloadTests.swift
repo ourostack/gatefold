@@ -234,4 +234,19 @@ final class ReloadedPage: ReaderPage {
         let p = jump.locations.progression ?? -1
         #expect(p >= 0.986428 && p <= 1, "after a touch the restore jumps to @\(p)")
     }
+
+    /// A live read that fails (the reloaded file still loading, as after a spring back that stepped back into
+    /// it) can't say the page moved: the turn's correction holds the anchor still.
+    @Test func anUnreadablePageAfterACorrectedTurnKeepsTheAnchorOnItsPage() async throws {
+        let t = try await opened()
+        let start = try turnBack(t, words: "words at the top of the page on screen")
+        t.model.userTurnedPage()
+        _ = try await placeOnItsLastPage(closing: false, t)
+        t.page.live = nil
+        t.model.noteInteraction()
+        await t.model.locationDidChange(start)
+        let anchor = try #require(t.model.keeper.anchor)
+        t.model.close()
+        #expect(anchor.progression >= 0.986428 && anchor.progression <= 1, "an unreadable page dropped the turn's page: @\(anchor.progression)")
+    }
 }
