@@ -173,8 +173,10 @@ final class PositionUITests: XCTestCase {
         let before = (bookmark.value as? String) ?? "?"
         XCTAssertNotEqual(before, "Bookmarked", "the page was already bookmarked before the tap (value \(before))")
         bookmark.tap()
+        let tapped = Date()
         let (marked, reads, hung) = readsUntilBookmarked(bookmark)
-        print("TAPRATE bookmark: marked=\(marked) after \(reads) reads\(hung ? " (hang guard)" : "")")
+        print(String(format: "TAPRATE bookmark: marked=%@ after %d reads (%.1f s)%@", "\(marked)", reads,
+                     Date().timeIntervalSince(tapped), hung ? " (hang guard)" : ""))
         XCTAssertTrue(marked, hung ? "the hang guard ran out after \(reads) reads"
                                    : "tapping the top bar's bookmark bookmarks the page (not in \(reads) reads)")
         XCTAssertEqual(bookmark.label, "Remove Bookmark")
