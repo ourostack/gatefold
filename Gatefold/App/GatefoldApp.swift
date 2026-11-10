@@ -263,6 +263,8 @@ struct RootView: View {
     /// How many of Reading Now's books wait open behind the shelf. Each new page needs its own WebKit
     /// process, whose start-up is most of an open; a few books ready covers what is likely tapped.
     private static let warmCount = 3
+    /// How long a warm open waits, in tenths of a second, for the one before it to show its page.
+    private static let warmWait = 600
     private static var tappedSinceLaunch = false
 
     private var warmKeys: [String] {
@@ -283,11 +285,13 @@ struct RootView: View {
         // The most likely book starts as soon as the shelf has its first data; each next one only once
         // the one before has its page, so the first never shares the CPU with the others (three pages
         // loading at once made each take three times as long, and the first tap waited on all three).
+        // A warm page isn't forced into view, so the wait has a bound: a minute, since a slow host took
+        // 14 to 67 s for one page and the 8 s this was before let three web views load at once (gatefold#113).
         var previous: ReaderModel?
         for id in keys where !warm.contains(where: { $0.bookID == id }) {
             if let previous {
                 var waited = 0
-                while !previous.pageReady, !previous.isClosed, !Task.isCancelled, waited < 80 {
+                while !previous.pageReady, !previous.isClosed, !Task.isCancelled, waited < Self.warmWait {
                     try? await Task.sleep(for: .milliseconds(100))
                     waited += 1
                 }
