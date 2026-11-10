@@ -1156,11 +1156,15 @@ final class ReaderModel {
         for _ in 0..<Self.catchUpReadyLooks where !pageReady && !isClosed { try? await Task.sleep(for: .milliseconds(50)) }
         guard !isClosed else { return }
         // The pages riffle past on the way, the way a thumb finds a place in a real book.
+        var back: Int?
         let jump = await veiled(riffle: true, forward: s.targetProgression >= totalProgression) {
-            await self.land(on: locator, progression: s.targetProgression, target: aim, cloud: cloud, rememberBack: !own)
+            back = await self.land(on: locator, progression: s.targetProgression, target: aim, cloud: cloud,
+                                   rememberBack: !own, publishes: false)
         }
-        // Overtaken past its veil by a move of his: it didn't land where he sees it, so no success.
-        if endedQuietly(jump, back: nil) { return }
+        // Overtaken past its veil by a move of his: it didn't land where he sees it, so no way back to
+        // offer and no success.
+        if endedQuietly(jump, back: back) { return }
+        publishBack(back)
         UINotificationFeedbackGenerator().notificationOccurred(.success)
         if let locator {
             host?.underline(locator, color: theme.palette.accent)
@@ -1315,8 +1319,12 @@ final class ReaderModel {
 
     /// Goes to another device's place: the exact spot when its CFI resolved, else its percent.
     /// Records the place once, when the page has settled, and never earlier than `target`.
-    private func land(on locator: Locator?, progression: Double, target: ReadingPosition?, cloud: Double? = nil, rememberBack: Bool) async {
-        guard !isClosed else { return }
+    /// Returns the way back it remembered. `publishes` false hands it to the caller, which puts it up
+    /// only if the landing wasn't ended quietly past its veil (`acceptSuggestion`).
+    @discardableResult
+    private func land(on locator: Locator?, progression: Double, target: ReadingPosition?, cloud: Double? = nil,
+                      rememberBack: Bool, publishes: Bool = true) async -> Int? {
+        guard !isClosed else { return nil }
         // A Cloud landing makes his own place's offer stale.
         if offersHisPlace { dismissSuggestion() }
         guard let locator else {
@@ -1324,16 +1332,19 @@ final class ReaderModel {
             // kept nothing, every reopen landed on the percent afresh and the spread could fall on the
             // page beside the one he left (build 20's reopen loop, 3 in 19). The landing's own steps are
             // not places (as below): `go` counts this move first thing.
+            // Its way back is this landing's, remembered here so the caller can hold it (`publishes`).
+            let back = rememberBack ? rememberPlace() : nil
+            defer { if publishes { publishBack(back) } }
             let move = moves + 1
             landingMove = move
-            await go(toProgression: progression, rememberBack: rememberBack, his: false)
+            await go(toProgression: progression, rememberBack: false, his: false)
             guard moves == move, !isClosed else {
                 if landingMove == move { landingMove = nil }
-                return
+                return back
             }
             guard keeper.reflowing != nil else {
                 await keepPercentLanding(move: move, target: target, cloud: cloud)
-                return
+                return back
             }
             // A reflow under way (a warm open laid out upright, then turned) moves the page: keep the
             // words it settles on, not the boundary before it. Waited for apart from the landing, so the
@@ -1345,11 +1356,11 @@ final class ReaderModel {
                 }
                 await self?.keepPercentLanding(move: move, target: target, cloud: cloud)
             }
-            return
+            return back
         }
         hasMoved = true
         let back = rememberBack ? rememberPlace() : nil
-        defer { publishBack(back) }
+        defer { if publishes { publishBack(back) } }
         moves += 1
         let move = moves
         let step = steps
@@ -1363,7 +1374,7 @@ final class ReaderModel {
         // out; once it has, the same jump finds the exact words. Retry until they're on screen.
         await settle(on: locator, move: move, loaded: ready)
         // Overtaken by a turn, another jump or the close: that move owns the place now.
-        guard moves == move, !isClosed else { return }
+        guard moves == move, !isClosed else { return back }
         // The spread the place it keeps reopens on: its words to the top of a left page, as a restore
         // puts them. Given way to any move of his, another jump or the close meanwhile.
         if let words = locator.text.highlight.map(ReaderJS.normalize), !words.isEmpty {
@@ -1380,14 +1391,15 @@ final class ReaderModel {
             if settlingLanding?.move == move { settlingLanding = nil }
         }
         let settled = Self.ms(since: started)
-        guard moves == move, !isClosed else { return }
+        guard moves == move, !isClosed else { return back }
         await captureAnchor()
         let anchored = Self.ms(since: started)
-        guard moves == move, !isClosed, let here = page?.currentLocation else { return }
+        guard moves == move, !isClosed, let here = page?.currentLocation else { return back }
         // Landed on the other device's page: that's the reader's place now.
         landed(step, at: here)
         await recordLanding(here, target: target, cloud: cloud)
         readerLog.notice("landing timing (standby \(ready, privacy: .public)): go \(went, privacy: .public) ms, settled \(settled, privacy: .public) ms, anchored \(anchored, privacy: .public) ms, recorded \(Self.ms(since: started), privacy: .public) ms")
+        return back
     }
 
     /// Keeps the page a percent landing settled on, unless he has moved since.
