@@ -17,6 +17,12 @@ final class PlaceUndoUITests: XCTestCase {
         "-GatefoldSignedIn", "YES",
     ]
 
+    /// A jump (Contents, or Back) is waited for until it ends: its veil lifts onto the new page. Not 30
+    /// or 60 s: the veil itself waits up to `ReaderHostController.loadingLooks` (1200 looks of at least
+    /// 50 ms, then its 40 tries) for a slow chapter, and a loaded runner's chapters took over 60 s
+    /// (main f38d8d9, gatefold#94). This is only a hang guard, well above that allowance.
+    private static let jumpEnds: TimeInterval = 240
+
     private func el(_ id: String) -> XCUIElement { app.descendants(matching: .any)[id] }
     private var visibleText: String { (el("reader.visibleText").value as? String) ?? "" }
     /// The words that open the page, as a number: enough to tell two pages apart, nothing to quote.
@@ -71,7 +77,7 @@ final class PlaceUndoUITests: XCTestCase {
 
     private func showChrome() {
         // A tap under a jump's veil is swallowed (the veil is the page changing), so wait it out.
-        XCTAssertTrue(el("reader.veil").waitForNonExistence(timeout: 60), "the veil lifts")
+        XCTAssertTrue(el("reader.veil").waitForNonExistence(timeout: Self.jumpEnds), "the veil lifts")
         // Already up (a jump made from them leaves them up), or still fading in: a tap now would put
         // them down.
         let contents = app.buttons["reader.contents"]
@@ -99,7 +105,7 @@ final class PlaceUndoUITests: XCTestCase {
     func testAJumpIsOneTapToUndoWithTheControlsHidden() {
         let first = openFresh()
         contentsJump(to: "Chapter XL")
-        let jumped = waitForWords(changingFrom: first, timeout: 30)
+        let jumped = waitForWords(changingFrom: first, timeout: Self.jumpEnds)
         XCTAssertNotEqual(opening(jumped), opening(first), "the jump moved the page")
         if app.buttons["reader.contents"].exists { el("reader.page").coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap() }
         XCTAssertTrue(app.buttons["reader.contents"].waitForNonExistence(timeout: 5), "the controls are hidden")
@@ -109,7 +115,7 @@ final class PlaceUndoUITests: XCTestCase {
         RunLoop.current.run(until: Date().addingTimeInterval(10))
         XCTAssertTrue(back.exists, "the way back went away by itself")
         back.tap()
-        let returned = waitForWords(changingFrom: jumped, timeout: 30)
+        let returned = waitForWords(changingFrom: jumped, timeout: Self.jumpEnds)
         XCTAssertEqual(opening(returned), opening(first), "Back did not return to his page")
         // And Back itself is one tap to undo.
         XCTAssertTrue(app.buttons["reader.back"].waitForExistence(timeout: 5), "going back can't be undone")
@@ -230,8 +236,8 @@ final class PlaceUndoUITests: XCTestCase {
     func testAChaptersFirstPageTurnsBackByTapAndBySwipe() {
         let first = openFresh()
         contentsJump(to: "Chapter XL")
-        _ = waitForWords(changingFrom: first, timeout: 30)
-        XCTAssertTrue(el("reader.veil").waitForNonExistence(timeout: 60), "the veil lifts")
+        _ = waitForWords(changingFrom: first, timeout: Self.jumpEnds)
+        XCTAssertTrue(el("reader.veil").waitForNonExistence(timeout: Self.jumpEnds), "the veil lifts")
         if app.buttons["reader.contents"].exists { el("reader.page").coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap() }
         XCTAssertTrue(app.buttons["reader.contents"].waitForNonExistence(timeout: 5), "the controls are hidden")
         let start = settledWords()
@@ -255,15 +261,15 @@ final class PlaceUndoUITests: XCTestCase {
         let veil = el("reader.veil")
         XCTAssertTrue(veil.waitForExistence(timeout: 10), "the jump's veil is up")
         el("reader.page").coordinate(withNormalizedOffset: CGVector(dx: 0.97, dy: 0.5)).tap()
-        XCTAssertTrue(veil.waitForNonExistence(timeout: 60))
+        XCTAssertTrue(veil.waitForNonExistence(timeout: Self.jumpEnds))
         let landed = settledWords()
         XCTAssertNotEqual(opening(landed), opening(first))
         // The same jump again, untouched, from his first page: the page it lands on is where he chose.
         app.buttons["reader.back"].tap()
-        _ = waitForWords(changingFrom: landed, timeout: 30)
+        _ = waitForWords(changingFrom: landed, timeout: Self.jumpEnds)
         contentsJump(to: "Chapter XL")
         XCTAssertTrue(veil.waitForExistence(timeout: 10))
-        XCTAssertTrue(veil.waitForNonExistence(timeout: 60))
+        XCTAssertTrue(veil.waitForNonExistence(timeout: Self.jumpEnds))
         XCTAssertEqual(opening(settledWords()), opening(landed), "a tap during the jump moved the page off where he chose")
     }
 }
