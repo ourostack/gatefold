@@ -246,15 +246,14 @@ import Testing
     }
 
     /// gatefold#143's root: after the slow launch landing, a report that isn't his move put "where he
-    /// is" back on words read on the chapter's start while his page stayed on screen. The running head,
-    /// the scrubber and the Cloud's "here" (`JumpSuggestion.isAhead`) all read `location`, so all three
-    /// named the chapter's start. They follow the page on screen.
+    /// is" back on words read on the chapter's start while his page stayed on screen. The running head
+    /// (its chapter), the scrubber and the Cloud's "here" (`JumpSuggestion.isAhead`) all read `location`,
+    /// so all three named the chapter's start. They follow the page on screen.
     @Test func whereHeIsFollowsThePageOnScreenAfterTheSlowLaunchLanding() async throws {
         let f = try await S.make(remote: { _, _ in nil }, startAt: 0.05)
         await f.model.load()
         let his = try #require(f.page.currentLocation)
         try #require((his.locations.progression ?? 0) > 0.05, "his page is partway through its chapter")
-        let head = f.model.runningHead
         // The same stand-in as Back's test above: words read on the chapter's start, then his page with no move.
         let start = S.boundary(of: his)
         f.page.anchorText = "words-on-the-chapter-start"
@@ -266,7 +265,10 @@ import Testing
         #expect(f.model.location?.href == his.href, "where he is names another chapter")
         #expect((f.model.location?.locations.progression ?? 0) > 0.01, "where he is lags at the chapter's start")
         #expect(abs(f.model.totalProgression - want) < 0.005, "the scrubber and the Cloud's here read \(f.model.totalProgression), not his page at \(want)")
-        #expect(f.model.runningHead == head, "the running head names the chapter's start, not his page")
+        // His words are read again from his page, so a reflow's restore or the landing check can't take
+        // the page back to the chapter's start.
+        let anchor = f.model.keeper.anchor?.progression ?? -1
+        #expect(anchor > 0.01, "his words stay those read on the chapter's start (\(anchor))")
         f.model.close()
     }
 

@@ -1709,7 +1709,15 @@ final class ReaderModel {
             readerLog.notice("location after reflow; anchor kept (reported \(Self.placeTag(locator), privacy: .public))")
             recheckLanding()
         } else if !readerMoved, keeper.anchor != nil {
-            readerLog.notice("location without a move; anchor and place kept (reported \(Self.placeTag(locator), privacy: .public))")
+            // Words read before this page's start were read on a page he has left (gatefold#143: a slow
+            // launch landing read them on the chapter's first page). Kept, a reflow's restore or the
+            // landing check would take the page back to them, so they are read again from his page.
+            if keeper.reflowing == nil, !openSettling, let words = anchorLocator, Self.lies(words, before: locator) {
+                await captureAnchor()
+                readerLog.notice("location without a move; his words were before this page, anchor taken again (reported \(Self.placeTag(locator), privacy: .public))")
+            } else {
+                readerLog.notice("location without a move; anchor and place kept (reported \(Self.placeTag(locator), privacy: .public))")
+            }
             recheckLanding()
         } else {
             let held = keeper.anchor, heldLocator = anchorLocator
@@ -1746,9 +1754,10 @@ final class ReaderModel {
         // Not words read before the page on screen, though (gatefold#143: after a slow launch landing
         // his words were read on the chapter's start and his page came up with no move of his; the head,
         // the scrubber and the Cloud's "here" all named the start). Mid-reflow or while the open settles,
-        // Readium's place is a guess and his held words stand.
+        // Readium's place is a guess, and from the layout his words were just seen first on screen (their
+        // place is the old layout's): his words stand.
         if notHisMove, !placeOnly, let words = anchorLocator, keeper.anchor?.text != nil,
-           keeper.reflowing != nil || openSettling || !Self.lies(words, before: locator) { location = words }
+           layoutReport || keeper.reflowing != nil || openSettling || !Self.lies(words, before: locator) { location = words }
         let fromLayout = layoutReport
         layoutReport = false
         // A swipe or a scroll of his that moved the page is reading on, as a turn is (slide and scroll
@@ -2141,8 +2150,9 @@ final class ReaderModel {
     /// The page on screen, when "where he is" names an earlier place in its chapter: a `location` before
     /// the page's start is a place the page has since moved past. A report keeps `location` off such
     /// words (`locationDidChange`), but the page can move before its report comes in, and Back must not
-    /// take him to the place he left (gatefold#143: Back took him to his chapter's first page). A page on screen before `location` (Readium
-    /// naming a chapter still loading at its start) is the one that lags, and `location` stands.
+    /// take him to the place he left (gatefold#143: Back took him to his chapter's first page). A page
+    /// on screen before `location` (Readium naming a chapter still loading at its start) is the one that
+    /// lags, and `location` stands.
     private func lagsBehindThePage() -> Locator? {
         // Mid-reflow or while the open settles, Readium's place is a guess and his held words stand.
         guard keeper.reflowing == nil, !openSettling,
