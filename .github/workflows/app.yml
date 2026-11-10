@@ -2,7 +2,8 @@ name: App
 
 # Two tiers. Every pull request runs the required checks (the eighth, Real unfold, is real-unfold.yml's): the place,
 # undo, taps and unit legs in full, and a smoke of the reviewers' checks (the last page's number, #30; the window
-# fit; a Duo turn-and-reopen). Every push to main runs the reviewers' full lists. A red main is fixed by whoever merged the change that turned it red (AGENTS.md, "CI").
+# fit; a Duo turn-and-reopen). Every push to main runs the reviewers' full lists. A red main is fixed by whoever
+# merged the change that turned it red (AGENTS.md, "CI").
 #
 # Build once: `build` makes the app and its tests for the simulator (build-for-testing) and uploads them, named by
 # commit and Xcode version; every simulator job boots its simulator while it downloads them and runs
