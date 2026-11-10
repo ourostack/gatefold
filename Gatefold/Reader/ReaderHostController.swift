@@ -1795,12 +1795,25 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
 
     @discardableResult
     func go(to locator: Locator) async -> Bool {
-        await navigator.go(to: locator, options: .init(animated: false))
+        if LaunchOptions.isUITest, let sends = LaunchOptions.holdBackSends, sends > 0, weakModel?.isGoingBack == true {
+            if !heldSendsArmed { heldSendsArmed = true; heldSends = sends; holdLoadForTest(looks: 0) }
+            if heldSends > 0 {
+                heldSends -= 1
+                if heldSends == 0, heldLoadLooks == 0 { heldLoadMarker?.removeFromSuperview(); heldLoadMarker = nil }
+                readerLog.notice("test: a held load takes a send at its chapter's start, \(self.heldSends, privacy: .public) left")
+                return await navigator.go(to: Locator(href: locator.href, mediaType: locator.mediaType), options: .init(animated: false))
+            }
+        }
+        return await navigator.go(to: locator, options: .init(animated: false))
     }
 
     func go(to link: ReadiumShared.Link) async {
         _ = await navigator.go(to: link, options: .init(animated: false))
     }
+
+    /// UI tests (`-GatefoldHoldBackSends`): Back's sends still to be taken at their chapter's start, the
+    /// load held meanwhile; armed by the first.
+    private var heldSendsArmed = false, heldSends = 0
 
     // MARK: Jumps
 
@@ -2159,6 +2172,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
 
     /// Readium's own loading spinner is showing: the page in view hasn't loaded yet.
     var isLoadingPage: Bool {
+        if heldSends > 0 { return true }
         if heldLoadLooks > 0 {
             heldLoadLooks -= 1
             if heldLoadLooks == 0 { heldLoadMarker?.removeFromSuperview(); heldLoadMarker = nil }
@@ -2170,7 +2184,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     /// A load under way, read without spending a held load's looks: a test's held load, Readium's spinner,
     /// or a web view in view still loading (its document can sit at about:blank for seconds, gatefold#94).
     var isLoadingChapter: Bool {
-        if heldLoadLooks > 0 || readiumSpinner != nil { return true }
+        if heldSends > 0 || heldLoadLooks > 0 || readiumSpinner != nil { return true }
         let host = navigator.view!
         // Hidden ones count too: Readium hides a web view still loading by its scroll view's alpha
         // (`unveilPlacedPages`), so the one on its way is often the hidden one.
