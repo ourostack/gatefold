@@ -575,11 +575,14 @@ import Testing
         f.page.releaseJumps()
         for _ in 0..<10_000 where gate.held == nil { await Task.yield() }
         try #require(gate.held != nil, "the late report's write was never on its way")
-        await second.value
+        // Bounded, never awaited: if the held write were the newest jump's own, waiting on it would hang.
         await Self.settle { abs((Self.kept(f) ?? -1) - 0.5) < 0.03 }
+        let keptBeforeRelease = Self.kept(f) ?? -1
         gate.held?.resume()
         gate.held = nil
+        await second.value
         await first.value
+        #expect(abs(keptBeforeRelease - 0.5) < 0.03, "the newest jump's keep didn't land while the late write was held: \(keptBeforeRelease)")
         await Self.settle { abs((Self.kept(f) ?? -1) - 0.5) >= 0.03 }
         #expect(abs((f.page.currentLocation?.locations.totalProgression ?? -1) - 0.5) < 0.03, "the second jump's page didn't stand")
         #expect(abs((Self.kept(f) ?? -1) - 0.5) < 0.03, "the slow late write kept \(Self.kept(f) ?? -1) over the second jump")
