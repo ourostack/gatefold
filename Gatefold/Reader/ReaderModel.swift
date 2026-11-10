@@ -1209,17 +1209,20 @@ final class ReaderModel {
         return "Back to where you were"
     }
 
-    /// The page a jump leaves, as Readium last named it, and the moves when it left (the jump's own, or
-    /// the one before it when the jump counts its move inside its veil): a report of exactly that page,
-    /// while Readium names another and the newest move isn't kept, is a late one. A turn back to that
-    /// very page has Readium naming it, so it is never taken for one.
-    @ObservationIgnored private var leftBehind: (moves: Int, page: Locator)?
+    /// The pages jumps have left since his place was last kept, as Readium last named each: a report of
+    /// exactly one of them, while Readium names another page and the newest move isn't kept, is a late
+    /// one (gatefold#174). Every jump adds its page, so a second jump before the first is kept still
+    /// knows the first page left. A turn or scroll back to such a page has his touch, or Readium naming
+    /// it, so it is never taken for one. The rule rests on Readium's own page, not the jump's target:
+    /// Readium reports its page boundary, which a target needn't match, and the report reaches here
+    /// through a task hop, by which time Readium has moved on.
+    @ObservationIgnored private var pagesLeft: [Locator] = []
     private func noteLeftBehind() {
-        leftBehind = page?.currentLocation.map { (moves, $0) }
+        if let here = page?.currentLocation, !pagesLeft.contains(where: { Self.samePage($0, here) }) { pagesLeft.append(here) }
     }
     private func isLateReportOfThePageLeft(_ l: Locator) -> Bool {
-        guard let left = leftBehind, moves >= left.moves, recordedMoves < moves,
-              Self.samePage(l, left.page), let now = page?.currentLocation, !Self.samePage(now, left.page) else { return false }
+        guard recordedMoves < moves, pagesLeft.contains(where: { Self.samePage(l, $0) }),
+              let now = page?.currentLocation, !Self.samePage(now, l) else { return false }
         return true
     }
     private static func samePage(_ a: Locator, _ b: Locator) -> Bool {
@@ -1381,6 +1384,7 @@ final class ReaderModel {
             }
             if let json {
                 self.recordedMoves = self.moves
+                self.pagesLeft = []
                 self.newestWrittenMove = max(self.newestWrittenMove, self.moves)
                 readerLog.notice("place write [r\(self.readerNumber, privacy: .public)]: landing (\(fresh != nil ? "his first words" : "Readium's boundary", privacy: .public)) \(Self.placeTag(settledLocator), privacy: .public); kept total \(chosen?.totalProgression ?? here.locations.totalProgression ?? 0, privacy: .public); move \(self.moves, privacy: .public)")
                 self.app.library.recordPlace(
@@ -1816,7 +1820,7 @@ final class ReaderModel {
         }
         // Kept as of now, before any further wait.
         recordedMoves = moves
-        leftBehind = nil
+        pagesLeft = []
         let keeping = moves
         newestWrittenMove = max(newestWrittenMove, keeping)
         // The first words on screen make the place exact; Readium's progression is a page boundary.
