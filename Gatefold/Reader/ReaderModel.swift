@@ -1715,9 +1715,9 @@ final class ReaderModel {
             if keeper.reflowing == nil, !openSettling, let words = anchorLocator, Self.lies(words, before: locator) {
                 await captureAnchor()
                 let taken = anchorLocator.map { !Self.lies($0, before: locator) } == true
-                readerLog.notice("location without a move; his words were before this page, \(taken ? "anchor taken again" : "anchor read failed, kept", privacy: .public) (reported \(Self.placeTag(locator), privacy: .public))")
+                readerLog.notice("location without a move; his words were before this page, \(taken ? "anchor taken again" : "anchor read failed, kept", privacy: .public) at \(self.anchorLocator.map(Self.placeTag) ?? "none", privacy: .public) (reported \(Self.placeTag(locator), privacy: .public))")
             } else {
-                readerLog.notice("location without a move; anchor and place kept (reported \(Self.placeTag(locator), privacy: .public))")
+                readerLog.notice("location without a move; anchor and place kept, anchor at \(self.anchorLocator.map(Self.placeTag) ?? "none", privacy: .public) (reported \(Self.placeTag(locator), privacy: .public))")
             }
             recheckLanding()
         } else {

@@ -264,9 +264,12 @@ import Testing
         f.page.currentLocation = start
         f.model.noteInteraction()
         await f.model.locationDidChange(start)
+        let kept = try #require(saved(f), "the swipe kept no place")
         f.page.anchorText = "words-on-his-page"
         f.page.currentLocation = his
         await f.model.locationDidChange(his)
+        // The place moves only on his move: the report with none leaves it where the swipe put it.
+        #expect(saved(f) == kept, "a report with no move of his moved the saved place")
         let want = his.locations.totalProgression ?? -1
         #expect(f.model.location?.href == his.href, "where he is names another chapter")
         #expect((f.model.location?.locations.progression ?? 0) > 0.01, "where he is lags at the chapter's start")
