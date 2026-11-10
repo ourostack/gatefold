@@ -48,13 +48,56 @@ final class FineTuneTapUITests: XCTestCase {
 
     private func value(_ e: XCUIElement) -> String { (e.value as? String) ?? "?" }
 
-    /// Changed once: it moved off its old value and, a moment later, hasn't moved back.
+    /// A switch's change is judged in reads of its value, never seconds (gatefold#119). Each read is a round
+    /// trip to the app, so a runner starved by #109 makes every read slower instead of counting a touch that
+    /// lands late as one that never landed. A touch that never lands still fails, after `landReads`.
+    private static let landReads = 40
+    /// Reads after the change in which it must not go back: a touch that changed it twice shows here.
+    private static let stayReads = 5
+    /// Only a hang guard, not the bar: reads so slow that `landReads` of them take over 3 minutes. (A single
+    /// read that never returns is ended by XCTest's own query timeout.)
+    private static let hangGuard: TimeInterval = 180
+
+    /// Reads until the value is a real one other than `before`, or `landReads` run out (or the hang guard).
+    private func readsUntilChanged(_ toggle: XCUIElement, from before: String)
+        -> (changed: Bool, reads: Int, hung: Bool) {
+        let hung = Date().addingTimeInterval(Self.hangGuard)
+        for read in 1...Self.landReads {
+            let now = value(toggle)
+            if now != before, now != "?" { return (true, read, false) }
+            if Date() > hung { return (false, read, true) }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        }
+        return (false, Self.landReads, false)
+    }
+
+    /// Reads, after a change, on which the switch showed its old value again (it changed twice).
+    private func readsBack(_ toggle: XCUIElement, to before: String) -> Int {
+        var back = 0
+        for _ in 0..<Self.stayReads {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+            if value(toggle) == before { back += 1 }
+        }
+        return back
+    }
+
+    /// The switch's value before a touch: a real one, or the touch is not judged against "?".
+    private func valueBefore(_ toggle: XCUIElement, _ what: String) -> String {
+        let now = value(toggle)
+        XCTAssertNotEqual(now, "?", "\(what): the switch's value can be read before the touch")
+        return now
+    }
+
+    /// Changed once: it moved off its old value within `landReads`, and in the `stayReads` after it never
+    /// moved back.
     private func assertChangedOnce(_ toggle: XCUIElement, from before: String, _ what: String) {
-        let up = Date().addingTimeInterval(2)
-        while value(toggle) == before, Date() < up { RunLoop.current.run(until: Date().addingTimeInterval(0.1)) }
-        XCTAssertNotEqual(value(toggle), before, what)
-        RunLoop.current.run(until: Date().addingTimeInterval(0.4))
-        XCTAssertNotEqual(value(toggle), before, "\(what), and stays changed")
+        let (changed, reads, hung) = readsUntilChanged(toggle, from: before)
+        print("TAPRATE \(what): changed=\(changed) after \(reads) reads\(hung ? " (hang guard)" : "")")
+        XCTAssertTrue(changed, hung ? "\(what): the hang guard ran out after \(reads) reads"
+                                    : "\(what) (no change in \(reads) reads)")
+        guard changed else { return }
+        let back = readsBack(toggle, to: before)
+        XCTAssertEqual(back, 0, "\(what), and stays changed (back on \(back) of \(Self.stayReads) reads)")
     }
 
     private func quickTouches() {
@@ -64,7 +107,7 @@ final class FineTuneTapUITests: XCTestCase {
             XCTAssertTrue(toggle.waitForExistence(timeout: 10), id)
             for _ in 0..<4 where !toggle.isHittable { panel.swipeUp() }
             for i in 0..<4 {
-                let before = value(toggle)
+                let before = valueBefore(toggle, "a quick touch on \(id) (\(i))")
                 toggle.press(forDuration: 0)
                 assertChangedOnce(toggle, from: before, "a quick touch on \(id) changes it (\(i))")
             }
@@ -93,11 +136,18 @@ final class FineTuneTapUITests: XCTestCase {
             XCTAssertTrue(toggle.waitForExistence(timeout: 10), id)
             for _ in 0..<4 where !toggle.isHittable { panel.swipeUp() }
             for _ in 0..<25 {
-                let before = value(toggle)
+                let before = valueBefore(toggle, "a tap on \(id)")
                 toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
-                RunLoop.current.run(until: Date().addingTimeInterval(1.0))
                 trials += 1
-                if value(toggle) == before { misses += 1; print("TAPRATE miss on \(id) at trial \(trials)") }
+                let (changed, reads, hung) = readsUntilChanged(toggle, from: before)
+                if !changed {
+                    misses += 1
+                    print("TAPRATE miss on \(id) at trial \(trials) (no change in \(reads) reads\(hung ? ", hang guard" : ""))")
+                } else if readsBack(toggle, to: before) > 0 {
+                    // Changed twice: as much a miss as no change, as the old 1 s wait then one read counted it.
+                    misses += 1
+                    print("TAPRATE miss on \(id) at trial \(trials) (changed, then back)")
+                }
             }
         }
         print("TAPRATE \(shown) trials=\(trials) misses=\(misses)")
@@ -140,7 +190,7 @@ final class FineTuneTapUITests: XCTestCase {
         openFineTune()
         let toggle = app.switches["appearance.pageNumbers"].firstMatch
         XCTAssertTrue(toggle.waitForExistence(timeout: 10))
-        let before = value(toggle)
+        let before = valueBefore(toggle, "a tap on the row's name")
         toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.2, dy: 0.5)).tap()
         assertChangedOnce(toggle, from: before, "a tap on the row's name changes it")
     }
