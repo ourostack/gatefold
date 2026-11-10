@@ -165,6 +165,7 @@ final class PlaceUndoUITests: XCTestCase {
         XCTAssertNotEqual(opening(jump.words), opening(first), "the jump moved the page")
         XCTAssertTrue(jump.ok, "the jump's veil lifts")
         let jumped = jump.words
+        XCTAssertTrue(keptAtChapterXL(), "the jump didn't keep the chapter he chose")
         // A jump made from the controls leaves them up, perhaps still fading in: once they are, a tap in
         // the middle puts them down.
         let contents = app.buttons["reader.contents"]

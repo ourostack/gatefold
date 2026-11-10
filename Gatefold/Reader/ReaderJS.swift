@@ -191,7 +191,12 @@ enum ReaderJS {
           if (!columns && se.scrollHeight > window.innerHeight + 1) { return null; }
           const el = document.getElementById(id) || document.getElementsByName(id)[0];
           if (!el) { return -1; }
-          if (!columns) { return 0; }
+          // Not in columns: only an element on the first screen is at the file's start. One past it is a
+          // file not laid out yet (CI, run 42852464361: a jump took 0 for an anchor 0.79 into its file).
+          if (!columns) {
+            const r = el.getBoundingClientRect();
+            return r.top < window.innerHeight && r.left < window.innerWidth ? 0 : null;
+          }
           const rect = el.getBoundingClientRect();
           return Math.max(0, Math.min(1, (rect.left + Math.abs(se.scrollLeft)) / se.scrollWidth));
         },
