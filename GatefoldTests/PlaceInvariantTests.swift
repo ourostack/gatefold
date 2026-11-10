@@ -540,6 +540,44 @@ import Testing
         f.model.close()
     }
 
+    /// Readium reports each jump's page before it returns, and the overtaken first jump's report is slow
+    /// to write: the newest jump, back past its veil, keeps its page, and the slow write yields to it.
+    @Test func aSlowLateReportWriteYieldsToTheNewestJumpPastTheVeil() async throws {
+        let f = try await S.make(remote: { _, _ in nil }, startAt: 0.05, jumpBeat: { await Task.yield() })
+        await f.model.load()
+        await f.model.locationDidChange(try #require(f.page.currentLocation))
+        f.page.reportsBeforeReturn = true
+        f.page.holdsJumps = true
+        f.page.loadingChapter = true
+        let first = Task { await f.model.go(toProgression: 0.7, rememberBack: true) }
+        await Self.settle { f.model.jumpsPastTheVeil == 1 }
+        let second = Task { await f.model.go(toProgression: 0.5, rememberBack: true) }
+        await Self.settle { f.model.jumpsPastTheVeil == 2 }
+        try #require(f.model.jumpsPastTheVeil == 2, "the jumps weren't both past the veil's limit")
+        // The next write (the first jump's late report) is held before it maps its position.
+        final class Gate { var armed = true; var held: CheckedContinuation<Void, Never>? }
+        let gate = Gate()
+        f.model.placeWriteWait = {
+            guard gate.armed else { return }
+            gate.armed = false
+            await withCheckedContinuation { gate.held = $0 }
+        }
+        f.page.loadingChapter = false
+        f.page.holdsJumps = false
+        f.page.releaseJumps()
+        for _ in 0..<10_000 where gate.held == nil { await Task.yield() }
+        try #require(gate.held != nil, "the late report's write was never on its way")
+        await second.value
+        await Self.settle { abs((Self.kept(f) ?? -1) - 0.5) < 0.03 }
+        gate.held?.resume()
+        gate.held = nil
+        await first.value
+        await Self.settle { abs((Self.kept(f) ?? -1) - 0.5) >= 0.03 }
+        #expect(abs((f.page.currentLocation?.locations.totalProgression ?? -1) - 0.5) < 0.03, "the second jump's page didn't stand")
+        #expect(abs((Self.kept(f) ?? -1) - 0.5) < 0.03, "the slow late write kept \(Self.kept(f) ?? -1) over the second jump")
+        f.model.close()
+    }
+
     /// A bookmark's jump ended quietly by a move of his offers no way back, as any other jump
     /// (gatefold#173 re-review).
     @Test func aBookmarkJumpEndedQuietlyOffersNoWayBack() async throws {
