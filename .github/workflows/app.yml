@@ -633,9 +633,9 @@ jobs:
     needs: [changes, build]
     if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
     runs-on: xcode-27
-    # 9 min of setup (job start to booted; p90 8.1 over 89 jobs) and up to 3.9 of unit tests: / 0.7 = 19, and 12 for
-    # the logs after the tests (gatefold#141).
-    timeout-minutes: 31
+    # The shards' formula: 9 min of setup, twice the slowest green unit step (7.8 min, run 42746464846; the suite grew
+    # in #46 from 3.9 min), and 12 for the logs after the tests (gatefold#141).
+    timeout-minutes: 37
     steps:
       - name: Note when the job began, so each test step can stop in time to upload its logs (gatefold#126)
         run: echo "JOB_START=$(date +%s)" >> "$GITHUB_ENV"
