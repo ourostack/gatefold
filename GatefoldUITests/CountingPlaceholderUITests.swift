@@ -86,6 +86,21 @@ final class CountingPlaceholderUITests: XCTestCase {
         }
     }
 
+    /// Diagnostic only (gatefold#94, not for merge): a probe that never comes, so both read waits must run out and fail.
+    func testRedProofReadsRunOutOnAProbeThatNeverComes() {
+        app.launchArguments = ["-GatefoldUITest", "YES", "-GatefoldFakeCloud", "YES", "-GatefoldSkipWelcome", "YES",
+                               "-GatefoldSignedIn", "YES", "-GatefoldReset", "YES"]
+        app.launch()
+        let never = app.descendants(matching: .any)["reader.noSuchProbe"].firstMatch
+        for (reads, guardS) in [(20, 60.0), (1200, 300.0)] {
+            let t = Date()
+            let r = readsUntil(reads: reads, hangGuard: guardS) { never.exists }
+            print(String(format: "PLACEHOLDER red proof: ok=%@ after %d of %d reads (%.1f s)%@", "\(r.ok)", r.reads, reads,
+                         Date().timeIntervalSince(t), r.hung ? " (hang guard)" : ""))
+            XCTExpectFailure("a probe that never comes must fail the wait") { XCTAssertTrue(r.ok) }
+        }
+    }
+
     func testAFreshOpenNeverLeavesTheNumbersSlotBlank() {
         freshOpenNeverLeavesTheSlotBlank()
     }

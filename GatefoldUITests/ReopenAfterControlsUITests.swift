@@ -18,7 +18,15 @@ final class ReopenAfterControlsUITests: XCTestCase {
 
     /// Any type, never `app.buttons`: a control that is a menu can be typed PopUpButton, and a Button lookup then
     /// finds nothing (gatefold#165).
-    private func el(_ id: String) -> XCUIElement { app.descendants(matching: .any)[id].firstMatch }
+    private func el(_ id: String) -> XCUIElement {
+        let e = app.descendants(matching: .any)[id].firstMatch
+        // Diagnostic only (gatefold#165, not for merge): the type each control is found at.
+        if ["banner.jump", "reader.close", "reader.appearance", "appearance.customize", "appearance.close",
+            "appearance.back"].contains(id), let snap = try? e.snapshot() {
+            print("REVIEWER anytype \(id): type \(snap.elementType.rawValue), a Button lookup finds it: \(app.buttons[id].exists)")
+        }
+        return e
+    }
     private var words: String { (el("reader.visibleText").value as? String) ?? "" }
     private static func hash(_ s: String) -> String {
         SHA256.hash(data: Data(s.utf8)).prefix(6).map { String(format: "%02x", $0) }.joined()

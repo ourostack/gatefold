@@ -86,7 +86,7 @@ final class RotationMidTransitionUITests: XCTestCase {
 
     private func turn() { el("reader.page").coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.5)).tap() }
 
-    private func expectWholeSpread(_ what: String, within asked: TimeInterval = 20) {
+    private func expectWholeSpread(_ what: String, within asked: TimeInterval = 20, ink need: Double = 0.01) {
         // Whatever was moving, a spread with words on both pages within the limit. A hosted runner runs
         // two to four times slower than this Mac and a screenshot there can take seconds, so CI sets a
         // floor (`GATEFOLD_SPREAD_FLOOR`); the page left stuck for good, the bug this guards, still fails.
@@ -105,15 +105,25 @@ final class RotationMidTransitionUITests: XCTestCase {
             shots += 1
             if let i = Self.ink(XCUIScreen.main.screenshot().image) {
                 last = i
-                if i.0 > 0.01, i.1 > 0.01 { break }
+                if i.0 > need, i.1 > need { break }
             }
             RunLoop.current.run(until: start.addingTimeInterval(Double(shots)))
         }
         let shot = XCTAttachment(screenshot: XCUIScreen.main.screenshot()); shot.name = "after-\(what)"; shot.lifetime = .keepAlways; add(shot)
-        let ok = (last?.0 ?? 0) > 0.01 && (last?.1 ?? 0) > 0.01
+        let ok = (last?.0 ?? 0) > need && (last?.1 ?? 0) > need
         print("MIDTURN \(what): ink \(last.map { String(format: "%.3f / %.3f", $0.0, $0.1) } ?? "none") \(ok ? "WHOLE" : "STUCK") after \(String(format: "%.1f", Date().timeIntervalSince(start))) s, \(shots) screenshots")
         XCTAssertTrue(ok, "\(what): the spread wasn't whole within \(Int(limit)) s and \(looks) screenshots of the turn\(hangGuard ? " (hang guard)" : "")")
         XCTAssertFalse(settle(30).isEmpty, "\(what): the page's words are readable")
+    }
+
+    /// Diagnostic only (gatefold#94, not for merge): ink that can never be met, so the looks must run out and fail.
+    func testRedProofASpreadThatNeverComesWholeFails() throws {
+        try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .pad, "a spread on rotation is an iPad path")
+        launch()
+        XCUIDevice.shared.orientation = .landscapeLeft
+        XCTExpectFailure("ink over 100% can't be met, so the spread check must fail") {
+            expectWholeSpread("red proof", ink: 2.0)
+        }
     }
 
     func testTurningDuringAContentsJump() throws {
