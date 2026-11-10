@@ -228,6 +228,10 @@ jobs:
         env:
           CI_SIMULATOR_BUDGET: "1740" # the step's 30 min less one: it ends with its own message, never killed
         run: python3 -I scripts/ci-simulator.py wait gatefold-ipad "iPad Pro 13-inch" 1200
+      - name: Stop the simulator's wallpaper and poster rendering (gatefold#39 experiment)
+        continue-on-error: true
+        timeout-minutes: 5
+        run: python3 -I scripts/ci-sim-quiet.py "$UDID"
       - name: Keep the app's place log as it runs (file and progression only, never the book's words)
         run: |
           sh scripts/ci-crashes.sh mark
@@ -422,6 +426,10 @@ jobs:
         env:
           CI_SIMULATOR_BUDGET: "1740" # the step's 30 min less one: it ends with its own message, never killed
         run: python3 -I scripts/ci-simulator.py wait gatefold-duo "iPhone Duo" 1200
+      - name: Stop the simulator's wallpaper and poster rendering (gatefold#39 experiment)
+        continue-on-error: true
+        timeout-minutes: 5
+        run: python3 -I scripts/ci-sim-quiet.py "$UDID"
       - id: left_unit
         uses: ./.github/actions/time-left
         with:
@@ -542,6 +550,10 @@ jobs:
         env:
           CI_SIMULATOR_BUDGET: "1740" # the step's 30 min less one: it ends with its own message, never killed
         run: python3 -I scripts/ci-simulator.py wait gatefold-duo "iPhone Duo" 1200
+      - name: Stop the simulator's wallpaper and poster rendering (gatefold#39 experiment)
+        continue-on-error: true
+        timeout-minutes: 5
+        run: python3 -I scripts/ci-sim-quiet.py "$UDID"
       - name: Keep the app's place log as it runs (file and progression only, never the book's words)
         run: |
           sh scripts/ci-crashes.sh mark
