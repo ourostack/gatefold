@@ -189,7 +189,7 @@ jobs:
       - name: Sample the runner's load every 20 s for the whole job (gatefold#39 comparison)
         run: |
           # shellcheck disable=SC2016
-          nohup sh -c 'while :; do echo "== $(date -u +%T) $(sysctl -n vm.loadavg)"; ps -Aceo pcpu=,rss=,comm= -r | head -8; sleep 20; done' \
+          nohup sh -c 'while :; do echo "== $(date -u +%T) $(sysctl -n vm.loadavg)"; ps -Aceo pcpu=,rss=,comm= -r | head -8; echo "io $(iostat -d -c 2 -w 1 | tail -1)"; vm_stat | grep -E "Pageins|Pageouts|Swapins|Swapouts|free" | tr -s " " | tr "\n" " "; echo; sleep 20; done' \
             >> "$RUNNER_TEMP/load.log" 2>&1 &
       - name: Start an iPad Pro 13-inch booting
         run: python3 -I scripts/ci-simulator.py start gatefold-ipad "iPad Pro 13-inch"
@@ -371,7 +371,7 @@ jobs:
       - name: Sample the runner's load every 20 s for the whole job (gatefold#39 comparison)
         run: |
           # shellcheck disable=SC2016
-          nohup sh -c 'while :; do echo "== $(date -u +%T) $(sysctl -n vm.loadavg)"; ps -Aceo pcpu=,rss=,comm= -r | head -8; sleep 20; done' \
+          nohup sh -c 'while :; do echo "== $(date -u +%T) $(sysctl -n vm.loadavg)"; ps -Aceo pcpu=,rss=,comm= -r | head -8; echo "io $(iostat -d -c 2 -w 1 | tail -1)"; vm_stat | grep -E "Pageins|Pageouts|Swapins|Swapouts|free" | tr -s " " | tr "\n" " "; echo; sleep 20; done' \
             >> "$RUNNER_TEMP/load.log" 2>&1 &
       - name: Start an iPhone Duo booting
         run: python3 -I scripts/ci-simulator.py start gatefold-duo "iPhone Duo"
@@ -504,7 +504,7 @@ jobs:
       - name: Sample the runner's load every 20 s for the whole job (gatefold#39 comparison)
         run: |
           # shellcheck disable=SC2016
-          nohup sh -c 'while :; do echo "== $(date -u +%T) $(sysctl -n vm.loadavg)"; ps -Aceo pcpu=,rss=,comm= -r | head -8; sleep 20; done' \
+          nohup sh -c 'while :; do echo "== $(date -u +%T) $(sysctl -n vm.loadavg)"; ps -Aceo pcpu=,rss=,comm= -r | head -8; echo "io $(iostat -d -c 2 -w 1 | tail -1)"; vm_stat | grep -E "Pageins|Pageouts|Swapins|Swapouts|free" | tr -s " " | tr "\n" " "; echo; sleep 20; done' \
             >> "$RUNNER_TEMP/load.log" 2>&1 &
       - name: Start an iPhone Duo booting
         run: python3 -I scripts/ci-simulator.py start gatefold-duo "iPhone Duo"
