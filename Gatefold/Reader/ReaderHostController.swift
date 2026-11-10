@@ -1799,6 +1799,8 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             if !heldSendsArmed { heldSendsArmed = true; heldSends = sends; holdLoadForTest(looks: 0) }
             if heldSends > 0 {
                 heldSends -= 1
+                // The sends still held, for the test to read (the log stream can drop lines).
+                heldLoadMarker?.accessibilityValue = "\(heldSends)"
                 if heldSends == 0, heldLoadLooks == 0 { heldLoadMarker?.removeFromSuperview(); heldLoadMarker = nil }
                 readerLog.notice("test: a held load takes a send at its chapter's start, \(self.heldSends, privacy: .public) left")
                 return await navigator.go(to: Locator(href: locator.href, mediaType: locator.mediaType), options: .init(animated: false))
