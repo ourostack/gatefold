@@ -452,7 +452,7 @@ import Testing
     /// page's own geometry (`pageRange`) lagging on the page he left:
     /// - "turn": a turn of his right after the jump, reported before the geometry caught up;
     /// - "new file": the jump's first report is its new file;
-    /// - "scroll": scroll mode, his touch and its report, then a report with no touch, as momentum sends;
+    /// - "scroll": scroll mode, two scrolls of his, each touch with its report;
     /// - "scroll back": scroll mode, his scroll straight back to the exact page the jump left;
     /// - "Readium names it": no touch, and Readium itself names the page left (a jump that stayed on it),
     ///   so only the rule's own check on Readium's page keeps it.
@@ -485,6 +485,7 @@ import Testing
             f.model.noteInteraction()
             await f.model.locationDidChange(first)
             f.page.currentLocation = want
+            f.model.noteInteraction()
             await f.model.locationDidChange(want)
         case "scroll back":
             want = left

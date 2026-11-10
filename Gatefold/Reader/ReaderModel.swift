@@ -1215,7 +1215,8 @@ final class ReaderModel {
     /// knows the first page left. A turn or scroll back to such a page has his touch, or Readium naming
     /// it, so it is never taken for one. The rule rests on Readium's own page, not the jump's target:
     /// Readium reports its page boundary, which a target needn't match, and the report reaches here
-    /// through a task hop, by which time Readium has moved on.
+    /// through a task hop, by which time Readium has usually moved on (when it hasn't, the late
+    /// report is still kept).
     @ObservationIgnored private var pagesLeft: [Locator] = []
     private func noteLeftBehind() {
         if let here = page?.currentLocation, !pagesLeft.contains(where: { Self.samePage($0, here) }) { pagesLeft.append(here) }
