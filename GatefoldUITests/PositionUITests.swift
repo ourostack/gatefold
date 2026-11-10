@@ -171,7 +171,7 @@ final class PositionUITests: XCTestCase {
         XCTAssertTrue(bookmark.waitForExistence(timeout: 5))
         XCTAssertTrue(bookmark.isHittable)
         let before = (bookmark.value as? String) ?? "?"
-        XCTAssertNotEqual(before, "Bookmarked", "the page isn't bookmarked before the tap")
+        XCTAssertNotEqual(before, "Bookmarked", "the page was already bookmarked before the tap (value \(before))")
         bookmark.tap()
         let (marked, reads, hung) = readsUntilBookmarked(bookmark)
         print("TAPRATE bookmark: marked=\(marked) after \(reads) reads\(hung ? " (hang guard)" : "")")
@@ -182,7 +182,8 @@ final class PositionUITests: XCTestCase {
 
     /// The bookmark is judged in reads of its value, never seconds (gatefold#159, as FineTuneTap in #121): each read
     /// is a round trip to the app, so a starved runner makes reads slower instead of failing a tap that landed late.
-    /// A tap that never bookmarks still fails, after 40 reads (at least 4 s). The 3-minute limit only catches a hang.
+    /// A tap that never bookmarks still fails once 40 reads come back without it (about 4 s at the least). The
+    /// 3-minute limit only catches a hang.
     private func readsUntilBookmarked(_ bookmark: XCUIElement) -> (marked: Bool, reads: Int, hung: Bool) {
         let hung = Date().addingTimeInterval(180)
         for read in 1...40 {
