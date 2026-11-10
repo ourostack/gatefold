@@ -148,7 +148,7 @@ jobs:
   # (gatefold#39). The split follows the slowest pass of each test in ten runs (green 42675099629, 42640941539,
   # 42584275845 and 42570370853, and main's 42673726551, 42666016340, 42656170735, 42605468542, 42605267361 and
   # 42576626603; for the limits, also 42711088472, 42717866316, 42725703725, 42711127428, 42727618551, 42717354081,
-  # 42734914470 and 42734917830): about 10 to 13 min of tests a pull-request shard. A test that alone takes longer has a shard of its
+  # 42734914470, 42734917830 and 42744406818): about 10 to 13 min of tests a pull-request shard. A test that alone takes longer has a shard of its
   # own. Each required check is a gate job below, green only when every one of its shards passed. Shards with
   # `pr_tests: none` run on main and on full-list pull requests only.
   # Each `timeout` is 9 min of setup (job start to booted: median 4.7, p90 8.1 over 89 jobs in 40 runs), plus twice the
@@ -185,7 +185,7 @@ jobs:
             tests: >-
               RotationMidTransitionUITests
             cold: true
-            timeout: 61 # (9 + 4) + 2 x 12.9 + 10 + 12
+            timeout: 61 # (9 + 4) + 2 x 13.0 + 10 + 12
             skip: ""
             pr_tests: ""
           - shard: ipad-place-portrait
@@ -230,7 +230,7 @@ jobs:
               NavigationPlaceUITests/testScrolledAfterTheLaunchReflowThenLeftKeepsWhereHeScrolled
               NavigationPlaceUITests/testAJumpsVeilHoldsWhileTheChapterLoads
               NavigationPlaceUITests/testAJumpFromAPageStillLoadingStartsAtOnce
-            timeout: 47 # 9 + 2 x 12.6 + 12
+            timeout: 50 # 9 + 2 x 14.4 + 12
             pr_tests: ""
             cold: false
     uses: ./.github/workflows/ui-tests.yml
@@ -262,7 +262,7 @@ jobs:
               PlaceUndoUITests/testAJumpIsOneTapToUndoWithTheControlsHidden
               PlaceUndoUITests/testATapAboveYourPageClosesItAndKeepsThePage
               PlaceUndoUITests/testATouchOnTheScrubberNeverJumps
-            timeout: 37 # 9 + 2 x 7.9 + 12
+            timeout: 41 # 9 + 2 x 9.7 + 12
             skip: ""
             pr_tests: ""
             cold: false
@@ -275,7 +275,7 @@ jobs:
               PlaceUndoUITests/testAJumpIsOneTapToUndoWithTheControlsHidden
               PlaceUndoUITests/testATapAboveYourPageClosesItAndKeepsThePage
               PlaceUndoUITests/testATouchOnTheScrubberNeverJumps
-            timeout: 32 # 9 + 2 x 5.1 + 12
+            timeout: 40 # 9 + 2 x 9.1 + 12
             pr_tests: ""
             cold: false
     uses: ./.github/workflows/ui-tests.yml
@@ -363,7 +363,7 @@ jobs:
               ReopenAfterControlsUITests
             pr_tests: >-
               ReviewerChecksUITests/testTheLastPagesNumberIsTheCount WindowFitUITests
-            timeout: 83 # 9 + 2 x 31.0 + 12
+            timeout: 89 # 9 + 2 x 33.6 + 12
             skip: ""
             cold: false
           - shard: ipad-reviewer-numbers
@@ -416,7 +416,7 @@ jobs:
             # stopped mid-run (runs 42711088472 and 42717866316; gatefold#39).
             tests: >-
               FineTuneTapUITests/testEveryTapFlipsItsSwitchPortrait
-            timeout: 36 # 9 + 2 x 7.4 + 12
+            timeout: 37 # 9 + 2 x 7.7 + 12
             skip: ""
             pr_tests: ""
             cold: false
@@ -441,7 +441,7 @@ jobs:
             # 237 + 173 + 86 + 83 + 79 s, and 65 s for the landscape every-tap test, which skips on the Duo
             tests: >-
               PositionUITests FineTuneTapUITests/testEveryTapFlipsItsSwitchLandscape
-            timeout: 59 # 9 + 2 x 18.7 + 12
+            timeout: 60 # 9 + 2 x 19.2 + 12
             skip: ""
             pr_tests: ""
             cold: false
