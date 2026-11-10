@@ -17,23 +17,27 @@ final class PlaceUndoUITests: XCTestCase {
         "-GatefoldSignedIn", "YES",
     ]
 
-    /// A jump (Contents, or Back) is waited for until the app says it ended (`reader.jumpsEnded`: it
-    /// landed and its veil lifted, or it was let go of). Never for some seconds: the app's own wait for a
-    /// slow chapter is counted in looks (`ReaderHostController.loadingLooks`), each a sleep and a snapshot
-    /// that a loaded runner makes far slower, and 30 and 60 s failed jumps it was still allowed to finish
-    /// (main f38d8d9, gatefold#94). This is only a hang guard, far past any plausible look time.
+    /// A jump (Contents, or Back) is waited for until the app says it landed (`reader.jumpsLanded`), then
+    /// until the words are the new page's. Never for some seconds: the app's own wait for a slow chapter
+    /// is counted in looks (`ReaderHostController.loadingLooks`), each a sleep and a snapshot that a
+    /// loaded runner makes far slower, and 30 and 60 s failed jumps it was still allowed to finish (main
+    /// f38d8d9, gatefold#94). This is only a hang guard, far past any plausible look time.
     private static let jumpHangGuard: TimeInterval = 600
 
-    /// How many jumps the app has ended so far.
-    private var jumpsEnded: Int {
-        Int(((el("reader.jumpsEnded").value as? String) ?? "0").split(separator: " ").first ?? "0") ?? 0
+    /// How many jumps the app has landed so far (none before the first, when its marker isn't up).
+    private var jumpsLanded: Int {
+        let marker = el("reader.jumpsLanded")
+        guard marker.exists else { return 0 }
+        return Int((marker.value as? String) ?? "") ?? 0
     }
 
-    /// Waits until a jump after the first `before` has ended, then gives the page's words.
-    private func wordsAfterJump(endedAfter before: Int) -> String {
+    /// Waits until a jump after the first `before` has landed and the words are no longer `old`'s,
+    /// then gives the page's settled words.
+    private func wordsAfterJump(landedAfter before: Int, from old: String) -> String {
         let up = Date().addingTimeInterval(Self.jumpHangGuard)
-        while jumpsEnded <= before, Date() < up { RunLoop.current.run(until: Date().addingTimeInterval(0.5)) }
-        XCTAssertGreaterThan(jumpsEnded, before, "the jump never ended")
+        while jumpsLanded <= before, Date() < up { RunLoop.current.run(until: Date().addingTimeInterval(0.5)) }
+        XCTAssertGreaterThan(jumpsLanded, before, "the jump never landed")
+        _ = waitForWords(changingFrom: old, timeout: max(1, up.timeIntervalSinceNow))
         return settledWords()
     }
 
@@ -118,10 +122,10 @@ final class PlaceUndoUITests: XCTestCase {
     /// A Contents jump, then the controls gone: "Back" is on the page, and one tap on it is his page again.
     func testAJumpIsOneTapToUndoWithTheControlsHidden() {
         let first = openFresh()
-        let before = jumpsEnded
+        let before = jumpsLanded
         contentsJump(to: "Chapter XL")
         // Ended, so its veil is down: the words can change under it, and a tap there is swallowed.
-        let jumped = wordsAfterJump(endedAfter: before)
+        let jumped = wordsAfterJump(landedAfter: before, from: first)
         XCTAssertNotEqual(opening(jumped), opening(first), "the jump moved the page")
         if app.buttons["reader.contents"].exists { el("reader.page").coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap() }
         XCTAssertTrue(app.buttons["reader.contents"].waitForNonExistence(timeout: 5), "the controls are hidden")
@@ -130,9 +134,9 @@ final class PlaceUndoUITests: XCTestCase {
         // Still there a while later: he may notice the jump late.
         RunLoop.current.run(until: Date().addingTimeInterval(10))
         XCTAssertTrue(back.exists, "the way back went away by itself")
-        let beforeBack = jumpsEnded
+        let beforeBack = jumpsLanded
         back.tap()
-        let returned = wordsAfterJump(endedAfter: beforeBack)
+        let returned = wordsAfterJump(landedAfter: beforeBack, from: jumped)
         XCTAssertEqual(opening(returned), opening(first), "Back did not return to his page")
         // And Back itself is one tap to undo.
         XCTAssertTrue(app.buttons["reader.back"].waitForExistence(timeout: 5), "going back can't be undone")
@@ -252,9 +256,9 @@ final class PlaceUndoUITests: XCTestCase {
     /// neither move the page).
     func testAChaptersFirstPageTurnsBackByTapAndBySwipe() {
         let first = openFresh()
-        let ended = jumpsEnded
+        let ended = jumpsLanded
         contentsJump(to: "Chapter XL")
-        let jumped = wordsAfterJump(endedAfter: ended)
+        let jumped = wordsAfterJump(landedAfter: ended, from: first)
         XCTAssertNotEqual(opening(jumped), opening(first), "the jump moved the page")
         if app.buttons["reader.contents"].exists { el("reader.page").coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap() }
         XCTAssertTrue(app.buttons["reader.contents"].waitForNonExistence(timeout: 5), "the controls are hidden")
@@ -275,21 +279,21 @@ final class PlaceUndoUITests: XCTestCase {
     /// A tap on the turn zone while a jump's veil is up is not a turn: the page lands where he chose.
     func testATapWhileAJumpIsUnderWayLandsWhereHeChose() {
         let first = openFresh(["-GatefoldHoldChapterLoad", "60"])
-        let before = jumpsEnded
+        let before = jumpsLanded
         contentsJump(to: "Chapter XL")
         let veil = el("reader.veil")
         XCTAssertTrue(veil.waitForExistence(timeout: 10), "the jump's veil is up")
         el("reader.page").coordinate(withNormalizedOffset: CGVector(dx: 0.97, dy: 0.5)).tap()
-        let landed = wordsAfterJump(endedAfter: before)
+        let landed = wordsAfterJump(landedAfter: before, from: first)
         XCTAssertNotEqual(opening(landed), opening(first))
         // The same jump again, untouched, from his first page: the page it lands on is where he chose.
-        let beforeBack = jumpsEnded
+        let beforeBack = jumpsLanded
         app.buttons["reader.back"].tap()
-        let returned = wordsAfterJump(endedAfter: beforeBack)
+        let returned = wordsAfterJump(landedAfter: beforeBack, from: landed)
         XCTAssertEqual(opening(returned), opening(first), "Back did not return to his first page")
-        let beforeAgain = jumpsEnded
+        let beforeAgain = jumpsLanded
         contentsJump(to: "Chapter XL")
         XCTAssertTrue(veil.waitForExistence(timeout: 10))
-        XCTAssertEqual(opening(wordsAfterJump(endedAfter: beforeAgain)), opening(landed), "a tap during the jump moved the page off where he chose")
+        XCTAssertEqual(opening(wordsAfterJump(landedAfter: beforeAgain, from: returned)), opening(landed), "a tap during the jump moved the page off where he chose")
     }
 }

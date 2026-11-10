@@ -1812,11 +1812,9 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     /// then the old page cross-fades away over 0.2 s (no blank page, no spinner). With `riffle`, a few
     /// leaves flick past first.
     func veiledJump(riffle: Bool, forward: Bool, jump: Int, _ body: @escaping () async -> Void) async {
-        guard veil == nil, !jumpStarting, !isTurning, view.window != nil else {
-            await body()
-            jumpEnded("unveiled")
-            return
-        }
+        // Every way out has run `body`, so the jump has landed (a let-go one too, when it comes back).
+        defer { jumpLanded() }
+        guard veil == nil, !jumpStarting, !isTurning, view.window != nil else { return await body() }
         jumpStarting = true
         veilJump = jump
         let jumpTapped = ContinuousClock.now
@@ -1879,7 +1877,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             }
             readerLog.notice("veil: jump \(jump, privacy: .public) lifted \(ReaderModel.ms(since: jumpTapped), privacy: .public) ms after it began")
             cover.removeFromSuperview()
-            if veil === cover { veil = nil; veilJump = nil; jumpEnded("landed") }
+            if veil === cover { veil = nil; veilJump = nil }
             return
         }
         let dim = UIViewPropertyAnimator(duration: 0.15, curve: .easeOut) { wash.alpha = 0.4 }
@@ -1898,27 +1896,29 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         cover.removeFromSuperview()
         readerLog.notice("veil: jump \(jump, privacy: .public) lifted \(ReaderModel.ms(since: jumpTapped), privacy: .public) ms after it began")
         // Its own cover only: one abandoned meanwhile (`abandonVeil`) may have made way for a newer one.
-        if veil === cover { veil = nil; veilJump = nil; jumpEnded("landed") }
+        if veil === cover { veil = nil; veilJump = nil }
     }
     /// The jump whose veil is up, or whose old page is being pictured for one.
     private var veilJump: Int?
 
-    /// Jumps that have ended (landed and lifted, or let go of), and the marker that tells UI tests: a
-    /// test waits for this count to rise, the app's own end of the jump, never for some seconds.
-    private var jumpsEnded = 0
-    private var jumpEndedMarker: UIView?
+    /// UI tests: how many veiled jumps have landed, their veil (if any) down. A test waits for this count
+    /// to rise, the app's own end of the jump, never for some seconds. A jump let go of (`abandonVeil`)
+    /// counts only when it comes back and lands.
+    private var jumpsLanded = 0
+    private var jumpsLandedMarker: UIView?
 
-    private func jumpEnded(_ how: String) {
-        jumpsEnded += 1
+    private func jumpLanded() {
         guard LaunchOptions.isUITest else { return }
-        if jumpEndedMarker == nil {
+        jumpsLanded += 1
+        if jumpsLandedMarker == nil {
             let marker = UIView(frame: CGRect(x: 0, y: 0, width: 1, height: 1))
+            marker.isUserInteractionEnabled = false
             marker.isAccessibilityElement = true
-            marker.accessibilityIdentifier = "reader.jumpsEnded"
+            marker.accessibilityIdentifier = "reader.jumpsLanded"
             view.addSubview(marker)
-            jumpEndedMarker = marker
+            jumpsLandedMarker = marker
         }
-        jumpEndedMarker?.accessibilityValue = "\(jumpsEnded) \(how)"
+        jumpsLandedMarker?.accessibilityValue = "\(jumpsLanded)"
     }
 
     /// Lifts the veil of a jump that never came back (a Back freed by its count): the reader gets the
@@ -1928,7 +1928,6 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     func abandonVeil(jump: Int) {
         guard veilJump == jump else { return }
         veilJump = nil
-        jumpEnded("let go")
         guard let cover = veil else {
             readerLog.notice("veil: a jump that never came back puts up no cover")
             return
