@@ -449,8 +449,8 @@ import Testing
         await f.model.locationDidChange(try #require(f.page.currentLocation))
         await f.model.checkRemote()
         try #require(f.model.suggestion != nil, "the Cloud's place is offered")
-        // The first page shown, as the host's reveal does: no host here, so a catch-up would otherwise
-        // wait out the cover's bound before it goes.
+        // The first page shown, as the host's reveal does (no host here). This only bounds the reveal: it
+        // never kept these catch-ups from going (the loaded standby did, below).
         f.model.forceReady()
         for _ in 0..<1_000 where !f.model.pageReady { try? await Task.sleep(for: .milliseconds(10)) }
         try #require(f.model.pageReady, "the first page never showed")
@@ -487,8 +487,8 @@ import Testing
         await f.model.locationDidChange(try #require(f.page.currentLocation))
         await f.model.checkRemote()
         try #require(f.model.suggestion != nil, "the Cloud's place is offered")
-        // The first page shown, as the host's reveal does: no host here, so a catch-up would otherwise
-        // wait out the cover's bound before it goes.
+        // The first page shown, as the host's reveal does (no host here). This only bounds the reveal: it
+        // never kept these catch-ups from going (the loaded standby did, below).
         f.model.forceReady()
         for _ in 0..<1_000 where !f.model.pageReady { try? await Task.sleep(for: .milliseconds(10)) }
         try #require(f.model.pageReady, "the first page never showed")
