@@ -47,7 +47,10 @@ import Testing
         // The restore gives way and the reflow ends: the place he scrolled to is the one kept.
         model.keeper.restoreGaveWay()
         model.reflowDidFinish(visible: nil)
-        for _ in 0..<200 where model.placeOwed { try await Task.sleep(for: .milliseconds(25)) }
+        // Waited on the save itself: the debt is cleared before the place is written.
+        for _ in 0..<200 where savedPlace(app)?.locations.progression != scrolled.locations.progression {
+            try await Task.sleep(for: .milliseconds(25))
+        }
         #expect(!model.placeOwed, "the reflow's end never paid the scroll it owed")
         #expect(savedPlace(app)?.locations.progression == scrolled.locations.progression, "the saved place isn't where he scrolled to")
         model.close()
@@ -70,6 +73,7 @@ import Testing
     @Test func aTouchFromBeforeTheReflowIsNotAScrollUnderIt() async throws {
         let (model, page, publication, _) = try await open()
         model.noteInteraction()
+        let before = model.hisMoves
         model.keeper.reflowWillBegin(.rotation, move: model.hisMoves)
         model.reflowDidBegin()
         let laidOut = try #require(await ReaderSyncTests.locate(publication, 0.21))
@@ -77,6 +81,7 @@ import Testing
         await model.locationDidChange(laidOut)
         #expect(model.keeper.restoreMayMove(move: model.hisMoves), "a touch from before the reflow took its restore away")
         #expect(!model.placeOwed, "the layout's page boundary is owed as his place")
+        #expect(model.hisMoves == before, "a touch from before the reflow counted as a move of his")
         model.close()
     }
 
