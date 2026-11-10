@@ -26,6 +26,9 @@ final class ScriptedPage: ReaderPage {
     var onGo: (() -> Void)?
     /// Jumps that never come back until released (a load that hangs).
     var holdsJumps = false
+    /// Whether the page says its chapter is still loading (Readium's spinner up, the web view still loading).
+    var loadingChapter = false
+    var isLoadingChapter: Bool { loadingChapter }
     /// Reports a jump's page before the jump returns, as Readium can.
     var reportsBeforeReturn = false
     private var held: [CheckedContinuation<Void, Never>] = []
