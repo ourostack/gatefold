@@ -1325,6 +1325,9 @@ final class ReaderModel {
     private func land(on locator: Locator?, progression: Double, target: ReadingPosition?, cloud: Double? = nil,
                       rememberBack: Bool, publishes: Bool = true) async -> Int? {
         guard !isClosed else { return nil }
+        // A swipe of his meanwhile takes a step without counting a move: past its veil, the landing gives
+        // way to it too, and writes nothing (gatefold#173 re-review).
+        let hisAtStart = hisSteps
         // A Cloud landing makes his own place's offer stale.
         if offersHisPlace { dismissSuggestion() }
         guard let locator else {
@@ -1338,12 +1341,12 @@ final class ReaderModel {
             let move = moves + 1
             landingMove = move
             await go(toProgression: progression, rememberBack: false, his: false)
-            guard moves == move, !isClosed else {
+            guard moves == move, hisSteps == hisAtStart, !isClosed else {
                 if landingMove == move { landingMove = nil }
                 return back
             }
             guard keeper.reflowing != nil else {
-                await keepPercentLanding(move: move, target: target, cloud: cloud)
+                await keepPercentLanding(move: move, his: hisAtStart, target: target, cloud: cloud)
                 return back
             }
             // A reflow under way (a warm open laid out upright, then turned) moves the page: keep the
@@ -1351,10 +1354,10 @@ final class ReaderModel {
             // cover never stays up for the reflow (on a slow runner that held a blank page past 20 s).
             Task { [weak self] in
                 for _ in 0..<80 {
-                    guard let self, self.keeper.reflowing != nil, self.moves == move, !self.isClosed else { break }
+                    guard let self, self.keeper.reflowing != nil, self.moves == move, self.hisSteps == hisAtStart, !self.isClosed else { break }
                     try? await Task.sleep(for: .milliseconds(250))
                 }
-                await self?.keepPercentLanding(move: move, target: target, cloud: cloud)
+                await self?.keepPercentLanding(move: move, his: hisAtStart, target: target, cloud: cloud)
             }
             return back
         }
@@ -1374,7 +1377,7 @@ final class ReaderModel {
         // out; once it has, the same jump finds the exact words. Retry until they're on screen.
         await settle(on: locator, move: move, loaded: ready)
         // Overtaken by a turn, another jump or the close: that move owns the place now.
-        guard moves == move, !isClosed else { return back }
+        guard moves == move, hisSteps == hisAtStart, !isClosed else { return back }
         // The spread the place it keeps reopens on: its words to the top of a left page, as a restore
         // puts them. Given way to any move of his, another jump or the close meanwhile.
         if let words = locator.text.highlight.map(ReaderJS.normalize), !words.isEmpty {
@@ -1391,10 +1394,10 @@ final class ReaderModel {
             if settlingLanding?.move == move { settlingLanding = nil }
         }
         let settled = Self.ms(since: started)
-        guard moves == move, !isClosed else { return back }
+        guard moves == move, hisSteps == hisAtStart, !isClosed else { return back }
         await captureAnchor()
         let anchored = Self.ms(since: started)
-        guard moves == move, !isClosed, let here = page?.currentLocation else { return back }
+        guard moves == move, hisSteps == hisAtStart, !isClosed, let here = page?.currentLocation else { return back }
         // Landed on the other device's page: that's the reader's place now.
         landed(step, at: here)
         await recordLanding(here, target: target, cloud: cloud)
@@ -1403,11 +1406,11 @@ final class ReaderModel {
     }
 
     /// Keeps the page a percent landing settled on, unless he has moved since.
-    private func keepPercentLanding(move: Int, target: ReadingPosition?, cloud: Double?) async {
+    private func keepPercentLanding(move: Int, his: Int, target: ReadingPosition?, cloud: Double?) async {
         defer { if landingMove == move { landingMove = nil } }
-        guard moves == move, !isClosed else { return }
+        guard moves == move, hisSteps == his, !isClosed else { return }
         await captureAnchor()
-        guard moves == move, !isClosed, let here = page?.currentLocation else { return }
+        guard moves == move, hisSteps == his, !isClosed, let here = page?.currentLocation else { return }
         await recordLanding(here, target: target, cloud: cloud)
     }
 
