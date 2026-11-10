@@ -409,6 +409,27 @@ import Testing
     }
 
     /// The place kept for the book, as a total progression.
+    /// A report of the page he has left, delivered late (after his jump's page is on screen, before the
+    /// jump's own report), is not his move: his jump's page is the place kept. On CI's iPad (job
+    /// 130027739780) a report of the book's first file came 36 ms after a jump landed at 0.309 and was
+    /// written as his move; the jump's own report then found the move kept, and the place stayed at 0.
+    @Test func aLateReportOfThePageHeLeftIsNotKeptOverHisJump() async throws {
+        let f = try await S.make(remote: { _, _ in nil }, startAt: 0.05)
+        await f.model.load()
+        let left = try #require(f.page.currentLocation)
+        await f.model.locationDidChange(left)
+        f.page.reportsOnGo = false
+        await f.model.go(toProgression: 0.7, rememberBack: true)
+        let landed = try #require(f.page.currentLocation)
+        try #require(abs((landed.locations.totalProgression ?? -1) - 0.7) < 0.03, "the jump didn't land")
+        // Readium's report of the page he left comes late, then the jump's own.
+        await f.model.locationDidChange(left)
+        await f.model.locationDidChange(landed)
+        await Self.settle { abs((Self.kept(f) ?? -1) - 0.7) < 0.03 }
+        #expect(abs((Self.kept(f) ?? -1) - 0.7) < 0.03, "a late report of the page he left was kept over his jump, at \(Self.kept(f) ?? -1)")
+        f.model.close()
+    }
+
     private static func kept(_ f: S.Fixture) -> Double? {
         f.app.library.book(S.frankenstein.fastHash)?.locatorJSON.flatMap { try? Locator(jsonString: $0) }?.locations.totalProgression
     }
