@@ -2125,21 +2125,25 @@ final class ReaderModel {
     /// a newer move can be kept while an older one's write is still on its way.
     @ObservationIgnored var placeWriteWait: () async -> Void = {}
 
-    /// The place a jump leaves, held until the jump has moved the page: "Back to page" offered while
-    /// the old page was still up (3.6 to 8.8 s on a cold Contents jump in build 19) read as a jump that
-    /// had already happened. An earlier jump's way back goes down meanwhile; it isn't this jump's.
     /// The page on screen, when "where he is" names an earlier place in its chapter: his words are the
     /// first on the page, never before its start, so a `location` before it is a report the page has
     /// since moved past (gatefold#143: a slow opening landed on his page while `location` stayed on the
     /// chapter's first page, and Back took him there). A page on screen before `location` (Readium
     /// naming a chapter still loading at its start) is the one that lags, and `location` stands.
     private func lagsBehindThePage() -> Locator? {
-        guard let location, let shown = page?.currentLocation, shown.href == location.href,
+        // Mid-reflow or while the open settles, Readium's place is a guess and his held words stand.
+        guard keeper.reflowing == nil, !openSettling,
+              let location, let shown = page?.currentLocation, shown.href == location.href,
               let at = location.locations.progression, let start = shown.locations.progression,
               at < start - 0.000_1 else { return nil }
+        // His words, when the anchor was read on this page: they carry the words, the page's start doesn't.
+        if let words = anchorLocator, words.href == shown.href, let w = words.locations.progression, w >= start - 0.000_1 { return words }
         return shown
     }
 
+    /// The place a jump leaves, held until the jump has moved the page: "Back to page" offered while
+    /// the old page was still up (3.6 to 8.8 s on a cold Contents jump in build 19) read as a jump that
+    /// had already happened. An earlier jump's way back goes down meanwhile; it isn't this jump's.
     private func rememberPlace(at here: Locator? = nil, keepingTheWayBack: Bool = false) -> Int {
         backJumps += 1
         let stale = here == nil ? lagsBehindThePage() : nil

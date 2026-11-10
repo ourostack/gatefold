@@ -225,10 +225,12 @@ import Testing
         await f.model.load()
         let his = try #require(f.page.currentLocation)
         try #require((his.locations.progression ?? 0) > 0.05, "his page is partway through its chapter")
-        // Readium first names the chapter's start, then the page settles on his without a move of his.
-        let start = his.copy(locations: { $0.progression = 0; $0.totalProgression = nil; $0.position = nil })
+        // His words are read on the chapter's start; then the page settles on his with no move of his,
+        // and "where he is" goes back to those words (`locationDidChange`'s report that isn't his move).
+        let start = his.copy(locations: { $0.progression = 0; $0.position = nil })
+        f.page.anchorText = "words-on-the-chapter-start"
         f.page.currentLocation = start
-        await f.model.locationDidChange(start)
+        await f.model.locationDidChange(start, hisMove: true)
         f.page.currentLocation = his
         await f.model.locationDidChange(his)
         let lagging = f.model.location?.locations.progression ?? -1
@@ -236,10 +238,10 @@ import Testing
         await f.model.go(toProgression: 0.7, rememberBack: true)
         f.model.backBeat = { await Task.yield() }
         await f.model.goBack()
-        let want = his.locations.progression ?? -1
-        let at = f.page.currentLocation?.locations.progression ?? -2
+        let want = his.locations.totalProgression ?? -1
+        let at = f.page.currentLocation?.locations.totalProgression ?? -2
         #expect(f.page.currentLocation?.href == his.href, "Back went to another chapter")
-        #expect(abs(at - want) < 0.005, "Back came back to \(at) in the chapter, not his page at \(want)")
+        #expect(abs(at - want) < 0.005, "Back came back to \(at), not his page at \(want)")
         f.model.close()
     }
 
