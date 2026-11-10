@@ -164,6 +164,7 @@ jobs:
     if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
     strategy:
       fail-fast: false
+      max-parallel: 2 # diagnostic only (gatefold#39): fewer simulators at once
       matrix:
         include:
           # The rotation tests on an erased iPad (the cold step), each shard on its own: 606, 548 and 716 s.
@@ -254,6 +255,7 @@ jobs:
     if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
     strategy:
       fail-fast: false
+      max-parallel: 2 # diagnostic only (gatefold#39): fewer simulators at once
       matrix:
         include:
           - shard: ipad-undo-jumps
@@ -298,6 +300,7 @@ jobs:
     if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
     strategy:
       fail-fast: false
+      max-parallel: 2 # diagnostic only (gatefold#39): fewer simulators at once
       matrix:
         include:
           # Each of the two every-tap tests takes longer than 10 min at its slowest (1045 and 1086 s), so each has a
@@ -356,6 +359,7 @@ jobs:
     if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
     strategy:
       fail-fast: false
+      max-parallel: 2 # diagnostic only (gatefold#39): fewer simulators at once
       matrix:
         include:
           - shard: ipad-reviewer-controls
@@ -410,6 +414,7 @@ jobs:
     if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
     strategy:
       fail-fast: false
+      max-parallel: 2 # diagnostic only (gatefold#39): fewer simulators at once
       matrix:
         include:
           - shard: duo-taps-portrait
