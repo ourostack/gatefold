@@ -82,11 +82,15 @@ final class CountingTallyPage: ReaderPage {
         // Meanwhile the number's slot is never blank and never the last layout's number: it says it's counting.
         #expect(model.screenNumbers == nil, "a number from the layout before the change is shown as current")
         #expect(model.countingPages, "the number's slot is blank while the count waits for Your Page to close")
+        // Held, not stalled: the minute's watch that would quiet the slot isn't running while he tunes.
+        #expect(!model.countStallArmed, "the stall watch runs while Your Page holds the count, and would blank the slot")
+        #expect(!model.countStalled)
         let tuned = page.countsStarted
         model.tuning = false
         for _ in 0..<200 where page.countsStarted == tuned { try await Task.sleep(for: .milliseconds(10)) }
         for _ in 0..<50 { await Task.yield() }
         #expect(page.countsStarted == tuned + 1, "closing Your Page started \(page.countsStarted - tuned) counts, not one")
+        #expect(model.countStallArmed, "the count closing Your Page started has no stall watch")
         model.close()
     }
 

@@ -400,6 +400,8 @@ final class ReaderModel {
     /// No chapter counted, and no count begun, for a minute.
     private(set) var countStalled = false
     @ObservationIgnored private var stallTimer: Task<Void, Never>?
+    /// Tests only: the minute's watch for a count that never moves is running.
+    var countStallArmed: Bool { stallTimer != nil }
     private func countMoved() {
         countStalled = false
         stallTimer?.cancel()
@@ -494,7 +496,7 @@ final class ReaderModel {
         guard pageReady, reopenPicture == nil, keeper.reflowing == nil,
               let map = screenPages, !map.uncounted.isEmpty else { return }
         // Held, not stalled: the slot keeps saying "Counting pages…" (never blank) until he closes it.
-        guard !tuning else { countHeldForTuning = true; stallTimer?.cancel(); countStalled = false; return }
+        guard !tuning else { countHeldForTuning = true; stallTimer?.cancel(); stallTimer = nil; countStalled = false; return }
         let key = map.layout
         countGaveUp = false
         countMoved()
