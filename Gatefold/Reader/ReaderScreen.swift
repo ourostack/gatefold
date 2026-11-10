@@ -229,6 +229,7 @@ struct ReaderScreen: View {
         .statusBarHidden(statusBarHidden)
         .persistentSystemOverlays(model.chromeVisible ? .automatic : .hidden)
         .animation(reduceMotion ? .easeOut(duration: 0.2) : Motion.open, value: showAppearance)
+        .onChange(of: showAppearance, initial: true) { _, open in model.tuning = open }
         .sheet(isPresented: $showSearch) {
             SearchSheet(model: model)
         }
