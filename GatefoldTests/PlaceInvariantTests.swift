@@ -459,9 +459,11 @@ import Testing
         f.model.close()
     }
 
-    /// A catch-up overtaken by a turn of his while it is past the veil's limit offers no way back: he
-    /// never saw it land (gatefold#173 re-review). The Cloud's place as a percent and as exact words.
-    @Test(arguments: ["percent", "exact"]) func aCatchUpEndedQuietlyOffersNoWayBack(place: String) async throws {
+    /// A catch-up overtaken by a turn or a swipe of his while it is past the veil's limit offers no way
+    /// back (he never saw it land) and writes nothing of the Cloud's when it comes back late: no Cloud
+    /// place kept, no Cloud scale noted (gatefold#173 re-review). A swipe counts no move, so the landing
+    /// must give way to his steps too. The Cloud's place as a percent and as exact words.
+    @Test(arguments: ["percent", "exact"], ["turn", "swipe"]) func aCatchUpEndedQuietlyOffersNoWayBack(place: String, how: String) async throws {
         let f = try await S.make(remote: { pub, mapper in
             place == "percent" ? ReadingPosition(cfi: nil, totalProgression: 0.7, updated: Date(), source: .pocketBookNative)
                 : try await S.inkPadPlace(pub, mapper, index: 12, percent: 40)
@@ -478,16 +480,22 @@ import Testing
         #expect(f.model.jumpsPastTheVeil == 1, "the catch-up wasn't on its way past the veil's limit")
         let next = try #require(await S.locate(f.publication, 0.06))
         f.page.currentLocation = next
-        f.model.userTurnedPage()
+        if how == "turn" {
+            f.model.userTurnedPage()
+        } else {
+            f.model.noteInteraction()
+            await f.model.locationDidChange(next)
+        }
         await Self.settle { abs((Self.kept(f) ?? -1) - (next.locations.totalProgression ?? 0)) < 0.001 }
         f.page.loadingChapter = false
         f.page.holdsJumps = false
         f.page.pageStartsBefore = 0
         f.page.releaseJumps()
         await taking.value
+        #expect(f.app.library.book(bookID)?.cloudScale == nil, "the late catch-up noted the Cloud's scale over his \(how)")
         await Self.settle { abs((f.page.currentLocation?.locations.totalProgression ?? -1) - (next.locations.totalProgression ?? 0)) < 0.00001 }
         #expect(abs((Self.kept(f) ?? -1) - (next.locations.totalProgression ?? 0)) < 0.001, "the place kept isn't his turn")
-        #expect(!f.model.showJumpBack, "a way back is offered for a catch-up he never saw land")
+        #expect(!f.model.showJumpBack, "a way back is offered for a catch-up he never saw land (\(how))")
         f.model.close()
     }
 
