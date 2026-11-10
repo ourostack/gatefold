@@ -412,7 +412,10 @@ import Testing
         // He moves on meanwhile: Readium moves itself and tells the reader. A tap first reports the page
         // he is still on (it moves nothing).
         let next = try #require(await S.locate(f.publication, 0.06))
-        if how == "tap, then swipe" { await f.model.locationDidChange(try #require(f.page.currentLocation)) }
+        if how == "tap, then swipe" {
+            f.model.controlsTapped(visible: true)
+            await f.model.locationDidChange(try #require(f.page.currentLocation))
+        }
         f.page.currentLocation = next
         if how == "turn" {
             f.model.userTurnedPage()
@@ -508,10 +511,13 @@ import Testing
 
     /// A jump of his made while another is still on its way past the veil's limit gets a limit of its
     /// own: a second load that never ends doesn't hold the screen either (gatefold#173 re-review).
-    @Test func aSecondJumpWhileOneIsPastTheVeilsLimitHasItsOwnLimit() async throws {
+    /// `reportsFirst`: Readium reports each jump's page before the jump returns, so the first jump's late
+    /// report comes before anything knows it was overtaken.
+    @Test(arguments: [false, true]) func aSecondJumpWhileOneIsPastTheVeilsLimitHasItsOwnLimit(reportsFirst: Bool) async throws {
         let f = try await S.make(remote: { _, _ in nil }, startAt: 0.05, jumpBeat: { await Task.yield() })
         await f.model.load()
         await f.model.locationDidChange(try #require(f.page.currentLocation))
+        f.page.reportsBeforeReturn = reportsFirst
         f.page.holdsJumps = true
         f.page.loadingChapter = true
         let first = Task { await f.model.go(toProgression: 0.7, rememberBack: true) }
