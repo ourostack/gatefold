@@ -225,16 +225,13 @@ import Testing
         await f.model.load()
         let his = try #require(f.page.currentLocation)
         try #require((his.locations.progression ?? 0) > 0.05, "his page is partway through its chapter")
-        // His words are read on the chapter's start; then the page settles on his with no move of his,
-        // and "where he is" goes back to those words (`locationDidChange`'s report that isn't his move).
-        // Here through the layout path ("his words still first on screen"); on CI it was a report inside
-        // a reflow's window: both lag `location` the same way.
+        // "Where he is" is the chapter's start; the page has moved on to his, and its report hasn't come
+        // in when he jumps (a report keeps `location` off words before the page, see the test below).
         let start = S.boundary(of: his)
         f.page.anchorText = "words-on-the-chapter-start"
         f.page.currentLocation = start
         await f.model.locationDidChange(start, hisMove: true)
         f.page.currentLocation = his
-        await f.model.locationDidChange(his)
         let lagging = f.model.location?.locations.progression ?? -1
         try #require(lagging < 0.001, "where he is lags at the chapter's start (it reads \(lagging))")
         await f.model.go(toProgression: 0.7, rememberBack: true)
