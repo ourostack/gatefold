@@ -325,6 +325,8 @@ import Testing
         f.page.holdsJumps = false
         f.page.releaseJumps()
         await trip.value
+        // The place is written on its own task after the landing's report: waited on as an event.
+        await Self.settle { abs((Self.kept(f) ?? -1) - first) < 0.03 }
         let at = try #require(f.page.currentLocation?.locations.totalProgression)
         #expect(abs(at - first) < 0.03, "Back did not take him back")
         #expect(abs((Self.kept(f) ?? -1) - first) < 0.03, "his page is not the place kept")
