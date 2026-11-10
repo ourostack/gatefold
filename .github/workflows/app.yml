@@ -252,14 +252,16 @@ jobs:
         with:
           limit: ${{ matrix.timeout }}
           cap: "65"
-      - name: Turned on its side cold (an erased iPad), the spread always comes whole and keeps his place
-        # An erased simulator, not a new one: build 19 left the old page under a frozen leaf in 3 of 9
-        # rounds after an erase and 0 of 3 on a new simulator. Once a run, before anything warms it.
+      - name: Turned on its side cold (a new iPad), the spread always comes whole and keeps his place
+        # On the iPad this leg created and booted, with nothing run on it yet: as cold as an erased one, and colder in
+        # build 19's own runs (RotationRepro green 0 of 3 rounds on a just-created simulator, 6 of 9 after an erase;
+        # delight-build19 review). It used to erase that iPad and boot it again, and that second boot is where the
+        # runner hung (gatefold#150: jobs 129883824568, 129919854207). The boot and its retries are the boot step's
+        # (boot-sim.sh, #57). Once a run, before anything warms it.
         if: matrix.cold
-        # 36 and 38 min on a hosted runner (16-17 to build, the rest tests; build 20), so 55 keeps 30%
-        # headroom, and 10 more for the erase's one fresh device (gatefold#71). A runner once hung here past 90 min with
-        # nothing in the log, so the step is bounded and reports each test as it ends. Less when less of the job is
-        # left, so a hang still uploads its logs.
+        # The tests' own time: up to 42.6 min in six green place jobs (2026-11-08 to 11-10), so the cap's 65 keeps
+        # about 30% headroom. A runner once hung here past 90 min with nothing in the log, so the step is bounded and
+        # reports each test as it ends. Less when less of the job is left, so a hang still uploads its logs.
         timeout-minutes: ${{ fromJSON(steps.left_cold.outputs.minutes || '65') }}
         env:
           STEP_UNTIL: ${{ steps.left_cold.outputs.until }}
@@ -267,24 +269,6 @@ jobs:
           # still fails a page left stuck for good.
           TEST_RUNNER_GATEFOLD_SPREAD_FLOOR: "90"
         run: |
-          udid="$UDID"
-          echo "$(date -u +%T) erasing $udid"
-          # Each simctl call bounded, then the device checked; if its runtime went ("Malformed bundle"; gatefold#71),
-          # one fresh device, erased the same way. Prints the UDID to test on.
-          # Up to 30 min of the step for the erase and one fresh device, less when the step has less, so the erase
-          # ends with its own message 5 min before the step does; the rest is the tests'.
-          budget=$(( STEP_UNTIL - $(date +%s) - 300 ))
-          [ "$budget" -le 1800 ] || budget=1800
-          [ "$budget" -ge 60 ] || budget=60
-          udid="$(CI_SIMULATOR_BUDGET=$budget python3 -I scripts/ci-simulator.py erase gatefold-ipad "$udid")"
-          DESTINATION="platform=iOS Simulator,arch=$(uname -m),id=$udid"
-          # The erase ended the place log's stream; take it up again.
-          nohup sh -c 'xcrun simctl spawn "$0" log stream --style compact --predicate "subsystem == \"bot.ouro.gatefold\"" 2>/dev/null \
-            | grep --line-buffered -E "place (read|write)|place:|location |reflow|landing|landed|reopen|tapped|warm:|open:|first page|pages:|turn:|spread:|veil:|settle [0-9]|REPRO|snapshot:|back:" \
-            | grep --line-buffered -v -E "text:|\] visible|\] anchor[: ]" >> "$1"' "$udid" "$RUNNER_TEMP/place.log" >/dev/null 2>&1 &
-          # Why the system ended the app, when it did (gatefold#76): runningboardd's lines about it, no page text.
-          nohup sh -c 'xcrun simctl spawn "$0" log stream --style compact --predicate "process == \"runningboardd\" AND eventMessage CONTAINS \"bot.ouro.gatefold\"" 2>/dev/null \
-            | grep --line-buffered -i -E "termin|kill|jetsam|exit|reason|invalidat|memory|highwater|limit" >> "$1"' "$udid" "$RUNNER_TEMP/rb.log" >/dev/null 2>&1 &
           echo "$(date -u +%T) booted; testing"
           python3 -I scripts/ci-within.py --until "$STEP_UNTIL" -- xcodebuild test-without-building -xctestrun "$XCTESTRUN" \
             -destination "$DESTINATION" \
