@@ -242,7 +242,12 @@ final class ReaderModel {
     /// Where in the book the landing in flight is bound, and its file: a report there is its own, whatever
     /// touch is counted.
     @ObservationIgnored private var landingAim = -1.0
-    @ObservationIgnored private var landingAimFile: AnyURL?
+    @ObservationIgnored private var landingAimFile: String?
+    /// The reading-order file at a point in the book, with no wait (as `screenPage(atTotal:)` finds it).
+    private func file(atTotal total: Double) -> String? {
+        guard let index = resourceStarts.lastIndex(where: { $0 <= total }), index < readingOrderHrefs.count else { return nil }
+        return readingOrderHrefs[index]
+    }
     /// A report of the landing's own: the page it is bound for (the same screen page, or the same Readium
     /// position while the screens aren't counted), its file's first page (a two-step jump names that
     /// first), or a report naming no place. Judged in pages, never a fraction of the book, and as tight as
@@ -250,10 +255,16 @@ final class ReaderModel {
     /// chapter was too coarse, his page and the Cloud's are often one file). The cost of erring the other
     /// way is small: a stray touch on the landing's own report ends it quietly on the page it was bound
     /// for, with no way back offered. A swipe of his that ends on the landing's page is taken as the
-    /// landing's: he is where it was going.
-    private func isLandingsOwnPage(_ l: Locator) -> Bool {
+    /// landing's: he is where it was going. So is a report naming no place (rare), his or not.
+    /// The file's first page is not the landing's when his page before it was the file just before: that
+    /// is a swipe of his onto the next chapter, one page on, not a jump's first step.
+    private func isLandingsOwnPage(_ l: Locator, after before: Locator?) -> Bool {
         guard let total = l.locations.totalProgression else { return true }
-        if let file = landingAimFile, l.href == file, (l.locations.progression ?? 0) == 0 { return true }
+        if let aimFile = landingAimFile, l.href.string == aimFile, (l.locations.progression ?? 0) == 0 {
+            guard let before, let i = readingOrderHrefs.firstIndex(of: aimFile), i > 0,
+                  before.href.string == readingOrderHrefs[i - 1] else { return true }
+            return false
+        }
         if let a = screenPage(atTotal: total), let b = screenPage(atTotal: landingAim) { return a == b }
         guard chapterMap.positionCount > 1 else { return abs(total - landingAim) < 0.000_1 }
         return chapterMap.page(at: total) == chapterMap.page(at: landingAim)
@@ -1394,7 +1405,7 @@ final class ReaderModel {
             landingMove = move
             landingStep = steps
             landingAim = progression
-            landingAimFile = await publication.locate(progression: progression)?.href
+            landingAimFile = file(atTotal: progression)
             await go(toProgression: progression, rememberBack: false, his: false)
             guard moves == move, hisSteps == hisAtStart, !isClosed else {
                 if landingMove == move { landingMove = nil }
@@ -1425,7 +1436,7 @@ final class ReaderModel {
         landingMove = move
         landingStep = steps
         landingAim = locator.locations.totalProgression ?? progression
-        landingAimFile = locator.href
+        landingAimFile = locator.href.string
         defer { if landingMove == move { landingMove = nil } }
         let started = ContinuousClock.now
         let ready = await page?.promoteStandby(for: locator) ?? false
@@ -1841,7 +1852,7 @@ final class ReaderModel {
         // the new veil still counts), and never a report of the page it is bound for: a touch that went
         // nowhere makes the landing's own report look touched (gatefold#173 re-review).
         let swipePastVeil = landing && touchedSinceLocation && (strayJump.map { $0.jump >= landingStep } ?? false)
-            && !isLandingsOwnPage(locator)
+            && !isLandingsOwnPage(locator, after: reportedBefore)
         guard !landing || swipePastVeil, !launchJumpInFlight else { return }
         // Mid-turn the navigator has moved under the overlay; the turn records the place when it lands.
         // A move reported mid-reflow (a turn or a jump while an iPad's first layout is still settling)

@@ -570,6 +570,60 @@ import Testing
         #expect(!f.model.showJumpBack, "a way back is offered for a catch-up he never saw land")
     }
 
+    /// The same past a file's end: the Cloud's place a few pages into the next chapter, and his swipe from
+    /// this file's last page onto the next file's first page. That first page is not the landing's first
+    /// step (a jump names its file's first page first): his page before it was the file just before, so
+    /// the swipe is his (gatefold#173 re-review).
+    @Test func aSwipeOntoTheNextChapterPastACatchUpThereIsHis() async throws {
+        let f = try await S.make(remote: { pub, mapper in
+            nonisolated(unsafe) let p = pub
+            let positions = try await p.positions().get()
+            let j = try #require(positions.indices.first { $0 > 0 && (positions[$0].locations.totalProgression ?? 0) > 0.05 && positions[$0].href != positions[$0 - 1].href })
+            let aim = positions[j + 2]
+            let made = try #require(await mapper.position(for: BookLocation(href: aim.href.string, progression: aim.locations.progression ?? 0), at: Date()))
+            return ReadingPosition(cfi: try #require(made.cfi), pointer: "pbr:/external##" + (made.cfi ?? ""),
+                                   totalProgression: aim.locations.totalProgression ?? 0, updated: Date(), source: .pocketBookNative)
+        }, book: { $0.totalProgression = 0.05; $0.lastOpened = Date().addingTimeInterval(-600) },
+           startAt: 0.05, jumpBeat: { await Task.yield() })
+        defer { f.model.close() }
+        await f.model.load()
+        await f.model.locationDidChange(try #require(f.page.currentLocation))
+        nonisolated(unsafe) let p = f.publication
+        let positions = try await p.positions().get()
+        let j = try #require(positions.indices.first { $0 > 0 && (positions[$0].locations.totalProgression ?? 0) > 0.05 && positions[$0].href != positions[$0 - 1].href })
+        let last = positions[j - 1], first = positions[j]
+        try #require((first.locations.progression ?? 1) == 0 && positions[j + 2].href == first.href, "the next file's first page and the Cloud's place aren't one file")
+        // He has read on to this file's last page.
+        f.page.currentLocation = last
+        f.model.noteInteraction()
+        await f.model.locationDidChange(last)
+        await f.model.checkRemote()
+        try #require(f.model.suggestion != nil, "the Cloud's place is offered")
+        f.model.forceReady()
+        for _ in 0..<1_000 where !f.model.pageReady { try? await Task.sleep(for: .milliseconds(10)) }
+        try #require(f.model.pageReady, "the first page never showed")
+        f.page.dropStandby()
+        f.page.holdsJumps = true
+        f.page.loadingChapter = true
+        let taking = Task { await f.model.acceptSuggestion() }
+        await Self.settle { f.model.jumpsPastTheVeil >= 1 }
+        try #require(f.model.jumpsPastTheVeil == 1, "the catch-up wasn't on its way past the veil's limit")
+        // He swipes on, onto the next chapter's first page.
+        f.page.currentLocation = first
+        f.model.noteInteraction()
+        await f.model.locationDidChange(first)
+        f.page.loadingChapter = false
+        f.page.holdsJumps = false
+        f.page.pageStartsBefore = 0
+        f.page.releaseJumps()
+        await taking.value
+        let mine = first.locations.totalProgression ?? 0
+        await Self.settle { abs((f.page.currentLocation?.locations.totalProgression ?? -1) - mine) < 0.00001 }
+        #expect(abs((f.page.currentLocation?.locations.totalProgression ?? -1) - mine) < 0.00001, "the late catch-up moved the page off his swipe onto the next chapter")
+        #expect(abs((Self.kept(f) ?? -1) - mine) < 0.001, "the place kept isn't his swipe: \(Self.kept(f) ?? -1), his \(mine)")
+        #expect(!f.model.showJumpBack, "a way back is offered for a catch-up he never saw land")
+    }
+
     /// A catch-up overtaken by a turn or a swipe of his while it is past the veil's limit offers no way
     /// back (he never saw it land) and writes nothing of the Cloud's when it comes back late: no Cloud
     /// place kept, no Cloud scale noted (gatefold#173 re-review). A swipe counts no move, so the landing
