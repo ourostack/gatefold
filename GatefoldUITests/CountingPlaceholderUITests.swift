@@ -21,7 +21,8 @@ final class CountingPlaceholderUITests: XCTestCase {
 
     /// Waits are judged in reads of the app, never seconds (gatefold#94, as FineTuneTap in #121): each read is a round
     /// trip to the app, so a starved runner makes reads slower instead of failing what landed late. Each read waits
-    /// at least 0.1 s, so `reads` sets the floor a fast runner gets (the old seconds); `hangGuard` only catches a hang.
+    /// at least 0.1 s, so `reads` sets the floor a fast runner gets (the old seconds); `hangGuard` ends it on a
+    /// runner so slow that the reads would run on (300 s for the page, 2.5 times the old 120 s).
     private func readsUntil(reads: Int, hangGuard: TimeInterval, _ done: () -> Bool) -> (ok: Bool, reads: Int, hung: Bool) {
         let hung = Date().addingTimeInterval(hangGuard)
         for read in 1...reads {
@@ -45,7 +46,7 @@ final class CountingPlaceholderUITests: XCTestCase {
         // From the moment the page is up, the slot holds the placeholder or the number. Only cheap reads
         // while sampling (the page's text takes seconds to read).
         let ready = app.descendants(matching: .any)["reader.pageReady"].firstMatch
-        let shows = readsUntil(reads: 1200, hangGuard: 300) { (ready.value as? String) == "1" }
+        let shows = readsUntil(reads: 1200, hangGuard: 300) { ready.exists && (ready.value as? String) == "1" }
         print("PLACEHOLDER page ready=\(shows.ok) after \(shows.reads) reads\(shows.hung ? " (hang guard)" : "")")
         XCTAssertTrue(shows.ok, shows.hung ? "the page shows (the hang guard ran out after \(shows.reads) reads)"
                                            : "the page shows (not in \(shows.reads) reads)")
