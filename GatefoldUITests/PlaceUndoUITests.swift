@@ -17,10 +17,11 @@ final class PlaceUndoUITests: XCTestCase {
         "-GatefoldSignedIn", "YES",
     ]
 
-    /// A jump (Contents, or Back) is waited for until it ends: its veil lifts onto the new page. Not 30
-    /// or 60 s: the veil itself waits up to `ReaderHostController.loadingLooks` (1200 looks of at least
-    /// 50 ms, then its 40 tries) for a slow chapter, and a loaded runner's chapters took over 60 s
-    /// (main f38d8d9, gatefold#94). This is only a hang guard, well above that allowance.
+    /// A jump (Contents, or Back) is waited for until it ends: its veil lifts onto the new page. The
+    /// app's wait for a slow chapter is counted, not timed (`ReaderHostController.loadingLooks`, 1200
+    /// looks of at least 50 ms, then its 40 tries, after Readium's own `go`), so no number of seconds
+    /// bounds it. 30 and 60 s failed jumps it was still allowed to finish (main f38d8d9, gatefold#94).
+    /// This is only a hang guard, 4 times that 60 s floor.
     private static let jumpEnds: TimeInterval = 240
 
     private func el(_ id: String) -> XCUIElement { app.descendants(matching: .any)[id] }
@@ -107,6 +108,8 @@ final class PlaceUndoUITests: XCTestCase {
         contentsJump(to: "Chapter XL")
         let jumped = waitForWords(changingFrom: first, timeout: Self.jumpEnds)
         XCTAssertNotEqual(opening(jumped), opening(first), "the jump moved the page")
+        // The words can change under the veil, and a tap there is swallowed.
+        XCTAssertTrue(el("reader.veil").waitForNonExistence(timeout: Self.jumpEnds), "the veil lifts")
         if app.buttons["reader.contents"].exists { el("reader.page").coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap() }
         XCTAssertTrue(app.buttons["reader.contents"].waitForNonExistence(timeout: 5), "the controls are hidden")
         let back = app.buttons["reader.back"]
@@ -117,6 +120,7 @@ final class PlaceUndoUITests: XCTestCase {
         back.tap()
         let returned = waitForWords(changingFrom: jumped, timeout: Self.jumpEnds)
         XCTAssertEqual(opening(returned), opening(first), "Back did not return to his page")
+        XCTAssertTrue(el("reader.veil").waitForNonExistence(timeout: Self.jumpEnds), "Back's veil lifts")
         // And Back itself is one tap to undo.
         XCTAssertTrue(app.buttons["reader.back"].waitForExistence(timeout: 5), "going back can't be undone")
         // And the page still answers: a tap in its middle brings the controls up.
@@ -236,7 +240,8 @@ final class PlaceUndoUITests: XCTestCase {
     func testAChaptersFirstPageTurnsBackByTapAndBySwipe() {
         let first = openFresh()
         contentsJump(to: "Chapter XL")
-        _ = waitForWords(changingFrom: first, timeout: Self.jumpEnds)
+        let jumped = waitForWords(changingFrom: first, timeout: Self.jumpEnds)
+        XCTAssertNotEqual(opening(jumped), opening(first), "the jump moved the page")
         XCTAssertTrue(el("reader.veil").waitForNonExistence(timeout: Self.jumpEnds), "the veil lifts")
         if app.buttons["reader.contents"].exists { el("reader.page").coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap() }
         XCTAssertTrue(app.buttons["reader.contents"].waitForNonExistence(timeout: 5), "the controls are hidden")
@@ -266,7 +271,8 @@ final class PlaceUndoUITests: XCTestCase {
         XCTAssertNotEqual(opening(landed), opening(first))
         // The same jump again, untouched, from his first page: the page it lands on is where he chose.
         app.buttons["reader.back"].tap()
-        _ = waitForWords(changingFrom: landed, timeout: Self.jumpEnds)
+        let returned = waitForWords(changingFrom: landed, timeout: Self.jumpEnds)
+        XCTAssertEqual(opening(returned), opening(first), "Back did not return to his first page")
         contentsJump(to: "Chapter XL")
         XCTAssertTrue(veil.waitForExistence(timeout: 10))
         XCTAssertTrue(veil.waitForNonExistence(timeout: Self.jumpEnds))
