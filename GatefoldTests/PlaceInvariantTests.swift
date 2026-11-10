@@ -398,7 +398,9 @@ import Testing
     /// A turn or a swipe of his while a jump is still on its way past the veil's limit ends it quietly:
     /// when the hung jump comes back at last, his page stands and is the place kept, and no way back
     /// is offered for a jump he never saw land (gatefold#173).
-    @Test(arguments: ["turn", "swipe"]) func aMoveWhileAJumpIsPastTheVeilsLimitEndsItQuietly(how: String) async throws {
+    /// "tap, then swipe": a report with no touch (the layout one the controls bring) comes first, so the
+    /// swipe has no jump of ours since that report; it still ends the jump (gatefold#173 re-review).
+    @Test(arguments: ["turn", "swipe", "tap, then swipe"]) func aMoveWhileAJumpIsPastTheVeilsLimitEndsItQuietly(how: String) async throws {
         let f = try await S.make(remote: { _, _ in nil }, startAt: 0.05, jumpBeat: { await Task.yield() })
         await f.model.load()
         await f.model.locationDidChange(try #require(f.page.currentLocation))
@@ -413,6 +415,7 @@ import Testing
         if how == "turn" {
             f.model.userTurnedPage()
         } else {
+            if how == "tap, then swipe" { await f.model.locationDidChange(try #require(f.page.currentLocation)) }
             f.model.noteInteraction()
             await f.model.locationDidChange(next)
         }
@@ -430,24 +433,79 @@ import Testing
         f.model.close()
     }
 
-    /// A slow landing of the app's own (the Cloud's place) that outlives the veil, with no move of his,
-    /// is not put back: it is where the page belongs (gatefold#173 review).
+    /// A slow catch-up to the Cloud's place (a percent, so the landing's own percent step runs inside its
+    /// veil) that outlives the veil, with no move of his, counts once and is not put back: it is where the
+    /// page belongs (gatefold#173 review).
     @Test func aSlowLandingOfOursPastTheVeilIsNotPutBack() async throws {
+        let f = try await S.make(remote: { _, _ in ReadingPosition(cfi: nil, totalProgression: 0.7, updated: Date(), source: .pocketBookNative) },
+                                 book: { $0.totalProgression = 0.05; $0.lastOpened = Date().addingTimeInterval(-600) },
+                                 startAt: 0.05, jumpBeat: { await Task.yield() })
+        await f.model.load()
+        await f.model.locationDidChange(try #require(f.page.currentLocation))
+        await f.model.checkRemote()
+        try #require(f.model.suggestion != nil, "the Cloud's place is offered")
+        f.page.holdsJumps = true
+        f.page.loadingChapter = true
+        let taking = Task { await f.model.acceptSuggestion() }
+        await Self.settle { f.model.jumpsPastTheVeil >= 1 }
+        #expect(f.model.jumpsPastTheVeil == 1, "the catch-up wasn't on its way past the veil's limit")
+        f.page.loadingChapter = false
+        f.page.holdsJumps = false
+        f.page.releaseJumps()
+        await taking.value
+        #expect(f.model.jumpsPastTheVeil == 1, "one catch-up counted \(f.model.jumpsPastTheVeil) times past the veil")
+        #expect(abs((f.page.currentLocation?.locations.totalProgression ?? -1) - 0.7) < 0.03, "the landing was put back")
+        f.model.close()
+    }
+
+    /// A jump of his made while another is still on its way past the veil's limit gets a limit of its
+    /// own: a second load that never ends doesn't hold the screen either (gatefold#173 re-review).
+    @Test func aSecondJumpWhileOneIsPastTheVeilsLimitHasItsOwnLimit() async throws {
         let f = try await S.make(remote: { _, _ in nil }, startAt: 0.05, jumpBeat: { await Task.yield() })
         await f.model.load()
         await f.model.locationDidChange(try #require(f.page.currentLocation))
         f.page.holdsJumps = true
         f.page.loadingChapter = true
-        let jump = Task { await f.model.go(toProgression: 0.7, rememberBack: false, his: false) }
-        await Self.settle { f.model.jumpsPastTheVeil >= 1 }
+        let first = Task { await f.model.go(toProgression: 0.7, rememberBack: true) }
+        await Self.settle { f.model.jumpsPastTheVeil == 1 }
+        #expect(f.model.jumpsPastTheVeil == 1, "the first jump wasn't past the veil's limit")
+        let second = Task { await f.model.go(toProgression: 0.5, rememberBack: true) }
+        await Self.settle { f.model.jumpsPastTheVeil == 2 }
+        #expect(f.model.jumpsPastTheVeil == 2, "the second hung jump held the screen with no limit")
         f.page.loadingChapter = false
         f.page.holdsJumps = false
-        let sent = f.page.jumps.count
+        f.page.releaseJumps()
+        await first.value
+        await second.value
+        f.model.close()
+    }
+
+    /// A bookmark's jump ended quietly by a move of his offers no way back, as any other jump
+    /// (gatefold#173 re-review).
+    @Test func aBookmarkJumpEndedQuietlyOffersNoWayBack() async throws {
+        let f = try await S.make(remote: { _, _ in nil }, startAt: 0.05, jumpBeat: { await Task.yield() })
+        await f.model.load()
+        await f.model.locationDidChange(try #require(f.page.currentLocation))
+        let mark = try JSONDecoder().decode(Bookmark.self, from: Data("""
+            {"id":"\(UUID().uuidString)","anchor":{"href":"x","progression":0.5},"title":"t","totalProgression":0.7,"created":0}
+            """.utf8))
+        f.page.holdsJumps = true
+        f.page.loadingChapter = true
+        let jump = Task { await f.model.go(to: mark) }
+        await Self.settle { f.model.jumpsPastTheVeil == 1 }
+        #expect(f.model.jumpsPastTheVeil == 1, "the bookmark's jump wasn't past the veil's limit")
+        let next = try #require(await S.locate(f.publication, 0.06))
+        f.page.currentLocation = next
+        f.model.userTurnedPage()
+        await Self.settle { abs((Self.kept(f) ?? -1) - (next.locations.totalProgression ?? 0)) < 0.001 }
+        f.page.loadingChapter = false
+        f.page.holdsJumps = false
+        f.page.pageStartsBefore = 0
         f.page.releaseJumps()
         await jump.value
-        #expect(f.model.jumpsPastTheVeil == 1, "one jump counted \(f.model.jumpsPastTheVeil) times past the veil")
-        #expect(f.page.jumps.count == sent, "a landing nobody overtook was put back")
-        #expect(abs((f.page.currentLocation?.locations.totalProgression ?? -1) - 0.7) < 0.03, "the landing didn't stand")
+        await Self.settle { abs((f.page.currentLocation?.locations.totalProgression ?? -1) - (next.locations.totalProgression ?? 0)) < 0.00001 }
+        #expect(abs((Self.kept(f) ?? -1) - (next.locations.totalProgression ?? 0)) < 0.001, "the place kept isn't his turn")
+        #expect(!f.model.showJumpBack, "a way back is offered for a bookmark jump he never saw land")
         f.model.close()
     }
 
