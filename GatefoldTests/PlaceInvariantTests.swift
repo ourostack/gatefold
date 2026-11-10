@@ -265,6 +265,8 @@ import Testing
         f.model.noteInteraction()
         await f.model.locationDidChange(start)
         let kept = try #require(saved(f), "the swipe kept no place")
+        let keptAt = Self.kept(f) ?? -1, startAt = start.locations.totalProgression ?? -2
+        try #require(abs(keptAt - startAt) < 0.001, "the place kept (\(keptAt)) isn't the swipe's (\(startAt))")
         f.page.anchorText = "words-on-his-page"
         f.page.currentLocation = his
         await f.model.locationDidChange(his)
