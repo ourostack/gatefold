@@ -316,8 +316,9 @@ import Testing
         f.page.loadingChapter = true
         let trip = Task { await f.model.goBack() }
         for _ in 0..<(JumpLanding.reads * 4) where !f.model.isGoingBack { await Task.yield() }
-        // Well past the reads a trip may spend on a page that isn't loading.
-        for _ in 0..<(JumpLanding.reads * 2) where f.model.isGoingBack { await Task.yield() }
+        // Past the reads a trip may spend on a page that isn't loading: waited on as an event, in reads,
+        // since the trip's beats share the main actor with other work (a count of yields here raced them).
+        await Self.settle { f.model.tripsPastTheVeil >= 1 }
         #expect(f.model.isGoingBack, "Back gave up while its chapter was still loading")
         #expect(f.model.tripsPastTheVeil == 1, "the veil held the screen past its limit")
         // The load comes in.
@@ -453,6 +454,10 @@ import Testing
         f.model.forceReady()
         for _ in 0..<1_000 where !f.model.pageReady { try? await Task.sleep(for: .milliseconds(10)) }
         try #require(f.model.pageReady, "the first page never showed")
+        // The Cloud place's page loading behind this one never loads either: the host drops it 1.5 s
+        // after the tap and jumps the plain way. Left in place, the catch-up swaps it in, sends no jump
+        // and never meets the hung load (every run of these tests before this line).
+        f.page.dropStandby()
         f.page.holdsJumps = true
         f.page.loadingChapter = true
         let taking = Task { await f.model.acceptSuggestion() }
@@ -487,6 +492,10 @@ import Testing
         f.model.forceReady()
         for _ in 0..<1_000 where !f.model.pageReady { try? await Task.sleep(for: .milliseconds(10)) }
         try #require(f.model.pageReady, "the first page never showed")
+        // The Cloud place's page loading behind this one never loads either: the host drops it 1.5 s
+        // after the tap and jumps the plain way. Left in place, the catch-up swaps it in, sends no jump
+        // and never meets the hung load (every run of these tests before this line).
+        f.page.dropStandby()
         f.page.holdsJumps = true
         f.page.loadingChapter = true
         let taking = Task { await f.model.acceptSuggestion() }
