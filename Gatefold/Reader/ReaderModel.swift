@@ -1198,7 +1198,7 @@ final class ReaderModel {
         guard showJumpBack else { return }
         turnsSinceJump += 1
         readerLog.notice("back: read on \(self.turnsSinceJump, privacy: .public)")
-        if turnsSinceJump >= JumpBack.turnsToKeep { withAnimation(Motion.chrome) { showJumpBack = false } }
+        if turnsSinceJump >= JumpBack.turnsToKeep { withAnimation(Motion.chrome) { showJumpBack = false; backGaveUp = false } }
     }
 
     /// What the pill says: the start, or just "where you were" (a counted page number could still be the
@@ -2077,8 +2077,7 @@ final class ReaderModel {
         // for (gatefold#170), and only one that has died gives the trip up.
         Task { [weak self] in
             var budget = JumpLanding.Budget()
-            while let self, budget.take(loading: self.page?.isLoadingChapter == true) {
-                guard self.goingBack == trip, !self.isClosed else { return }
+            while let self, self.goingBack == trip, !self.isClosed, budget.take(loading: self.page?.isLoadingChapter == true) {
                 await self.backBeat()
             }
             guard let self, self.goingBack == trip, !self.isClosed else { return }
@@ -2098,7 +2097,9 @@ final class ReaderModel {
         // taken down under his finger mid-tap (on the Duo a Back taken down and put up again never
         // showed, and going back could not be undone).
         let undo = rememberPlace(at: page?.currentLocation, keepingTheWayBack: true)
-        defer { publishBack(undo) }
+        // Not when the trip gave up: the pill keeps pointing at his page (gatefold#170).
+        var keepsUndo = true
+        defer { if keepsUndo { publishBack(undo) } }
         // Sent again until his page is on screen: a web view still loading takes the jump at its file's
         // first page and drops the place inside it (CI's iPad at 8c5f294: Back came back to the chapter's
         // start). Never once he has moved on or the trip was given up.
@@ -2146,6 +2147,21 @@ final class ReaderModel {
             if steps == restore, !isClosed, let here = page?.currentLocation { await locationDidChange(here, hisMove: true) }
             return
         }
+        // Given up (freed by its count) or out of reads, and his page isn't what the page shows: Back didn't
+        // go. The pill keeps its way back and says so, and nothing here is taken as his (gatefold#170: the
+        // watchdog and the landing count the same reads, so a jump that came back short is freed too).
+        let gaveUp = (freed || (!backLanded && (back.locations.progression ?? 0) > 0 && steps == jump))
+        if gaveUp, !(await pageShows(back)) {
+            keepsUndo = false
+            if pendingBack?.jump == undo { pendingBack = nil }
+            readerLog.notice("back: trip \(trip, privacy: .public) never showed his page; the pill keeps it and says so")
+            guard !isClosed else { return }
+            withAnimation(Motion.chrome) {
+                backGaveUp = true
+                showJumpBack = backLocator != nil
+            }
+            return
+        }
         await captureAnchor()
         // No move since: it is his Back, late, and its place is kept now (its report may have come first).
         if freed, steps == jump, !isClosed, let here = page?.currentLocation {
@@ -2157,8 +2173,8 @@ final class ReaderModel {
         // kept, and the landing's own report then read as layout. His page is kept here, once.
         else if !freed, backLanded, sends > 1, steps == jump, !isClosed, let here = page?.currentLocation { await locationDidChange(here, hisMove: true) }
     }
-    /// The last Back trip gave up (its chapter never came): the pill says so until he taps it again or
-    /// jumps somewhere else.
+    /// The last Back trip gave up (its chapter never came): the pill says so until he taps it again,
+    /// jumps somewhere else, or reads on until the pill goes.
     private(set) var backGaveUp = false
     /// The Back trip under way: a second tap meanwhile is not a second jump.
     @ObservationIgnored private var goingBack: Int?
@@ -2221,6 +2237,13 @@ final class ReaderModel {
 
     /// Offers the way back once its jump has landed (a veiled jump returns once the new page has
     /// painted), and only for the newest jump: one overtaken by another offers nothing.
+    /// The page on screen holds `place`: in its file, and (mid-file) in the page's range.
+    private func pageShows(_ place: Locator) async -> Bool {
+        guard let inFile = place.locations.progression, inFile > 0 else { return page?.currentLocation?.href == place.href }
+        guard let range = await page?.pageRange() else { return false }
+        return range.contains(ReadingAnchor(href: place.href.string, progression: inFile, text: nil))
+    }
+
     private func publishBack(_ jump: Int?) {
         guard let jump, let pending = pendingBack, pending.jump == jump else {
             if let jump { readerLog.notice("back: jump \(jump, privacy: .public) superseded by \(self.pendingBack?.jump ?? -1, privacy: .public)") }
