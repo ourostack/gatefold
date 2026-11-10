@@ -54,10 +54,33 @@ import json, sys
 try: print(any(d["udid"] == sys.argv[1] and d["state"] == "Booted" for v in json.load(sys.stdin)["devices"].values() for d in v))
 except ValueError: print("Unknown")' "$1"
 }
+# Diagnostic only (gatefold#150, not for merge): while the first bootstatus runs, note at set times whether the device
+# is listed Booted, whether a second, plain bootstatus answers, and once where the stuck bootstatus is waiting.
+bootdiag() {
+  local udid="$1" t0=$SECONDS s st bp q
+  for s in 20 45 90 150 240 400; do
+    while (( SECONDS - t0 < s )); do sleep 1; done
+    st="$(booted "$udid")"
+    bp="$(pgrep -f "bootstatus $udid -b" | head -1)"
+    echo "BOOTDIAG $(date -u +%T) +${s}s listed-booted=$st first-bootstatus=${bp:-gone}" >&2
+    [[ -z $bp ]] && return 0
+    if [[ $s == 90 ]]; then
+      sample "$bp" 2 -file "${RUNNER_TEMP:-/tmp}/bootstatus-sample-$udid.txt" >/dev/null 2>&1
+      sed -n '/Call graph/,/Total number in stack/p' "${RUNNER_TEMP:-/tmp}/bootstatus-sample-$udid.txt" | head -45 | sed 's/^/BOOTDIAG sample /' >&2
+    fi
+    q="$(within 20 xcrun simctl bootstatus "$udid" 2>&1 | head -3 | tr '\n' ' ')"
+    echo "BOOTDIAG $(date -u +%T) +${s}s plain bootstatus (20 s): ${q:-nothing}" >&2
+  done
+}
 try_boot() {
   xcrun simctl boot "$1" >&2 || true
+  echo "BOOTDIAG $(date -u +%T) boot returned for $1" >&2
+  bootdiag "$1" &
+  local diag=$!
   status="$(within "$BOOTSTATUS_LIMIT" xcrun simctl bootstatus "$1" -b 2>&1)"
   local code=$?
+  echo "BOOTDIAG $(date -u +%T) first bootstatus ended, code $code" >&2
+  kill "$diag" 2>/dev/null
   if [[ $code == 124 ]]; then
     echo "$status" | tail -3 >&2
     # Listed Booted is not ready: the data migration runs after that, and bootstatus is what waits for it (#57). So a
