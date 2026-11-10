@@ -144,8 +144,7 @@ jobs:
     # Jobs side by side, each with at least 30% headroom (one job took 94 of 100 min in build
     # 19). Measured on a hosted runner: about 13 min to set up and build, then the tests' own time.
     # Each limit is that plus the 12 min the time-left action keeps after the tests for the logs, so the
-    # tests keep the time they had before the logs were kept (gatefold#141): green place jobs took up to
-    # 79 min, and a cap at 90 - 12 would have stopped them.
+    # tests keep the time they had before the logs were kept (gatefold#141).
     strategy:
       fail-fast: false
       matrix:
@@ -161,10 +160,11 @@ jobs:
               CountingPlaceholderUITests
           - name: rotation
             # The erased-iPad rotation (the cold step), on its own leg. The same six green place jobs spent up to
-            # 51 min on the setup and this step: 51 / 0.7 is 72.
-            timeout: 84 # 72 for the job, 12 for the logs
+            # 51 min on the setup and this step: 51 / 0.7 is 73.
+            timeout: 85 # 73 for the job, 12 for the logs
             # Rotation on an erased iPad, and nothing else on this leg.
             cold: true
+            title: Nothing after the rotation on this leg
           - name: undo
             # Every jump's one-tap Back (#46), on its own: in the place leg it pushed a slow host past that job's
             # limit (c4c3b6a, gatefold#39). 9 min of tests at c8d3084 plus about 13 to set up and build: 31 / 0.7.
@@ -297,13 +297,13 @@ jobs:
           echo "$(date -u +%T) done ($status)"
           exit $status
       - id: left
-        # Its minutes are the next step's limit, and that step runs after a cold-step miss too.
+        # Its minutes are the next step's limit. No leg has both test steps now (the rotation has its own leg), so the
+        # !cancelled() here and below only keeps a leg reporting after a failed earlier step.
         if: ${{ !cancelled() }}
         uses: ./.github/actions/time-left
         with:
           limit: ${{ matrix.timeout }}
       - name: ${{ matrix.title }}
-        # A miss in the cold step still lets the rest report: one failure must not hide the others.
         # Not without the app or a booted iPad, which would only add a misleading red. Not on the rotation leg, which has
         # only the cold step.
         if: ${{ !cancelled() && matrix.tests && steps.unpack.outcome == 'success' && steps.boot.outcome == 'success' }}
@@ -644,7 +644,7 @@ jobs:
             ${{ runner.temp }}/duo.xcresult
 
   ipad-docs:
-    # A skipped matrix job reports under its unexpanded name, so a Markdown-only pull request gets the three iPad checks
+    # A skipped matrix job reports under its unexpanded name, so a Markdown-only pull request gets the five iPad checks
     # from here instead (gatefold#42). It runs only when `changes` found nothing but Markdown.
     name: iPad (${{ matrix.name }})
     needs: changes
