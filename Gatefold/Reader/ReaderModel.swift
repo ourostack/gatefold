@@ -417,8 +417,9 @@ final class ReaderModel {
     /// UI tests: "Counting pages…" was drawn at least once (CI's slow reads can miss it on screen).
     var countingShownProbe = false
     /// UI tests only: the latest reflow's number and how far it has got ("3 reflowing", "3 placed", then
-    /// "3 settled" once its page is fully shown, its cover faded or its swing played), so a test can let a
-    /// reflow settle before its next touch (gatefold#175). Never set outside UI tests.
+    /// "3 settled" once its page is fully shown, its cover faded or its swing played; a restore that gave way
+    /// to his move counts as settled when its page starts showing), so a test can let a reflow settle before
+    /// its next touch (gatefold#175). Never set outside UI tests.
     var reflowProbe = ""
     /// The last count ended by itself with chapters it couldn't count; cleared when a count starts.
     private(set) var countGaveUp = false
