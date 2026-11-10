@@ -121,7 +121,7 @@ final class PlaceUndoUITests: XCTestCase {
 
     /// A Contents jump, then the controls gone: "Back" is on the page, and one tap on it is his page again.
     func testAJumpIsOneTapToUndoWithTheControlsHidden() {
-        let first = openFresh()
+        let first = openFresh(["-GatefoldHoldChapterLoad", "800"])
         let before = jumpsLanded
         contentsJump(to: "Chapter XL")
         // Ended, so its veil is down: the words can change under it, and a tap there is swallowed.
