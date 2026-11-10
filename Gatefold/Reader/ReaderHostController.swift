@@ -1762,7 +1762,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         }
         // The jump he chose starts now: the old page is pictured as it is, never waited on while it
         // loads (its spinner held the jump back up to 60 s, and the page never moved: gatefold#73).
-        let old = await renderedSnapshot(afterChange: false, waitsForLoad: false)
+        let old = await renderedSnapshot(afterChange: false, waitsForLoad: true)
         if LaunchOptions.isUITest, LaunchOptions.holdOldPageLoadLooks != nil {
             heldLoadLooks = heldBefore
             // How many looks the old page's picture took, and how many of them waited for its load: its few

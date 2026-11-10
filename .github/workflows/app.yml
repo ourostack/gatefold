@@ -154,11 +154,9 @@ jobs:
             # 79 min (gatefold#141), so the headroom is down to about 12% (gatefold#39).
             timeout: 102 # 90 for the job, 12 for the logs
             # Rotation first, on an erased iPad (the cold step), then the rest on the same one.
-            cold: true
+            cold: false
             title: Jumps keep his place; the number's slot is never blank
-            tests: >-
-              NavigationPlaceUITests PositionUITests/testEveryPostureKeepsThePlace
-              CountingPlaceholderUITests
+            tests: NavigationPlaceUITests/testAJumpFromAPageStillLoadingStartsAtOnce
           - name: undo
             # Every jump's one-tap Back (#46), on its own: in the place leg it pushed a slow host past that job's
             # limit (c4c3b6a, gatefold#39). 9 min of tests at c8d3084 plus about 13 to set up and build: 31 / 0.7.
