@@ -232,6 +232,8 @@ final class ReaderModel {
     /// Every move of his, a swipe too (which counts no move): a jump that outlived its veil gives way
     /// only to one of these, never to a landing of ours (gatefold#173).
     @ObservationIgnored private var hisSteps = 0
+    var diagSwipe = "none"
+    var diagHisSteps: Int { hisSteps }
     /// Set from the moment the reader closes; nothing moves the page or records a place after it.
     private(set) var isClosed = false
     /// While a landing settles, the navigator's in-between locations are not places: the landing
@@ -1902,6 +1904,7 @@ final class ReaderModel {
         // but not one in its chapter, which may be that trip landing (Readium reports before the jump
         // returns). Whatever such a report kept, the trip's return writes his place again (`goBack`),
         // unless a newer move still on its way does.
+        diagSwipe = "touched \(touchedAtReport) moved \(readerMoved) layout \(fromLayout) before \(reportedBefore != nil) swiped \(swiped) noMove \(noMoveOfOurs) strayJ \(strayJump != nil) strayB \(strayBack != nil) strayCh \(isStrayChapter(locator)) layoutOnly \(layoutOnly) kept \(alreadyKept) hisMove \(hisMove)"
         if swiped && (noMoveOfOurs || strayBack != nil || strayJump != nil) && !isStrayChapter(locator) {
             hisSteps += 1
             landed(takeStep(), at: locator)

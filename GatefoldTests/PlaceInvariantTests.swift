@@ -508,8 +508,10 @@ import Testing
         if how == "turn" {
             f.model.userTurnedPage()
         } else {
+            let h0 = f.model.diagHisSteps
             f.model.noteInteraction()
             await f.model.locationDidChange(next)
+            Issue.record("DIAG173S \(place) his \(h0)->\(f.model.diagHisSteps) \(f.model.diagSwipe)")
         }
         await Self.settle { abs((Self.kept(f) ?? -1) - (next.locations.totalProgression ?? 0)) < 0.001 }
         f.page.loadingChapter = false
