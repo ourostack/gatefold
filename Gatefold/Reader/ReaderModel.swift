@@ -1807,7 +1807,11 @@ final class ReaderModel {
         // A landing records its place once it has settled; the steps on the way are not places. So does a
         // test's launch jump: a report on its way (its file's first page) could finish after the landing and
         // be kept as his move, and Back then went there (gatefold#83). `load()` reports where it ended.
-        guard !landing, !launchJumpInFlight else { return }
+        // But a landing past its veil has let the page go to him: a swipe of his then is his move, not a
+        // step of the landing, and the landing gives way to it (gatefold#173: dropped here, his swipe
+        // never counted and the late catch-up was kept over his page).
+        let swipePastVeil = landing && touchedSinceLocation && strayJump != nil
+        guard !landing || swipePastVeil, !launchJumpInFlight else { return }
         // Mid-turn the navigator has moved under the overlay; the turn records the place when it lands.
         // A move reported mid-reflow (a turn or a jump while an iPad's first layout is still settling)
         // is owed: the reflow's end records it, or the place he went to is never kept (build 17 reopened
