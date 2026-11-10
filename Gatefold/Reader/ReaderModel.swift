@@ -1714,7 +1714,8 @@ final class ReaderModel {
             // landing check would take the page back to them, so they are read again from his page.
             if keeper.reflowing == nil, !openSettling, let words = anchorLocator, Self.lies(words, before: locator) {
                 await captureAnchor()
-                readerLog.notice("location without a move; his words were before this page, anchor taken again (reported \(Self.placeTag(locator), privacy: .public))")
+                let taken = anchorLocator.map { !Self.lies($0, before: locator) } == true
+                readerLog.notice("location without a move; his words were before this page, \(taken ? "anchor taken again" : "anchor read failed, kept", privacy: .public) (reported \(Self.placeTag(locator), privacy: .public))")
             } else {
                 readerLog.notice("location without a move; anchor and place kept (reported \(Self.placeTag(locator), privacy: .public))")
             }
