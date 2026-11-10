@@ -1941,11 +1941,16 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         // keep turning, so the thumb never stops on the bare old page waiting for it: one sweep.
         let t0 = ContinuousClock.now
         var page: UIImage?
-        let picturing = Task { @MainActor in page = await fresh() }
+        var pictured = false
+        let picturing = Task { @MainActor in page = await fresh(); pictured = true }
         while i < 3 || (page == nil && i < 40) {
             await leaf(top: old, beneath: old, index: i, size: size, forward: forward, duration: 0.12)
             i += 1
         }
+        // A veil let go at its limit (`abandonVeil`) gives his turns back at once: the leaves stop
+        // waiting on a jump that may never come back (gatefold#173).
+        while !pictured, veil === cover { try? await Task.sleep(for: .milliseconds(100)) }
+        guard veil === cover else { return }
         await picturing.value
         readerLog.notice("riffle: \(i, privacy: .public) leaves, new page pictured at \(ReaderModel.ms(since: t0), privacy: .public) ms")
         // The last leaf uncovers the new page, and its chapter comes up in the head as it does:

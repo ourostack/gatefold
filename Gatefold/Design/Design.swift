@@ -113,8 +113,6 @@ enum LaunchOptions {
         nil
         #endif
     }
-    /// Tests only: the first page counts as still loading for this many looks, so the opening cover
-    /// stays up as it does on a slow device or a stuck load (#94), and a test can tap through it (#104).
     /// UI tests: a Contents jump never comes back, a chapter load that never ends (gatefold#173).
     static var hangLinkJumps: Bool {
         #if DEBUG
@@ -123,6 +121,8 @@ enum LaunchOptions {
         false
         #endif
     }
+    /// Tests only: the first page counts as still loading for this many looks, so the opening cover
+    /// stays up as it does on a slow device or a stuck load (#94), and a test can tap through it (#104).
     static var holdOpeningLoadLooks: Int? { defaults.object(forKey: "GatefoldHoldOpeningLoad") == nil ? nil : defaults.integer(forKey: "GatefoldHoldOpeningLoad") }
     /// Tests only: seconds an unanswered offer waits before it folds into its tab (10 by default), so
     /// a test on a slow host can tap Catch up without racing the fold.

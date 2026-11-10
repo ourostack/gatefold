@@ -228,7 +228,10 @@ final class ReaderModel {
     /// His own moves only (his turns, the jumps and links he chose, the offer he took): never the app's (a
     /// launch jump, a Cloud landing, the close). A restore gives way once this has changed since its reflow
     /// began; a restore's own moves go straight to the navigator and are not counted at all.
-    @ObservationIgnored private(set) var hisMoves = 0
+    @ObservationIgnored private(set) var hisMoves = 0 { didSet { if hisMoves > oldValue { hisSteps += 1 } } }
+    /// Every move of his, a swipe too (which counts no move): a jump that outlived its veil gives way
+    /// only to one of these, never to a landing of ours (gatefold#173).
+    @ObservationIgnored private var hisSteps = 0
     /// Set from the moment the reader closes; nothing moves the page or records a place after it.
     private(set) var isClosed = false
     /// While a landing settles, the navigator's in-between locations are not places: the landing
@@ -1212,31 +1215,46 @@ final class ReaderModel {
     /// A jump keeps the old page on screen, dimmed, until the new one has painted, then cross-fades.
     /// Returns the jump's step; `step` is one the caller took for it beforehand.
     @discardableResult
-    private func veiled(riffle: Bool = false, forward: Bool = true, step: Int? = nil, _ body: @escaping () async -> Void) async -> Int {
+    private func veiled(riffle: Bool = false, forward: Bool = true, step: Int? = nil, toward: AnyURL? = nil,
+                        _ body: @escaping () async -> Void) async -> Int {
         let jump = step ?? takeStep()
         let watch = VeilWatch()
+        let his = hisSteps
         // Where the newest move left the page, noted the moment its jump is back: a jump overtaken
         // meanwhile (a Back freed by its count) that lands late is put back there.
         let tracked: () async -> Void = { [weak self] in
             await body()
             watch.back = true
             guard let self else { return }
+            if watch.letGo {
+                // Nothing may suspend between the late jump's return and this reset: a tap swallowed
+                // meanwhile (no report) must not make the late jump's own report a swipe of his.
+                self.touchesSinceLocation = 0
+                self.layoutOnly = false
+                if self.strayJump?.jump == jump { self.strayJump = nil }
+            }
             self.landed(jump, at: self.page?.currentLocation)
         }
-        // Every jump but Back's (its trip keeps its own watch): a load that never ends must not hold
-        // the screen behind the veil (gatefold#173). At the veil's old limit it lets go, the chapter
-        // shows its own loading, and the jump goes on and lands when the load comes in.
-        if step == nil { watchVeil(jump: jump, watch) }
+        // Every jump but Back's (its trip keeps its own watch), and not one inside another's veil: a load
+        // that never ends must not hold the screen behind the veil (gatefold#173). At the veil's old limit
+        // it lets go, the chapter shows its own loading, and the jump goes on and lands when the load comes in.
+        if step == nil, veilDepth == 0 { watchVeil(jump: jump, toward: toward, watch) }
+        veilDepth += 1
         // Behind the cover placeholder there's nothing to veil.
         if let host, pageReady {
             await host.veiledJump(riffle: riffle && !reduceMotion && pageTurn == .curl, forward: forward, jump: jump, tracked)
         } else {
             await tracked()
         }
+        veilDepth -= 1
         watch.back = true
+        if strayJump?.jump == jump { strayJump = nil }
         // Past its veil, a move of his meanwhile (a turn, a swipe, another jump) ended it quietly: the
-        // late jump moved the page, so it goes back where his newest move left it, and that is kept.
-        if watch.letGo, steps != jump, newestHasLanded, host?.isTurning != true, !isClosed, let newest = lastLanded {
+        // late jump moved the page, so it goes back where his newest move left it, and that is kept. A
+        // landing of ours that only took long is where the page belongs.
+        guard watch.letGo, hisSteps != his else { return jump }
+        overtakenJumps.insert(jump)
+        if newestHasLanded, host?.isTurning != true, !isClosed, let newest = lastLanded {
             readerLog.notice("veil: jump \(jump, privacy: .public) came back after a move of his; page put back")
             let restore = await veiled { _ = await self.page?.go(to: newest) }
             if steps == restore, !isClosed, let here = page?.currentLocation { await locationDidChange(here, hisMove: true) }
@@ -1245,7 +1263,20 @@ final class ReaderModel {
     }
     /// A veiled jump's watch: whether it is back, and whether its veil let go first.
     @MainActor private final class VeilWatch { var back = false; var letGo = false }
-    private func watchVeil(jump: Int, _ watch: VeilWatch) {
+    /// Veils under way, one inside another's (a landing's own percent step): only the outer one is watched.
+    @ObservationIgnored private var veilDepth = 0
+    /// A jump past its veil's limit, still out: its step and the chapter it goes to (if known). A swipe
+    /// meanwhile is a step of his; a report from that chapter may be the jump landing.
+    @ObservationIgnored private var strayJump: (jump: Int, href: AnyURL?)?
+    /// Jumps that outlived their veil and were overtaken by a move of his: no way back, no words taken.
+    @ObservationIgnored private var overtakenJumps: Set<Int> = []
+    private func endedQuietly(_ jump: Int, back: Int?) -> Bool {
+        guard overtakenJumps.remove(jump) != nil else { return false }
+        if let back, pendingBack?.jump == back { pendingBack = nil }
+        readerLog.notice("veil: jump \(jump, privacy: .public) ended quietly by a move of his; no way back for it")
+        return true
+    }
+    private func watchVeil(jump: Int, toward: AnyURL?, _ watch: VeilWatch) {
         Task { [weak self] in
             for _ in 0..<JumpLanding.reads {
                 guard let self, !watch.back, !self.isClosed else { return }
@@ -1253,6 +1284,7 @@ final class ReaderModel {
             }
             guard let self, !watch.back, !self.isClosed else { return }
             watch.letGo = true
+            self.strayJump = (jump, toward)
             self.jumpsPastTheVeil += 1
             readerLog.notice("veil: jump \(jump, privacy: .public) still on its way after \(JumpLanding.reads, privacy: .public) beats; the veil lets go, the jump goes on")
             self.host?.abandonVeil(jump: jump)
@@ -1804,7 +1836,10 @@ final class ReaderModel {
         // but not one in its chapter, which may be that trip landing (Readium reports before the jump
         // returns). Whatever such a report kept, the trip's return writes his place again (`goBack`),
         // unless a newer move still on its way does.
-        if swiped && (noMoveOfOurs || strayBack != nil) && !isStrayChapter(locator) { landed(takeStep(), at: locator) }
+        if swiped && (noMoveOfOurs || strayBack != nil || strayJump != nil) && !isStrayChapter(locator) {
+            if !noMoveOfOurs { hisSteps += 1 }
+            landed(takeStep(), at: locator)
+        }
         // Only the reader moves the place. Readium reopening a page boundary off from the saved one is
         // not a move, so opening a book never overwrites a further-ahead place on the InkPad.
         // A book warmed behind the shelf has had no move of his yet: nothing it reports is his place.
@@ -2015,7 +2050,8 @@ final class ReaderModel {
         let back = rememberBack ? rememberPlace() : nil
         defer { publishBack(back) }
         if let locator = await publication.locate(progression: progression) {
-            await veiled { _ = await self.page?.go(to: locator) }
+            let jump = await veiled(toward: locator.href) { _ = await self.page?.go(to: locator) }
+            if endedQuietly(jump, back: back) { return }
             await captureAnchor()
             // Behind the cover nothing hides a chapter still loading, so keep the cover up until the
             // words are there.
@@ -2039,7 +2075,8 @@ final class ReaderModel {
         moves += 1
         let back = rememberPlace()
         defer { publishBack(back) }
-        await veiled { await self.page?.go(to: entry.link) }
+        let jump = await veiled(toward: AnyURL(url: entry.link.url().removingFragment().url)) { await self.page?.go(to: entry.link) }
+        if endedQuietly(jump, back: back) { return }
         await captureAnchor()
     }
 
@@ -2049,7 +2086,8 @@ final class ReaderModel {
         moves += 1
         let back = rememberPlace()
         defer { publishBack(back) }
-        await veiled { await self.page?.go(to: link) }
+        let jump = await veiled(toward: AnyURL(url: link.url().removingFragment().url)) { await self.page?.go(to: link) }
+        if endedQuietly(jump, back: back) { return }
         await captureAnchor()
     }
 
@@ -2060,7 +2098,8 @@ final class ReaderModel {
         moves += 1
         let back = rememberBack ? rememberPlace() : nil
         defer { publishBack(back) }
-        await veiled { _ = await self.page?.go(to: locator) }
+        let jump = await veiled(toward: locator.href) { _ = await self.page?.go(to: locator) }
+        if endedQuietly(jump, back: back) { return }
         await captureAnchor()
     }
 
@@ -2242,7 +2281,9 @@ final class ReaderModel {
     /// A Back trip freed by its count whose jump hasn't come back yet: its step and its chapter.
     @ObservationIgnored private var strayBack: (jump: Int, href: AnyURL)?
     /// A page in that trip's chapter may be the trip landing: no swipe or turn takes it as where it went.
-    private func isStrayChapter(_ l: Locator) -> Bool { strayBack.map { $0.href == l.href } ?? false }
+    private func isStrayChapter(_ l: Locator) -> Bool {
+        strayBack.map { $0.href == l.href } ?? strayJump.map { $0.href == l.href } ?? false
+    }
     var isGoingBack: Bool { goingBack != nil }
     /// One beat of the wait for Back's jump (a sleep, counted as `JumpLanding` counts its reads):
     /// `JumpLanding.reads` of them free Back again.
