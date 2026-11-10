@@ -1924,8 +1924,6 @@ final class ReaderModel {
         keptPage = locator
         let keeping = moves
         newestWrittenMove = max(newestWrittenMove, keeping)
-        placeWrites += 1
-        let write = placeWrites
         // The first words on screen make the place exact; Readium's progression is a page boundary.
         // Only words captured on this very page count; a capture a reflow cut short leaves the last page's.
         let fresh = anchorLocator.flatMap { a in
@@ -1949,7 +1947,10 @@ final class ReaderModel {
                 } ?? other
             }
         }
+        keptPage = reported
         if let json = try? here.jsonString() {
+            placeWrites += 1
+            let write = placeWrites
             let now = Date()
             await placeWriteWait()
             let exact = await mapper?.position(for: BookLocation(here), at: now)
