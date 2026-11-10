@@ -141,12 +141,15 @@ final class PlaceUndoUITests: XCTestCase {
         // Sampled until the held load ends: how long the veil stayed, for the log (it may let go at its limit).
         // A trip that stops sending leaves it held: 400 samples, past the 25 sends' 50 s of reads.
         var samples = 0, bare = 0
+        print("BACKHELD sendsLeftAtStart=\(held.value as? String ?? "?")")
+        var sendsLeft = "?"
         while held.exists, samples < 400 {
+            sendsLeft = held.value as? String ?? sendsLeft
             samples += 1
             if !veil.exists, held.exists { bare += 1 }
             RunLoop.current.run(until: Date().addingTimeInterval(0.3))
         }
-        print("BACKHELD samples=\(samples) veilGoneWhileLoading=\(bare) heldAtEnd=\(held.exists)")
+        print("BACKHELD sendsLeft=\(sendsLeft) samples=\(samples) veilGoneWhileLoading=\(bare) heldAtEnd=\(held.exists)")
         XCTAssertFalse(held.exists, "Back stopped sending while the chapter was still loading")
         XCTAssertTrue(veil.waitForNonExistence(timeout: 30), "Back's veil lifted once the chapter had loaded")
         let returned = waitForWords(changingFrom: jumped, timeout: 30)
