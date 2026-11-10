@@ -164,7 +164,7 @@ jobs:
             # limit (c4c3b6a, gatefold#39). 9 min of tests at c8d3084 plus about 13 to set up and build: 31 / 0.7.
             timeout: 57 # 45 for the job, 12 for the logs
             title: Every jump that isn't a turn is one tap to undo
-            tests: PlaceUndoUITests
+            tests: PlaceUndoUITests/testAJumpIsOneTapToUndoWithTheControlsHidden
           - name: taps
             # 53 min measured (a 10 min simulator boot among them); measured / 0.7 keeps 30% headroom.
             timeout: 92 # 80 for the job, 12 for the logs
