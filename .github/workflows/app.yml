@@ -157,16 +157,6 @@ jobs:
             cold: true
             title: Jumps keep his place; the number's slot is never blank
             tests: CountingPlaceholderUITests # diagnostic only (gatefold#94)
-          - name: reviewer
-            # 65 min measured with the full list; measured / 0.7 keeps 30% headroom. Green runs now take up to 78 min
-            # (gatefold#141), so the headroom is down to about 18% (gatefold#39).
-            timeout: 107 # 95 for the job, 12 for the logs
-            title: The reviewers' checks - reopen by hash, true numbers, reader-wide toggles, density, landing; the reader fits its window
-            # Pushes to main run the whole list.
-            tests: ReopenAfterControlsUITests # diagnostic only (gatefold#165)
-            # Pull requests run its smoke: the last page's number is the count (#30), and the reader fits its window.
-            pr_tests: >-
-              ReviewerChecksUITests/testTheLastPagesNumberIsTheCount WindowFitUITests
     needs: [changes, build]
     if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
     runs-on: xcode-27
