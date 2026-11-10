@@ -239,24 +239,13 @@ final class ReaderModel {
     private var landingMove: Int?
     /// The step the landing in flight began on: the veil it may outlive is its own, or one taken inside it.
     @ObservationIgnored private var landingStep = 0
-    /// Where in the book the landing in flight is bound, and its file: a report there is its own, whatever
-    /// touch is counted.
+    /// Where in the book the landing in flight is bound: a report there is its own, whatever touch is counted.
     @ObservationIgnored private var landingAim = -1.0
-    @ObservationIgnored private var landingAimFile: AnyURL?
-    /// A report of the landing's own: the page it is bound for (the same screen page, or the same Readium
-    /// position while the screens aren't counted), its file's first page (a two-step jump names that
-    /// first), or a report naming no place. Judged in pages, never a fraction of the book, and as tight as
-    /// that: a swipe of his a page from his own page, a page or more from the Cloud's, must count (a
-    /// chapter was too coarse, his page and the Cloud's are often one file). The cost of erring the other
-    /// way is small: a stray touch on the landing's own report ends it quietly on the page it was bound
-    /// for, with no way back offered. A swipe of his that ends on the landing's page is taken as the
-    /// landing's: he is where it was going.
+    /// A report on the landing's own page: within about a page of where it is bound. A swipe of his is a
+    /// page from where he was, which a landing past its veil is not (a chapter is too coarse: his page and
+    /// the Cloud's are often one file).
     private func isLandingsOwnPage(_ l: Locator) -> Bool {
-        guard let total = l.locations.totalProgression else { return true }
-        if let file = landingAimFile, l.href == file, (l.locations.progression ?? 0) == 0 { return true }
-        if let a = screenPage(atTotal: total), let b = screenPage(atTotal: landingAim) { return a == b }
-        guard chapterMap.positionCount > 1 else { return abs(total - landingAim) < 0.000_1 }
-        return chapterMap.page(at: total) == chapterMap.page(at: landingAim)
+        abs((l.locations.totalProgression ?? -1) - landingAim) < 0.005
     }
     private var landing: Bool { landingMove == moves }
     /// The Cloud place behind the banner, so accepting it records that exact place.
@@ -1394,7 +1383,6 @@ final class ReaderModel {
             landingMove = move
             landingStep = steps
             landingAim = progression
-            landingAimFile = await publication.locate(progression: progression)?.href
             await go(toProgression: progression, rememberBack: false, his: false)
             guard moves == move, hisSteps == hisAtStart, !isClosed else {
                 if landingMove == move { landingMove = nil }
@@ -1425,7 +1413,6 @@ final class ReaderModel {
         landingMove = move
         landingStep = steps
         landingAim = locator.locations.totalProgression ?? progression
-        landingAimFile = locator.href
         defer { if landingMove == move { landingMove = nil } }
         let started = ContinuousClock.now
         let ready = await page?.promoteStandby(for: locator) ?? false
