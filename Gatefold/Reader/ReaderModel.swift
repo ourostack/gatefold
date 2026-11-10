@@ -1480,6 +1480,7 @@ final class ReaderModel {
             if let json {
                 self.recordedMoves = self.moves
                 self.lateLandings = []
+                self.placeWrites += 1
                 self.keptPage = settledLocator
                 self.newestWrittenMove = max(self.newestWrittenMove, self.moves)
                 readerLog.notice("place write [r\(self.readerNumber, privacy: .public)]: landing (\(fresh != nil ? "his first words" : "Readium's boundary", privacy: .public)) \(Self.placeTag(settledLocator), privacy: .public); kept total \(chosen?.totalProgression ?? here.locations.totalProgression ?? 0, privacy: .public); move \(self.moves, privacy: .public)")
@@ -1743,6 +1744,8 @@ final class ReaderModel {
     /// The newest move whose place a write has taken, never lowered (`keepOwedPlace` lowers
     /// `recordedMoves` after its write): a write still on its way for an older move yields to it.
     @ObservationIgnored private var newestWrittenMove = -1
+    /// Every place write as it starts, numbered: one still on its way when a newer one starts yields.
+    @ObservationIgnored private var placeWrites = 0
     /// The move whose first report is still reading his words before its write (`locationDidChange`).
     @ObservationIgnored private var claimedMove: Int?
     /// A launch jump that never landed, and its move: owed by a reflow, its target is the place kept.
@@ -1921,6 +1924,8 @@ final class ReaderModel {
         keptPage = locator
         let keeping = moves
         newestWrittenMove = max(newestWrittenMove, keeping)
+        placeWrites += 1
+        let write = placeWrites
         // The first words on screen make the place exact; Readium's progression is a page boundary.
         // Only words captured on this very page count; a capture a reflow cut short leaves the last page's.
         let fresh = anchorLocator.flatMap { a in
@@ -1950,7 +1955,9 @@ final class ReaderModel {
             let exact = await mapper?.position(for: BookLocation(here), at: now)
             // A newer move kept during those waits owns the place: this write, resumed after it, would land
             // over it (#46 at c4c3b6a: the Contents jump's write landed after Back's and kept the jump's page).
-            guard newestWrittenMove == keeping else {
+            // So does a newer write for this same move: the newest jump back past its veil keeps its
+            // page over a late report's write still on its way (gatefold#173 re-review).
+            guard newestWrittenMove == keeping, placeWrites == write else {
                 readerLog.notice("place write [r\(self.readerNumber, privacy: .public)]: move \(keeping, privacy: .public) overtaken by move \(self.newestWrittenMove, privacy: .public)'s write, not written")
                 return refreshBookmarkState(await page?.visibleRange())
             }
