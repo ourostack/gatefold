@@ -149,40 +149,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: place
-            # 48 min measured with the erased-iPad rotation at 23; it has taken 38, so 63 / 0.7. Green runs now take up to
-            # 79 min (gatefold#141), so the headroom is down to about 12% (gatefold#39).
-            timeout: 102 # 90 for the job, 12 for the logs
-            # Rotation first, on an erased iPad (the cold step), then the rest on the same one.
-            cold: true
-            title: Jumps keep his place; the number's slot is never blank
-            tests: >-
-              NavigationPlaceUITests PositionUITests/testEveryPostureKeepsThePlace
-              CountingPlaceholderUITests
           - name: undo
             # Every jump's one-tap Back (#46), on its own: in the place leg it pushed a slow host past that job's
             # limit (c4c3b6a, gatefold#39). 9 min of tests at c8d3084 plus about 13 to set up and build: 31 / 0.7.
             timeout: 57 # 45 for the job, 12 for the logs
             title: Every jump that isn't a turn is one tap to undo
-            tests: PlaceUndoUITests
-          - name: taps
-            # 53 min measured (a 10 min simulator boot among them); measured / 0.7 keeps 30% headroom.
-            timeout: 92 # 80 for the job, 12 for the logs
-            title: Every Fine-Tune tap lands; the furniture never moves the words
-            tests: FineTuneTapUITests PageFurnitureUITests
-          - name: reviewer
-            # 65 min measured with the full list; measured / 0.7 keeps 30% headroom. Green runs now take up to 78 min
-            # (gatefold#141), so the headroom is down to about 18% (gatefold#39).
-            timeout: 107 # 95 for the job, 12 for the logs
-            title: The reviewers' checks - reopen by hash, true numbers, reader-wide toggles, density, landing; the reader fits its window
-            # Pushes to main run the whole list.
-            tests: >-
-              ReviewerChecksUITests PageNumberUITests/testOnASpreadEveryTurnMovesOnTwoPages
-              SpreadTurnSettleUITests/testSpreadTurnsLandWithoutSliding
-              ReopenAfterControlsUITests WindowFitUITests
-            # Pull requests run its smoke: the last page's number is the count (#30), and the reader fits its window.
-            pr_tests: >-
-              ReviewerChecksUITests/testTheLastPagesNumberIsTheCount WindowFitUITests
+            tests: PlaceUndoUITests/testAContentsJumpThatNeverLoadsLetsTheVeilGo
     needs: [changes, build]
     if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
     runs-on: xcode-27
@@ -314,7 +286,7 @@ jobs:
           # Each test's result prints as it finishes: a job cut off at its limit still names the slow test
           # (run 42393941976's reviewer leg printed nothing, since this read the log only at the end).
           python3 -I scripts/ci-within.py --until "$STEP_UNTIL" -- xcodebuild test-without-building -xctestrun "$XCTESTRUN" \
-            -destination "$DESTINATION" "${only[@]}" \
+            -destination "$DESTINATION" "${only[@]}"  \
             -resultBundlePath "$RUNNER_TEMP/ipad.xcresult" 2>&1 | tee "$RUNNER_TEMP/ipad.log" \
             | grep --line-buffered -E "Test Case .*(started|passed|failed|skipped)|TEST (SUCCEEDED|FAILED)|REPRO (round|SUMMARY)|TAPRATE|PLACEHOLDER|REVIEWER|OLDPAGEHELD|WINDOWFIT|REOPEN round [0-9]+:|\.swift:[0-9]+: error|::error::" \
             | awk '{ if (match($0, /XCTAssert[A-Za-z]* failed/)) $0 = substr($0, 1, RSTART + RLENGTH - 1) " (text withheld)"; print; fflush() }'
@@ -469,6 +441,7 @@ jobs:
         with:
           limit: "97" # the job's timeout-minutes
       - name: Reading position survives posture and font changes; every Fine-Tune tap lands (UI tests)
+        if: false # probe, not for merge
         timeout-minutes: ${{ fromJSON(steps.left_ui.outputs.minutes) }}
         env:
           STEP_UNTIL: ${{ steps.left_ui.outputs.until }}
@@ -521,7 +494,7 @@ jobs:
     # Pull requests run its smoke (a page a turn, and a reopen keeps the numbers); pushes to main add the reviewers'
     # full list, about 13 min a test on this runner (gatefold#39).
     needs: [changes, build]
-    if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
+    if: false # probe, not for merge
     runs-on: xcode-27
     # 45 min measured (build 20), plus about 10 for the two turn checks; 47 min at c4c3b6a with both.
     # feel-ci sets this job longer (gatefold#65 tracks the overrun): at a merge, the larger value wins.
