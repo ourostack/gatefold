@@ -318,6 +318,7 @@ import Testing
         for _ in 0..<(JumpLanding.reads * 4) where !f.model.isGoingBack { await Task.yield() }
         // Well past the reads a trip may spend on a page that isn't loading.
         for _ in 0..<(JumpLanding.reads * 2) where f.model.isGoingBack { await Task.yield() }
+        Issue.record("DIAG170 goingBack \(f.model.isGoingBack) trips \(f.model.tripsPastTheVeil) jumps \(f.page.jumps.count)")
         #expect(f.model.isGoingBack, "Back gave up while its chapter was still loading")
         #expect(f.model.tripsPastTheVeil == 1, "the veil held the screen past its limit")
         // The load comes in.
@@ -455,8 +456,17 @@ import Testing
         try #require(f.model.pageReady, "the first page never showed")
         f.page.holdsJumps = true
         f.page.loadingChapter = true
+        let offered = f.model.suggestion != nil
+        let t0 = ContinuousClock.now
+        var sentAt = -1, pastAt = -1, reads = 0
         let taking = Task { await f.model.acceptSuggestion() }
-        await Self.settle { f.model.jumpsPastTheVeil >= 1 }
+        for _ in 0..<3_000 where f.model.jumpsPastTheVeil < 1 {
+            reads += 1
+            if sentAt < 0, !f.page.jumps.isEmpty { sentAt = ReaderModel.ms(since: t0) }
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        if f.model.jumpsPastTheVeil >= 1 { pastAt = ReaderModel.ms(since: t0) }
+        Issue.record("DIAG173 offered \(offered) sentAt \(sentAt) pastAt \(pastAt) reads \(reads) jumps \(f.page.jumps.count) ready \(f.model.pageReady) suggestion \(f.model.suggestion != nil)")
         #expect(f.model.jumpsPastTheVeil == 1, "the catch-up wasn't on its way past the veil's limit (jumps sent \(f.page.jumps.count), page ready \(f.model.pageReady))")
         f.page.loadingChapter = false
         f.page.holdsJumps = false
@@ -489,8 +499,17 @@ import Testing
         try #require(f.model.pageReady, "the first page never showed")
         f.page.holdsJumps = true
         f.page.loadingChapter = true
+        let offered = f.model.suggestion != nil
+        let t0 = ContinuousClock.now
+        var sentAt = -1, pastAt = -1, reads = 0
         let taking = Task { await f.model.acceptSuggestion() }
-        await Self.settle { f.model.jumpsPastTheVeil >= 1 }
+        for _ in 0..<3_000 where f.model.jumpsPastTheVeil < 1 {
+            reads += 1
+            if sentAt < 0, !f.page.jumps.isEmpty { sentAt = ReaderModel.ms(since: t0) }
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        if f.model.jumpsPastTheVeil >= 1 { pastAt = ReaderModel.ms(since: t0) }
+        Issue.record("DIAG173 offered \(offered) sentAt \(sentAt) pastAt \(pastAt) reads \(reads) jumps \(f.page.jumps.count) ready \(f.model.pageReady) suggestion \(f.model.suggestion != nil)")
         #expect(f.model.jumpsPastTheVeil == 1, "the catch-up wasn't on its way past the veil's limit (jumps sent \(f.page.jumps.count), page ready \(f.model.pageReady))")
         let next = try #require(await S.locate(f.publication, 0.06))
         f.page.currentLocation = next
