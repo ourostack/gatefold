@@ -1923,8 +1923,9 @@ final class ReaderModel {
            let corrected = fix.place.locations.progression {
             let live = await page?.pageRange()
             guard keeper.reflowing == nil else { return }
-            guard let live, ScreenPageGeometry.document(live.href, isChapter: fix.href),
-                  (live.start...live.end).contains(corrected) else {
+            // Dropped only on a read of that file without the corrected page; a page that can't be read yet (a
+            // reloaded file still loading) says nothing about where it is.
+            if let live, ScreenPageGeometry.document(live.href, isChapter: fix.href), !(live.start...live.end).contains(corrected) {
                 screenCorrection = nil
                 return await captureAnchor()
             }
