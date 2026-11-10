@@ -1712,7 +1712,7 @@ final class ReaderModel {
             // Words read before this page's start were read on a page he has left (gatefold#143: a slow
             // launch landing read them on the chapter's first page). Kept, a reflow's restore or the
             // landing check would take the page back to them, so they are read again from his page.
-            if keeper.reflowing == nil, !openSettling, let words = anchorLocator, Self.lies(words, before: locator) {
+            if false, let words = anchorLocator, Self.lies(words, before: locator) {
                 await captureAnchor()
                 readerLog.notice("location without a move; his words were before this page, anchor taken again (reported \(Self.placeTag(locator), privacy: .public))")
             } else {
