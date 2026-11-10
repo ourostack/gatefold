@@ -218,12 +218,12 @@ import Testing
     }
 
     /// Probe (#154): a place write slower than the 2 s wait, checked with main's settle.
-    @Test func aPlaceWriteSlowerThanTwoSecondsIsWaitedFor() async throws {
+    @Test func aPlaceWriteSlowerThanTheOldWaitIsWaitedFor() async throws {
         let f = try await S.make(remote: { _, _ in nil }, startAt: 0.05)
         await f.model.load()
         await f.model.locationDidChange(try #require(f.page.currentLocation))
         let next = try #require(await S.locate(f.publication, 0.3))
-        f.model.placeWriteWait = { try? await Task.sleep(for: .milliseconds(2500)) }
+        f.model.placeWriteWait = { try? await Task.sleep(for: .seconds(5)) }
         f.page.currentLocation = next
         f.model.userTurnedPage()
         let want = next.locations.totalProgression ?? -1
