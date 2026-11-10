@@ -1763,7 +1763,12 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         // The jump he chose starts now: the old page is pictured as it is, never waited on while it
         // loads (its spinner held the jump back up to 60 s, and the page never moved: gatefold#73).
         let old = await renderedSnapshot(afterChange: false, waitsForLoad: false)
-        if LaunchOptions.isUITest, LaunchOptions.holdOldPageLoadLooks != nil { heldLoadLooks = heldBefore }
+        if LaunchOptions.isUITest, LaunchOptions.holdOldPageLoadLooks != nil {
+            heldLoadLooks = heldBefore
+            // How many looks the old page's picture took, and how many of them waited for its load: its few
+            // tries, never the load (gatefold#155).
+            oldPageHeldMarker?.accessibilityValue = "\(lastSnapshotLooks) \(lastSnapshotWaited)"
+        }
         jumpStarting = false
         readerLog.notice("veil: jump \(jump, privacy: .public) pictured the old page in \(ReaderModel.ms(since: jumpTapped), privacy: .public) ms, \(self.lastSnapshotLooks, privacy: .public) looks")
         // Let go of while its old page was being pictured (`abandonVeil`): no cover goes up.
@@ -2182,6 +2187,8 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     private(set) var lastSnapshotFrames: [CGRect] = []
     /// How many looks (about 50 ms each, counted, not timed) the last `renderedSnapshot` took.
     private(set) var lastSnapshotLooks = 0
+    /// Of those, the looks spent waiting for a page still loading (none when pictured as it is).
+    private(set) var lastSnapshotWaited = 0
     private var landedTurns = 0
 
     /// The visible web views' frames in the host now.
@@ -2342,7 +2349,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         // took over 25 s, and the veil lifted onto a blank page and a spinner.
         var loadingLooks = 0
         var attempt = 0
-        defer { lastSnapshotLooks = loadingLooks + attempt }
+        defer { lastSnapshotLooks = loadingLooks + attempt; lastSnapshotWaited = loadingLooks }
         let attempts = waitsForLoad ? 40 : 10
         while attempt < attempts {
             if afterChange || attempt > 0 || loadingLooks > 0 { try? await Task.sleep(for: .milliseconds(attempt == 0 && loadingLooks == 0 ? 60 : 50)) }
