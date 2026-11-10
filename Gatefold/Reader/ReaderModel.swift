@@ -1375,7 +1375,7 @@ final class ReaderModel {
         let went = Self.ms(since: started)
         // Opening another chapter, Readium places the page by progression before the chapter has laid
         // out; once it has, the same jump finds the exact words. Retry until they're on screen.
-        await settle(on: locator, move: move, loaded: ready)
+        await settle(on: locator, move: move, his: hisAtStart, loaded: ready)
         // Overtaken by a turn, another jump or the close: that move owns the place now.
         guard moves == move, hisSteps == hisAtStart, !isClosed else { return back }
         // The spread the place it keeps reopens on: its words to the top of a left page, as a restore
@@ -1514,10 +1514,11 @@ final class ReaderModel {
     /// `offerOnceInView`: the open's settle under the cover. If the cover's bound has already shown the
     /// page (forced ready, no picture over it), moving it now would jump a page he can see, so his place
     /// is offered as a Jump instead (build 21 on a starved iPad: forced at 25.3 s, moved 0.5 s later).
-    private func settle(on locator: Locator, move: Int, loaded: Bool = false, offerOnceInView: Bool = false) async {
+    /// `his`: his steps when the landing began; a swipe of his since (no move counted) ends it too.
+    private func settle(on locator: Locator, move: Int, his: Int? = nil, loaded: Bool = false, offerOnceInView: Bool = false) async {
         guard let words = locator.text.highlight.map(ReaderJS.normalize), words.count >= 8 else { return }
         let probe = String(words.prefix(24))
-        func current() -> Bool { moves == move && !isClosed }
+        func current() -> Bool { moves == move && his.map { hisSteps == $0 } != false && !isClosed }
         let t0 = ContinuousClock.now
         for round in 0..<4 {
             // A page already loaded (the standby) can be read at once.
