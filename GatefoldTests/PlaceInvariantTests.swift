@@ -254,11 +254,17 @@ import Testing
         await f.model.load()
         let his = try #require(f.page.currentLocation)
         try #require((his.locations.progression ?? 0) > 0.05, "his page is partway through its chapter")
-        // The same stand-in as Back's test above: words read on the chapter's start, then his page with no move.
+        await f.model.locationDidChange(his)
+        // Words read on the chapter's start and kept with a move (here a swipe; on CI, the launch landing),
+        // then his page on screen with no move of his: the report is the move already kept, and the anchor
+        // isn't read again. His page's own first words differ from the start's, as they do on a device
+        // (the same words would be the layout's report, his words still first on screen).
         let start = S.boundary(of: his)
         f.page.anchorText = "words-on-the-chapter-start"
         f.page.currentLocation = start
-        await f.model.locationDidChange(start, hisMove: true)
+        f.model.noteInteraction()
+        await f.model.locationDidChange(start)
+        f.page.anchorText = "words-on-his-page"
         f.page.currentLocation = his
         await f.model.locationDidChange(his)
         let want = his.locations.totalProgression ?? -1
