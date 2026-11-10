@@ -160,6 +160,32 @@ import Testing
         f.model.close()
     }
 
+    /// A file that never lays out in columns (every read of the anchor's place comes back empty): the
+    /// jump ends within its reads, keeps Readium's landing in that file and lets its veil go, never a
+    /// read loop that outlives its budget (gatefold#172 asked whether 1f50a36's empty reads could hang).
+    @Test func aContentsJumpWhoseAnchorIsNeverReadEndsWithinItsReads() async throws {
+        let f = try await S.make(remote: { _, _ in nil }, startAt: 0.05)
+        await f.model.load()
+        await f.model.locationDidChange(try #require(f.page.currentLocation))
+        let entry = try #require(f.model.toc.last(where: { $0.progression > 0.3 && $0.link.url().fragment != nil }))
+        nonisolated(unsafe) let publication = f.publication
+        let opened = try #require(await publication.locate(entry.link))
+        let fileStart = opened.copy(locations: { $0.fragments = []; $0.progression = 0 }, text: { $0 = Locator.Text() })
+        f.page.linkOpens = fileStart
+        // No place for the anchor, ever: every read is empty.
+        f.page.fragmentAt = [:]
+
+        await f.model.go(to: entry)
+        for _ in 0..<200 where saved(f).flatMap({ try? Locator(jsonString: $0) }).map({ !ContentsIndex.sameResource($0.href.string, fileStart.href.string) }) ?? true {
+            await Task.yield()
+        }
+        let kept = try #require(saved(f).flatMap { try? Locator(jsonString: $0) }, "the jump kept no place")
+        #expect(ContentsIndex.sameResource(kept.href.string, fileStart.href.string), "the jump that found no anchor kept no place in its file")
+        #expect(f.model.showJumpBack, "the jump has no way back")
+        #expect(f.page.jumps.count <= 1 + JumpLanding.reads / JumpLanding.resendEvery, "the reads ran past their budget")
+        f.model.close()
+    }
+
     /// A contents jump inside its file can be overtaken while its file is still laying out (another jump
     /// of his, from the veil's moment): the newer move's page is the place, never the file's first page the
     /// contents jump passed through.
