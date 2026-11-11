@@ -170,4 +170,21 @@ import Testing
         #expect(model.hisMoves == before, "a curl drag that turned nothing counted as a move of his")
         model.close()
     }
+
+    /// In curl a drag up the page neither turns nor springs back: it is still no scroll.
+    @Test func aCurlDragUpThePageIsNotAScroll() async throws {
+        let (model, page, publication, _) = try await open()
+        model.setPreferences { $0.pageTurn = .curl }
+        model.keeper.reflowWillBegin(.typography, move: model.hisMoves)
+        model.reflowDidBegin()
+        let before = model.hisMoves
+        model.noteInteraction()
+        model.noteDrag()
+        let laidOut = try #require(await ReaderSyncTests.locate(publication, 0.21))
+        page.currentLocation = laidOut
+        await model.locationDidChange(laidOut)
+        #expect(model.keeper.restoreMayMove(move: model.hisMoves), "a curl drag up the page took the restore away")
+        #expect(model.hisMoves == before, "a curl drag up the page counted as a move of his")
+        model.close()
+    }
 }
