@@ -64,14 +64,14 @@ final class ReviewerChecksUITests: XCTestCase {
     /// hang guard is well past the cap even at a cold read's 10 s (75 x 10 s is 750 s), so only a runner that has
     /// stopped answering reaches it, and it fails as a hang, not as a page that didn't turn.
     @discardableResult
-    private func turnForward() -> Bool {
+    private func turnForward(file: StaticString = #filePath, line: UInt = #line) -> Bool {
         let before = words
         el("reader.page").coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.5)).tap()
         let start = Date()
         let turned = readsUntil(reads: 75, hangGuard: 900) { let now = words; return now != before && !now.isEmpty }
         let secs = String(format: "%.1f", Date().timeIntervalSince(start))
         note("TURNREADS turned=\(turned.ok) after \(turned.reads) reads in \(secs) s\(turned.hung ? " (hang guard)" : "")")
-        if turned.hung { XCTFail("hang: the turn's reads ran on for \(secs) s (\(turned.reads) reads) without a verdict") }
+        if turned.hung { XCTFail("hang: the turn's reads ran on for \(secs) s (\(turned.reads) reads) without a verdict", file: file, line: line) }
         if turned.ok { _ = settle(15) }
         return turned.ok
     }
