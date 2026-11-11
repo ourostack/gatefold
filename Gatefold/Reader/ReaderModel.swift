@@ -1599,7 +1599,9 @@ final class ReaderModel {
                 await self.captureAnchor()
                 // A turn that landed meanwhile recorded its own page and paid the debt.
                 // A jump that never landed owes where he was sent, not Readium's stale file start.
-                let target = self.owedJumpTarget.flatMap { $0.1 == self.moves ? $0.0 : nil }
+                // A slide or scroll since (no move counted; a report under the reflow leaves the touch
+                // pending) makes his page the place, not the target. A tap that only shows the controls doesn't.
+                let target = self.owedJumpTarget.flatMap { $0.1 == self.moves && !self.touchedSinceLocation ? $0.0 : nil }
                 guard self.placeOwed, !self.isClosed, self.keeper.reflowing == nil,
                       let here = target ?? self.page?.currentLocation else { return }
                 // Kept until now: a reflow that began meanwhile owes it still.
@@ -1689,6 +1691,12 @@ final class ReaderModel {
             if !placeOwed { readerLog.notice("place: owed by a reflow, at \(locator.locations.totalProgression ?? -1, privacy: .public) moves \(self.moves, privacy: .public) recorded \(self.recordedMoves, privacy: .public)") }
             placeOwed = true
         }
+        // A touch that brought a report under the reflow was a slide or scroll, his own move: his page is
+        // the place now, not an unreached jump's target. The report is dropped below and its touch stays
+        // pending, so a tap for the controls before the reflow ends would otherwise bring the target back.
+        // A layout report between a tap's touch-down and its recognition looks the same and drops the
+        // target too: the rule outside reflows ("a report after a touch is his") errs the same way.
+        if keeper.reflowing != nil, !leaving, touchedSinceLocation { owedJumpTarget = nil }
         guard keeper.reflowing == nil || leaving, !duringTurn else { return }
         // A reader still open keeps the debt for its reflow's end (`keepOwedPlace`).
         if !leaving || isClosed { placeOwed = false }
@@ -1863,11 +1871,7 @@ final class ReaderModel {
     /// A touch on the page. If the next location (outside a reflow) differs from where the book
     /// opened, it was a swipe in slide or scroll mode and the place is the reader's own. A tap that
     /// only shows the controls changes no location, so it moves nothing.
-    func noteInteraction() {
-        touchesSinceLocation += 1
-        // A slide or scroll (no move counted) makes his page the place, not an unreached jump's target.
-        owedJumpTarget = nil
-    }
+    func noteInteraction() { touchesSinceLocation += 1 }
     /// Touches on the page since the last location report; a tap that only shows or hides the controls
     /// clears them.
     @ObservationIgnored private var touchesSinceLocation = 0
@@ -1979,7 +1983,8 @@ final class ReaderModel {
         // Every touch since the last report, not only this tap's: a counter that took off one touch per
         // tap kept a tap Readium never passed on (one whose touch began but whose tap went nowhere) as
         // a move of his, and the next layout report moved his place (2 in 20 reopens). A swipe that a
-        // tap follows before Readium reports it is the rarer case and is left to that report.
+        // tap follows before Readium reports it is the rarer case and is left to that report. A swipe
+        // reported under a reflow has already dropped the jump's target (`locationDidChange`).
         touchesSinceLocation = 0
         readerLog.notice("controls: \(visible ? "up" : "down", privacy: .public) by a tap")
         setChrome(visible)
