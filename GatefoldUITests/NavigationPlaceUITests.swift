@@ -381,9 +381,11 @@ final class NavigationPlaceUITests: XCTestCase {
         if first.isEmpty { first = takeTheCloudsOffer() }
         XCTAssertFalse(first.isEmpty, "the page he scrolls from shows words")
         // A tap that met the page after the offer folded may have brought up the controls already.
-        let contents = app.buttons["reader.contents"]
+        let contents = app.descendants(matching: .any)["reader.contents"].firstMatch
         if !(contents.exists && contents.isHittable) { showChrome() }
-        app.buttons["reader.appearance"].tap()
+        let appearance = app.descendants(matching: .any)["reader.appearance"].firstMatch
+        if !appearance.isHittable { showChrome() }
+        appearance.tap()
         let turnStyle = app.descendants(matching: .any)["appearance.pageTurn"].firstMatch
         XCTAssertTrue(turnStyle.waitForExistence(timeout: 5))
         turnStyle.tap()
@@ -393,12 +395,13 @@ final class NavigationPlaceUITests: XCTestCase {
         let close = app.buttons["appearance.close"].exists ? app.buttons["appearance.close"] : app.buttons["appearance.back"]
         if close.exists { close.tap() } else { app.descendants(matching: .any)["reader.page"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.2)).tap() }
         // The switch to Scroll reflows the book: he swipes once the page has held still (the old 4 s).
-        _ = steadyWords()
+        let before = steadyWords()
         let page = app.descendants(matching: .any)["reader.page"]
         let savedBefore = savedWords
         for _ in 0..<6 { page.swipeUp(velocity: .fast) }
         let scrolled = steadyWords()
         XCTAssertNotEqual(opening(scrolled), opening(first), "the scroll moved the words")
+        XCTAssertNotEqual(opening(scrolled), opening(before), "the scroll moved the words from where Scroll began")
         // He leaves once his scroll's place is written, not after a guessed number of seconds: the saved
         // words are words of the page he scrolled to. A gate, not a check: the reopen below judges.
         let lead = flat(opening(scrolled)).split(separator: " ").prefix(4).joined(separator: " ")
@@ -418,6 +421,7 @@ final class NavigationPlaceUITests: XCTestCase {
             looks += 1
             RunLoop.current.run(until: Date().addingTimeInterval(0.2))
         }
+        print("SCROLL reopen page ready \(looks < 300) after \(looks) looks")
         let back = steadyWords()
         let words = opening(scrolled).split(separator: " ").prefix(6).joined(separator: " ")
         XCTAssertTrue(flat(back).contains(words), "reopened where he scrolled to")
