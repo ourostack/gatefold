@@ -1245,6 +1245,10 @@ final class ReaderModel {
     /// through a task hop, by which time Readium has usually moved on (when it hasn't, the late
     /// report is still kept).
     @ObservationIgnored private var pagesLeft: [Locator] = []
+    /// A report whose reads outlasted a newer move: that move's own report keeps the place.
+    private func noteOvertaken(_ l: Locator) {
+        readerLog.notice("place: a report from before move \(self.moves, privacy: .public) (\(Self.placeTag(l), privacy: .public)); that move keeps the place")
+    }
     private func noteLeftBehind() {
         if let here = page?.currentLocation, !pagesLeft.contains(where: { Self.samePage($0, here) }) { pagesLeft.append(here) }
     }
@@ -1821,6 +1825,9 @@ final class ReaderModel {
         } else {
             let held = keeper.anchor, heldLocator = anchorLocator
             await captureAnchor()
+            // Overtaken while reading (below): not the layout's either, so it neither puts back older words
+            // nor marks the newer move's report as the layout's.
+            guard moves == judgedMove else { return noteOvertaken(locator) }
             // No turn, no jump and no swipe since the last report, and his words are still the first on
             // screen: the layout moved Readium's page boundary (page numbers coming on, a number taking
             // the "Counting pages…" slot), not the reader. His page, its words and its place stay.
@@ -1844,10 +1851,7 @@ final class ReaderModel {
         // page was before it. Kept, it took that move's write (gatefold#201: the book's start, reported
         // before a launch jump, was written as the jump's move after it landed, and every reopen opened on
         // the cover); left to note this report, the move's own report read as the layout's and kept nothing.
-        guard moves == judgedMove else {
-            readerLog.notice("place: a report from before move \(self.moves, privacy: .public) (\(Self.placeTag(locator), privacy: .public)); that move keeps the place")
-            return
-        }
+        guard moves == judgedMove else { return noteOvertaken(locator) }
         // No turn or jump of ours since the last report: a page move his touch brought is Readium's own
         // swipe or scroll (a turn counts itself in `userTurnedPage`).
         let noMoveOfOurs = moves == movesAtLastReport
