@@ -14,9 +14,11 @@ final class RotationMidTransitionUITests: XCTestCase {
 
     private func el(_ id: String) -> XCUIElement { app.descendants(matching: .any)[id].firstMatch }
     /// Reads of the app until `done`, never seconds (gatefold#94, as FineTuneTap in #121): each read waits at least
-    /// 0.1 s, so `reads` sets the floor a fast runner gets (the old seconds); `hangGuard` only catches a hang.
-    private func readsUntil(reads: Int, hangGuard: TimeInterval, _ done: () -> Bool) -> (ok: Bool, reads: Int, hung: Bool) {
-        let hung = Date().addingTimeInterval(hangGuard)
+    /// 0.1 s, so `reads` sets the floor a fast runner gets (the old seconds). The hang guard only catches a hang:
+    /// `HangGuard` sizes it from `reads` and ends it before the step does (gatefold#223; the fixed 120 s and 180 s
+    /// it replaces would end these waits after about 6 and 10 reads at the slowest read seen, long before their caps).
+    private func readsUntil(reads: Int, _ done: () -> Bool) -> (ok: Bool, reads: Int, hung: Bool) {
+        let hung = Date().addingTimeInterval(HangGuard.seconds(reads: reads))
         for read in 1...reads {
             if done() { return (true, read, false) }
             if Date() > hung { return (false, read, true) }
@@ -71,12 +73,12 @@ final class RotationMidTransitionUITests: XCTestCase {
 
     private func tapContentsRow() {
         el("reader.page").coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
-        let offered = readsUntil(reads: 50, hangGuard: 120) { el("reader.contents").exists }
+        let offered = readsUntil(reads: 50) { el("reader.contents").exists }
         print("MIDTURN contents offered=\(offered.ok) after \(offered.reads) reads\(offered.hung ? " (hang guard)" : "")")
         XCTAssertTrue(offered.ok, "Contents is offered (not in \(offered.reads) reads\(offered.hung ? ", hang guard" : ""))")
         el("reader.contents").tap()
         let rows = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH 'contents.entry.'"))
-        let listed = readsUntil(reads: 150, hangGuard: 180) { rows.firstMatch.exists }
+        let listed = readsUntil(reads: 150) { rows.firstMatch.exists }
         print("MIDTURN contents listed=\(listed.ok) after \(listed.reads) reads\(listed.hung ? " (hang guard)" : "")")
         XCTAssertTrue(listed.ok, "the contents list is up (not in \(listed.reads) reads\(listed.hung ? ", hang guard" : ""))")
         let pick = rows.element(boundBy: min(30, max(0, rows.count - 1)))
