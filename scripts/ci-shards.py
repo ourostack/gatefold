@@ -10,7 +10,9 @@ main and full-list pull requests) this fails when
   - an entry names no test in the sources (a renamed test would otherwise drop out of CI quietly),
   - a skipped test is not in its shard's `tests`, or runs in no other shard on that device on main,
   - a shard has no `tests` list (an empty list would run the whole suite), or a PR list with no `pr_when`,
-  - one test runs in two shards on the same device in the same tier.
+  - one test runs in two shards on the same device in the same tier,
+  - a shard's `timeout` is not its comment's `<setup> + 2 x <slowest> + 12` rounded up, with <setup> the `boot` that
+    ui-tests.yml gives the time-left action: the test step's budget is the limit less those two (gatefold#198).
 --list prints every "tier|device|test" with its shard. --expect FILE fails unless that set equals the file's (the first
 word of each line; blank lines and lines starting with # ignored). CI checks against scripts/ci-shards.expect, so a
 test leaves CI only by a visible edit there: after adding or removing a test, `write` rewrites the file from the shards
@@ -24,6 +26,8 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WORKFLOW = os.path.join(ROOT, ".github", "workflows", "app.yml")
+SHARD = os.path.join(ROOT, ".github", "workflows", "ui-tests.yml")
+RESERVE = 12  # the time-left action's default, kept for the logs after the tests
 SOURCES = os.path.join(ROOT, "GatefoldUITests")
 TIERS = ("pr", "main")
 EXPECT = os.path.join(ROOT, "scripts", "ci-shards.expect")
@@ -127,6 +131,9 @@ def matrix_entries(lines):
             else:
                 key = None
                 entry[m.group(1)] = scalar(value)
+                note = re.search(r"\s#\s*(.*)$", value)
+                if note:
+                    entry["#" + m.group(1)] = note.group(1).strip()
     return entries
 
 
@@ -180,10 +187,40 @@ def plan(text, tests):
     return problems, runs
 
 
+def boot_of(shard_text):
+    """The `boot` minutes ui-tests.yml gives the time-left action, or None."""
+    m = re.search(r"^\s+boot:\s*\"?(\d+)\"?", shard_text, re.M)
+    return int(m.group(1)) if m else None
+
+
+def limit_problems(text, boot):
+    """A shard whose `timeout` isn't `boot + 2 x slowest + 12` rounded up, as its comment shows (gatefold#198)."""
+    if boot is None:
+        return ["ui-tests.yml gives the time-left action no `boot`, so no shard's tests' budget can be checked"]
+    out = []
+    for job, _, s in shards(text):
+        where = f"{job} shard {s.get('shard', '?')}"
+        note = s.get("#timeout", "")
+        m = re.fullmatch(r"(\d+) \+ 2 x (\d+(?:\.\d+)?) \+ (\d+)", note)
+        want = f"`timeout: N # {boot} + 2 x <slowest> + {RESERVE}`"
+        if not m or int(m.group(1)) != boot or int(m.group(3)) != RESERVE:
+            out.append(f"{where}: its timeout should read {want}, the boot's {boot} min, twice its tests' slowest "
+                       f"passes and {RESERVE} for the logs; it reads {s.get('timeout', '?')} # {note or '(no formula)'}")
+            continue
+        slowest = float(m.group(2))
+        need = boot + RESERVE + -(-int(round(2 * slowest * 10)) // 10)
+        if s.get("timeout") != str(need):
+            out.append(f"{where}: timeout {s.get('timeout')} should be {need} ({note}, rounded up), or its tests get "
+                       "less than twice their slowest passes")
+    return out
+
+
 def check(args):
     with open(WORKFLOW, encoding="utf-8") as f:
         text = f.read()
     problems, runs = plan(text, read_tests(SOURCES))
+    with open(SHARD, encoding="utf-8") as f:
+        problems += limit_problems(text, boot_of(f.read()))
     listed = []
     if "--list" in args:
         for (tier, device, t), names in sorted(runs.items()):
@@ -376,6 +413,21 @@ jobs:
     assert "main|d|A/added runs in CI but isn't in scripts/ci-shards.expect" in new and WRITE in new, new
     assert "main|d|A/gone is in scripts/ci-shards.expect, but no shard runs it" in gone and WRITE in gone, gone
     assert expect_problems({"x"}, {"x"}) == []
+    # The limit: the boot's minutes, twice the slowest rounded up, and the reserve (gatefold#198).
+    assert boot_of('      - uses: ./.github/actions/time-left\n        with:\n          boot: "30" # x\n') == 30
+    assert boot_of("no boot here") is None
+    def limits(timeout):
+        return limit_problems(wf(f"""          - shard: s1
+            tests: AUITests
+            timeout: {timeout}
+            cold: false"""), 30)
+    assert limits("54 # 30 + 2 x 5.8 + 12") == [], limits("54 # 30 + 2 x 5.8 + 12")
+    assert limits("42 # 30 + 2 x 0.0 + 12") == []
+    assert limits("54 # 30 + 2 x 5.95 + 12") == []  # 11.9 -> 12
+    assert any("should be 54" in p for p in limits("53 # 30 + 2 x 5.8 + 12")), limits("53 # 30 + 2 x 5.8 + 12")
+    assert any("should read" in p for p in limits("36 # 12 + 2 x 5.8 + 12")), limits("36 # 12 + 2 x 5.8 + 12")
+    assert any("no formula" in p for p in limits("54")), limits("54")
+    assert limit_problems(wf(""), None) != []
     print("ci-shards selftest: ok")
     return 0
 
