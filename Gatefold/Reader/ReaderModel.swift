@@ -1495,20 +1495,47 @@ final class ReaderModel {
     /// before the page goes, so a reflow that never settles (a slow device, a load stuck as in gatefold#94)
     /// can't drop the move he made under it (gatefold#96).
     func owedPlaceOnLeaving() -> Locator? {
-        guard placeOwed, !isClosed, !isWarming else { return nil }
+        guard !isClosed, !isWarming else { return nil }
+        // No move owed, but a restore that never settled left him the page as it was: that page is what he
+        // saw, so it is what the reopen shows (gatefold#133).
+        if !placeOwed {
+            leavingOnShownPage = shownOnLeaving
+            return leavingOnShownPage
+        }
         return owedJumpTarget.flatMap { $0.1 == moves && !touchedSinceLocation ? $0.0 : nil } ?? page?.currentLocation
     }
 
     /// Writes the place a reflow owed, as he leaves: the reader may have closed, and the reflow may
     /// still be under way. Only the place; nothing on screen changes. If he hasn't closed the book
     /// (the app only went inactive), the debt stands: a reflow that settles later still records his
-    /// own words over this write, as it would have without it.
+    /// own words over this write, as it would have without it. So does the page a stalled restore left
+    /// him (`reflowDidFinish` writes the settled page back over it).
     func keepOwedPlace(_ here: Locator) async {
-        guard placeOwed, !isWarming else { return }
+        let shown = leavingOnShownPage.map { $0.href == here.href && $0.locations.progression == here.locations.progression } == true
+        leavingOnShownPage = nil
+        guard placeOwed || shown, !isWarming else { return }
+        // The page as shown is the place now: no longer the layout's, whatever the reflow before it set.
+        if shown {
+            layoutOnly = false
+            readerLog.notice("place: the page a restore left unsettled, on leaving, at \(here.locations.totalProgression ?? -1, privacy: .public)")
+        } else {
+            readerLog.notice("place: recorded the move a reflow held, on leaving, at \(here.locations.totalProgression ?? -1, privacy: .public) moves \(self.moves, privacy: .public) recorded \(self.recordedMoves, privacy: .public)")
+        }
         if isClosed { owedJumpTarget = nil }
         let recordedBefore = recordedMoves
-        readerLog.notice("place: recorded the move a reflow held, on leaving, at \(here.locations.totalProgression ?? -1, privacy: .public) moves \(self.moves, privacy: .public) recorded \(self.recordedMoves, privacy: .public)")
+        // Still open (the app only went inactive): once the restore settles, the page it settles on is
+        // the one he sees again, and it is written back over this one. Noted before the write's own wait.
+        let movesAtWrite = moves
+        if shown, !isClosed { shownWrittenOpen = movesAtWrite }
         await locationDidChange(here, hisMove: true, placeOnly: true, leaving: true)
+        // The restore settled during that wait: its write-back may have gone first, so this one follows it.
+        if shown, !isClosed, keeper.reflowing == nil, moves == movesAtWrite, !touchedSinceLocation, let words = anchorLocator {
+            shownWrittenOpen = nil
+            readerLog.notice("place: the restore settled while the page it left was written; its page written back at \(words.locations.totalProgression ?? -1, privacy: .public)")
+            layoutOnly = false
+            await locationDidChange(words, hisMove: true, placeOnly: true)
+            if moves == movesAtWrite, !touchedSinceLocation { layoutOnly = true }
+        }
         if !isClosed, placeOwed, recordedMoves == moves { recordedMoves = recordedBefore }
     }
 
@@ -1542,7 +1569,31 @@ final class ReaderModel {
 
     private var reflowCount = 0
 
+    /// The page the 12 s watchdog showed him while the restore under it hadn't settled, and `moves` then.
+    /// Until that restore ends or he moves, that page is the one he sees (gatefold#133).
+    @ObservationIgnored private var shownUnsettled: (locator: Locator, move: Int)?
+    /// Leaving on that page: `keepOwedPlace` keeps it though no move is owed. Set as he leaves, before
+    /// `close()` counts its own move.
+    @ObservationIgnored private var leavingOnShownPage: Locator?
+    private var shownOnLeaving: Locator? {
+        guard let shown = shownUnsettled, shown.move == moves, keeper.reflowing != nil, !touchedSinceLocation else { return nil }
+        return shown.locator
+    }
+
+    /// `moves` when the page a stalled restore left him was written while the book stayed open.
+    @ObservationIgnored private var shownWrittenOpen: Int?
+
+    /// The watchdog showed the page as it is, its restore still unsettled: noted as Readium names it, then
+    /// by its first words (`words`) if the page answers while the note stands.
+    func reflowShownUnsettled(_ here: Locator, words: Bool = false) {
+        guard keeper.reflowing != nil, !isClosed, !isWarming else { return }
+        if words { guard let shown = shownUnsettled, shown.move == moves else { return } }
+        shownUnsettled = (here, moves)
+        readerLog.notice("reflow: the page shown unsettled is at \(here.locations.totalProgression ?? -1, privacy: .public)")
+    }
+
     func reflowDidBegin() {
+        shownUnsettled = nil
         reflowCount += 1
         landingChecks = 0
         anchorCheck = "settling \(reflowCount)"
@@ -1569,6 +1620,24 @@ final class ReaderModel {
     }
 
     func reflowDidFinish(visible: VisibleRange?) {
+        shownUnsettled = nil
+        // He came back to a restore that then settled: the page it settled on is his again, not the one
+        // written as he went (his words, which the restore put back on the left page).
+        if let written = shownWrittenOpen {
+            shownWrittenOpen = nil
+            if written == moves, !isClosed, !isWarming, !touchedSinceLocation, let words = anchorLocator {
+                Task { [weak self] in
+                    guard let self, self.moves == written, !self.isClosed, !self.touchedSinceLocation, self.keeper.reflowing == nil else {
+                        readerLog.notice("place: the settled page's write-back skipped (a move, a touch or a new reflow first)")
+                        return
+                    }
+                    readerLog.notice("place: the restore settled after he came back; its page written back at \(words.locations.totalProgression ?? -1, privacy: .public)")
+                    self.layoutOnly = false
+                    await self.locationDidChange(words, hisMove: true, placeOnly: true)
+                    if self.moves == written, !self.touchedSinceLocation { self.layoutOnly = true }
+                }
+            }
+        }
         reflowSettledAt = Date()
         // A reflow throws away the page loading behind this one; the catch-up still on offer gets a new one.
         if let waiting = suggestionLocator, !isClosed { page?.prepareStandby(at: waiting) }

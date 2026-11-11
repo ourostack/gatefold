@@ -92,6 +92,9 @@ enum LaunchOptions {
     /// a busy device, to show the old page holding until they paint.
     /// Tests only: every reflow's restore hangs after laying out, as a cold iPad's could; the page must still show.
     static var stallReflow: Bool { defaults.bool(forKey: "GatefoldStallReflow") }
+    /// Tests only: the first reflow after his first move waits 120 s for its page to answer its first script, as
+    /// CI's landscape spread did while its chapter loaded (gatefold#94, #133); every restore of it waits.
+    static var slowRestorePage: Bool { defaults.bool(forKey: "GatefoldSlowRestorePage") }
     /// Debug only: a jump's chapter counts as still loading (Readium's spinner up) for this many looks,
     /// so a test can hold the load open as a slow device does and watch the veil (#38).
     static var holdChapterLoadLooks: Int? { defaults.object(forKey: "GatefoldHoldChapterLoad") == nil ? nil : defaults.integer(forKey: "GatefoldHoldChapterLoad") }

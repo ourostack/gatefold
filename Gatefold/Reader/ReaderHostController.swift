@@ -30,6 +30,8 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     private var lastSize: CGSize = .zero
     private var reflowTask: Task<Void, Never>?
     private var reflowGeneration = 0
+    /// Tests only (`-GatefoldSlowRestorePage`): when the slow reflow's page starts answering.
+    private var slowRestoreDeadline: ContinuousClock.Instant?
     /// The old page, held over the web view while it repaginates, so a reflow never shows bare paper.
     private var reflowCover: UIView?
     /// Set while a reflow from one page to a spread is the unfold.
@@ -621,6 +623,10 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
 
     private func beginReflow(_ reason: ReflowReason) {
         readerLog.notice("reflow begins: \(String(describing: reason), privacy: .public)")
+        if LaunchOptions.stallReflow == false, LaunchOptions.slowRestorePage, slowRestoreDeadline == nil, model.hisMoves > 0 {
+            slowRestoreDeadline = .now + .seconds(120)
+            readerLog.notice("reflow: its page answers only in 120 s, for the test (GatefoldSlowRestorePage)")
+        }
         // A late correction's picture is the spread he was reading (the page beneath may be half moved):
         // it becomes the reflow's cover.
         if let picture = settlePicture {
@@ -841,6 +847,21 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         guard reflowCover != nil || leaf != nil || navigator.view.alpha < 1 else { return }
         readerLog.error("reflow: no settle after 12 s; showing the page as it is")
         showPageAsItIs()
+        noteShownUnsettled()
+    }
+
+    /// The page just shown as it is, while its restore still runs, is the page he sees: noted at once as
+    /// Readium names it, then by its first words once the page answers (that may be the very script the
+    /// restore is waiting on), so a leave before the restore ends keeps it (gatefold#133).
+    private func noteShownUnsettled() {
+        guard let model = weakModel else { return }
+        if let here = navigator.currentLocation { model.reflowShownUnsettled(here) }
+        // The watchdog starts the restore again right after this, so a newer generation is expected: the
+        // model takes the words only while its note of this page stands (a settle or new reflow drops it).
+        Task { [weak self] in
+            guard let found = await self?.currentAnchor(), let self, let model = self.weakModel, found.0.text != nil else { return }
+            model.reflowShownUnsettled(found.1, words: true)
+        }
     }
 
     private func showPageAsItIs() {
@@ -869,6 +890,10 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             return model.keeper.restoreMayMove(move: model.hisMoves)
         }
         defer { giveWayIfHeMoved(generation: generation) }
+        // Tests only: the page doesn't answer yet, as a spread whose chapter is still loading.
+        if let until = slowRestoreDeadline {
+            while ContinuousClock.now < until, current(), !Task.isCancelled { try? await Task.sleep(for: .milliseconds(250)) }
+        }
         // Back from the page itself: a script whose spread the reflow replaced comes back at once with
         // no page behind it (gatefold#109), and runs again on the spread that replaced it.
         _ = await Self.onSpread { () async throws -> Void? in

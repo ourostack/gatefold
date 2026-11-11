@@ -12,7 +12,7 @@ import GatefoldCore
 /// Path (an ordinary reader's, no jump hook after the first open):
 ///  1. Portrait. Fresh install (`-GatefoldReset`), open Pride and Prejudice at 0.31, wait until the book
 ///     is counted (`reader.pageCount` has a value; up to 300 s), let the words settle.
-///  2. Controls up, Contents, tap the last contents entry (index min(30, rows - 1); 13 rows on this book),
+///  2. Controls up, Contents, tap contents entry 11, by its identifier,
 ///     let the words settle.
 ///  3. Read two pages: two forward taps at the right edge, each waiting for the words to change and settle.
 ///  4. Turn the iPad to landscape (`.landscapeLeft`), let the reflow settle (30 s cap, then 6 s more).
@@ -101,6 +101,14 @@ final class RotationRepro: XCTestCase {
         try rotateThenLeave(extra: ["-GatefoldStallReflow", "YES"])
     }
 
+    /// The same path with the rotation's page slow to answer (`-GatefoldSlowRestorePage`, first launch only):
+    /// the restore waits on its first script past the 12 s watchdog, which shows the page as it is, and he
+    /// leaves on that page before the restore settles, as on CI's iPad (gatefold#133). The reopen must start
+    /// on the page he saw.
+    func testRotateThenLeaveWhileTheRestoreWaitsOnItsPage() throws {
+        try rotateThenLeave(extra: ["-GatefoldSlowRestorePage", "YES"])
+    }
+
     private func rotateThenLeave(extra: [String] = []) throws {
         try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .pad, "a spread on rotation is an iPad path")
         // 1. Portrait, fresh install, open, wait for the count.
@@ -125,8 +133,28 @@ final class RotationRepro: XCTestCase {
         sleep(1)
         let beforeJump = vtext
         let rowCount = rows.count
-        let pick = rows.element(boundBy: min(30, max(0, rows.count - 1)))
-        for _ in 0..<6 where !pick.isHittable { app.swipeUp() }
+        // One entry, named, every run: the last row the lazy list had loaded was 12 rows on some runs and
+        // 14 on others, so the jump went to a different chapter from run to run (gatefold#133, #193).
+        let pick = app.descendants(matching: .any)["contents.entry.11"]
+        // The list opens scrolled to his chapter, so entry 11 may sit above or below what is on screen.
+        // Short drags inside the list itself, a few at a time: a swipe at the list's top would close the sheet.
+        let list = app.collectionViews.firstMatch
+        let loaded = rows.allElementsBoundByIndex.map { $0.identifier.replacingOccurrences(of: "contents.entry.", with: "") }
+        print("REPRO jump rows loaded \(loaded.joined(separator: ","))")
+        let current = app.descendants(matching: .any)["contents.current"].exists
+        print("REPRO jump current row \(current ? "up" : "not loaded")")
+        // Toward entry 11 only: a pull-down at the list's top can close the sheet. Entry 11 in the top half
+        // of the loaded rows (or above them) is reached by pulling down; one loaded at the top edge isn't
+        // hittable, and a push up would take it away.
+        let ids = loaded.compactMap { Int($0) }
+        let above = ids.isEmpty ? false : 11 < (ids.min()! + ids.max()!) / 2
+        for _ in 0..<10 where !(pick.exists && pick.isHittable) {
+            // A short drag inside the list, never a swipe from its top: a pull-down there closes the sheet.
+            let from = list.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: above ? 0.35 : 0.65))
+            let to = list.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: above ? 0.65 : 0.35))
+            from.press(forDuration: 0.1, thenDragTo: to)
+        }
+        XCTAssertTrue(pick.isHittable, "contents entry 11 is on screen")
         pick.tap()
         // The old page stays put while the jump loads (over 10 s on a hosted runner), so wait for the
         // words to change before waiting for them to settle.
