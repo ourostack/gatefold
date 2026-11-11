@@ -98,17 +98,6 @@ enum LaunchOptions {
     /// Tests only, with `slowRestorePage`: the page shown unsettled is noted as Readium names it and never by
     /// its words, as on a device whose page scripts wait on the stalled install too (gatefold#133).
     static var shownPageWithoutWords: Bool { isUITest && defaults.bool(forKey: "GatefoldShownPageWithoutWords") }
-    /// Tests only (DEBUG, UI tests): seconds the reflow watchdog waits before it shows the page as it is
-    /// and starts the restore again (12 by default), so a test of a restore held past it (`slowRestorePage`)
-    /// takes the same path without waiting out the full 12 s (gatefold#266).
-    static var restoreWatchdogSeconds: Int {
-        #if DEBUG
-        if isUITest, defaults.object(forKey: "GatefoldRestoreWatchdog") != nil {
-            return max(1, defaults.integer(forKey: "GatefoldRestoreWatchdog"))
-        }
-        #endif
-        return 12
-    }
     /// Debug only: a jump's chapter counts as still loading (Readium's spinner up) for this many looks,
     /// so a test can hold the load open as a slow device does and watch the veil (#38).
     static var holdChapterLoadLooks: Int? { defaults.object(forKey: "GatefoldHoldChapterLoad") == nil ? nil : defaults.integer(forKey: "GatefoldHoldChapterLoad") }
