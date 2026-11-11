@@ -29,6 +29,7 @@ main|iPad Pro 13-inch|PageFurnitureUITests/testOnTheIPadSpreadTwoTogglesThenAReo
 main|iPad Pro 13-inch|PageFurnitureUITests/testTurningNumbersOnKeepsTheWordsAndIsKept
 main|iPad Pro 13-inch|PageNumberUITests/testOnASpreadEveryTurnMovesOnTwoPages
 main|iPad Pro 13-inch|PlaceUndoUITests/testAChaptersFirstPageTurnsBackByTapAndBySwipe
+main|iPad Pro 13-inch|PlaceUndoUITests/testAContentsJumpThatNeverLoadsLetsTheVeilGo
 main|iPad Pro 13-inch|PlaceUndoUITests/testAJumpIsOneTapToUndoWithTheControlsHidden
 main|iPad Pro 13-inch|PlaceUndoUITests/testATapAboveYourPageClosesItAndKeepsThePage
 main|iPad Pro 13-inch|PlaceUndoUITests/testATapAtTheLeftEdgeTurnsBackPromptly
@@ -36,6 +37,7 @@ main|iPad Pro 13-inch|PlaceUndoUITests/testATapAtTheLeftEdgeTurnsBackPromptlyWit
 main|iPad Pro 13-inch|PlaceUndoUITests/testATapNearTheLeftEdgeOfASpreadTurnsBack
 main|iPad Pro 13-inch|PlaceUndoUITests/testATapWhileAJumpIsUnderWayLandsWhereHeChose
 main|iPad Pro 13-inch|PlaceUndoUITests/testATouchOnTheScrubberNeverJumps
+main|iPad Pro 13-inch|PlaceUndoUITests/testBackToAChapterStillLoadingWaitsForItAndTakesHimBack
 main|iPad Pro 13-inch|PositionUITests/testEveryPostureKeepsThePlace
 main|iPad Pro 13-inch|ReopenAfterControlsUITests/testAReturnAfterTheControlsAndNumbersShowsTheSameWords
 main|iPad Pro 13-inch|ReviewerChecksUITests/testEveryReopenReturnsTheSameWords
