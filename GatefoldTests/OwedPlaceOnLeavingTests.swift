@@ -158,6 +158,73 @@ import Testing
     }
 }
 
+/// A page whose jump goes out and is never reported: the chapter it went to is still loading (Readium's
+/// spinner up, its location still the page before) when he leaves.
+@MainActor
+final class UnreportedJumpPage: ReaderPage {
+    var currentLocation: Locator?
+    private(set) var sent: [Locator] = []
+    init(at location: Locator) { currentLocation = location }
+    @discardableResult func go(to locator: Locator) async -> Bool { sent.append(locator); return true }
+    func go(to link: ReadiumShared.Link) async {}
+    func visibleRange() async -> VisibleRange? { nil }
+    func progression(of quote: String) async -> Double? { nil }
+    func currentAnchor() async -> (ReadingAnchor, Locator)? { nil }
+}
+
+/// gatefold#279: a scrubber jump from the opening page whose chapter is still loading when he leaves,
+/// no turn. Readium never reported the jump's page, so nothing was written, and the reopen had no place
+/// at all ("opening on none"). The place he chose is kept: the jump's target, never the page before it.
+@MainActor @Suite(.serialized) struct LeavingAScrubberJumpOnItsWayTests {
+    private func open(_ name: String) async throws -> (AppModel, ReaderModel, UnreportedJumpPage) {
+        let sync = StubSync()
+        await sync.setLibrary(.success([ReaderSyncTests.frankenstein]))
+        await sync.setRemote(nil)
+        let app = AppModel(sync: sync, libraryRoot: URL.temporaryDirectory.appending(path: "\(name)-\(UUID().uuidString)"))
+        await app.library.refresh()
+        let publication = try await ReaderSyncTests.publication()
+        let book = try #require(app.library.book(ReaderSyncTests.frankenstein.fastHash))
+        let first = publication.readingOrder[0].url().string
+        let opening = Locator(href: try #require(AnyURL(string: first)), mediaType: .xhtml,
+                              locations: .init(progression: 0, totalProgression: 0))
+        let page = UnreportedJumpPage(at: opening)
+        let model = ReaderModel(book: book, publication: publication, app: app, page: page)
+        await model.load()
+        return (app, model, page)
+    }
+
+    private func savedPlace(_ app: AppModel) -> Locator? {
+        app.library.book(ReaderSyncTests.frankenstein.fastHash)?.locatorJSON.flatMap { try? Locator(jsonString: $0) }
+    }
+
+    @Test func closingOnAScrubberJumpStillLoadingKeepsItsTarget() async throws {
+        let (app, model, page) = try await open("scrub-leave-close")
+        await model.go(toProgression: 0.43, rememberBack: true)
+        let target = try #require(page.sent.last, "the jump went out")
+        model.close()
+        for _ in 0..<200 where savedPlace(app) == nil { try await Task.sleep(for: .milliseconds(25)) }
+        let saved = try #require(savedPlace(app), "leaving kept no place")
+        #expect(saved.href.string == target.href.string)
+        #expect(saved.locations.progression == target.locations.progression,
+                "kept at \(saved.locations.progression ?? -1) in its file, not the jump's target (\(target.locations.progression ?? -1))")
+    }
+
+    @Test func goingInactiveOnAScrubberJumpStillLoadingKeepsItsTarget() async throws {
+        let (app, model, page) = try await open("scrub-leave-inactive")
+        await model.go(toProgression: 0.43, rememberBack: true)
+        let target = try #require(page.sent.last, "the jump went out")
+        // As the app does when it goes inactive (GatefoldApp's scene phase).
+        let owed = try #require(model.owedPlaceOnLeaving(), "leaving owed no place")
+        model.keepShownPageNow(owed)
+        await model.keepOwedPlace(owed)
+        for _ in 0..<200 where savedPlace(app) == nil { try await Task.sleep(for: .milliseconds(25)) }
+        let saved = try #require(savedPlace(app), "leaving kept no place")
+        #expect(saved.href.string == target.href.string)
+        #expect(saved.locations.progression == target.locations.progression)
+        model.close()
+    }
+}
+
 /// A wait that holds until it is opened.
 actor LeaveGate {
     private var isOpen = false
