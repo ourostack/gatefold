@@ -19,7 +19,7 @@ on:
         required: false
         type: string
       whats_new:
-        description: What's New override (default the commit's subject)
+        description: What to Test override (default the changelog.d tales since the last build)
         required: false
         type: string
 
@@ -271,13 +271,12 @@ jobs:
           if [[ -n "${WHATS_NEW//[[:space:]]/}" ]]; then
             printf '%s\n' "$WHATS_NEW" > "$notes"
           else
-            subject="$(git log -1 --format=%s "$GATEFOLD_SHA")"
-            # A merge commit's subject is "Merge pull request #N from ..."; its body's first line is the PR title.
-            if [[ "$subject" == "Merge pull request "* ]]; then
-              subject="$(git log -1 --format=%b "$GATEFOLD_SHA" | sed -n '/[^[:space:]]/{p;q;}')"
-            fi
-            printf '%s\n' "$subject" > "$notes"
+            # The tales in changelog.d added since the last testflight/build-N tag, in merge order
+            # (scripts/changelog.py; the same commits always give the same text, and no model writes it).
+            python3 -I scripts/changelog.py assemble --head "$GATEFOLD_SHA" --out "$notes"
           fi
+          echo "What to Test, $(wc -m < "$notes") characters:"
+          cat "$notes"
           echo "GATEFOLD_WHATS_NEW_FILE=$notes" >> "$GITHUB_ENV"
 
       - name: Archive, upload and publish to Gatefold Internal

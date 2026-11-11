@@ -23,6 +23,8 @@ DIR = "changelog.d"
 SKIP_LABEL = "no-changelog"
 LIMIT = 4000  # App Store Connect's What to Test
 TITLE_MAX, TRY_MAX, BODY_MAX = 70, 240, 700
+# For the App Store's What's New later (Guideline 2.3.12: features first, specific). TestFlight keeps merge order.
+KINDS = ("feature", "fix", "polish")
 SLUG = re.compile(r"^[a-z0-9][a-z0-9-]{2,79}\.md$")
 # What builds into the app a tester holds. Tests, CI, scripts, docs and the website are not in it.
 APP = re.compile(r"^(Gatefold/|Packages/[^/]+/(Sources/|Package\.(swift|resolved)$)|project\.yml$|distribution/)")
@@ -68,8 +70,8 @@ def parse(text, name="fragment"):
             continue
         key, sep, value = ln.partition(":")
         key = key.strip().lower()
-        if not sep or key not in ("title", "try"):
-            errors.append(f"{name}: unknown front-matter line {ln.strip()!r} (only title: and try:)")
+        if not sep or key not in ("title", "try", "kind"):
+            errors.append(f"{name}: unknown front-matter line {ln.strip()!r} (only title:, kind: and try:)")
             continue
         fields[key] = value.strip().strip('"')
     body = "\n".join(lines[end + 1:]).strip()
@@ -80,6 +82,8 @@ def parse(text, name="fragment"):
         errors.append(f"{name}: needs a title: line")
     elif len(title) > TITLE_MAX:
         errors.append(f"{name}: the title is {len(title)} characters; keep it to {TITLE_MAX}")
+    if fields.get("kind", "fix") not in KINDS:
+        errors.append(f"{name}: kind: is one of {', '.join(KINDS)}")
     if len(fields.get("try", "")) > TRY_MAX:
         errors.append(f"{name}: try: is {len(fields['try'])} characters; keep it to {TRY_MAX}")
     if not body:
@@ -251,7 +255,8 @@ def selftest():
             run("commit", "-q", "-m", msg)
             return run("rev-parse", "HEAD").strip()
 
-        frag = lambda t, b, tr="": f"---\ntitle: {t}\n" + (f"try: {tr}\n" if tr else "") + f"---\n{b}\n"
+        frag = lambda t, b, tr="": f"---\ntitle: {t}\nkind: fix\n" + (f"try: {tr}\n" if tr else "") + f"---\n{b}\n"
+        assert parse("---\ntitle: T\nkind: heist\n---\nx")[1], "an unknown kind is refused"
         c0 = commit({"README.md": "x", f"{DIR}/README.md": "guide"}, "start")
         c1 = commit({"Gatefold/A.swift": "1", f"{DIR}/the-first-crossing.md": frag("The First Crossing", "It held.", "Open a book.")}, "one")
         c2 = commit({"Gatefold/B.swift": "2"}, "two, no tale")
