@@ -1,8 +1,9 @@
 name: UI test shard
 
-# One shard of App's UI tests, called by app.yml. The job starts with the run, not after `build`: it boots its new
-# simulator while `Build for testing` builds, waits for that build's artifact (named by commit and Xcode version), and
-# runs this shard's tests with test-without-building (gatefold#39). The shards of one required check report through
+# One shard of App's UI tests, called by app.yml. The job starts with the run (or, capped, when a slot frees;
+# gatefold#243), not after `build`: it boots its new simulator (alongside `Build for testing`, when it starts with the
+# run), waits for that build's artifact (named by commit and Xcode version), and runs this shard's tests with
+# test-without-building (gatefold#39). The shards of one required check report through
 # that check's gate job in app.yml. scripts/ci-shards.py checks the lists in app.yml: every listed test exists, and
 # none runs in two shards of a tier.
 

@@ -8,8 +8,9 @@ name: App
 #
 # Build once: `build` makes the app and its tests for the simulator (build-for-testing) and uploads them, named by
 # commit and Xcode version; no simulator job compiles the app again (gatefold#39: each job spent 10 to 16 min building).
-# Every simulator job starts with the run, boots its new simulator while `build` builds, waits for that artifact
-# (.github/actions/await-build) and runs test-without-building.
+# Every simulator job starts with the run (a capped shard, when a slot frees; gatefold#243), boots its new simulator
+# (alongside `build`, when it starts with the run), waits for that artifact (.github/actions/await-build) and runs
+# test-without-building.
 #
 # UI tests run in shards (.github/workflows/ui-tests.yml), each on its own runner; a gate job named for each required
 # check is green only when all of its shards passed.
@@ -184,8 +185,12 @@ jobs:
           python3 -I scripts/ci-shards.py --selftest
           python3 -I scripts/ci-shards.py check --expect scripts/ci-shards.expect
 
-  # UI tests run in shards, each on its own runner (.github/workflows/ui-tests.yml). Every shard starts with the run: it
-  # boots its new simulator while `build` builds, then waits for the build's artifact. On main each shard holds about
+  # UI tests run in shards, each on its own runner (.github/workflows/ui-tests.yml). A shard starts with the run, or
+  # when its matrix has a free slot: it boots its new simulator (alongside `build`, when it starts with the run), then
+  # waits for the build's artifact.
+  # Per run, each matrix's `max-parallel` caps how many of its shards run at once, so full-list runs leave macOS runners
+  # for app pull requests (gatefold#243). The five caps sum to 12 on main and 8 on a pull request running the full lists;
+  # one running only its tier is uncapped. GitHub may start a matrix's shards in any order. On main each shard holds about
   # 5 min of tests by its median pass on main (eight runs, 42605267361 to 42905906538). On a pull request a shard runs
   # its `pr_tests` only when its `pr_when` group is in `changes`' `fired`; every other shard reports from a no-op job.
   # Each `timeout` is 12 min of setup (the boot and the wait for the build), plus twice the sum of its tests' slowest
@@ -200,6 +205,7 @@ jobs:
     if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
     strategy:
       fail-fast: false
+      max-parallel: ${{ github.event_name != 'pull_request' && 3 || needs.changes.outputs.full != 'false' && 2 || 10 }}
       matrix:
         include:
           - shard: ipad-place-portrait
@@ -314,6 +320,7 @@ jobs:
     if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
     strategy:
       fail-fast: false
+      max-parallel: ${{ github.event_name != 'pull_request' && 1 || needs.changes.outputs.full != 'false' && 1 || 4 }}
       matrix:
         include:
           - shard: ipad-undo-underway
@@ -375,6 +382,7 @@ jobs:
     if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
     strategy:
       fail-fast: false
+      max-parallel: ${{ github.event_name != 'pull_request' && 2 || needs.changes.outputs.full != 'false' && 1 || 7 }}
       matrix:
         include:
           - shard: ipad-taps-quick
@@ -460,6 +468,7 @@ jobs:
     if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
     strategy:
       fail-fast: false
+      max-parallel: ${{ github.event_name != 'pull_request' && 3 || needs.changes.outputs.full != 'false' && 2 || 5 }}
       matrix:
         include:
           - shard: ipad-reviewer-smoke
@@ -529,6 +538,7 @@ jobs:
     if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
     strategy:
       fail-fast: false
+      max-parallel: ${{ github.event_name != 'pull_request' && 3 || needs.changes.outputs.full != 'false' && 2 || 9 }}
       matrix:
         include:
           - shard: duo-taps-portrait
