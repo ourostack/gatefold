@@ -417,6 +417,11 @@ final class ReaderModel {
     }
     /// UI tests: "Counting pages…" was drawn at least once (CI's slow reads can miss it on screen).
     var countingShownProbe = false
+    /// UI tests only: the latest reflow's number and how far it has got ("3 reflowing", "3 placed", then
+    /// "3 settled" once its page is fully shown, its cover faded or its swing played; a restore that gave way
+    /// to his move counts as settled when its page starts showing), so a test can let a reflow settle before
+    /// its next touch (gatefold#175). Never set outside UI tests.
+    var reflowProbe = ""
     /// The last count ended by itself with chapters it couldn't count; cleared when a count starts.
     private(set) var countGaveUp = false
     private var lastGeometry: (href: String, geometry: ScreenPageGeometry)?
@@ -1592,6 +1597,7 @@ final class ReaderModel {
         reflowCount += 1
         landingChecks = 0
         anchorCheck = "settling \(reflowCount)"
+        if LaunchOptions.isUITest { reflowProbe = "\(reflowCount) reflowing" }
     }
 
     private var reflowSettledAt: Date?
@@ -1614,8 +1620,18 @@ final class ReaderModel {
         }
     }
 
+    /// The latest reflow's number, for `reflowShown`.
+    var reflowNumber: Int { reflowCount }
+
+    /// UI tests only: reflow `number`'s page is fully shown. A newer reflow begun meanwhile keeps its own state.
+    func reflowShown(_ number: Int) {
+        guard LaunchOptions.isUITest, number == reflowCount else { return }
+        reflowProbe = "\(number) settled"
+    }
+
     func reflowDidFinish(visible: VisibleRange?) {
         reflowSettledAt = Date()
+        if LaunchOptions.isUITest { reflowProbe = "\(reflowCount) placed" }
         // A reflow throws away the page loading behind this one; the catch-up still on offer gets a new one.
         if let waiting = suggestionLocator, !isClosed { page?.prepareStandby(at: waiting) }
         if let visible, let anchor = keeper.anchor {
