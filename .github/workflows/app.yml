@@ -1,7 +1,7 @@
 name: App
 
-# Probe for gatefold#198 (never merged): can a new simulator's first boot be short and quiet? Each job samples the
-# runner's 1-min load every 20 s. No app, no tests, no book text.
+# Probe for gatefold#198 (never merged): does `simctl boot --disabledJob` for quiet-sim.labels keep a new simulator's
+# first boot short and quiet? Each job samples the runner's 1-min load every 20 s. No app, no tests, no book text.
 
 on:
   workflow_dispatch:
@@ -10,70 +10,38 @@ permissions:
   contents: read
 
 jobs:
-  control:
-    name: Today's boot (ci-simulator.py start, wait, quiet after the check)
+  disabled:
+    name: First boot with quiet-sim.labels disabled (${{ matrix.set }} ${{ matrix.rep }})
     runs-on: xcode-27
-    timeout-minutes: 45
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        set: [labels, wider]
+        rep: [1, 2]
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/select-xcode
-      - run: |
-          set -u
-          .github/probe/sim.sh sample control 1500 &
-          t=$SECONDS
-          python3 -I scripts/ci-simulator.py start gatefold-ipad "iPad Pro 13-inch"
-          CI_SIMULATOR_BUDGET=1740 python3 -I scripts/ci-simulator.py wait gatefold-ipad "iPad Pro 13-inch" 1200 2>&1 | tail -25
-          echo "BOOTED control after $((SECONDS-t)) s"
-          wait
-
-  early:
-    name: Storm jobs removed from the moment the device is up, during the boot
-    runs-on: xcode-27
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/select-xcode
-      - run: |
+      - env:
+          SET: ${{ matrix.set }}
+        run: |
           set -u
           read -r rt dt < <(.github/probe/sim.sh pick); echo "runtime $rt type $dt"
-          .github/probe/sim.sh sample early 1500 &
+          jobs=$(grep -vE '^\s*(#|$)' .github/scripts/quiet-sim.labels)
+          if [ "$SET" = wider ]; then
+            jobs="$jobs com.apple.sociallayerd com.apple.fitnesscoachingd com.apple.healthd com.apple.amsengagementd com.apple.promotedcontentd com.apple.intelligenceplatformd com.apple.biomesyncd com.apple.duetexpertd com.apple.siriinferenced com.apple.modelcatalogd com.apple.intelligencecontextd com.apple.photos.ImageConversionService com.apple.jetpackassetd"
+          fi
+          args=(); for j in $jobs; do args+=("--disabledJob=$j"); done; echo "DISABLING ${#args[@]} jobs"
+          .github/probe/sim.sh sample "$SET" 1260 &
           u=$(xcrun simctl create probe-ipad "$dt" "$rt"); echo "created $u"
-          t=$SECONDS; xcrun simctl boot "$u"; echo "BOOT returned after $((SECONDS-t)) s"
-          flag="$RUNNER_TEMP/booted"; .github/probe/early.sh during "$u" "$flag" &
-          xcrun simctl bootstatus "$u" -b > "$RUNNER_TEMP/bs.txt" 2>&1; echo "BOOTSTATUS early done ($?) after $((SECONDS-t)) s"; tail -3 "$RUNNER_TEMP/bs.txt"
-          touch "$flag"
-          xcrun simctl spawn "$u" launchctl list | awk 'NR>1{print $3}' | sort > "$RUNNER_TEMP/jobs.txt"; echo "JOBS loaded $(wc -l < "$RUNNER_TEMP/jobs.txt")"
+          t=$SECONDS; xcrun simctl boot "$u" "${args[@]}"; echo "BOOT returned ($?) after $((SECONDS-t)) s"
+          xcrun simctl bootstatus "$u" -b > "$RUNNER_TEMP/bs.txt" 2>&1; echo "BOOTSTATUS $SET done ($?) after $((SECONDS-t)) s"; tail -3 "$RUNNER_TEMP/bs.txt"
+          xcrun simctl spawn "$u" launchctl list | awk 'NR>1{print $3}' > "$RUNNER_TEMP/jobs.txt"
+          n=0; for j in $jobs; do grep -qx "$j" "$RUNNER_TEMP/jobs.txt" && { n=$((n+1)); echo "STILL LOADED $j"; }; done; echo "LOADED of the disabled: $n"
+          xcrun simctl spawn "$u" launchctl print-disabled system | grep -c "=> disabled" | sed 's/^/PRINT-DISABLED /'
+          for i in 1 2 3 4 5 6 7 8 9 10; do
+            t0=$SECONDS; xcrun simctl launch "$u" com.apple.Preferences >/dev/null 2>&1; r=$?
+            echo "LAUNCH $i $(date -u +%T) $((SECONDS-t0)) s exit $r load $(sysctl -n vm.loadavg | awk '{print $2}')"
+            xcrun simctl terminate "$u" com.apple.Preferences >/dev/null 2>&1; sleep 60
+          done
           wait
-
-  discover:
-    name: Where a launchctl disable persists, and whether it holds before a new device's first boot
-    runs-on: xcode-27
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/select-xcode
-      - run: |
-          set -u
-          read -r rt dt < <(.github/probe/sim.sh pick)
-          u=$(xcrun simctl create probe-a "$dt" "$rt"); xcrun simctl boot "$u"
-          xcrun simctl bootstatus "$u" -b >/dev/null 2>&1; echo "first device booted"
-          sleep 5; touch "$RUNNER_TEMP/marker"; sleep 2
-          for l in com.apple.homed com.apple.geod com.apple.weatherd com.apple.PosterBoard com.apple.triald; do
-            xcrun simctl spawn "$u" launchctl disable "system/$l"; echo "disable $l: $?"
-          done
-          xcrun simctl spawn "$u" launchctl print-disabled system | head -20
-          xcrun simctl spawn "$u" launchctl print-disabled user/501 2>&1 | head -5
-          xcrun simctl shutdown "$u"
-          .github/probe/early.sh find "$u" "$RUNNER_TEMP/marker"
-          d="$HOME/Library/Developer/CoreSimulator/Devices/$u/data"
-          find "$d" -path '*launchd*' -type f | sed "s#$d/##" | head -20
-          f=$(find "$d" -path '*launchd*' -name 'disabled*.plist' -type f | head -1)
-          [ -n "$f" ] || { echo "NO DISABLED PLIST"; exit 0; }
-          rel=${f#$d/}; echo "PLIST $rel"; plutil -p "$f"
-          v=$(xcrun simctl create probe-b "$dt" "$rt"); e="$HOME/Library/Developer/CoreSimulator/Devices/$v/data"
-          mkdir -p "$(dirname "$e/$rel")"; cp "$f" "$e/$rel"
-          t=$SECONDS; xcrun simctl boot "$v"; xcrun simctl bootstatus "$v" -b >/dev/null 2>&1; echo "second device booted after $((SECONDS-t)) s"
-          xcrun simctl spawn "$v" launchctl print-disabled system | head -20
-          for l in com.apple.homed com.apple.geod com.apple.weatherd com.apple.PosterBoard com.apple.triald; do
-            echo "$l running: $(xcrun simctl spawn "$v" launchctl list | grep -c " $l$")"
-          done
