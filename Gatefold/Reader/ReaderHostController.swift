@@ -827,6 +827,9 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     func endReflowForSwap() {
         settledGeneration = reflowGeneration
         reflowRetries = 0
+        // A restore still placing his words was measuring the retired page: it stops at its next look
+        // (he tapped, so its move is stale), and the landing's own settle mustn't wait on it.
+        placingGeneration = -1
         showPageAsItIs()
     }
 

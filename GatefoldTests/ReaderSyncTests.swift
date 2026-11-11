@@ -672,6 +672,8 @@ final class ScriptedPage: ReaderPage {
         }, book: { $0.totalProgression = 0.05; $0.lastOpened = opened }, startAt: 0.05)
         await f.model.load()
         let waiting = try #require(f.page.standby)
+        // A stand-in for the landed page's first words, never a book's.
+        f.page.anchorText = "stand-in-words-of-the-landed-page"
         f.model.keeper.reflowWillBegin(.rotation, move: f.model.hisMoves)
         f.model.reflowDidBegin()
         await f.model.acceptSuggestion()
@@ -679,6 +681,10 @@ final class ScriptedPage: ReaderPage {
         #expect(f.model.keeper.reflowing == nil, "the reflow on the retired page ended with the swap")
         #expect(f.page.reflowsEndedBySwap == 1)
         #expect(f.page.landingWanted == [true], "the landing settled its words instead of giving way to a reflow that could not end")
+        // The place kept is his first words on the landed page (the landing's `fresh`), not Readium's boundary.
+        let here = try #require(f.page.currentLocation)
+        #expect(f.model.keeper.anchor?.text == "stand-in-words-of-the-landed-page", "his first words on the landed page were taken")
+        #expect(f.model.keeper.anchor?.href == here.href.string)
         f.model.close()
     }
 
