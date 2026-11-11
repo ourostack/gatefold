@@ -839,6 +839,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         // His move's own report took his place, or reflowDidFinish's owed-place path does now (with its guards
         // for a landing and a launch jump in flight): no capture of whatever the page shows here.
         model.reflowDidFinish(visible: nil)
+        model.reflowShown(model.reflowNumber)
     }
 
     /// A reflow that hasn't settled in 12 s: the page as it is, never a picture of the old one under a
@@ -965,6 +966,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         guard current() else { return }
         model.keeper.restoreDidComplete()
         model.reflowDidFinish(visible: after)
+        let shownNumber = model.reflowNumber
         // Settled now, not when the swing below has played: the 12 s watchdog took a slow, finished
         // restore whose swing was still running for a stalled one and started it again.
         settledGeneration = generation
@@ -995,6 +997,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             model.heldPage = nil
             readerLog.notice("unfold: from \(choice == .held ? "the picture held as the hinge moved" : choice == .live ? "the live page" : "nothing (a plain reflow)", privacy: .public)")
             await swingOpen(cover: cover)
+            weakModel?.reflowShown(shownNumber)
             return
         }
         unfolding = false
@@ -1002,7 +1005,10 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         UIView.animate(withDuration: 0.25) {
             self.navigator.view.alpha = 1
             cover?.alpha = 0
-        } completion: { _ in cover?.removeFromSuperview() }
+        } completion: { [weak self] _ in
+            cover?.removeFromSuperview()
+            self?.weakModel?.reflowShown(shownNumber)
+        }
     }
 
     /// Moves the spread so `anchor`'s words start its left page: a blank verso before the file's first
