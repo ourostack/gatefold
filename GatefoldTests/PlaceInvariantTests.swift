@@ -817,8 +817,18 @@ import Testing
         // Bounded, never awaited: if the held write were the newest jump's own, waiting on it would hang.
         await Self.settle { abs((Self.kept(f) ?? -1) - 0.5) < 0.03 }
         let keptBeforeRelease = Self.kept(f) ?? -1
+        // A later report's write follows and keeps the second jump's page again, so the end state alone
+        // can't tell whether the late write landed: the next write waits at the gate while the late one runs.
+        gate.armed = true
         gate.held?.resume()
         gate.held = nil
+        for _ in 0..<10_000 where gate.held == nil { await Task.yield() }
+        await Self.settle { abs((Self.kept(f) ?? -1) - 0.5) >= 0.03 }
+        let keptAfterLateWrite = Self.kept(f) ?? -1
+        gate.armed = false
+        gate.held?.resume()
+        gate.held = nil
+        #expect(abs(keptAfterLateWrite - 0.5) < 0.03, "the slow late write kept \(keptAfterLateWrite) over the second jump before any later write")
         await second.value
         await first.value
         #expect(abs(keptBeforeRelease - 0.5) < 0.03, "the newest jump's keep didn't land while the late write was held: \(keptBeforeRelease)")
