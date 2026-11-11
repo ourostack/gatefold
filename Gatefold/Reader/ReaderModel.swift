@@ -296,7 +296,8 @@ final class ReaderModel {
             hostController = try ReaderHostController(
                 model: self,
                 publication: publication,
-                initialLocation: initial,
+                initialLocation: LaunchOptions.reopenOnChapterStart && initial?.text.highlight == nil
+                    ? initial?.copy(locations: { $0 = Locator.Locations(progression: 0) }) : initial,
                 preferences: Self.epubPreferences(prefs, theme: prefs.resolvedTheme(systemIsDark: false), columns: .one, viewWidth: layout.pageFrame.width > 0 ? layout.pageFrame.width : 402, language: Self.hyphenationLanguage(publication))
             )
         } catch {
