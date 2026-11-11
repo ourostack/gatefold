@@ -108,7 +108,8 @@ try_boot() {
     [[ $state == Unknown ]] && state="$(booted "$1")"
     if [[ $state == True ]]; then
       status="$(within "$RECHECK_LIMIT" xcrun simctl bootstatus "$1" -b 2>&1)"
-      if [[ $? != 124 ]] && ! grep -q "Failed" <<<"$status"; then
+      # A Failed from any slice still counts (#57), not only the recheck's own.
+      if [[ $? != 124 ]] && ! grep -q "Failed" <<<"$status$all"; then
         echo "$status" | tail -3 >&2
         echo "$1 is booted; its second bootstatus finished" >&2
         return 0

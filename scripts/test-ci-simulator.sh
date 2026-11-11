@@ -268,6 +268,8 @@ CASE_LIMIT=8 CASE_SLICE=1 real_case "bootstatus gives no answer in its first sli
 # Only the first ask boots (-b); the next only waits, so it can't boot again a device whose first boot failed.
 CASE_LIMIT=8 CASE_SLICE=1 real_case "only the first slice passes -b; a slice that answered logs how long bootstatus took" \
   "1" "" dev1 "dev1: bootstatus finished after" "second bootstatus" "bootstatus dev1"
+[ "$(head -1 "$real/only-the-first-slice-passes--b--a-slice-that-answered-logs-how-long-bootstatus-took/fake/calls" 2>/dev/null)" = "bootstatus dev1 -b" ] \
+  && echo "ok   boot-sim.sh: the first ask passes -b" || { echo "FAIL boot-sim.sh: the first ask did not pass -b"; fails=$((fails + 1)); }
 # #57: a slice printed Failed and was cut off; the next one exits 0. Not that device.
 FAKE_FAILED_HANGS="1" CASE_LIMIT=8 CASE_SLICE=1 real_case "a slice says Failed and is cut off, the next exits 0: not that device (#57)" \
   "" "" dev2 "attempt 1: dev1 did not boot" "dev1: bootstatus finished clean"
