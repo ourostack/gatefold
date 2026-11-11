@@ -55,23 +55,32 @@ final class ReopenAfterControlsUITests: XCTestCase {
         // 0.3 s apart (the old 60 s on a fast runner); the 2400 s guard only catches a hang: a look is up to five
         // queries of the app, and a starved runner has taken 1-2 s a query, so 200 looks can run to about 2000 s.
         let start = Date(), hung = start.addingTimeInterval(2400)
-        // Read from the frame and tapped at its point, never `isHittable`: asked of an offer mid-fold, it fails the
-        // test (gatefold#236). After a tap the page gets 10 looks to answer before another, as NavigationPlace's
-        // offer taps since #171: an offer that folded just before its tap is looked for again on the looks after.
-        var looks = 0, taps = 0, quiet = 0
-        while looks < 200, words.isEmpty {
+        // Read from one snapshot each and tapped at the point, never `isHittable`: asked of an offer mid-fold, it
+        // fails the test (gatefold#236). After a tap the page gets 10 looks to answer before another, as
+        // NavigationPlace's offer taps since #171. Taken only once the offer and its tab are both gone (taking it
+        // hides the slip at once): an offer that folded just before its tap leaves the tab, and that tap may have
+        // turned the page instead, which fails below rather than going on from the wrong page.
+        let window = app.frame
+        var looks = 0, taps = 0, quiet = 0, taken = false
+        while looks < 200 {
             if Date() > hung { XCTFail("hang: looking for the Cloud's offer ran \(looks) looks over 2400 s"); return }
             looks += 1
+            let offerAt = HitCheck.frame(of: offer), tabAt = HitCheck.frame(of: tab)
+            if taps > 0, offerAt == nil, tabAt == nil { taken = true; break }
+            if !words.isEmpty { break }
             if quiet > 0 {
                 quiet -= 1
-            } else if let f = HitCheck.frame(offer, in: app) {
+            } else if let f = offerAt.flatMap({ HitCheck.usable($0, within: window) }) {
                 HitCheck.tap(f, in: app); taps += 1; quiet = 10
-            } else if let f = HitCheck.frame(tab, in: app) {
+            } else if let f = tabAt.flatMap({ HitCheck.usable($0, within: window) }) {
                 HitCheck.tap(f, in: app); quiet = 2
             }
             RunLoop.current.run(until: Date().addingTimeInterval(0.3))
         }
-        let taken = taps > 0
+        if taps > 0, !taken {
+            XCTFail("\(taps) taps meant for the Cloud's offer didn't take it in \(looks) looks (its tab is still up, words \(!words.isEmpty))")
+            return
+        }
         let secs = String(format: "%.1f", Date().timeIntervalSince(start))
         // "REOPEN round N:" so the iPad step's log filter keeps it.
         guard taken else {
