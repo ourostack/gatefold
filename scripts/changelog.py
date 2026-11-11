@@ -59,9 +59,8 @@ def parse(text, name="fragment"):
     lines = text.replace("\r\n", "\n").split("\n")
     if not lines or lines[0].strip() != "---":
         return {}, [f"{name}: starts with a '---' line, then 'title:' (see {DIR}/README.md)"]
-    try:
-        end = lines.index("---", 1)
-    except ValueError:
+    end = next((i for i, ln in enumerate(lines[1:], 1) if ln.strip() == "---"), None)
+    if end is None:
         return {}, [f"{name}: the front matter needs a closing '---' line"]
     fields = {}
     for ln in lines[1:end]:
@@ -88,17 +87,21 @@ def parse(text, name="fragment"):
     elif len(body) > BODY_MAX:
         errors.append(f"{name}: the tale is {len(body)} characters; keep it to {BODY_MAX} (testers read it on a phone)")
     # What to Test is plain text: links and markup show as their raw characters.
-    if re.search(r"\]\(|<[a-zA-Z/][^>]*>|^#", body, re.M):
+    markup = re.compile(r"\]\(|<[a-zA-Z/][^>]*>|^#", re.M)
+    if any(markup.search(fields.get(k, "")) for k in ("title", "try", "body")):
         errors.append(f"{name}: What to Test is plain text; drop Markdown links, headings and HTML")
     return fields, errors
 
 
 def check(base, head, labels, cwd=None):
     """A pull request: returns (ok, messages)."""
-    status = git("diff", "--name-status", "--no-renames", f"{base}...{head}", cwd=cwd).splitlines()
-    changed = [ln.split("\t", 1) for ln in status if "\t" in ln]
+    fields = git("diff", "-z", "--name-status", "--no-renames", f"{base}...{head}", cwd=cwd).split("\0")
+    changed = list(zip(fields[0::2], fields[1::2]))
     app = [p for s, p in changed if APP.match(p)]
-    frags = [p for s, p in changed if s[0] in "AM" and is_fragment(p)]
+    # A tale counts only when it is new: assemble takes fragments added since the last build, so editing an old
+    # one tells testers nothing. Edited ones are still checked.
+    added = [p for s, p in changed if s == "A" and is_fragment(p)]
+    frags = [p for s, p in changed if s[:1] in ("A", "M") and is_fragment(p)]
     msgs, ok = [], True
     for p in frags:
         if not SLUG.match(pathlib.PurePosixPath(p).name):
@@ -108,7 +111,7 @@ def check(base, head, labels, cwd=None):
         if errs:
             ok = False
             msgs.extend(errs)
-    if app and not frags:
+    if app and not added:
         if SKIP_LABEL in labels:
             msgs.append(f"No fragment, and the '{SKIP_LABEL}' label says none is needed.")
         else:
@@ -147,11 +150,12 @@ def last_tag(head, cwd=None):
 def added_since(since, head, cwd=None):
     """Fragment paths added in (since, head], oldest merge first, that still exist at head."""
     rng = f"{since}..{head}" if since else head
-    out = git("log", "--reverse", "--first-parent", "--diff-filter=A", "--no-renames", "--name-only",
-              "--format=", rng, "--", DIR, cwd=cwd)
+    # Renames are detected (and so not "added"): a fragment moved to a new name is not a new tale.
+    out = git("log", "--reverse", "--first-parent", "--diff-filter=A", "--find-renames", "--name-only", "-z",
+              "--format=", rng, "--", DIR, cwd=cwd).replace("\n", "\0")
     present = set(git("ls-tree", "--name-only", f"{head}:{DIR}", cwd=cwd).split()) if has_dir(head, cwd) else set()
     seen, order = set(), []
-    for p in out.split():
+    for p in (x for x in out.split("\0") if x):
         if is_fragment(p) and p not in seen and pathlib.PurePosixPath(p).name in present:
             seen.add(p)
             order.append(p)
@@ -192,14 +196,21 @@ def render(tales, head, subjects=()):
     return fit("\n\n".join([opener, *(tale(i, t, False) for i, t in enumerate(tales))]))
 
 
+REST = "\n\n(The rest is in changelog.d on GitHub.)"
+
+
 def fit(text):
     if len(text) <= LIMIT:
         return text
-    cut = text[:LIMIT - 40].rsplit("\n", 1)[0]
-    return cut + "\n\n(The rest is in changelog.d on GitHub.)"
+    cut = text[:LIMIT - len(REST)]
+    cut = cut.rsplit("\n", 1)[0] if "\n" in cut else cut
+    return cut + REST
 
 
 def assemble(head, since=None, cwd=None):
+    # A shallow clone has neither the history nor the tags: it would quietly find only the tip's tales.
+    if git("rev-parse", "--is-shallow-repository", cwd=cwd).strip() == "true":
+        raise SystemExit("changelog: this clone is shallow; check out with fetch-depth: 0 (and its tags)")
     head = git("rev-parse", head, cwd=cwd).strip()
     if since is None:
         since = last_tag(head, cwd)
@@ -229,6 +240,7 @@ def selftest():
         run("init", "-q", "-b", "main")
         run("config", "user.email", "t@example.com")
         run("config", "user.name", "t")
+        run("config", "commit.gpgsign", "false")
 
         def commit(files, msg):
             for path, text in files.items():
@@ -257,6 +269,12 @@ def selftest():
         md = commit({f"{DIR}/linky.md": frag("Linky", "See [here](https://x).")}, "link")
         ok, m = check(long_one, md, [], cwd=d); assert not ok and "plain text" in m[0], m
 
+        edit = commit({"Gatefold/F.swift": "7", f"{DIR}/the-first-crossing.md": frag("The First Crossing", "It held, barely.")}, "edit")
+        ok, m = check(md, edit, [], cwd=d); assert not ok and "adds no fragment" in " ".join(m), m
+        run("mv", f"{DIR}/the-second-night.md", f"{DIR}/the-second-night-renamed.md"); run("commit", "-q", "-m", "rename")
+        renamed = run("rev-parse", "HEAD").strip()
+        assert added_since(edit, renamed, cwd=d) == [], "a rename is no new tale"
+        assert len(fit("x" * 5000)) <= LIMIT and len(fit(("y" * 50 + "\n") * 100)) <= LIMIT
         text = assemble(c4, since=None, cwd=d)
         assert text.index("I. The First Crossing") < text.index("II. The Second Night"), text
         assert "Try it: Open a book." in text and text == assemble(c4, since=None, cwd=d), "deterministic"
@@ -282,10 +300,14 @@ def main(argv):
         return 0
     cmd = argv[0] if argv else ""
     if cmd == "check":
+        if not arg(argv, "--base"):
+            print(__doc__, file=sys.stderr)
+            return 2
         labels = [x.strip() for x in arg(argv, "--labels", "").split(",") if x.strip()]
         ok, msgs = check(arg(argv, "--base"), arg(argv, "--head", "HEAD"), labels)
         for m in msgs:
-            print(("" if ok else "::error::") + m)
+            info = m.startswith(("No app change", "No fragment, and", "Fragment ok"))
+            print(m if info else "::error::" + m)
         return 0 if ok else 1
     if cmd == "lint":
         errs = lint()
@@ -296,7 +318,7 @@ def main(argv):
         text = assemble(arg(argv, "--head", "HEAD"), arg(argv, "--since"))
         out = arg(argv, "--out")
         if out:
-            pathlib.Path(out).write_text(text + "\n")
+            pathlib.Path(out).write_text(text)
         else:
             print(text)
         return 0
