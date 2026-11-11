@@ -37,7 +37,10 @@ case "$*" in
     for u in ${FAKE_ERASE_405:-}; do [ "$u" = "$n" ] && { echo "Unable to erase contents and settings in current state: Booted (code=405)" >&2; exit 149; }; done
     echo "$*" >> "$FAKE/simctl" ;;
   "simctl delete "*|"simctl boot "*) echo "$*" >> "$FAKE/simctl" ;;
-  "simctl spawn "*) echo "$*" >> "$FAKE/simctl" ;;
+  "simctl spawn "*)
+    echo "$*" >> "$FAKE/simctl"
+    # Every spawn hangs when $FAKE_SPAWN_HANGS is set (a starved simulator).
+    [ -z "${FAKE_SPAWN_HANGS:-}" ] || exec /bin/sleep 5 ;;
   *) echo "fake xcrun: unexpected $*" >&2; exit 64 ;;
 esac
 FAKE
@@ -96,10 +99,6 @@ erase_case() {
     echo "FAIL erase: $1: $4 was never erased"; fails=$((fails + 1)); fi
 }
 erase_case "the erased device is fine" "" 0 dev0
-# The erased device is quieted (gatefold#209): its first-boot jobs are removed before the check.
-if grep -qx "simctl spawn dev0 launchctl remove com.apple.PosterBoard" "$work/erase-the erased device is fine/fake/simctl"; then
-  echo "ok   erase: the erased device's first-boot jobs are removed (gatefold#209)"
-else echo "FAIL erase: the erased device was not quieted"; fails=$((fails + 1)); fi
 erase_case "the runtime went during the erase (gatefold#71)" "1" 0 dev1
 erase_case "it stays gone" "1 2 3" 1 -
 erase_case "bootstatus says Failed, yet the device is Booted (#57)" "" 0 dev1 "1"
@@ -110,6 +109,33 @@ erase_case "one listing times out, the next answers: the answer decides" "" 0 de
 # Out of time, the step fails with its own warning unless the device was last seen ready (it never is by then).
 erase_case "the step's time runs out mid-check: fails, with its own warning" "" 1 - "" "1 2" 32 "Simulator check out of time"
 erase_case "the runtime went but no time is left for a fresh device: fails, with its own warning" "1" 1 - "" "" 40 "Simulator check out of time"
+# A device that passed its check has its first-boot jobs removed (gatefold#209), on the wait path and the erase path.
+labels="$here/../.github/scripts/quiet-sim.labels"
+want=$(grep -cvE '^[[:space:]]*(#|$)' "$labels")
+if grep -qx "simctl spawn dev1 launchctl remove com.apple.PosterBoard" "$work/booted and its runtime is there/fake/simctl" \
+   && [ "$(grep -c 'launchctl remove' "$work/booted and its runtime is there/fake/simctl")" = "$want" ]; then
+  echo "ok   wait: the booted device's $want first-boot jobs are removed (gatefold#209)"
+else echo "FAIL wait: the booted device was not quieted"; fails=$((fails + 1)); fi
+if grep -qx "simctl spawn dev0 launchctl remove com.apple.PosterBoard" "$work/erase-the erased device is fine/fake/simctl"; then
+  echo "ok   erase: the erased device's first-boot jobs are removed (gatefold#209)"
+else echo "FAIL erase: the erased device was not quieted"; fails=$((fails + 1)); fi
+if ! grep -q "launchctl remove" "$work/the boot fails/fake/simctl" 2>/dev/null; then
+  echo "ok   wait: a device that failed is never quieted"
+else echo "FAIL wait: a failed device was quieted"; fails=$((fails + 1)); fi
+# Every spawn hangs: quieting stops at its limit and the device still passes.
+qd="$work/quiet-hangs"; mkdir -p "$qd/fake" "$qd/tmp"; : > "$qd/env"
+out="$(PATH="$work/bin:$PATH" FAKE="$qd/fake" FAKE_UNAVAIL_CALLS="" FAKE_BOOT_EXIT=0 FAKE_SPAWN_HANGS=1 CI_SIMULATOR_QUIET_LIMIT=3 \
+  CI_SIMULATOR_BOOT_SIM="$work/boot-sim.sh" RUNNER_TEMP="$qd/tmp" GITHUB_ENV="$qd/env" \
+  bash -c 'python3 -I "$0/ci-simulator.py" start gatefold-ipad "iPad Pro 13-inch" && python3 -I "$0/ci-simulator.py" wait gatefold-ipad "iPad Pro 13-inch" 30' "$here" 2>&1)"; code=$?
+if [ "$code" = 0 ] && grep -q "^UDID=dev1$" "$qd/env" && grep -qF "stopped at its limit" <<<"$out"; then
+  echo "ok   wait: quieting that hangs stops at its limit, and the device still passes"
+else echo "FAIL wait: hanging quieting: exit $code"; echo "$out" | tail -5; fails=$((fails + 1)); fi
+# No labels file: not quieted, and the device still passes.
+if python3 -I -c 'import importlib.util as u, pathlib, sys
+s = u.spec_from_file_location("cs", sys.argv[1]); m = u.module_from_spec(s); s.loader.exec_module(m)
+m.quiet("dev9", pathlib.Path("/nonexistent/quiet-sim.labels"))' "$here/ci-simulator.py" 2>&1 | grep -qF "dev9 not quieted"; then
+  echo "ok   no labels file: not quieted, no error"
+else echo "FAIL no labels file"; fails=$((fails + 1)); fi
 # The wait path's fresh device: boot-sim.sh hangs. Its whole process group is ended at the timeout (not only its
 # bash, which left its children running), and the timeout reported is the one that applied. With less left than one
 # boot attempt, no fresh device is tried, and it says so.
@@ -163,7 +189,6 @@ case "$1 $2" in
   "simctl boot") for u in ${FAKE_NO_BOOT:-}; do [ "$u" = "$3" ] && exit 0; done; echo Booted > "$FAKE/state-$3" ;;
   "simctl shutdown") [ "$3" = all ] || echo Shutdown > "$FAKE/state-$3"; echo "shutdown $3" >> "$FAKE/calls" ;;
   "simctl delete") echo "delete $3" >> "$FAKE/calls" ;;
-  "simctl spawn") echo "spawn $3 $4 $5 $6" >> "$FAKE/calls" ;;
   "simctl bootstatus")
     n=$(( $(cat "$FAKE/bootstatus" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$FAKE/bootstatus"
     echo "bootstatus $3" >> "$FAKE/calls"
@@ -236,9 +261,6 @@ PATH="$real/bin:$PATH" FAKE="$fr/bad/fake" BOOT_SIM_LIST_LIMIT=soon "${BOOT_SIM_
 if [ "$code" = 2 ] && grep -q "a limit must be a number of seconds, not 'soon'" "$fr/bad/err" && [ ! -e "$fr/bad/fake/created" ]; then
   echo "ok   boot-sim.sh: a limit override that is not a number is refused before any device is made"
 else echo "FAIL boot-sim.sh: a non-number limit override: exit $code (want 2)"; tail -3 "$fr/bad/err"; fails=$((fails + 1)); fi
-# A booted device is quieted before its UDID is printed (gatefold#209).
-real_case "a booted device's first-boot jobs are removed (gatefold#209)" "" "" dev1 "quieted dev1: removed 24 of 24" "hung" \
-  "spawn dev1 launchctl remove com.apple.PosterBoard"
 # The watchdog of a bootstatus that finished must not wake: the old one logged a false hang on most boots.
 for n in 1 2 3 4 5; do real_case "a clean boot logs no hang (run $n of 5)" "" "" dev1 "Device already booted" "hung"; done
 

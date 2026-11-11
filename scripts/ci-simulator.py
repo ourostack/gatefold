@@ -21,6 +21,8 @@ runtime that fails to mount ("Malformed bundle") can vanish after the boot, and 
 "runtime path not found" (gatefold#71). If not, it runs boot-sim.sh once more for a fresh device, on the time left.
 `erase <name> <udid>` is the cold step's erase: shutdown, erase, boot and bootstatus, each bounded, then the same
 check; if the runtime went, one fresh device erased the same way. It prints the UDID to test on.
+Once a device passes its check, `wait` and `erase` remove its first-boot jobs (.github/scripts/quiet-sim.labels,
+gatefold#209) on the step's time left, so XCUITest does not launch the app inside the first boot's load.
 Offline test: bash scripts/test-ci-simulator.sh (a fake xcrun and boot-sim.sh; no simulator).
 
 A prefix that is a whole device name ("iPhone Duo") picks that device only, never a sibling such as "iPhone Duo Pro".
@@ -195,17 +197,16 @@ def export(udid):
 
 
 # One full boot-sim.sh attempt, the slowest that passes: bootstatus 420 s + its kill grace 5 + the listing 60 + its
-# second ask 60 + the second bootstatus 90 + its grace 5 + quieting the device 120 (gatefold#209) = 760 s, rounded up
-# to 780. A fresh device never starts with less (it would be killed mid-attempt). What must be left to try one at all:
-# that, plus the two `quietly` calls (60 s each) and the runtime listing (120 s): 780 + 240 = 1020 s. The offline test
-# shortens both.
+# second ask 60 + the second bootstatus 90 + its grace 5 = 640 s, rounded up to 660. A fresh device never starts
+# with less (it would be killed mid-attempt). What must be left to try one at all: that, plus the two `quietly` calls
+# (60 s each) and the runtime listing (120 s): 660 + 240 = 900 s. The offline test shortens both.
 # They fit the workflow's budgets less the 30 s margin. The wait step (1740 s, so 1710): the boot is read at up to
 # 1200 s and the check takes up to 2 listings x 2 tries x 120 s = 480 s, so a fresh device fits when the first boot
-# and its check took up to 1710 - 1020 = 690 s, as a typical 3 to 10 min boot does; past that it fails, out of time,
-# with its own message. The erase (1800 s, so 1770): a typical erase, quieting and check (about 250 s), a fresh device
-# (1020 s) and its own erase, quieting and check (about 250 s) take about 1520 s; the worst case fails the same way.
-BOOT_ATTEMPT = setting("CI_SIMULATOR_BOOT_ATTEMPT", "780")
-RETRY_RESERVE = setting("CI_SIMULATOR_RETRY_RESERVE", "1020")
+# and its check took up to 1710 - 900 = 810 s, as a typical 3 to 10 min boot does; past that it fails, out of time,
+# with its own message. The erase (1800 s, so 1770): a typical erase and check (about 130 s), a fresh device (900 s)
+# and its own erase and check (about 130 s) take about 1160 s; the worst case (1140 s of erase calls) fails the same way.
+BOOT_ATTEMPT = setting("CI_SIMULATOR_BOOT_ATTEMPT", "660")
+RETRY_RESERVE = setting("CI_SIMULATOR_RETRY_RESERVE", "900")
 
 
 def quietly(*args):
@@ -274,29 +275,30 @@ QUIET_LIMIT = setting("CI_SIMULATOR_QUIET_LIMIT", "120")
 
 
 def quiet(udid, labels=QUIET_LABELS):
-    """As boot-sim.sh's quiet: disable and remove the first-boot jobs in quiet-sim.labels on the erased device
-    (gatefold#209), each call bounded; never fails the erase."""
+    """Remove the first-boot jobs in quiet-sim.labels from a device that has passed its check (gatefold#209), so its
+    first-boot load ends in minutes, not about 15. Only after the check, and only on the step's time left: it never
+    fails a device or takes the time a check or a retry needs. Each call bounded; QUIET_LIMIT in all. Logs to stderr
+    (`erase` prints the UDID on stdout)."""
     try:
-        names = [l.strip() for l in labels.read_text().splitlines() if l.strip() and not l.startswith("#")]
+        names = [l.strip() for l in labels.read_text().splitlines() if l.strip() and not l.strip().startswith("#")]
     except OSError:
-        print(f"no {labels}; {udid} not quieted")
+        print(f"no {labels}; {udid} not quieted", file=sys.stderr)
         return
-    # At most QUIET_LIMIT in all, and never the time the check after it needs.
-    if left() < RETRY_RESERVE:
-        print(f"{udid} not quieted: the check needs the time left")
-        return
-    removed, end = 0, time.time() + QUIET_LIMIT
+    end = time.time() + min(QUIET_LIMIT, left() - 5)
+    removed = tried = 0
     for name in names:
-        for args in (("launchctl", "disable", f"system/{name}"), ("launchctl", "remove", name)):
-            if time.time() >= end:
-                break
-            try:
-                done = subprocess.run(["xcrun", "simctl", "spawn", udid, *args], capture_output=True,
-                                      timeout=min(20, max(1, end - time.time()))).returncode == 0
-            except (OSError, subprocess.SubprocessError):
-                done = False
-            removed += done and args[1] == "remove"
-    print(f"quieted {udid}: removed {removed} of {len(names)} first-boot jobs (gatefold#209)")
+        rest = end - time.time()
+        if rest < 1:
+            print(f"quieting {udid} stopped at its limit after {tried} of {len(names)} jobs", file=sys.stderr)
+            break
+        tried += 1
+        try:
+            removed += subprocess.run(["xcrun", "simctl", "spawn", udid, "launchctl", "remove", name],
+                                      stdin=subprocess.DEVNULL, capture_output=True,
+                                      timeout=min(20, rest)).returncode == 0
+        except (OSError, subprocess.SubprocessError):
+            pass
+    print(f"quieted {udid}: removed {removed} of {len(names)} first-boot jobs (gatefold#209)", file=sys.stderr)
 
 
 def erase(udid, steps=ERASE_STEPS):
@@ -324,7 +326,6 @@ def erase(udid, steps=ERASE_STEPS):
         # As boot-sim.sh: a boot whose bootstatus failed is a failed boot, even if the device is listed Booted.
         if args[0] == "bootstatus" and "Failed" in said:
             return "bootstatus said Failed"
-    quiet(udid)
     problem = check(udid)
     return "ready" if problem is None else problem
 
@@ -361,6 +362,7 @@ def main(argv):
             except OutOfTime:
                 said = out_of_time(udid, "during the erase")
         if said == "ready":
+            quiet(udid)
             export(udid)
             print(udid)
             return 0
@@ -380,6 +382,7 @@ def main(argv):
             said = out_of_time(udid, "while checking it")
         if said == "booted":
             if problem is None:
+                quiet(udid)
                 export(udid)
                 print(f"{udid} booted, and its runtime is available")
                 return 0
@@ -403,6 +406,7 @@ def main(argv):
                 except OutOfTime:
                     problem = out_of_time(udid, "while checking the fresh device")
                 if problem is None:
+                    quiet(udid)
                     export(udid)
                     print(f"{udid} booted on the second try, and its runtime is available")
                     return 0
