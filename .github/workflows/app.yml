@@ -290,9 +290,17 @@ jobs:
               RotationRepro
             skip: >-
               RotationRepro/testRotateThenLeaveWithoutTurning
+              RotationRepro/testRotateThenLeaveWithoutItsWordsAndReopenOnTheChapterStart
             pr_tests: none
             cold: true
             timeout: 43 # 12 + 2 x 9.1 + 12
+          - shard: ipad-rotate-chapter-start
+            # Main only, like ipad-rotate-stalled (gatefold#250)
+            tests: >-
+              RotationRepro/testRotateThenLeaveWithoutItsWordsAndReopenOnTheChapterStart
+            pr_tests: none
+            cold: true
+            timeout: 36 # 12 + 2 x 5.8 + 12
     uses: ./.github/workflows/ui-tests.yml
     with:
       device: "iPad Pro 13-inch"
