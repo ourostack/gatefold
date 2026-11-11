@@ -38,6 +38,8 @@ struct GatefoldApp: App {
                 // ends (gatefold#96); the push below waits for it.
                 let owed = app.activeReader?.owedPlaceOnLeaving()
                 if let reader = app.activeReader, let owed {
+                    // The page a stalled restore left him is written now, before any wait (gatefold#133).
+                    reader.keepShownPageNow(owed)
                     Task {
                         await reader.keepOwedPlace(owed)
                         app.library.flushPushes()

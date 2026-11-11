@@ -96,10 +96,11 @@ import Testing
         model.close()
     }
 
-    /// A restore that stalls after a rotation leaves him the page as it was (gatefold#133). Leaving writes
-    /// that page at once, before any wait: the words and their mapped position may never come while the
-    /// page is stalled, and the app may be ended a moment later. The words, when they come, land on the
-    /// same place. Fails if the leave write waits on the words' path (`placeWriteWait`, then the mapping).
+    /// A restore that stalls after a rotation leaves him the page as it was (gatefold#133). Closing writes
+    /// that page in the close itself, before any Task or wait: the words and their mapped position may
+    /// never come while the page is stalled, and the app may be ended a moment later. The words, when
+    /// they come, land on the same place. Fails if the leave write waits on the words' path
+    /// (`placeWriteWait`, then the mapping) or on a Task hop.
     @Test func thePageAStalledRestoreLeftIsWrittenBeforeAnyWait() async throws {
         let sync = StubSync()
         await sync.setLibrary(.success([ReaderSyncTests.frankenstein]))
@@ -119,7 +120,15 @@ import Testing
             app.library.book(ReaderSyncTests.frankenstein.fastHash)?.locatorJSON.flatMap { try? Locator(jsonString: $0) }
         }
 
-        // He rotates; the restore stalls, and the page is shown as it is, a page the opening wasn't on.
+        // He reads on a little: a turn, kept as his place.
+        let read = try #require(await ReaderSyncTests.locate(publication, 0.12))
+        page.currentLocation = read
+        model.userTurnedPage()
+        await model.locationDidChange(read)
+        for _ in 0..<200 where savedPlace()?.locations.progression != read.locations.progression { await Task.yield() }
+        try #require(savedPlace()?.locations.progression == read.locations.progression, "his turn was kept")
+
+        // He rotates; the restore stalls, and the page is shown as it is, not the page he turned to.
         model.keeper.reflowWillBegin(.rotation)
         model.reflowDidBegin()
         let shownPage = try #require(await ReaderSyncTests.locate(publication, 0.31))
@@ -130,10 +139,9 @@ import Testing
         // The words' path never comes back while he is leaving.
         let held = LeaveGate()
         model.placeWriteWait = { await held.wait() }
-        let owed = try #require(model.owedPlaceOnLeaving(), "the page left unsettled is owed on leaving")
-        let leaving = Task { await model.keepOwedPlace(owed) }
-        for _ in 0..<200 where savedPlace()?.locations.progression != shownPage.locations.progression { await Task.yield() }
-        let atOnce = try #require(savedPlace(), "leaving kept no place before the words' wait")
+        // He closes the book: the place is the shown page by the time the close returns, with no yield.
+        model.close()
+        let atOnce = try #require(savedPlace(), "leaving kept no place")
         #expect(atOnce.href.string == shownPage.href.string)
         #expect(atOnce.locations.progression == shownPage.locations.progression,
                 "kept at \(atOnce.locations.progression ?? -1), not the shown page (\(shownPage.locations.progression ?? -1)), while the words' path waits")
@@ -141,11 +149,10 @@ import Testing
 
         // The words come: on the same place, never another.
         await held.open()
-        await leaving.value
+        for _ in 0..<200 where savedPlace()?.text.highlight == nil { await Task.yield() }
         let after = try #require(savedPlace())
-        #expect(after.locations.progression == shownPage.locations.progression)
+        #expect(after.locations.progression == shownPage.locations.progression, "the words moved the place")
         #expect(after.text.highlight != nil, "his words were not attached once they came")
-        model.close()
     }
 }
 
