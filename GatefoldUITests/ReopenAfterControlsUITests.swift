@@ -92,11 +92,40 @@ final class ReopenAfterControlsUITests: XCTestCase {
     }
 
     /// One tap that only brings up the controls, then Page Numbers on in Fine-Tune.
+    /// Reads of the app until `done`, never seconds (gatefold#94): each read waits at least 0.1 s, so `reads` is the
+    /// floor a fast runner gets. The hang guard only catches a hang: `HangGuard` sizes it from `reads` and ends it
+    /// before the step does.
+    private func readsUntil(reads: Int, _ done: () -> Bool) -> (ok: Bool, reads: Int, hung: Bool) {
+        let guardEnds = Date().addingTimeInterval(HangGuard.seconds(reads: reads))
+        for read in 1...reads {
+            if done() { return (true, read, false) }
+            if Date() > guardEnds { return (false, read, true) }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        }
+        return (false, reads, false)
+    }
+
+    /// The controls, judged in reads (gatefold#233). A tap under a jump's veil is swallowed, and the veil can stay
+    /// up for a chapter that loads for minutes (#94: 135.7 s in run 43010124019), so each tap waits for the veil
+    /// to lift first. Then up to 30 reads for the controls to come up, never a second tap while they fade in
+    /// (it would put them down). If they never come up, the test says so, not a tap on a missing control.
     private func numbersOn() {
         let appearance = el("reader.appearance")
-        for _ in 0..<4 where !appearance.exists {
+        let veil = el("reader.veil")
+        for tap in 1...4 where !appearance.exists {
+            let lifted = readsUntil(reads: 600) { !veil.exists }
+            guard lifted.ok else {
+                print("REOPEN controls: the veil was still up after \(lifted.reads) reads\(lifted.hung ? " (hang guard)" : "")")
+                break
+            }
             el("reader.page").coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
-            _ = appearance.waitForExistence(timeout: 3)
+            let up = readsUntil(reads: 30) { appearance.exists }
+            print("REOPEN controls: tap \(tap) up=\(up.ok) after \(up.reads) reads\(up.hung ? " (hang guard)" : "")")
+            if up.hung { break }
+        }
+        guard appearance.exists else {
+            XCTFail("the controls come up for Page Numbers (veil up: \(veil.exists))")
+            return
         }
         appearance.tap()
         let fine = el("appearance.customize")
