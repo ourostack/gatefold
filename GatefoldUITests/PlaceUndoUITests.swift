@@ -50,11 +50,20 @@ final class PlaceUndoUITests: XCTestCase {
     /// Each read waits at least 0.1 s, so `reads` is the floor a fast runner gets. The hang guard ends only a
     /// hang: `HangGuard` sizes it from `reads` and ends it before the step does (gatefold#223). The fixed guards
     /// it replaces (30 s to 240 s) would end a wait after 2 to 13 reads at the slowest read seen, before its cap.
+    /// After one wait hangs, every later wait in the test answers at once, not done, so the test runs to its end
+    /// with its own failures and leaves the shard's later tests their time, instead of each wait in turn running
+    /// on toward the step's end (gatefold#223 review). A test method gets a fresh instance, so this is per test.
+    private var hung = false
     private func readsUntil(reads: Int, _ done: () -> Bool) -> (ok: Bool, reads: Int) {
-        let hung = Date().addingTimeInterval(HangGuard.seconds(reads: reads))
+        if hung { return (false, 0) }
+        let guardEnds = Date().addingTimeInterval(HangGuard.seconds(reads: reads))
         for read in 1...reads {
             if done() { return (true, read) }
-            if Date() > hung { return (false, read) }
+            if Date() > guardEnds {
+                hung = true
+                XCTFail("hang: a wait ran \(read) of its \(reads) reads past its hang guard")
+                return (false, read)
+            }
             RunLoop.current.run(until: Date().addingTimeInterval(0.1))
         }
         return (false, reads)
@@ -137,7 +146,7 @@ final class PlaceUndoUITests: XCTestCase {
         // The list opens centred on the current chapter, so the first rows are not built yet.
         XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label BEGINSWITH[c] %@", "Chapter")).firstMatch.waitForExistence(timeout: 10),
                       "the contents list opens")
-        for _ in 0..<20 {
+        for _ in 0..<20 where !hung {
             holdsStill(row)
             if row.exists && row.isHittable { break }
             app.swipeUp(velocity: .slow)

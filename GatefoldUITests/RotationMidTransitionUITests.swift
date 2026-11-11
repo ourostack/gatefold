@@ -17,11 +17,15 @@ final class RotationMidTransitionUITests: XCTestCase {
     /// 0.1 s, so `reads` sets the floor a fast runner gets (the old seconds). The hang guard only catches a hang:
     /// `HangGuard` sizes it from `reads` and ends it before the step does (gatefold#223; the fixed 120 s and 180 s
     /// it replaces would end these waits after about 6 and 10 reads at the slowest read seen, long before their caps).
+    /// After one wait hangs, later waits answer at once and the spread isn't judged, so the test ends with its own
+    /// failure and leaves the shard's later tests their time (gatefold#223 review). Per test: each gets an instance.
+    private var hung = false
     private func readsUntil(reads: Int, _ done: () -> Bool) -> (ok: Bool, reads: Int, hung: Bool) {
-        let hung = Date().addingTimeInterval(HangGuard.seconds(reads: reads))
+        if hung { return (false, 0, true) }
+        let guardEnds = Date().addingTimeInterval(HangGuard.seconds(reads: reads))
         for read in 1...reads {
             if done() { return (true, read, false) }
-            if Date() > hung { return (false, read, true) }
+            if Date() > guardEnds { hung = true; return (false, read, true) }
             RunLoop.current.run(until: Date().addingTimeInterval(0.1))
         }
         return (false, reads, false)
@@ -89,6 +93,7 @@ final class RotationMidTransitionUITests: XCTestCase {
     private func turn() { el("reader.page").coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.5)).tap() }
 
     private func expectWholeSpread(_ what: String, within asked: TimeInterval = 20) {
+        if self.hung { XCTFail("\(what): not judged, since a wait before it hung"); return }
         // Whatever was moving, a spread with words on both pages within the limit. A hosted runner runs
         // two to four times slower than this Mac and a screenshot there can take seconds, so CI sets a
         // floor (`GATEFOLD_SPREAD_FLOOR`); the page left stuck for good, the bug this guards, still fails.
