@@ -311,19 +311,27 @@ final class PlaceUndoUITests: XCTestCase {
     }
 
     /// A tap on the turn zone while a jump's veil is up is not a turn: the page lands where he chose.
+    /// A Contents jump leaves the controls up, and a tap that got past the veil would put them down
+    /// (`handleTap`), so the controls still up after it prove the tap was swallowed, not just harmless.
     /// Each wait is judged in reads (gatefold#166): a starved runner's queries take seconds each, and
-    /// 10 s for the veil ran out on #182 while the app had not yet begun the jump.
+    /// 10 s for the veil ran out on #182. The chapter's load is held for 800 looks (about 20 s), so the
+    /// veil outlasts the slow reads and the tap.
     func testATapWhileAJumpIsUnderWayLandsWhereHeChose() {
-        let first = openFresh(["-GatefoldHoldChapterLoad", "60"])
+        let first = openFresh(["-GatefoldHoldChapterLoad", "800"])
         contentsJump(to: "Chapter XL")
         let veil = el("reader.veil")
+        let contents = app.buttons["reader.contents"]
         let up = readsUntil(reads: 100, hangGuard: 120) { veil.exists }
         print("UNDO tapped jump: veil up after \(up.reads) reads")
         XCTAssertTrue(up.ok, "the jump's veil is up")
+        XCTAssertTrue(contents.exists, "the controls are up under the veil")
         el("reader.page").coordinate(withNormalizedOffset: CGVector(dx: 0.97, dy: 0.5)).tap()
+        // One veil a jump: still up after the tap means it was up when the tap landed.
+        XCTAssertTrue(veil.exists, "the tap landed under the jump's veil")
         let jump = landed(from: first, reads: 1200, hangGuard: 240)
         print("UNDO tapped jump landed after \(jump.reads) reads")
         XCTAssertTrue(jump.ok, "the jump's veil lifts")
+        XCTAssertTrue(contents.exists, "the tap under the veil was swallowed (the controls it would have put down are up)")
         let chosen = settledWords()
         XCTAssertNotEqual(opening(chosen), opening(first))
         // The same jump again, untouched, from his first page: the page it lands on is where he chose.
@@ -334,9 +342,9 @@ final class PlaceUndoUITests: XCTestCase {
         contentsJump(to: "Chapter XL")
         let again = readsUntil(reads: 100, hangGuard: 120) { veil.exists }
         XCTAssertTrue(again.ok, "the untouched jump's veil is up")
-        let gone = readsUntil(reads: 1200, hangGuard: 240) { !veil.exists }
-        print("UNDO untouched jump: veil up after \(again.reads) reads, gone after \(gone.reads) reads")
-        XCTAssertTrue(gone.ok, "the untouched jump's veil lifts")
+        let untouched = landed(from: back.words, reads: 1200, hangGuard: 240)
+        print("UNDO untouched jump: veil up after \(again.reads) reads, landed after \(untouched.reads) reads")
+        XCTAssertTrue(untouched.ok, "the untouched jump's veil lifts")
         XCTAssertEqual(opening(settledWords()), opening(chosen), "a tap during the jump moved the page off where he chose")
     }
 }
