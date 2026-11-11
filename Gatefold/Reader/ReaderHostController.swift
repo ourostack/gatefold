@@ -116,12 +116,12 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
 
         // Any touch on the page means the next location is the reader's own (slide and scroll swipes
         // belong to Readium, so they're noticed here rather than in the pan handler).
-        let noticer = TouchNoticer { [weak self] in
+        let noticer = TouchNoticer(onTouch: { [weak self] in
             // Web views loaded since the last location change bring their own scroll pans; switch them
             // off before this touch can drag the page sideways under the curl.
             self?.disablePanningIfNeeded()
             self?.weakModel?.noteInteraction()
-        }
+        }, onDrag: { [weak self] in self?.weakModel?.noteDrag() })
         noticer.delegate = self
         self.noticer = noticer
 
@@ -2534,9 +2534,13 @@ struct ReaderHostView: UIViewControllerRepresentable {
 /// Reports that a touch began, then steps aside without claiming it.
 private final class TouchNoticer: UIGestureRecognizer {
     private let onTouch: () -> Void
+    private let onDrag: () -> Void
+    /// Where the finger went down, until it travels far enough to be a drag (a tap never does).
+    private var start: CGPoint?
 
-    init(onTouch: @escaping () -> Void) {
+    init(onTouch: @escaping () -> Void, onDrag: @escaping () -> Void) {
         self.onTouch = onTouch
+        self.onDrag = onDrag
         super.init(target: nil, action: nil)
         cancelsTouchesInView = false
         delaysTouchesBegan = false
@@ -2545,8 +2549,20 @@ private final class TouchNoticer: UIGestureRecognizer {
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
         onTouch()
+        if start == nil { start = touches.first?.location(in: view) }
+    }
+
+    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent) {
+        guard let start, let here = touches.first?.location(in: view) else { return }
+        guard hypot(here.x - start.x, here.y - start.y) > 10 else { return }
+        self.start = nil
+        onDrag()
         state = .failed
     }
+
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) { state = .failed }
+    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent) { state = .failed }
+    override func reset() { start = nil }
 }
 
 extension Decoration.Style.Id {

@@ -36,8 +36,9 @@ import Testing
         model.keeper.reflowWillBegin(.typography, move: model.hisMoves)
         model.reflowDidBegin()
         #expect(model.keeper.restoreMayMove(move: model.hisMoves))
-        // He scrolls: a touch, and the page moves on.
+        // He scrolls: a touch that travels, and the page moves on.
         model.noteInteraction()
+        model.noteDrag()
         let scrolled = try #require(await ReaderSyncTests.locate(publication, 0.22))
         page.currentLocation = scrolled
         await model.locationDidChange(scrolled)
@@ -73,6 +74,7 @@ import Testing
     @Test func aTouchFromBeforeTheReflowIsNotAScrollUnderIt() async throws {
         let (model, page, publication, _) = try await open()
         model.noteInteraction()
+        model.noteDrag()
         let before = model.hisMoves
         model.keeper.reflowWillBegin(.rotation, move: model.hisMoves)
         model.reflowDidBegin()
@@ -106,12 +108,46 @@ import Testing
         model.reflowDidBegin()
         let before = model.hisMoves
         model.noteInteraction()
+        model.noteDrag()
         for p in [0.22, 0.23] {
             let here = try #require(await ReaderSyncTests.locate(publication, p))
             page.currentLocation = here
             await model.locationDidChange(here)
         }
         #expect(model.hisMoves == before + 1, "one swipe counted as \(model.hisMoves - before) moves")
+        model.close()
+    }
+
+    /// A finger down that hasn't travelled is no scroll yet: a report of the layout's that lands before
+    /// the tap is recognised keeps the restore.
+    @Test func aFingerDownBeforeItsTapIsRecognisedIsNotAScroll() async throws {
+        let (model, page, publication, _) = try await open()
+        model.keeper.reflowWillBegin(.typography, move: model.hisMoves)
+        model.reflowDidBegin()
+        let before = model.hisMoves
+        model.noteInteraction()
+        let laidOut = try #require(await ReaderSyncTests.locate(publication, 0.21))
+        page.currentLocation = laidOut
+        await model.locationDidChange(laidOut)
+        #expect(model.keeper.restoreMayMove(move: model.hisMoves), "a finger down for a tap took the restore away")
+        #expect(model.hisMoves == before, "a finger down for a tap counted as a move of his")
+        model.close()
+    }
+
+    /// A turn under the reflow is one move: its own late report is not a second one.
+    @Test func aTurnUnderTheReflowIsOneMove() async throws {
+        let (model, page, publication, _) = try await open()
+        model.keeper.reflowWillBegin(.typography, move: model.hisMoves)
+        model.reflowDidBegin()
+        let before = model.hisMoves
+        model.noteInteraction()
+        model.noteDrag()
+        let next = try #require(await ReaderSyncTests.locate(publication, 0.22))
+        page.currentLocation = next
+        model.userTurnedPage()
+        await model.locationDidChange(next)
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(model.hisMoves == before + 1, "one turn counted as \(model.hisMoves - before) moves")
         model.close()
     }
 }

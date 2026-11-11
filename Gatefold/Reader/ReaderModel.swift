@@ -1769,6 +1769,8 @@ final class ReaderModel {
             hisMoves += 1
             hasMoved = true
             moves += 1
+            // A move of the page, as a swipe's is: a late Back after it puts the page back here.
+            landed(takeStep(), at: locator)
             // Reading on after a jump, as a turn is (the report's own step sees this move as overtaken).
             readOnAfterJump()
             readerLog.notice("reflow: a scroll of his while it lays out; the restore gives way (reported \(Self.placeTag(locator), privacy: .public))")
@@ -1957,15 +1959,16 @@ final class ReaderModel {
     /// A touch on the page. If the next location (outside a reflow) differs from where the book
     /// opened, it was a swipe in slide or scroll mode and the place is the reader's own. A tap that
     /// only shows the controls changes no location, so it moves nothing.
-    func noteInteraction() {
-        touchesSinceLocation += 1
-        if keeper.reflowing != nil { reflowTouches += 1 }
-    }
+    func noteInteraction() { touchesSinceLocation += 1 }
+    /// A finger that travelled on the page: a scroll or swipe, never a tap. Only one made while a reflow
+    /// lays out can be a move of his under it (gatefold#171); a finger already moving when the reflow
+    /// began brings no new drag, so it never counts.
+    func noteDrag() { if keeper.reflowing != nil { reflowTouches += 1 } }
     /// Touches on the page since the last location report; a tap that only shows or hides the controls
     /// clears them.
     @ObservationIgnored private var touchesSinceLocation = 0
-    /// Touches on the page since the reflow under way began and not yet counted as a move of his
-    /// (gatefold#171); a tap that only shows or hides the controls clears them.
+    /// Drags on the page since the reflow under way began and not yet counted as a move of his
+    /// (gatefold#171); a tap that only shows or hides the controls, a turn and a jump clear them.
     @ObservationIgnored private var reflowTouches = 0
     /// The page moved between two reports (no report before counts as a move).
     private static func pageMoved(_ before: Locator?, _ now: Locator) -> Bool {
@@ -1982,6 +1985,8 @@ final class ReaderModel {
 
     /// A turn landed or sprang back: take the place from where the navigator is now.
     func userTurnedPage() {
+        // The turn counts itself; its tap or swipe is no second move under a reflow.
+        reflowTouches = 0
         hisMoves += 1
         foldSlip()
         readOnAfterJump()
@@ -2096,6 +2101,7 @@ final class ReaderModel {
 
     /// `his`: false for a landing's own percent step (the Cloud's place), which is not a move of his.
     func go(toProgression progression: Double, rememberBack: Bool, his: Bool = true) async {
+        reflowTouches = 0
         if his { hisMoves += 1 }
         hasMoved = true
         moves += 1
@@ -2121,6 +2127,7 @@ final class ReaderModel {
     }
 
     func go(to entry: TOCEntry) async {
+        reflowTouches = 0
         hisMoves += 1
         hasMoved = true
         moves += 1
@@ -2131,6 +2138,7 @@ final class ReaderModel {
     }
 
     func follow(_ link: ReadiumShared.Link) async {
+        reflowTouches = 0
         hisMoves += 1
         hasMoved = true
         moves += 1
@@ -2142,6 +2150,7 @@ final class ReaderModel {
 
     /// A highlight's exact place: Readium finds its words, so the page is the one they are on.
     func go(to locator: Locator, rememberBack: Bool) async {
+        reflowTouches = 0
         hisMoves += 1
         hasMoved = true
         moves += 1
@@ -2161,6 +2170,7 @@ final class ReaderModel {
     /// with one more.
     func goBack() async {
         guard let back = backLocator, goingBack == nil else { return }
+        reflowTouches = 0
         hisMoves += 1
         backTrips += 1
         let trip = backTrips
