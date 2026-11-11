@@ -1539,7 +1539,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
 
     @discardableResult
     func turn(forward: Bool) -> Bool {
-        guard !isTurning else { return true }
+        guard TurnGate.starts(turning: isTurning, veiled: veil != nil, jumpStarting: jumpStarting) else { return true }
         switch model.pageTurn {
         case .scroll:
             return false
