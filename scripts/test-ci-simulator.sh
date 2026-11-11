@@ -197,6 +197,8 @@ case "$1 $2" in
     n=$(( $(cat "$FAKE/bootstatus" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$FAKE/bootstatus"
     echo "bootstatus $3" >> "$FAKE/calls"
     for u in ${FAKE_HANGS:-}; do [ "$u" = "$n" ] && { echo "Monitoring boot status for $3."; exec /bin/sleep 30; }; done
+    # A device that never comes up never answers bootstatus either.
+    for u in ${FAKE_NO_BOOT:-}; do [ "$u" = "$3" ] && { echo "Monitoring boot status for $3."; exec /bin/sleep 30; }; done
     for u in ${FAKE_BOOTSTATUS_EXITS:-}; do [ "$u" = "$n" ] && { echo "Unable to boot: the service went away."; exit 1; }; done
     echo "Device already booted, nothing to do." ;;
   "simctl list")
@@ -221,7 +223,8 @@ chmod +x "$real/bin/"*
 real_case() {
   local d="$real/$(echo "$1" | tr -c 'a-zA-Z0-9\n' -)"; mkdir -p "$d/fake"
   local began got code took; began=$(date +%s)
-  got="$(PATH="$real/bin:$PATH" FAKE="$d/fake" FAKE_HANGS="$2" FAKE_NO_BOOT="$3" BOOT_SIM_BOOTSTATUS_LIMIT=2 \
+  got="$(PATH="$real/bin:$PATH" FAKE="$d/fake" FAKE_HANGS="$2" FAKE_NO_BOOT="$3" BOOT_SIM_BOOTSTATUS_LIMIT="${CASE_LIMIT:-2}" \
+    BOOT_SIM_BOOTSTATUS_SLICE="${CASE_SLICE:-}" BOOT_SIM_NOBOOT_LIMIT="${CASE_NOBOOT:-}" BOOT_SIM_CONFIRM_LIMIT=2 \
     BOOT_SIM_RECHECK_LIMIT=2 BOOT_SIM_LIST_LIMIT=2 "${BOOT_SIM_BASH:-/bin/bash}" "${BOOT_SIM_UNDER_TEST:-$here/../.github/scripts/boot-sim.sh}" gatefold-ipad iPad-Pro-13 iOS-27-1 2>"$d/err")"; code=$?
   took=$(( $(date +%s) - began ))
   # The script's last background process is gone once it returns (nothing of a watchdog left to act).
@@ -253,6 +256,15 @@ FAKE_LIST_HANGS="1 2" real_case "bootstatus hangs, the listing hangs twice: stat
 # not trusted, so not that device.
 FAKE_BOOTSTATUS_EXITS="1" FAKE_LIST_HANGS="1" real_case "bootstatus exits 1, then the listing hangs: not that device" \
   "" "" dev2 "dev1: bootstatus exited 1 and the device listing did not answer; taken as not booted" "dev1: bootstatus finished clean"
+# bootstatus missed the end of the boot (7 of 41 slow boots on 2026-11-11 waited out 420 s on a ready device): asked
+# again after one slice, it answers, so that device, without the hung-device path's second bootstatus.
+CASE_LIMIT=8 CASE_SLICE=1 real_case "bootstatus gives no answer in its first slice, the next answers: that device, no recheck" \
+  "1" "" dev1 "dev1: bootstatus gave no answer in a 1 s slice" "second bootstatus"
+CASE_LIMIT=8 CASE_SLICE=1 real_case "a slice that answered logs how long bootstatus took" \
+  "1" "" dev1 "dev1: bootstatus finished after" "hung past 8 s"
+# A device that never came up is given up on once NOBOOT_LIMIT passes, not when BOOTSTATUS_LIMIT runs out.
+CASE_LIMIT=30 CASE_SLICE=1 CASE_NOBOOT=2 real_case "a device not listed Booted past its no-boot limit: given up early, the next device" \
+  "" "dev1" dev2 "dev1 never booted: not listed Booted" "dev1 is booted" "shutdown dev1"
 # A limit override: a fraction is rounded down, not a crash; one that is not a number is refused.
 fr="$real/fraction"; mkdir -p "$fr/fake"
 if got="$(PATH="$real/bin:$PATH" FAKE="$fr/fake" BOOT_SIM_LIST_LIMIT=2.5 BOOT_SIM_BOOTSTATUS_LIMIT= \

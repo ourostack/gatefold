@@ -14,7 +14,8 @@ returns at once, so the job downloads the build while the simulator boots.
 boot-sim.sh's log, as "Simulator did not boot", when it failed or did not finish. The limit counts from `start`, so
 the time spent downloading meanwhile counts toward it; a boot that has finished is read even when the wait starts after
 the limit (the unit job's Release build can outlast it, #78). A boot has taken 10 min on a hosted runner, and boot-sim.sh
-bounds each bootstatus at 7 min so a hang falls through to its next attempt; the wait step's own timeout is longer.
+bounds its bootstatus at 7 min in all so a hang falls through to its next attempt; the wait step's own timeout is longer.
+It asks in 60 s slices, so a bootstatus that missed the end of the boot costs one slice, not the 7 min.
 
 Before it passes, `wait` checks that the device is still Booted and its runtime is still listed as available: a
 runtime that fails to mount ("Malformed bundle") can vanish after the boot, and the test launch then fails with
@@ -196,7 +197,8 @@ def export(udid):
             f.write(f"UDID={udid}\nDESTINATION=platform=iOS Simulator,arch={platform.machine()},id={udid}\n")
 
 
-# One full boot-sim.sh attempt, the slowest that passes: bootstatus 420 s + its kill grace 5 + the listing 60 + its
+# One full boot-sim.sh attempt, the slowest that passes: bootstatus 420 s in all (its slices, and its one early listing,
+# count inside the 420) + the last slice's kill grace 5 + the listing 60 + its
 # second ask 60 + the second bootstatus 90 + its grace 5 = 640 s, rounded up to 660. A fresh device never starts
 # with less (it would be killed mid-attempt). What must be left to try one at all: that, plus the two `quietly` calls
 # (60 s each) and the runtime listing (120 s): 660 + 240 = 900 s. The offline test shortens both.
