@@ -524,8 +524,8 @@ struct ReaderScreen: View {
     @ViewBuilder
     private func pageNumbers(pages: [CGRect], hidden: Bool, shown: Bool) -> some View {
         let band = model.textBand.bottom
-        // Numbers for another layout (the page reflowed and its numbers aren't asked for yet) don't fit these
-        // pages: the slot says it's counting until they do, never blank (gatefold#262).
+        // Numbers for a different count of pages (the page reflowed into a spread or out of one, and its numbers
+        // aren't asked for yet) don't fit these pages: the slot says it's counting until they do, never blank (gatefold#262).
         let fitting = model.screenNumbers.flatMap { $0.count == pages.count ? $0 : nil }
         if model.preferences.showsPageNumbers, let numbers = fitting {
             ZStack(alignment: .topLeading) {

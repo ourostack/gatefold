@@ -382,6 +382,8 @@ final class ReaderModel {
     /// Not after a count that ended with chapters still uncounted, nor after a minute in which nothing
     /// was counted (a count stopped and not restarted, or one that never began): the slot goes quiet
     /// again rather than promising a number that isn't coming. Counting moving again brings it back.
+    /// A count held back (the page not up, the reopen picture, a reflow, Your Page) isn't stalled: the
+    /// minute starts once it can run (gatefold#262).
     var countingPages: Bool { screenNumbers == nil && awaitingNumber }
     /// The page is up in a paged layout and its number is still coming: no count has given up or stalled.
     var awaitingNumber: Bool {
