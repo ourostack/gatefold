@@ -37,6 +37,7 @@ case "$*" in
     for u in ${FAKE_ERASE_405:-}; do [ "$u" = "$n" ] && { echo "Unable to erase contents and settings in current state: Booted (code=405)" >&2; exit 149; }; done
     echo "$*" >> "$FAKE/simctl" ;;
   "simctl delete "*|"simctl boot "*) echo "$*" >> "$FAKE/simctl" ;;
+  "simctl spawn "*) echo "$*" >> "$FAKE/simctl" ;;
   *) echo "fake xcrun: unexpected $*" >&2; exit 64 ;;
 esac
 FAKE
@@ -95,6 +96,10 @@ erase_case() {
     echo "FAIL erase: $1: $4 was never erased"; fails=$((fails + 1)); fi
 }
 erase_case "the erased device is fine" "" 0 dev0
+# The erased device is quieted (gatefold#209): its first-boot jobs are removed before the check.
+if grep -qx "simctl spawn dev0 launchctl remove com.apple.PosterBoard" "$work/erase-the erased device is fine/fake/simctl"; then
+  echo "ok   erase: the erased device's first-boot jobs are removed (gatefold#209)"
+else echo "FAIL erase: the erased device was not quieted"; fails=$((fails + 1)); fi
 erase_case "the runtime went during the erase (gatefold#71)" "1" 0 dev1
 erase_case "it stays gone" "1 2 3" 1 -
 erase_case "bootstatus says Failed, yet the device is Booted (#57)" "" 0 dev1 "1"
@@ -158,6 +163,7 @@ case "$1 $2" in
   "simctl boot") for u in ${FAKE_NO_BOOT:-}; do [ "$u" = "$3" ] && exit 0; done; echo Booted > "$FAKE/state-$3" ;;
   "simctl shutdown") [ "$3" = all ] || echo Shutdown > "$FAKE/state-$3"; echo "shutdown $3" >> "$FAKE/calls" ;;
   "simctl delete") echo "delete $3" >> "$FAKE/calls" ;;
+  "simctl spawn") echo "spawn $3 $4 $5 $6" >> "$FAKE/calls" ;;
   "simctl bootstatus")
     n=$(( $(cat "$FAKE/bootstatus" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$FAKE/bootstatus"
     echo "bootstatus $3" >> "$FAKE/calls"
@@ -230,6 +236,9 @@ PATH="$real/bin:$PATH" FAKE="$fr/bad/fake" BOOT_SIM_LIST_LIMIT=soon "${BOOT_SIM_
 if [ "$code" = 2 ] && grep -q "a limit must be a number of seconds, not 'soon'" "$fr/bad/err" && [ ! -e "$fr/bad/fake/created" ]; then
   echo "ok   boot-sim.sh: a limit override that is not a number is refused before any device is made"
 else echo "FAIL boot-sim.sh: a non-number limit override: exit $code (want 2)"; tail -3 "$fr/bad/err"; fails=$((fails + 1)); fi
+# A booted device is quieted before its UDID is printed (gatefold#209).
+real_case "a booted device's first-boot jobs are removed (gatefold#209)" "" "" dev1 "quieted dev1: removed 24 of 24" "hung" \
+  "spawn dev1 launchctl remove com.apple.PosterBoard"
 # The watchdog of a bootstatus that finished must not wake: the old one logged a false hang on most boots.
 for n in 1 2 3 4 5; do real_case "a clean boot logs no hang (run $n of 5)" "" "" dev1 "Device already booted" "hung"; done
 

@@ -1,0 +1,31 @@
+# The simulator's own launchd jobs that make a new device's first boot hold the runner's load at 500 to 900 for about
+# 15 min (gatefold#198): lock-screen posters, Spotlight and search, photo and media analysis, widgets, Siri, Home,
+# maps, weather and trial downloads. boot-sim.sh and ci-simulator.py's erase disable and remove them once the device has
+# booted (gatefold#209: XCUITest timed out launching the app inside that load). Gatefold uses none of them; never list
+# a job XCUITest needs (accessibility, testmanagerd, runningboardd, SpringBoard).
+# Probe 42965000531: with these gone, load under 25 about 4 min after the boot and a Settings launch 0.5 to 2.5 s;
+# without, about 18 min and launches of 351 s, 79 s, 25 s.
+com.apple.PosterBoard
+com.apple.contacts.postersyncd
+com.apple.Spotlight
+com.apple.searchd
+com.apple.corespotlightservice
+com.apple.hybridsearchd
+com.apple.spotlightknowledged
+com.apple.spotlightknowledged.updater
+com.apple.knowledgeconstructiond
+com.apple.suggestd
+com.apple.photoanalysisd
+com.apple.mediaanalysisd
+com.apple.mediaanalysisd.service
+com.apple.assetsd
+com.apple.assetsd.nebulad
+com.apple.cloudphotod
+com.apple.managedassetsd
+com.apple.chronod
+com.apple.siriactionsd
+com.apple.siriknowledged
+com.apple.homed
+com.apple.geod
+com.apple.weatherd
+com.apple.triald

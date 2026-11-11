@@ -8,6 +8,7 @@
 #   2. the same device booted a second time (the migration has run once), then a fresh one;
 #   3. `xcodebuild -runFirstLaunch` and a service restart, then a fresh device.
 # On every failure the device's migration lines go to the log, so the next failure names its cause.
+# A booted device is quieted first (quiet-sim.labels, gatefold#209).
 # Usage: boot-sim.sh <name> <device type id> <runtime id>
 set -uo pipefail
 name="$1" type="$2" runtime="$3"
@@ -21,6 +22,7 @@ limit() {
 BOOTSTATUS_LIMIT="$(limit "${BOOT_SIM_BOOTSTATUS_LIMIT:-}" 420)" || exit 2
 RECHECK_LIMIT="$(limit "${BOOT_SIM_RECHECK_LIMIT:-}" 90)" || exit 2
 LIST_LIMIT="$(limit "${BOOT_SIM_LIST_LIMIT:-}" 60)" || exit 2
+QUIET_LIMIT="$(limit "${BOOT_SIM_QUIET_LIMIT:-}" 120)" || exit 2
 # within <seconds> <command...>: the command's own exit code, or 124 if it ran out of time; then it is killed (TERM,
 # then KILL 5 s later) and this logs "hung". (A command that exits 124 by itself reads as a hang too; simctl does
 # not.) The limit is measured on the clock ($SECONDS), not by counting polls, which run slow on a busy runner.
@@ -107,18 +109,34 @@ restart_service() {
   sleep 20
   xcrun simctl list devices >/dev/null 2>&1 || true
 }
+# quiet <udid>: disable and remove the first-boot jobs in quiet-sim.labels (gatefold#209), each call bounded. Never fails
+# the boot: a job that is not there, or a call that hangs, is skipped; 120 s at most in all.
+quiet() {
+  local labels n=0 m=0 l
+  labels="$(dirname "$0")/quiet-sim.labels"
+  [[ -r $labels ]] || { echo "$1: no $labels; not quieted" >&2; return 0; }
+  local end=$(( SECONDS + QUIET_LIMIT ))
+  while read -r l; do
+    [[ -z $l || $l == \#* ]] && continue
+    (( SECONDS < end )) || { echo "$1: quieting stopped at its $QUIET_LIMIT s limit" >&2; break; }
+    m=$((m + 1))
+    within 20 xcrun simctl spawn "$1" launchctl disable "system/$l" >/dev/null 2>&1
+    within 20 xcrun simctl spawn "$1" launchctl remove "$l" >/dev/null 2>&1 && n=$((n + 1))
+  done < "$labels"
+  echo "quieted $1: removed $n of $m first-boot jobs (gatefold#209)" >&2
+}
 for attempt in 1 2 3; do
   if [[ $attempt == 3 ]]; then
     xcodebuild -runFirstLaunch >&2 || true
     restart_service
   fi
   udid="$(xcrun simctl create "$name" "$type" "$runtime")" || { echo "attempt $attempt: create failed" >&2; restart_service; continue; }
-  if try_boot "$udid"; then echo "$udid"; exit 0; fi
+  if try_boot "$udid"; then quiet "$udid"; echo "$udid"; exit 0; fi
   diagnose "$udid"
   if [[ $attempt == 2 ]]; then
     echo "attempt 2: booting $udid a second time" >&2
     xcrun simctl shutdown "$udid" >/dev/null 2>&1 || true
-    if try_boot "$udid"; then echo "$udid"; exit 0; fi
+    if try_boot "$udid"; then quiet "$udid"; echo "$udid"; exit 0; fi
   fi
   echo "attempt $attempt: $udid did not boot" >&2
   xcrun simctl shutdown "$udid" >/dev/null 2>&1 || true

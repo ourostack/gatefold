@@ -195,16 +195,17 @@ def export(udid):
 
 
 # One full boot-sim.sh attempt, the slowest that passes: bootstatus 420 s + its kill grace 5 + the listing 60 + its
-# second ask 60 + the second bootstatus 90 + its grace 5 = 640 s, rounded up to 660. A fresh device never starts
-# with less (it would be killed mid-attempt). What must be left to try one at all: that, plus the two `quietly` calls
-# (60 s each) and the runtime listing (120 s): 660 + 240 = 900 s. The offline test shortens both.
+# second ask 60 + the second bootstatus 90 + its grace 5 + quieting the device 120 (gatefold#209) = 760 s, rounded up
+# to 780. A fresh device never starts with less (it would be killed mid-attempt). What must be left to try one at all:
+# that, plus the two `quietly` calls (60 s each) and the runtime listing (120 s): 780 + 240 = 1020 s. The offline test
+# shortens both.
 # They fit the workflow's budgets less the 30 s margin. The wait step (1740 s, so 1710): the boot is read at up to
 # 1200 s and the check takes up to 2 listings x 2 tries x 120 s = 480 s, so a fresh device fits when the first boot
-# and its check took up to 1710 - 900 = 810 s, as a typical 3 to 10 min boot does; past that it fails, out of time,
-# with its own message. The erase (1800 s, so 1770): a typical erase and check (about 130 s), a fresh device (900 s)
-# and its own erase and check (about 130 s) take about 1160 s; the worst case (1140 s of erase calls) fails the same way.
-BOOT_ATTEMPT = setting("CI_SIMULATOR_BOOT_ATTEMPT", "660")
-RETRY_RESERVE = setting("CI_SIMULATOR_RETRY_RESERVE", "900")
+# and its check took up to 1710 - 1020 = 690 s, as a typical 3 to 10 min boot does; past that it fails, out of time,
+# with its own message. The erase (1800 s, so 1770): a typical erase, quieting and check (about 250 s), a fresh device
+# (1020 s) and its own erase, quieting and check (about 250 s) take about 1520 s; the worst case fails the same way.
+BOOT_ATTEMPT = setting("CI_SIMULATOR_BOOT_ATTEMPT", "780")
+RETRY_RESERVE = setting("CI_SIMULATOR_RETRY_RESERVE", "1020")
 
 
 def quietly(*args):
@@ -268,6 +269,36 @@ ERASE_STEPS = [(("shutdown",), setting("CI_SIMULATOR_SHUTDOWN_TIMEOUT", "120")),
                (("bootstatus", "-b"), 420)]
 
 
+QUIET_LABELS = Path(__file__).resolve().parent.parent / ".github" / "scripts" / "quiet-sim.labels"
+QUIET_LIMIT = setting("CI_SIMULATOR_QUIET_LIMIT", "120")
+
+
+def quiet(udid, labels=QUIET_LABELS):
+    """As boot-sim.sh's quiet: disable and remove the first-boot jobs in quiet-sim.labels on the erased device
+    (gatefold#209), each call bounded; never fails the erase."""
+    try:
+        names = [l.strip() for l in labels.read_text().splitlines() if l.strip() and not l.startswith("#")]
+    except OSError:
+        print(f"no {labels}; {udid} not quieted")
+        return
+    # At most QUIET_LIMIT in all, and never the time the check after it needs.
+    if left() < RETRY_RESERVE:
+        print(f"{udid} not quieted: the check needs the time left")
+        return
+    removed, end = 0, time.time() + QUIET_LIMIT
+    for name in names:
+        for args in (("launchctl", "disable", f"system/{name}"), ("launchctl", "remove", name)):
+            if time.time() >= end:
+                break
+            try:
+                done = subprocess.run(["xcrun", "simctl", "spawn", udid, *args], capture_output=True,
+                                      timeout=min(20, max(1, end - time.time()))).returncode == 0
+            except (OSError, subprocess.SubprocessError):
+                done = False
+            removed += done and args[1] == "remove"
+    print(f"quieted {udid}: removed {removed} of {len(names)} first-boot jobs (gatefold#209)")
+
+
 def erase(udid, steps=ERASE_STEPS):
     """Shut down, erase, boot and wait for the device, each call bounded (a runtime that won't mount hangs bootstatus,
     #57), then check it. "ready", or why not. Any call that does not finish or fails fails the erase, with its reason:
@@ -293,6 +324,7 @@ def erase(udid, steps=ERASE_STEPS):
         # As boot-sim.sh: a boot whose bootstatus failed is a failed boot, even if the device is listed Booted.
         if args[0] == "bootstatus" and "Failed" in said:
             return "bootstatus said Failed"
+    quiet(udid)
     problem = check(udid)
     return "ready" if problem is None else problem
 
