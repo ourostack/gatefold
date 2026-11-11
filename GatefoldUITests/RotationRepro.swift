@@ -125,7 +125,7 @@ final class RotationRepro: XCTestCase {
         sleep(1)
         let beforeJump = vtext
         let rowCount = rows.count
-        let pick = rows.element(boundBy: min(30, max(0, rows.count - 1)))
+        let pick = rows.element(boundBy: min(11, max(0, rows.count - 1))) // probe: the 12-row case's entry, pinned
         for _ in 0..<6 where !pick.isHittable { app.swipeUp() }
         pick.tap()
         // The old page stays put while the jump loads (over 10 s on a hosted runner), so wait for the

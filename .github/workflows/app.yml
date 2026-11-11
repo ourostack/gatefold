@@ -119,7 +119,7 @@ jobs:
     # In Swift's own image: the Ubuntu 26.04 runner image stopped carrying Swift (exit 127 on
     # `swift --version`, 2026-11-05).
     needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
+    if: false # probe, not for merge
     runs-on: ubuntu-latest
     container: swift:6.2
     timeout-minutes: 20
@@ -159,30 +159,6 @@ jobs:
             tests: >-
               NavigationPlaceUITests PositionUITests/testEveryPostureKeepsThePlace
               CountingPlaceholderUITests
-          - name: undo
-            # Every jump's one-tap Back (#46), on its own: in the place leg it pushed a slow host past that job's
-            # limit (c4c3b6a, gatefold#39). 9 min of tests at c8d3084 plus about 13 to set up and build: 31 / 0.7.
-            timeout: 57 # 45 for the job, 12 for the logs
-            title: Every jump that isn't a turn is one tap to undo
-            tests: PlaceUndoUITests
-          - name: taps
-            # 53 min measured (a 10 min simulator boot among them); measured / 0.7 keeps 30% headroom.
-            timeout: 92 # 80 for the job, 12 for the logs
-            title: Every Fine-Tune tap lands; the furniture never moves the words
-            tests: FineTuneTapUITests PageFurnitureUITests
-          - name: reviewer
-            # 65 min measured with the full list; measured / 0.7 keeps 30% headroom. Green runs now take up to 78 min
-            # (gatefold#141), so the headroom is down to about 18% (gatefold#39).
-            timeout: 107 # 95 for the job, 12 for the logs
-            title: The reviewers' checks - reopen by hash, true numbers, reader-wide toggles, density, landing; the reader fits its window
-            # Pushes to main run the whole list.
-            tests: >-
-              ReviewerChecksUITests PageNumberUITests/testOnASpreadEveryTurnMovesOnTwoPages
-              SpreadTurnSettleUITests/testSpreadTurnsLandWithoutSliding
-              ReopenAfterControlsUITests WindowFitUITests
-            # Pull requests run its smoke: the last page's number is the count (#30), and the reader fits its window.
-            pr_tests: >-
-              ReviewerChecksUITests/testTheLastPagesNumberIsTheCount WindowFitUITests
     needs: [changes, build]
     if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
     runs-on: xcode-27
@@ -297,6 +273,7 @@ jobs:
         with:
           limit: ${{ matrix.timeout }}
       - name: ${{ matrix.title }}
+        if: false # probe, not for merge
         # A miss in the cold step still lets the rest report: one failure must not hide the others.
         # Not without the app or a booted iPad, which would only add a misleading red.
         if: ${{ !cancelled() && steps.unpack.outcome == 'success' && steps.boot.outcome == 'success' }}
@@ -367,7 +344,7 @@ jobs:
     # only Xcode 26, so this job cannot move there.
     # ~55 min in build 19: 85 keeps 30% headroom, and 12 more for the logs after the tests (gatefold#141).
     needs: [changes, build]
-    if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
+    if: false # probe, not for merge
     runs-on: xcode-27
     timeout-minutes: 97
     steps:
@@ -521,7 +498,7 @@ jobs:
     # Pull requests run its smoke (a page a turn, and a reopen keeps the numbers); pushes to main add the reviewers'
     # full list, about 13 min a test on this runner (gatefold#39).
     needs: [changes, build]
-    if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
+    if: false # probe, not for merge
     runs-on: xcode-27
     # 45 min measured (build 20), plus about 10 for the two turn checks; 47 min at c4c3b6a with both.
     # feel-ci sets this job longer (gatefold#65 tracks the overrun): at a merge, the larger value wins.
@@ -641,7 +618,7 @@ jobs:
     # from here instead (gatefold#42). It runs only when `changes` found nothing but Markdown.
     name: iPad (${{ matrix.name }})
     needs: changes
-    if: needs.changes.outputs.app != 'true'
+    if: false # probe, not for merge
     strategy:
       matrix:
         name: [place, taps, reviewer]
