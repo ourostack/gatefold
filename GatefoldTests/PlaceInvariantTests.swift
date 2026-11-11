@@ -382,8 +382,12 @@ import Testing
         f.page.loadingChapter = true
         let trip = Task { await f.model.goBack() }
         for _ in 0..<(JumpLanding.reads * 4) where !f.model.isGoingBack { await Task.yield() }
-        // Well past the reads a trip may spend on a page that isn't loading.
-        for _ in 0..<(JumpLanding.reads * 2) where f.model.isGoingBack { await Task.yield() }
+        // Past the reads a trip may spend on a page that isn't loading: waited on as the event itself,
+        // counted in yields as the trip's beats are (a fixed count raced them on a busy runner). Never
+        // in sleeps: each beat is a yield, so a sleep spends the whole loading budget and Back rightly
+        // gives up.
+        for _ in 0..<(JumpLanding.reads * 20) where f.model.tripsPastTheVeil < 1 { await Task.yield() }
+        try #require(f.model.tripsPastTheVeil >= 1, "the trip never got past its veil's limit")
         #expect(f.model.isGoingBack, "Back gave up while its chapter was still loading")
         #expect(f.model.tripsPastTheVeil == 1, "the veil held the screen past its limit")
         // The load comes in.
