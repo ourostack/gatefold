@@ -26,10 +26,15 @@ final class ColdLaunchPage: ReaderPage {
     /// Where the jump showed its own page once loaded.
     private(set) var landedPage: Locator?
 
-    init(at start: Locator, span: Double, loadsAtRead: Int) {
+    /// The read that loads the page lets the reads it freed run before it returns, as the web view's
+    /// load does on CI (gatefold#201): a report waiting on the words then goes before the jump's own.
+    let freedReadsGoFirst: Bool
+
+    init(at start: Locator, span: Double, loadsAtRead: Int, freedReadsGoFirst: Bool = false) {
         currentLocation = start
         self.span = span
         self.loadsAtRead = loadsAtRead
+        self.freedReadsGoFirst = freedReadsGoFirst
     }
 
     /// The page that holds `locator`'s place in its file.
@@ -70,7 +75,10 @@ final class ColdLaunchPage: ReaderPage {
 
     func pageRange() async -> VisibleRange? {
         reads += 1
-        if !loaded, reads >= loadsAtRead { load() }
+        if !loaded, reads >= loadsAtRead {
+            load()
+            if freedReadsGoFirst { for _ in 0..<20 { await Task.yield() } }
+        }
         guard loaded else { return nil }
         return await visibleRange()
     }

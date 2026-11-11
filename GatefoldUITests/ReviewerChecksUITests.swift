@@ -132,9 +132,30 @@ final class ReviewerChecksUITests: XCTestCase {
         let t = pageNumbersSwitch()
         if ((t.value as? String) == "1") != on {
             t.tap()
-            let want = on ? "1" : "0"
-            XCTAssertEqual(XCTWaiter.wait(for: [expectation(for: NSPredicate(format: "value == %@", want), evaluatedWith: t)], timeout: 5),
-                           .completed, "the switch turned \(on ? "on" : "off")")
+            // Judged in reads of the switch, not seconds (#219, #94): 25 reads at least 0.2 s apart (about the old 5 s on a
+            // fast runner). One look at the app has taken up to 18.6 s here (#207), so 25 reads can run to about 450 s and
+            // the guard is 600 s, not FineTuneTap's 180 s (#119); it only catches a hang. Then 5 reads that it stays turned.
+            let want = on ? "1" : "0", start = Date(), hung = start.addingTimeInterval(600)
+            var reads = 0, turned = false, hang = false
+            while reads < 25 {
+                if Date() > hung { hang = true; break }
+                reads += 1
+                if (t.value as? String) == want { turned = true; break }
+                if reads < 25 { RunLoop.current.run(until: Date().addingTimeInterval(0.2)) }
+            }
+            var held = 0
+            while turned, held < 5, !hang {
+                RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+                guard (t.value as? String) == want else { break }
+                held += 1
+            }
+            let secs = String(format: "%.1f", Date().timeIntervalSince(start))
+            note("switch \(on ? "on" : "off") turned=\(turned) after \(reads) reads in \(secs) s, held \(held) of 5\(hang ? " (hang guard)" : "")")
+            if hang { XCTFail("hang: reading the Page Numbers switch ran \(reads) reads over 600 s") }
+            else {
+                XCTAssertTrue(turned, "the switch turned \(on ? "on" : "off") (not in \(reads) reads)")
+                if turned { XCTAssertEqual(held, 5, "the switch stayed \(on ? "on" : "off") (\(held) of 5 reads)") }
+            }
         }
         closePanel()
     }
