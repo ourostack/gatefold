@@ -68,16 +68,22 @@ final class RotationRepro: XCTestCase {
         return (false, reads, false)
     }
     /// Non-empty, then the same words `quiet` reads in a row. A short settle (3 reads) stands for the old
-    /// 2.5 s of quiet; a long one (6 reads) for the old settle, 4 s and a second settle, so late moves
-    /// after the first quiet are still seen. A busy runner takes up to 10 s per read.
-    private func settle(quiet: Int = 3, hangGuard: TimeInterval = 60) -> String {
+    /// 2.5 s of quiet. A long one (12 reads, at least 9 s on the fastest runner's 0.5 s reads) stands for the
+    /// old settle, 4 s and a second settle, so a late move after the first quiet is still seen. A settle the
+    /// hang guard ended is logged: its words are the latest read, not a quiet page.
+    private static let longQuiet = 12
+    private func settle(quiet: Int = 3, hangGuard: TimeInterval = 60, _ when: String = "") -> String {
         let hung = Date().addingTimeInterval(hangGuard)
-        var last = "", same = 0
+        var last = "", same = 0, reads = 0
         while Date() < hung {
             let now = vtext
+            reads += 1
             if now.isEmpty || now != last { last = now; same = now.isEmpty ? 0 : 1 } else { same += 1 }
             if same >= quiet { break }
             RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        }
+        if !when.isEmpty || same < quiet {
+            note("settle \(when.isEmpty ? "-" : when) \(same >= quiet ? "quiet" : "HANG GUARD") after \(reads) reads (\(same) of \(quiet) the same)")
         }
         return last
     }
@@ -157,7 +163,9 @@ final class RotationRepro: XCTestCase {
         // 2. A Contents jump.
         el("reader.page").coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
         let contents = el("reader.contents")
-        XCTAssertTrue(readsUntil(reads: 20, hangGuard: 5) { contents.exists && contents.isHittable }.ok)
+        let controls = readsUntil(reads: 120, hangGuard: 30) { contents.exists && contents.isHittable }
+        XCTAssertTrue(controls.ok, controls.hung ? "Contents is up (the hang guard ran out after \(controls.reads) reads)"
+                                                 : "Contents is up (not in \(controls.reads) reads)")
         contents.tap()
         let rows = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH 'contents.entry.'"))
         XCTAssertTrue(rows.firstMatch.waitForExistence(timeout: 15), "the contents list is up")
@@ -211,7 +219,7 @@ final class RotationRepro: XCTestCase {
         XCUIDevice.shared.orientation = .landscapeLeft
         let reflowed = readsUntil(reads: 240, hangGuard: 60) { let now = vtext; return !now.isEmpty && now != beforeTurn }
         note("rotation shown after \(reflowed.reads) reads\(reflowed.hung ? " (hang guard)" : "")")
-        let his = settle(quiet: 6)
+        let his = settle(quiet: Self.longQuiet, hangGuard: 120, "his page")
         XCTAssertFalse(his.isEmpty)
         note("setup counted=\(counted) contentsRows=\(rowCount) jumped=\(jumped) hisHead=\(hash(head(his)))")
         assertNoVisibleSettleMove("the rotation")
@@ -223,7 +231,7 @@ final class RotationRepro: XCTestCase {
             app.launchArguments = base
             app.relaunch()
             XCUIDevice.shared.orientation = .landscapeLeft
-            let back = settle(quiet: 6, hangGuard: 70)
+            let back = settle(quiet: Self.longQuiet, hangGuard: 120, "round \(round)")
             let startsSame = head(back) == head(his)
             let middleSame = back.contains(middle(his))
             let at = back.range(of: head(his)).map { back.distance(from: back.startIndex, to: $0.lowerBound) } ?? -1
@@ -244,7 +252,7 @@ final class RotationRepro: XCTestCase {
         app.launchArguments = base
         app.relaunch()
         XCUIDevice.shared.orientation = .landscapeLeft
-        let afterTurns = settle(quiet: 6, hangGuard: 70)
+        let afterTurns = settle(quiet: Self.longQuiet, hangGuard: 120, "after two turns")
         // His place is the page's first whole word (`ReaderJS.anchor`): a spread that opens on the end of a
         // word hyphenated across the turn reopens on the word after it. That counts only when the place the
         // app saved proves the dropped token was a word's tail (`ReopenMatch`); otherwise exact or red.
