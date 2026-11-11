@@ -238,6 +238,8 @@ final class ReaderModel {
     /// records once, when it has settled. Any later move ends it.
     private var landingMove: Int?
     /// The step the landing in flight began on: the veil it may outlive is its own, or one taken inside it.
+    /// A landing made inside a veil (a catch-up's) begins on that veil's step (gatefold#173: begun after it,
+    /// the catch-up's own veil never let his swipe through).
     @ObservationIgnored private var landingStep = 0
     /// Where in the book the landing in flight is bound, and its file: a report there is its own, whatever
     /// touch is counted.
@@ -1297,8 +1299,8 @@ final class ReaderModel {
         // (gatefold#173). At the veil's old limit it lets go, the chapter shows its own loading, and the
         // jump goes on and lands when the load comes in. Inside, not alongside: a jump of his made while a
         // hung one is still out is watched too.
-        if step == nil, !Self.insideVeil { watchVeil(jump: jump, toward: toward, watch) }
-        await Self.$insideVeil.withValue(true) {
+        if step == nil, Self.outerVeil == nil { watchVeil(jump: jump, toward: toward, watch) }
+        await Self.$outerVeil.withValue(Self.outerVeil ?? jump) {
             // Behind the cover placeholder there's nothing to veil.
             if let host, pageReady {
                 await host.veiledJump(riffle: riffle && !reduceMotion && pageTurn == .curl, forward: forward, jump: jump, tracked)
@@ -1341,9 +1343,10 @@ final class ReaderModel {
     }
     /// A veiled jump's watch: whether it is back, and whether its veil let go first.
     @MainActor private final class VeilWatch { var back = false; var letGo = false }
-    /// Set for the work inside a veil (a landing's own percent step runs there): only the outer veil is
-    /// watched. Task-local, so a jump started alongside one still out is not taken as inside it.
-    @TaskLocal private static var insideVeil = false
+    /// The outer veil's jump, for the work inside it (a landing's own percent step runs there): only the
+    /// outer veil is watched, and a landing inside it is that veil's. Task-local, so a jump started
+    /// alongside one still out is not taken as inside it.
+    @TaskLocal private static var outerVeil: Int?
     /// Late jumps put back where his newest move left the page (tests read it).
     @ObservationIgnored private(set) var jumpsPutBack = 0
     /// A jump past its veil's limit, still out: its step and the chapter it goes to (if known). A swipe
@@ -1408,7 +1411,7 @@ final class ReaderModel {
             defer { if publishes { publishBack(back) } }
             let move = moves + 1
             landingMove = move
-            landingStep = steps
+            landingStep = Self.outerVeil ?? steps
             landingAim = progression
             landingAimFile = file(atTotal: progression)
             await go(toProgression: progression, rememberBack: false, his: false)
@@ -1439,7 +1442,7 @@ final class ReaderModel {
         let move = moves
         let step = steps
         landingMove = move
-        landingStep = steps
+        landingStep = Self.outerVeil ?? steps
         landingAim = locator.locations.totalProgression ?? progression
         landingAimFile = locator.href.string
         defer { if landingMove == move { landingMove = nil } }
