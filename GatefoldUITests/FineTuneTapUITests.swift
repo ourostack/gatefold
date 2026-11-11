@@ -100,6 +100,24 @@ final class FineTuneTapUITests: XCTestCase {
         XCTAssertEqual(back, 0, "\(what), and stays changed (back on \(back) of \(Self.stayReads) reads)")
     }
 
+    /// Touch (0)'s reflow (justify's typography) has settled, its page fully shown, before touch (1) goes in:
+    /// XCUITest's synthesizer lost touches sent 0.1 to 0.3 s after a reflow placed its words, while its cover
+    /// faded, and the app's own UIApplication.sendEvent never saw them (gatefold#175, runs 42881927745 and
+    /// 42891025460). In reads, like the change itself; a reflow that never settles is not judged here, the
+    /// touch after it still is.
+    private func awaitReflowSettled(_ what: String) {
+        let reflow = app.descendants(matching: .any)["reader.reflow"].firstMatch
+        for read in 1...Self.landReads {
+            let now = (reflow.value as? String) ?? ""
+            if now.isEmpty || now.hasSuffix("settled") {
+                if read > 1 { print("TAPRATE \(what): reflow settled after \(read) reads") }
+                return
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        }
+        print("TAPRATE \(what): reflow still running after \(Self.landReads) reads")
+    }
+
     private func quickTouches() {
         let panel = app.descendants(matching: .any)["appearance.panel"].firstMatch
         for id in switches {
@@ -107,6 +125,7 @@ final class FineTuneTapUITests: XCTestCase {
             XCTAssertTrue(toggle.waitForExistence(timeout: 10), id)
             for _ in 0..<4 where !toggle.isHittable { panel.swipeUp() }
             for i in 0..<4 {
+                if i == 1 { awaitReflowSettled("before a quick touch on \(id) (1)") }
                 let before = valueBefore(toggle, "a quick touch on \(id) (\(i))")
                 toggle.press(forDuration: 0)
                 assertChangedOnce(toggle, from: before, "a quick touch on \(id) changes it (\(i))")

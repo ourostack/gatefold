@@ -217,6 +217,72 @@ import Testing
         f.model.close()
     }
 
+    /// Back goes to the page he was reading, even when "where he is" still names the chapter's start
+    /// (gatefold#143: on CI a slow opening landed on his page while `location` stayed at the chapter's
+    /// first page, so Back remembered that start and took him there).
+    @Test func backGoesToThePageOnScreenWhenWhereHeIsLagsAtTheChaptersStart() async throws {
+        let f = try await S.make(remote: { _, _ in nil }, startAt: 0.05)
+        await f.model.load()
+        let his = try #require(f.page.currentLocation)
+        try #require((his.locations.progression ?? 0) > 0.05, "his page is partway through its chapter")
+        // "Where he is" is the chapter's start; the page has moved on to his, and its report hasn't come
+        // in when he jumps (a report keeps `location` off words before the page, see the test below).
+        let start = S.boundary(of: his)
+        f.page.anchorText = "words-on-the-chapter-start"
+        f.page.currentLocation = start
+        await f.model.locationDidChange(start, hisMove: true)
+        f.page.currentLocation = his
+        let lagging = f.model.location?.locations.progression ?? -1
+        try #require(lagging < 0.001, "where he is lags at the chapter's start (it reads \(lagging))")
+        await f.model.go(toProgression: 0.7, rememberBack: true)
+        f.model.backBeat = { await Task.yield() }
+        await f.model.goBack()
+        let want = his.locations.totalProgression ?? -1
+        let at = f.page.currentLocation?.locations.totalProgression ?? -2
+        #expect(f.page.currentLocation?.href == his.href, "Back went to another chapter")
+        #expect((f.page.currentLocation?.locations.progression ?? 0) > 0.01, "Back landed on the chapter's start")
+        #expect(abs(at - want) < 0.005, "Back came back to \(at), not his page at \(want)")
+        f.model.close()
+    }
+
+    /// gatefold#143's root: after the slow launch landing, a report that isn't his move put "where he
+    /// is" back on words read on the chapter's start while his page stayed on screen. The running head
+    /// (its chapter), the scrubber and the Cloud's "here" (`JumpSuggestion.isAhead`) all read `location`,
+    /// so all three named the chapter's start. They follow the page on screen.
+    @Test func whereHeIsFollowsThePageOnScreenAfterTheSlowLaunchLanding() async throws {
+        let f = try await S.make(remote: { _, _ in nil }, startAt: 0.05)
+        await f.model.load()
+        let his = try #require(f.page.currentLocation)
+        try #require((his.locations.progression ?? 0) > 0.05, "his page is partway through its chapter")
+        await f.model.locationDidChange(his)
+        // Words read on the chapter's start and kept with a move (here a swipe; on CI, the launch landing),
+        // then his page on screen with no move of his: the report is the move already kept, and the anchor
+        // isn't read again. His page's own first words differ from the start's, as they do on a device
+        // (the same words would be the layout's report, his words still first on screen).
+        let start = S.boundary(of: his)
+        f.page.anchorText = "words-on-the-chapter-start"
+        f.page.currentLocation = start
+        f.model.noteInteraction()
+        await f.model.locationDidChange(start)
+        let kept = try #require(saved(f), "the swipe kept no place")
+        let keptAt = Self.kept(f) ?? -1, startAt = start.locations.totalProgression ?? -2
+        try #require(abs(keptAt - startAt) < 0.001, "the place kept (\(keptAt)) isn't the swipe's (\(startAt))")
+        f.page.anchorText = "words-on-his-page"
+        f.page.currentLocation = his
+        await f.model.locationDidChange(his)
+        // The place moves only on his move: the report with none leaves it where the swipe put it.
+        #expect(saved(f) == kept, "a report with no move of his moved the saved place")
+        let want = his.locations.totalProgression ?? -1
+        #expect(f.model.location?.href == his.href, "where he is names another chapter")
+        #expect((f.model.location?.locations.progression ?? 0) > 0.01, "where he is lags at the chapter's start")
+        #expect(abs(f.model.totalProgression - want) < 0.005, "the scrubber and the Cloud's here read \(f.model.totalProgression), not his page at \(want)")
+        // His words are read again from his page, so a reflow's restore or the landing check can't take
+        // the page back to the chapter's start.
+        let anchor = f.model.keeper.anchor?.progression ?? -1
+        #expect(anchor > 0.01, "his words stay those read on the chapter's start (\(anchor))")
+        f.model.close()
+    }
+
     /// A place write still on its way for an older move never lands over a newer move's place. On CI at
     /// c4c3b6a the Contents jump's write, slow to map its position, landed after Back's and kept the
     /// jump's page (0.6996) as his place once Back had brought him home.
@@ -405,6 +471,101 @@ import Testing
         #expect(abs(at - want) < 0.00001, "the page is not where Back went")
         let kept = saved(f).flatMap { try? Locator(jsonString: $0) }?.locations.totalProgression ?? -1
         #expect(abs(kept - want) < 0.001, "the late Back's place was not kept")
+        f.model.close()
+    }
+
+    /// A report of the page he has left, delivered late (after his jump's page is on screen, before the
+    /// jump's own report), is not his move: his jump's page is the place kept. On CI's iPad (job
+    /// 130027739780) a report of the book's first file came 36 ms after a jump landed at 0.309 and was
+    /// written as his move; the jump's own report then found the move kept, and the place stayed at 0.
+    @Test func aLateReportOfThePageHeLeftIsNotKeptOverHisJump() async throws {
+        let f = try await S.make(remote: { _, _ in nil }, startAt: 0.05)
+        await f.model.load()
+        let left = try #require(f.page.currentLocation)
+        await f.model.locationDidChange(left)
+        f.page.reportsOnGo = false
+        await f.model.go(toProgression: 0.7, rememberBack: true)
+        let landed = try #require(f.page.currentLocation)
+        try #require(abs((landed.locations.totalProgression ?? -1) - 0.7) < 0.03, "the jump didn't land")
+        // Readium's report of the page he left comes late, then the jump's own.
+        await f.model.locationDidChange(left)
+        await f.model.locationDidChange(landed)
+        await Self.settle { abs((Self.kept(f) ?? -1) - 0.7) < 0.03 }
+        #expect(abs((Self.kept(f) ?? -1) - 0.7) < 0.03, "a late report of the page he left was kept over his jump, at \(Self.kept(f) ?? -1)")
+        f.model.close()
+    }
+
+    /// Two jumps before the first is kept: a late report of the first page he left still isn't his move.
+    @Test func aLateReportOfThePageLeftBeforeTwoJumpsIsNotKept() async throws {
+        let f = try await S.make(remote: { _, _ in nil }, startAt: 0.05)
+        await f.model.load()
+        let left = try #require(f.page.currentLocation)
+        await f.model.locationDidChange(left)
+        f.page.reportsOnGo = false
+        await f.model.go(toProgression: 0.4, rememberBack: true)
+        await f.model.go(toProgression: 0.7, rememberBack: true)
+        let landed = try #require(f.page.currentLocation)
+        await f.model.locationDidChange(left)
+        await f.model.locationDidChange(landed)
+        let at = landed.locations.totalProgression ?? -1
+        await Self.settle { abs((Self.kept(f) ?? -1) - at) < 0.001 }
+        #expect(abs((Self.kept(f) ?? -1) - at) < 0.001, "a late report of the first page left was kept, at \(Self.kept(f) ?? -1)")
+        f.model.close()
+    }
+
+    /// The late-report rule (gatefold#174) never drops a real move of his. It names only an exact page a
+    /// jump left, while Readium names another, before the jump is kept, with no touch. Each case has the
+    /// page's own geometry (`pageRange`) lagging on the page he left:
+    /// - "turn": a turn of his right after the jump, reported before the geometry caught up;
+    /// - "new file": the jump's first report is its new file;
+    /// - "scroll": scroll mode, two scrolls of his, each touch with its report;
+    /// - "scroll back": scroll mode, his scroll straight back to the exact page the jump left;
+    /// - "Readium names it": no touch, and Readium itself names the page left (a jump that stayed on it),
+    ///   so only the rule's own check on Readium's page keeps it.
+    @Test(arguments: ["turn", "new file", "scroll", "scroll back", "Readium names it"])
+    func aMoveOfHisAfterAJumpIsStillKept(how: String) async throws {
+        let f = try await S.make(remote: { _, _ in nil }, startAt: 0.05)
+        if how.hasPrefix("scroll") { f.model.setPreferences { $0.pageTurn = .scroll } }
+        await f.model.load()
+        let left = try #require(f.page.currentLocation)
+        await f.model.locationDidChange(left)
+        f.page.reportsOnGo = false
+        await f.model.go(toProgression: 0.7, rememberBack: true)
+        let landed = try #require(f.page.currentLocation)
+        f.page.shownLocation = left
+        let want: Locator
+        switch how {
+        case "turn":
+            want = try #require(await S.locate(f.publication, 0.71))
+            f.page.currentLocation = want
+            f.model.userTurnedPage()
+            await f.model.locationDidChange(want)
+        case "new file":
+            #expect(landed.href != left.href, "the jump stayed in the file he left")
+            want = landed
+            await f.model.locationDidChange(landed)
+        case "scroll":
+            let first = try #require(await S.locate(f.publication, 0.72))
+            want = try #require(await S.locate(f.publication, 0.73))
+            f.page.currentLocation = first
+            f.model.noteInteraction()
+            await f.model.locationDidChange(first)
+            f.page.currentLocation = want
+            f.model.noteInteraction()
+            await f.model.locationDidChange(want)
+        case "scroll back":
+            want = left
+            f.page.currentLocation = left
+            f.model.noteInteraction()
+            await f.model.locationDidChange(left)
+        default:
+            want = left
+            f.page.currentLocation = left
+            await f.model.locationDidChange(left)
+        }
+        let at = want.locations.totalProgression ?? -1
+        await Self.settle { abs((Self.kept(f) ?? -1) - at) < 0.001 }
+        #expect(abs((Self.kept(f) ?? -1) - at) < 0.001, "his \(how) wasn't kept: \(Self.kept(f) ?? -1), not \(at)")
         f.model.close()
     }
 

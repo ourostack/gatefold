@@ -124,6 +124,8 @@ final class ScriptedPage: ReaderPage {
 
     /// A capture a stalled reflow cuts short: no first words to be had.
     var withholdAnchor = false
+    /// The words an anchor names (none by default, as a page with no text read): a stand-in, never a book's.
+    var anchorText: String?
 
     /// How long reading the first words on screen takes (the web view answers in its own time).
     var anchorDelay: Duration = .zero
@@ -156,7 +158,7 @@ final class ScriptedPage: ReaderPage {
             await mine.value
         }
         guard !withholdAnchor, let here = taken else { return nil }
-        let anchor = ReadingAnchor(href: here.href.string, progression: here.locations.progression ?? 0, text: nil)
+        let anchor = ReadingAnchor(href: here.href.string, progression: here.locations.progression ?? 0, text: anchorText)
         return (anchor, here)
     }
 }
@@ -341,6 +343,29 @@ final class ScriptedPage: ReaderPage {
         #expect(f.page.jumps.isEmpty)
         #expect(f.model.suggestion != nil)
         #expect(f.app.library.book(Self.frankenstein.fastHash)?.locatorJSON == nil, "a place was saved without a move of his")
+        f.model.close()
+    }
+
+    /// An offer made behind the shelf has not been seen, so it is not "unanswered" yet: it stays open
+    /// until he has tapped the book and its page is up, and only then starts the wait before it folds
+    /// (gatefold#156: made at a warm open's start, it folded about 10 s later, before the page under
+    /// the cover had shown; CI's Catch up then found only the tab). Counted in reads of the slip.
+    @Test func anOfferMadeBehindTheShelfFoldsOnlyAfterHeHasSeenIt() async throws {
+        let f = try await Self.make(remote: { _, _ in
+            ReadingPosition(cfi: nil, totalProgression: 0.42, updated: Date(), source: .pocketBookNative)
+        }, book: { $0.remote = ReadingPosition(cfi: nil, totalProgression: 0.42, updated: Date(), source: .pocketBookNative) })
+        f.model.warm()
+        for _ in 0..<200 where f.model.slip == nil || !f.model.pageReady { try await Task.sleep(for: .milliseconds(25)) }
+        try #require(f.model.slip != nil && f.model.slipKind == .ahead && f.model.pageReady, "the Cloud's place was not offered behind the shelf, or the warm page never came up")
+        // Past the fold's whole wait, behind the shelf: nobody has seen the offer, so it must still be open.
+        let foldReads = Int((LaunchOptions.offerFoldSeconds + 2) / 0.025)
+        for _ in 0..<foldReads where !f.model.slipFolded { try await Task.sleep(for: .milliseconds(25)) }
+        #expect(!f.model.slipFolded, "the offer folded behind the shelf, before he had seen it")
+        f.model.activate()
+        #expect(f.model.slip != nil && !f.model.slipFolded, "the tap did not find the offer open")
+        // Seen and unanswered, it still folds into its tab.
+        for _ in 0..<foldReads where !f.model.slipFolded { try await Task.sleep(for: .milliseconds(25)) }
+        #expect(f.model.slipFolded && f.model.slip != nil, "the offer never folded once he had seen it")
         f.model.close()
     }
 
