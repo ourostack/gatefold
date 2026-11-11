@@ -180,6 +180,27 @@ enum ReaderJS {
           }
           return null;
         },
+        // Where the element `id` (or old-style `name`) starts in this resource, as the progression that
+        // puts its page on screen (paginated). Null until the resource has loaded and is laid out in
+        // columns (a long file still one screen wide would give a place in the wrong layout); -1 once it
+        // is, and there is no such element.
+        progressionOfId: function (id) {
+          if (document.readyState !== "complete") { return null; }
+          const se = document.scrollingElement;
+          const columns = se.scrollWidth > window.innerWidth + 1;
+          if (!columns && se.scrollHeight > window.innerHeight + 1) { return null; }
+          const el = document.getElementById(id) || document.getElementsByName(id)[0];
+          if (!el) { return -1; }
+          // Not in columns: only an element on the first screen is at the file's start. One past it is a
+          // file not laid out yet (CI, run 42852464361: a jump took 0 for an anchor 0.79 into its file).
+          if (!columns) {
+            const r = el.getBoundingClientRect();
+            const onScreen = r.width + r.height > 0 && r.right > 0 && r.bottom > 0 && r.left < window.innerWidth && r.top < window.innerHeight;
+            return onScreen ? 0 : null;
+          }
+          const rect = el.getBoundingClientRect();
+          return Math.max(0, Math.min(1, (rect.left + Math.abs(se.scrollLeft)) / se.scrollWidth));
+        },
         // Which page of the spread `quote` starts on: 0 left, 1 right, -1 before the spread, 2 after it.
         sideOf: function (quote) {
           const words = norm(quote).split(" ").slice(0, 8).map(function (w) { return w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); });
@@ -295,6 +316,11 @@ enum ReaderJS {
     static func progressionOf(_ quote: String) -> String {
         let q = (try? JSONEncoder().encode(quote)).map { String(decoding: $0, as: UTF8.self) } ?? "\"\""
         return "window.gatefold ? window.gatefold.progressionOf(\(q)) : null"
+    }
+
+    static func progressionOfId(_ id: String) -> String {
+        let q = (try? JSONEncoder().encode(id)).map { String(decoding: $0, as: UTF8.self) } ?? "\"\""
+        return "window.gatefold ? window.gatefold.progressionOfId(\(q)) : null"
     }
 
     static let pageEnd = "window.gatefold ? window.gatefold.pageEnd() : null"

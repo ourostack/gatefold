@@ -84,6 +84,7 @@ final class NavigationPlaceUITests: XCTestCase {
         XCTAssertTrue(row.exists && row.isHittable, "the contents list chapter XXX")
         row.tap()
         _ = waitForWords(changingFrom: first, timeout: 20)
+        XCTAssertTrue(keptWhatIsShown(), "the jump kept a place other than the page shown")
         leaveAndReturn(expecting: first, "contents jump")
     }
 
@@ -119,6 +120,7 @@ final class NavigationPlaceUITests: XCTestCase {
         let words = waitForWords(changingFrom: first, timeout: 15)
         XCTAssertFalse(words.isEmpty, "the veil lifted onto words")
         XCTAssertNotEqual(opening(words), opening(first), "the jump moved the page")
+        XCTAssertTrue(keptWhatIsShown(), "the jump kept a place other than the page shown")
     }
 
     /// A Contents jump made while the page he leaves is still loading starts at once: the old page is
@@ -165,6 +167,7 @@ final class NavigationPlaceUITests: XCTestCase {
             if back == nil, app.buttons["reader.back"].exists { back = reads }
             RunLoop.current.run(until: Date().addingTimeInterval(0.2))
         }
+        XCTAssertTrue(keptWhatIsShown(), "the jump kept a place other than the page shown")
         if extra.contains("-GatefoldHoldOldPageLoad") {
             XCTAssertTrue(app.descendants(matching: .any)["reader.oldPageHeld"].exists, "the old page's held load armed")
         }
@@ -348,6 +351,7 @@ final class NavigationPlaceUITests: XCTestCase {
         for _ in 0..<20 where !(row.exists && row.isHittable) { app.swipeUp(velocity: .slow) }
         row.tap()
         var words = waitForWords(changingFrom: first, timeout: 20)
+        XCTAssertTrue(keptWhatIsShown(), "the jump kept a place other than the page shown")
         sleep(3)
         for _ in 0..<2 {
             turn(forward: true)
@@ -487,5 +491,22 @@ final class NavigationPlaceUITests: XCTestCase {
         print("SCROLL offer taps \(offers), tab taps \(tabs), looks \(looks), words \(!visibleText.isEmpty)")
         XCTAssertGreaterThan(offers, 0, "a fresh install on the cover offers the Cloud's place")
         return waitForWords()
+    }
+
+    /// The place kept is the page Readium shows: same file, near the same place in it (gatefold#166: a
+    /// Contents jump kept its file's first page while the page went on to the chapter 0.79 into it).
+    /// Judged in reads; a mismatch that lasts all of them is a wrong place kept.
+    private func keptWhatIsShown(reads: Int = 40) -> Bool {
+        let saved = app.descendants(matching: .any)["reader.savedPlace"], shown = app.descendants(matching: .any)["reader.shownPlace"]
+        func tag(_ e: XCUIElement) -> (String, Double)? {
+            let parts = ((e.value as? String) ?? "").split(separator: "@")
+            guard parts.count == 2, let p = Double(parts[1]) else { return nil }
+            return (String(parts[0]), p)
+        }
+        for _ in 0..<reads {
+            if let a = tag(saved), let b = tag(shown), a.0 == b.0, abs(a.1 - b.1) < 0.1 { return true }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        }
+        return false
     }
 }

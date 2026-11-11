@@ -18,6 +18,9 @@ protocol ReaderPage: AnyObject {
     func pageRange() async -> VisibleRange?
     /// Where `quote` is in the resource on screen, as a progression; nil when it isn't there.
     func progression(of quote: String) async -> Double?
+    /// Where the element `id` starts in the resource on screen, as a progression, once the resource is
+    /// laid out; nil when it isn't there or the layout isn't done.
+    func progression(ofFragment id: String) async -> Double?
     /// The first words on the page the reader is on.
     func currentAnchor() async -> (ReadingAnchor, Locator)?
     /// Starts loading `locator`'s page out of sight, so a jump there later is quick.
@@ -50,6 +53,7 @@ extension ReaderPage {
     func promoteStandby(for locator: Locator) async -> Bool { false }
     func screenGeometry() async -> (href: String, geometry: ScreenPageGeometry)? { nil }
     func pageRange() async -> VisibleRange? { await visibleRange() }
+    func progression(ofFragment id: String) async -> Double? { nil }
     func countPages(_ hrefs: [String], record: @escaping @MainActor (String, Int) -> Void, finished: @escaping @MainActor () -> Void) {}
     func stopCounting() {}
     func endReflowForSwap() {}
