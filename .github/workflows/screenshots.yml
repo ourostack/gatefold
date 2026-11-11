@@ -186,8 +186,8 @@ jobs:
             xcrun simctl io "$UDID" enumerate | grep -iE "display|port|class|size|name" | head -40 || true
           fi
       - name: Capture every scene twice
-        # Worst case: 3 scenes x 2 tries x 2 passes at about 4 min a try (waits of 60 + 60 + 100 s, and launch).
-        timeout-minutes: 70
+        # Worst case: 3 scenes x 2 tries x 2 passes at about 4.5 min a try (waits of 60 + 60 + 120 s, and launch).
+        timeout-minutes: 75
         run: |
           # The step's default shell is bash -e; a failed try must reach the retry, not end the step.
           set +e -uo pipefail

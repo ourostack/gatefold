@@ -65,12 +65,7 @@ final class ListingShotsUITests: XCTestCase {
             guard waited == .completed else { XCTFail("\(id): \(ready["id"] ?? "?") never read as ready"); return }
         }
 
-        // Nothing that names the reader's e-reader (the sync slip, the catch-up offer or its tab) is in the picture.
-        for name in ["slip", "banner", "banner.tab"] {
-            if app.descendants(matching: .any).matching(identifier: name).firstMatch.exists {
-                XCTFail("\(id): \(name) is on screen, and it names the e-reader"); return
-            }
-        }
+        guard nothingNamesTheEReader(app, id) else { return }
 
         let folder = URL(fileURLWithPath: dir)
         let handoff = "\(id).\(attempt)"
@@ -81,12 +76,26 @@ final class ListingShotsUITests: XCTestCase {
             XCTFail("\(id): could not write to the shots folder: \(error)"); return
         }
         // The host shoots until the screen holds still; a scene that never settles fails there, with its reason.
-        let deadline = Date().addingTimeInterval(100)
+        // Longer than the host's worst case: 80 s of frames plus a last screenshot and status bar call, 15 s each.
+        let deadline = Date().addingTimeInterval(120)
         while Date() < deadline {
-            if FileManager.default.fileExists(atPath: done.path) { return }
+            if FileManager.default.fileExists(atPath: done.path) {
+                _ = nothingNamesTheEReader(app, id)  // and nothing turned up while the host shot
+                return
+            }
             if let why = try? String(contentsOf: fail, encoding: .utf8) { XCTFail("\(id): \(why)"); return }
             Thread.sleep(forTimeInterval: 0.5)
         }
-        XCTFail("\(id): the host took no picture within 100 s")
+        XCTFail("\(id): the host took no picture within 120 s")
+    }
+
+    /// The sync slip, the catch-up offer, its tab and a highlight's source all name the reader's e-reader ("InkPad"),
+    /// which a listing never shows. One query for all four, not one each.
+    private func nothingNamesTheEReader(_ app: XCUIApplication, _ id: String) -> Bool {
+        let names = ["slip", "banner", "banner.tab", "highlight.provenance"]
+        let shown = app.descendants(matching: .any).matching(NSPredicate(format: "identifier IN %@", names)).firstMatch
+        guard shown.exists else { return true }
+        XCTFail("\(id): \(shown.identifier) is on screen, and it names the e-reader")
+        return false
     }
 }

@@ -35,7 +35,7 @@ ON_SCREEN = ["Gatefold", "Packages/GatefoldCore/Sources", "Packages/GatefoldClou
              "Packages/GatefoldCore/Package.swift", "Packages/GatefoldCloud/Package.swift",
              "Packages/GatefoldCloud/Package.resolved", "project.yml", "GatefoldListingShots", "screenshots",
              "scripts/screenshots", ".github/actions/select-xcode", ".github/workflows/screenshots.yml"]
-# The watcher gives up after SHOOT_LIMIT seconds; the scene test waits longer (ListingShotsUITests: 100 s).
+# The watcher gives up after SHOOT_LIMIT seconds; the scene test waits longer (ListingShotsUITests: 120 s, past 80 s plus two 15 s simctl calls).
 STABLE_FRAMES, SHOOT_LIMIT, FRAME_GAP = 3, 80, 0.8
 SIMCTL_LIMIT = 15  # one screenshot or status-bar call; a hung simctl fails the scene instead of the step
 # Elements whose text names the e-reader ("In step with your InkPad", the catch-up offer and its tab).
