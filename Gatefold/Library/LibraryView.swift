@@ -720,7 +720,7 @@ private struct EmptyShelf: View {
                 .accessibilityIdentifier("library.empty")
             Text(signedIn
                  ? "Books you add to PocketBook Cloud will land here. EPUBs from Files are welcome too."
-                 : "Slip in an EPUB from Files, or connect PocketBook Cloud to bring your InkPad's books along.")
+                 : "Slip in an EPUB from Files, or connect PocketBook Cloud to bring your e-reader's books along.")
                 .multilineTextAlignment(.center)
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: 340)
@@ -780,7 +780,7 @@ private struct UnreachableShelf: View {
 
     private var detail: String {
         switch problem {
-        case .offline: "You're offline. The moment you're back, your InkPad's books will hop onto this shelf."
+        case .offline: "You're offline. The moment you're back, your e-reader's books will hop onto this shelf."
         case .signInExpired: "PocketBook Cloud would like you to sign in again."
         case let .other(message): message
         }
@@ -967,7 +967,7 @@ struct FinishedColophon: View {
         .accessibilityElement(children: .combine)
     }
 
-    /// The read's span, the same story the end leaf tells ("Read over 6 days, InkPad to phone").
+    /// The read's span, the same story the end leaf tells ("Read over 6 days, e-reader to phone").
     static func journey(_ book: LibraryBook) -> String? {
         guard let finished = book.finished else { return nil }
         return ReadStory.shelfLine(otherDevice: book.otherDevice, otherSince: book.otherSince, started: book.started,
