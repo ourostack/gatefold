@@ -63,26 +63,41 @@ import json, sys
 try: print(any(d["udid"] == sys.argv[1] and d["state"] == "Booted" for v in json.load(sys.stdin)["devices"].values() for d in v))
 except ValueError: print("Unknown")' "$1"
 }
+# The device's listed state ("Booted", "Booting", "Shutdown", ...), "Missing" when it isn't listed, or "Unknown" when
+# the listing did not answer in time.
+device_state() {
+  within "$LIST_LIMIT" xcrun simctl list devices -j | python3 -c '
+import json, sys
+try: print(next((d["state"] for v in json.load(sys.stdin)["devices"].values() for d in v if d["udid"] == sys.argv[1]), "Missing"))
+except ValueError: print("Unknown")' "$1"
+}
 try_boot() {
   xcrun simctl boot "$1" >&2 || true
-  local began=$SECONDS code rest slice asked=""
+  # Every slice's output is kept: a "Failed" printed in a slice that was then cut off still fails the boot (#57).
+  local began=$SECONDS code=124 rest slice asked="" all="" boot=-b
   while :; do
-    rest=$(( BOOTSTATUS_LIMIT - (SECONDS - began) )); (( rest < 1 )) && rest=1
+    rest=$(( BOOTSTATUS_LIMIT - (SECONDS - began) ))
+    (( rest < 1 )) && break
     slice=$(( rest < SLICE_LIMIT ? rest : SLICE_LIMIT ))
-    status="$(within "$slice" xcrun simctl bootstatus "$1" -b 2>&1)"; code=$?
+    # -b only on the first ask: later slices only wait, so they can't boot a device again whose first boot failed.
+    status="$(within "$slice" xcrun simctl bootstatus "$1" $boot 2>&1)"; code=$?; boot=""
+    all="$all$status"$'\n'
     [[ $code == 124 ]] || break
-    (( SECONDS - began >= BOOTSTATUS_LIMIT )) && break
-    # Once, past NOBOOT_LIMIT and with time for the listing: a device that never came up goes now, not at the limit.
-    if [[ -z $asked ]] && (( SECONDS - began >= NOBOOT_LIMIT && SECONDS - began + LIST_LIMIT < BOOTSTATUS_LIMIT )); then
+    # Once, past NOBOOT_LIMIT and with time for the listing (its limit, its kill grace and a second of $SECONDS
+    # rounding) inside the limit: a device listed Shutdown, or not listed, never came up and goes now. One still
+    # Booting is slow, not dead (boots have taken 10 min, gatefold#198), so it keeps its whole limit.
+    if [[ -z $asked ]] && (( SECONDS - began >= NOBOOT_LIMIT && SECONDS - began + LIST_LIMIT + 6 < BOOTSTATUS_LIMIT )); then
       asked=1
-      if [[ "$(booted "$1")" == False ]]; then
-        echo "$1 never booted: not listed Booted $(( SECONDS - began )) s after its boot was asked for" >&2
+      local now; now="$(device_state "$1")"
+      if [[ $now == Shutdown || $now == Missing ]]; then
+        echo "$1 never booted: listed $now $(( SECONDS - began )) s after its boot was asked for" >&2
         within "$LIST_LIMIT" xcrun simctl shutdown "$1" >/dev/null 2>&1
         return 1
       fi
     fi
     echo "$1: bootstatus gave no answer in a ${slice} s slice, $(( SECONDS - began )) s in; asking again" >&2
   done
+  status="$all"
   [[ $code == 124 ]] || echo "$1: bootstatus finished after $(( SECONDS - began )) s" >&2
   if [[ $code == 124 ]]; then
     echo "$status" | tail -3 >&2
@@ -111,7 +126,9 @@ try_boot() {
   grep -q "Failed" <<<"$status" && return 1
   # A bootstatus that exited 0 is the stronger word: a listing that did not answer does not undo it (as
   # ci-simulator.py since 8b144cf; a healthy device was thrown away over one, run 42502520118). One that exited
-  # otherwise is not trusted on an unanswered listing (both happen when CoreSimulatorService is failing).
+  # otherwise is not trusted on an unanswered listing (both happen when CoreSimulatorService is failing). The listing
+  # only confirms here, so its bound is short; ci-simulator.py's check still confirms Booted and the runtime before the
+  # device is used.
   case "$(booted "$1" "$CONFIRM_LIMIT")" in
     True) return 0 ;;
     Unknown)

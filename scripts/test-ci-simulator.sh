@@ -190,16 +190,21 @@ cat > "$real/bin/xcrun" <<'FAKE'
 state() { cat "$FAKE/state-$1" 2>/dev/null || echo Shutdown; }
 case "$1 $2" in
   "simctl create") n=$(( $(cat "$FAKE/created" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$FAKE/created"; echo "dev$n" ;;
-  "simctl boot") for u in ${FAKE_NO_BOOT:-}; do [ "$u" = "$3" ] && exit 0; done; echo Booted > "$FAKE/state-$3" ;;
+  "simctl boot") for u in ${FAKE_NO_BOOT:-}; do [ "$u" = "$3" ] && exit 0; done
+    for u in ${FAKE_BOOTING:-}; do [ "$u" = "$3" ] && { echo Booting > "$FAKE/state-$3"; exit 0; }; done
+    echo Booted > "$FAKE/state-$3" ;;
   "simctl shutdown") [ "$3" = all ] || echo Shutdown > "$FAKE/state-$3"; echo "shutdown $3" >> "$FAKE/calls" ;;
   "simctl delete") echo "delete $3" >> "$FAKE/calls" ;;
   "simctl bootstatus")
     n=$(( $(cat "$FAKE/bootstatus" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$FAKE/bootstatus"
-    echo "bootstatus $3" >> "$FAKE/calls"
+    echo "bootstatus $3${4:+ $4}" >> "$FAKE/calls"
     for u in ${FAKE_HANGS:-}; do [ "$u" = "$n" ] && { echo "Monitoring boot status for $3."; exec /bin/sleep 30; }; done
+    # Call N reports a failed migration, then hangs (cut off by its slice) when N is in $FAKE_FAILED_HANGS.
+    for u in ${FAKE_FAILED_HANGS:-}; do [ "$u" = "$n" ] && { echo "Data Migration Failed"; exec /bin/sleep 30; }; done
     # A device that never comes up never answers bootstatus either.
     for u in ${FAKE_NO_BOOT:-}; do [ "$u" = "$3" ] && { echo "Monitoring boot status for $3."; exec /bin/sleep 30; }; done
     for u in ${FAKE_BOOTSTATUS_EXITS:-}; do [ "$u" = "$n" ] && { echo "Unable to boot: the service went away."; exit 1; }; done
+    [ -e "$FAKE/state-$3" ] && echo Booted > "$FAKE/state-$3"
     echo "Device already booted, nothing to do." ;;
   "simctl list")
     if [ "${3:-}" = devices ] && [ "${4:-}" = -j ]; then
@@ -260,11 +265,21 @@ FAKE_BOOTSTATUS_EXITS="1" FAKE_LIST_HANGS="1" real_case "bootstatus exits 1, the
 # again after one slice, it answers, so that device, without the hung-device path's second bootstatus.
 CASE_LIMIT=8 CASE_SLICE=1 real_case "bootstatus gives no answer in its first slice, the next answers: that device, no recheck" \
   "1" "" dev1 "dev1: bootstatus gave no answer in a 1 s slice" "second bootstatus"
-CASE_LIMIT=8 CASE_SLICE=1 real_case "a slice that answered logs how long bootstatus took" \
-  "1" "" dev1 "dev1: bootstatus finished after" "hung past 8 s"
-# A device that never came up is given up on once NOBOOT_LIMIT passes, not when BOOTSTATUS_LIMIT runs out.
-CASE_LIMIT=30 CASE_SLICE=1 CASE_NOBOOT=2 real_case "a device not listed Booted past its no-boot limit: given up early, the next device" \
-  "" "dev1" dev2 "dev1 never booted: not listed Booted" "dev1 is booted" "shutdown dev1"
+# Only the first ask boots (-b); the next only waits, so it can't boot again a device whose first boot failed.
+CASE_LIMIT=8 CASE_SLICE=1 real_case "only the first slice passes -b; a slice that answered logs how long bootstatus took" \
+  "1" "" dev1 "dev1: bootstatus finished after" "second bootstatus" "bootstatus dev1"
+# #57: a slice printed Failed and was cut off; the next one exits 0. Not that device.
+FAKE_FAILED_HANGS="1" CASE_LIMIT=8 CASE_SLICE=1 real_case "a slice says Failed and is cut off, the next exits 0: not that device (#57)" \
+  "" "" dev2 "attempt 1: dev1 did not boot" "dev1: bootstatus finished clean"
+# A device that never came up (listed Shutdown, or here not listed at all) is given up on once NOBOOT_LIMIT passes, not at BOOTSTATUS_LIMIT.
+CASE_LIMIT=30 CASE_SLICE=1 CASE_NOBOOT=2 real_case "a device not listed past its no-boot limit: given up early, the next device" \
+  "" "dev1" dev2 "dev1 never booted: listed Missing" "dev1 is booted" "shutdown dev1"
+# One still Booting at that point is slow, not dead (gatefold#198): it keeps slicing and passes when bootstatus answers.
+FAKE_BOOTING="dev1" CASE_LIMIT=30 CASE_SLICE=1 CASE_NOBOOT=2 real_case "a device still Booting past its no-boot limit: kept, that device" \
+  "1 2 3 4" "" dev1 "dev1: bootstatus finished after" "never booted"
+# The early listing must fit inside the limit; when it can't, the old path decides (here, "never booted" at the limit).
+CASE_LIMIT=4 CASE_SLICE=1 CASE_NOBOOT=1 real_case "no room for the early listing: the limit's own path decides" \
+  "" "dev1" dev2 "dev1 never booted" "listed Missing" "shutdown dev1"
 # A limit override: a fraction is rounded down, not a crash; one that is not a number is refused.
 fr="$real/fraction"; mkdir -p "$fr/fake"
 if got="$(PATH="$real/bin:$PATH" FAKE="$fr/fake" BOOT_SIM_LIST_LIMIT=2.5 BOOT_SIM_BOOTSTATUS_LIMIT= \

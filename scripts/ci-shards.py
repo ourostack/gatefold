@@ -220,7 +220,13 @@ def expect_problems(want, have):
 def write(path=EXPECT, workflow=WORKFLOW, sources=SOURCES):
     """Rewrite the expect file from the shards, keeping its leading comment lines."""
     with open(workflow, encoding="utf-8") as f:
-        _, runs = plan(f.read(), read_tests(sources))
+        problems, runs = plan(f.read(), read_tests(sources))
+    if problems:
+        # A broken entry drops its tests from the set, so writing now would quietly drop them from the file too.
+        for p in problems:
+            print(f"::error title=UI test shards (.github/workflows/app.yml)::{p}")
+        print("Fix the shards first; scripts/ci-shards.expect is unchanged.")
+        return 1
     header = []
     if os.path.exists(path):
         with open(path, encoding="utf-8") as f:

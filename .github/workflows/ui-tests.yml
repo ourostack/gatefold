@@ -98,7 +98,7 @@ jobs:
       - name: The ${{ inputs.device }} finished booting
         # Before the download: a first boot holds the runner's load at 500 to 760, and a download beside it stalls to
         # its 4-min limit (gatefold#198). boot-sim.sh retries a boot that fails or hangs (#57); this waits with a limit.
-        # 1200 s for the boot, the check's listings, and 900 s for one fresh device when the first boot left room
+        # 1200 s for the boot, the check's listings, and 920 s for one fresh device when the first boot left room
         # (gatefold#71; the sums are in scripts/ci-simulator.py at BOOT_ATTEMPT).
         timeout-minutes: 30
         env:

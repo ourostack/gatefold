@@ -198,17 +198,18 @@ def export(udid):
 
 
 # One full boot-sim.sh attempt, the slowest that passes: bootstatus 420 s in all (its slices, and its one early listing,
-# count inside the 420) + the last slice's kill grace 5 + the listing 60 + its
-# second ask 60 + the second bootstatus 90 + its grace 5 = 640 s, rounded up to 660. A fresh device never starts
+# count inside the 420) + the last slice's kill grace 5 + the listing 60 + its second ask 60 + the second bootstatus
+# 90 + its grace 5 = 640 s, plus a second of $SECONDS rounding and up to 5 s of kill grace on each of the 4 bounded
+# calls after the 420: about 664 s, rounded up to 680. A fresh device never starts
 # with less (it would be killed mid-attempt). What must be left to try one at all: that, plus the two `quietly` calls
-# (60 s each) and the runtime listing (120 s): 660 + 240 = 900 s. The offline test shortens both.
+# (60 s each) and the runtime listing (120 s): 680 + 240 = 920 s. The offline test shortens both.
 # They fit the workflow's budgets less the 30 s margin. The wait step (1740 s, so 1710): the boot is read at up to
 # 1200 s and the check takes up to 2 listings x 2 tries x 120 s = 480 s, so a fresh device fits when the first boot
-# and its check took up to 1710 - 900 = 810 s, as a typical 3 to 10 min boot does; past that it fails, out of time,
-# with its own message. The erase (1800 s, so 1770): a typical erase and check (about 130 s), a fresh device (900 s)
-# and its own erase and check (about 130 s) take about 1160 s; the worst case (1140 s of erase calls) fails the same way.
-BOOT_ATTEMPT = setting("CI_SIMULATOR_BOOT_ATTEMPT", "660")
-RETRY_RESERVE = setting("CI_SIMULATOR_RETRY_RESERVE", "900")
+# and its check took up to 1710 - 920 = 790 s, as a typical 3 to 10 min boot does; past that it fails, out of time,
+# with its own message. The erase (1800 s, so 1770): a typical erase and check (about 130 s), a fresh device (920 s)
+# and its own erase and check (about 130 s) take about 1180 s; the worst case (1140 s of erase calls) fails the same way.
+BOOT_ATTEMPT = setting("CI_SIMULATOR_BOOT_ATTEMPT", "680")
+RETRY_RESERVE = setting("CI_SIMULATOR_RETRY_RESERVE", "920")
 
 
 def quietly(*args):

@@ -815,7 +815,7 @@ jobs:
           tar -xzf "$RUNNER_TEMP/products.tgz" -C "$RUNNER_TEMP/dd/Build"
           echo "XCTESTRUN=$(ls "$RUNNER_TEMP"/dd/Build/Products/*.xctestrun | head -1)" >> "$GITHUB_ENV"
       - name: The iPhone Duo finished booting
-        # 1200 s for the boot, the check's listings, and 900 s for one fresh device when the first boot left room
+        # 1200 s for the boot, the check's listings, and 920 s for one fresh device when the first boot left room
         # (gatefold#71; the sums are in scripts/ci-simulator.py at BOOT_ATTEMPT).
         timeout-minutes: 30
         env:
