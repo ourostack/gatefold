@@ -1788,6 +1788,9 @@ final class ReaderModel {
         let alreadyKept = (moves == recordedMoves && !hisMove) || claimedByEarlier
         let touchedAtReport = touchedSinceLocation
         let readerMoved = (!layoutOnly && !alreadyKept) || touchedAtReport
+        // The move this report was judged for. Its reads below can outlast a jump (a report of the book's
+        // start, read before a launch jump, waited for the web view and resumed after the jump landed).
+        let judgedMove = moves
         let claim = readerMoved && !hisMove && !touchedAtReport && hasMoved && !isWarming ? moves : nil
         if let claim { claimedMove = claim; contestingReport = nil }
         // A claim that ends without a write leaves the move to the next report.
@@ -1875,7 +1878,11 @@ final class ReaderModel {
         // its words found the move not yet kept, and both wrote (build 20's loop saved two places for one
         // jump, 0.3 s apart, from one reader).
         let keptMeanwhile = moves == recordedMoves && !hisMove && !touchedAtReport
-        guard hasMoved, readerMoved, !keptMeanwhile, !fromLayout, !isWarming else {
+        // A move made during those waits owns the place: this report names where the page was before it,
+        // and kept, it took that move's write (gatefold#201: the book's start, reported before a launch
+        // jump, was written as the jump's move 1.5 s after it landed, and every reopen opened on the cover).
+        let overtaken = moves != judgedMove
+        guard hasMoved, readerMoved, !keptMeanwhile, !overtaken, !fromLayout, !isWarming else {
             // No write: the move is the next report's to keep, from now, not after the wait below.
             if let claim, claimedMove == claim { claimedMove = nil }
             return refreshBookmarkState(await page?.visibleRange())
