@@ -18,4 +18,7 @@ enum OldPagePicture {
     /// What the veil holds, given whether the old page's picture came back bare (or black).
     /// A bare picture held over the jump is a blank flash: the screen as it is stays instead.
     static func hold(bare: Bool) -> Hold { bare ? .onScreen : .picture }
+
+    /// Whether a riffle's leaves curl over the veil, given what it holds.
+    static func riffles(_ hold: Hold) -> Bool { true }
 }
