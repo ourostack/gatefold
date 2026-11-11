@@ -248,7 +248,9 @@ final class ReviewerChecksUITests: XCTestCase {
     /// words never move.
     func testPageNumbersAreOnOrOffInEveryBook() {
         app.launchArguments = base + ["-GatefoldReset", "YES", "-GatefoldDownloadAll", "YES",
-                                      "-GatefoldOpenBook", "gutenberg-emma", "-GatefoldGoTo", "0.2"]
+                                      "-GatefoldOpenBook", "gutenberg-emma", "-GatefoldGoTo", "0.2",
+                                      // The second book's Cloud offer mustn't fold between a look and the tap (#207).
+                                      "-GatefoldOfferFoldSeconds", "600"]
         app.launch()
         XCTAssertTrue(el("reader.page").waitForExistence(timeout: 120))
         XCTAssertNotNil(counted(), "the book was counted")

@@ -121,7 +121,10 @@ final class ReopenAfterControlsUITests: XCTestCase {
             print("REOPEN round \(round) starts \(clock.string(from: Date()))")
             app.launchArguments = ["-GatefoldUITest", "YES", "-GatefoldFakeCloud", "YES", "-GatefoldSkipWelcome", "YES",
                                    "-GatefoldSignedIn", "YES", "-GatefoldAllowReopen", "YES", "-GatefoldNoLatency", "YES",
-                                   "-GatefoldReset", "YES", "-GatefoldDownloadAll", "YES"]
+                                   "-GatefoldReset", "YES", "-GatefoldDownloadAll", "YES",
+                                   // This host's looks take seconds; the offer mustn't fold between a look and the tap (#207, as
+                                   // NavigationPlace's cover test). The fold isn't what this test checks.
+                                   "-GatefoldOfferFoldSeconds", "600"]
             app.relaunch()
             open()
             takeTheOffer(round: round)
