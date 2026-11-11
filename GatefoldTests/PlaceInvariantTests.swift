@@ -418,7 +418,9 @@ import Testing
         f.page.loadingChapter = true
         let trip = Task { await f.model.goBack() }
         for _ in 0..<(JumpLanding.reads * 4) where !f.model.isGoingBack { await Task.yield() }
-        for _ in 0..<(JumpLanding.reads * 2) where f.model.tripsPastTheVeil == 0 { await Task.yield() }
+        // Waited on as the event, in yields as the trip's beats are (a fixed count raced them).
+        for _ in 0..<(JumpLanding.reads * 20) where f.model.tripsPastTheVeil < 1 { await Task.yield() }
+        try #require(f.model.tripsPastTheVeil >= 1, "the trip never got past its veil's limit")
         #expect(f.model.isGoingBack && f.model.tripsPastTheVeil == 1, "the trip wasn't still on its way past the veil's limit")
         // He turns to the next page meanwhile: Readium moves itself and tells the reader.
         let next = try #require(await S.locate(f.publication, 0.72))
