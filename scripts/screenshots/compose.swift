@@ -93,7 +93,7 @@ func oriented(_ img: CGImage, landscape: Bool) -> CGImage {
     guard let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0,
                               space: CGColorSpace(name: CGColorSpace.sRGB)!,
                               bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else { fail("no context") }
-    // Landscape-left: the home side on the left, so the picture turns a quarter clockwise.
+    // A quarter turn counterclockwise (CoreGraphics' y axis points up): right for landscapeLeft, home side on the right.
     ctx.translateBy(x: CGFloat(w), y: 0)
     ctx.rotate(by: .pi / 2)
     ctx.draw(img, in: CGRect(x: 0, y: 0, width: img.width, height: img.height))
@@ -168,7 +168,8 @@ func compose(scene: [String: Any], device: [String: Any], raw: String, out: Stri
     let screenW = devW - 2 * bezel, screenH = screenW * aspect
     let devH = screenH + 2 * bezel
     let devTop = textBottom + 96 * u
-    let devY = landscape ? max(H - devTop - devH, (H - devTop - devH) / 2) : H - devTop - devH
+    // A landscape device sits centred in the space under the text; a portrait one hangs from it and bleeds off.
+    let devY = landscape ? (H - devTop - devH) / 2 : H - devTop - devH
     let body = CGRect(x: (W - devW) / 2, y: devY, width: devW, height: devH)
     let outerR = devW * radiusFactor
     ctx.saveGState()

@@ -17,7 +17,7 @@
     {
       "id": "spread", "devices": ["ipad"], "orientation": "landscape",
       "args": ["-GatefoldOpenBook", "gutenberg-moby-dick", "-GatefoldGoTo", "0.31", "-GatefoldTheme", "daylight"],
-      "ready": {"id": "reader.anchorCheck", "label": "ready 0"},
+      "ready": {"id": "reader.anchorCheck", "label_begins": "ready "},
       "bg": "paper", "headline": ["Two pages,", "like a real book"],
       "subline": "Turn your iPad sideways for a two-page spread."
     },

@@ -21,6 +21,7 @@ on:
       - "screenshots/**"
       - "scripts/screenshots/**"
       - ".github/workflows/screenshots.yml"
+      - "Gatefold/Sync/FakeSyncService.swift"
 
 permissions:
   contents: read
@@ -40,7 +41,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       render: ${{ steps.decide.outputs.render }}
-      sha: ${{ steps.sha.outputs.sha }}
+      sha: ${{ steps.decide.outputs.sha || steps.sha.outputs.sha }}
       fingerprint: ${{ steps.decide.outputs.fingerprint }}
     steps:
       - id: sha
@@ -67,10 +68,17 @@ jobs:
           echo "fingerprint=$fp" >> "$GITHUB_OUTPUT"
           say() { echo "::notice::$1"; echo "$1" >> "$GITHUB_STEP_SUMMARY"; }
           if [[ "$EVENT" == workflow_run ]]; then
-            # A TestFlight run that only judged the gate published nothing; a release leaves its tag at the commit.
-            if [[ -z "$(git tag --points-at "$SHA" --list 'testflight/build-*')" ]]; then
-              say "${SHA:0:7} was not released to TestFlight: no screenshots."; echo "render=false" >> "$GITHUB_OUTPUT"; exit 0
+            # A TestFlight run's own head is main's tip when it started, not the commit it published. Render the
+            # newest published build's commit (its testflight/build-N tag); a run that published nothing changes nothing.
+            tag="$(git tag --list 'testflight/build-*' | sort -t- -k2 -n | tail -1)"
+            if [[ -z "$tag" ]]; then
+              say "No build has been released to TestFlight yet: no screenshots."; echo "render=false" >> "$GITHUB_OUTPUT"; exit 0
             fi
+            SHA="$(git rev-list -n 1 "$tag")"
+            echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+            git checkout --quiet "$SHA"
+            fp="$(python3 -I scripts/screenshots/capture.py fingerprint)"
+            echo "fingerprint=$fp" >> "$GITHUB_OUTPUT"
             have="$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=listing-screenshots-$fp" --jq '[.artifacts[] | select(.expired | not)] | length')"
             if [[ "$have" != 0 ]]; then
               say "Nothing a screenshot shows changed since the last render (listing-screenshots-${fp:0:12})."
@@ -131,6 +139,7 @@ jobs:
         device: [ipad, iphone, duo]
     env:
       DEVICE: ${{ matrix.device }}
+      TZ: America/Los_Angeles # the staged 17:41Z reads 9:41
       FP: ${{ needs.plan.outputs.fingerprint }}
     steps:
       - uses: actions/checkout@v4
@@ -167,6 +176,7 @@ jobs:
           xcrun simctl ui "$UDID" appearance light
           xcrun simctl ui "$UDID" content_size large
           python3 -I scripts/screenshots/capture.py status-bar --udid "$UDID"
+          xcrun simctl io "$UDID" enumerate | grep -iE "display|port|class|size|name" | head -40 || true
       - name: Capture every scene twice
         timeout-minutes: 50
         run: |
@@ -182,8 +192,9 @@ jobs:
               xcodebuild test-without-building -xctestrun "$XCTESTRUN" -destination "id=$UDID" \
                 -only-testing:GatefoldListingShots/ListingShotsUITests/testListingScenes \
                 -resultBundlePath "$RUNNER_TEMP/shots-$pass.xcresult" 2>&1 | tee "$RUNNER_TEMP/test-$pass.log" \
-                | grep --line-buffered -E "Test Case|TEST (SUCCEEDED|FAILED)|error:" || true
-            [ "${PIPESTATUS[0]}" = 0 ] || status=1
+                | { grep --line-buffered -E "Test Case|TEST (SUCCEEDED|FAILED)|error:" || true; }
+            [ "${PIPESTATUS[0]}" = 0 ] || { echo "::error::Pass $pass: the scenes' test failed"; status=1; }
+            kill -0 "$watcher" 2>/dev/null || { echo "::error::Pass $pass: the capture watcher had stopped"; status=1; }
             touch "$dir/finished"; wait "$watcher" || true
             echo "== pass $pass"; cat "$RUNNER_TEMP/watch-$pass.log"
             python3 -I scripts/screenshots/capture.py check --device "$DEVICE" --dir "$dir" || status=1
@@ -238,6 +249,6 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         with:
-          name: listing-screenshots-${{ needs.plan.outputs.fingerprint }}
+          name: listing-screenshots-${{ github.event_name == 'pull_request' && 'pr-' || '' }}${{ needs.plan.outputs.fingerprint }}
           path: ${{ runner.temp }}/set
           retention-days: 90

@@ -48,6 +48,8 @@ final class ListingShotsUITests: XCTestCase {
         var predicate: NSPredicate?
         if let label = ready["label"] { predicate = NSPredicate(format: "label == %@", label) }
         if let part = ready["label_contains"] { predicate = NSPredicate(format: "label CONTAINS %@", part) }
+        // A rotation can lay the page out once more before it settles, so its count need not be 0.
+        if let start = ready["label_begins"] { predicate = NSPredicate(format: "label BEGINSWITH %@", start) }
         if let predicate {
             let waited = XCTWaiter.wait(for: [expectation(for: predicate, evaluatedWith: element)], timeout: 90)
             guard waited == .completed else { XCTFail("\(id): \(ready["id"] ?? "?") never read as ready"); return }

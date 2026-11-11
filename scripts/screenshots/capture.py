@@ -28,9 +28,16 @@ import time
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 SPEC = ROOT / "screenshots" / "spec.json"
 # What can change a shot: the app, its packages' code, the project, the scenes, the spec and the composer.
-ON_SCREEN = ["Gatefold", "Packages/GatefoldCore/Sources", "Packages/GatefoldCloud/Sources", "project.yml",
-             "GatefoldListingShots", "screenshots", "scripts/screenshots"]
-STABLE_FRAMES, MAX_FRAMES, FRAME_GAP = 3, 45, 0.8
+# Also what renders it: the dependencies, the pinned Xcode and simulator, and the workflow's appearance settings.
+ON_SCREEN = ["Gatefold", "Packages/GatefoldCore/Sources", "Packages/GatefoldCloud/Sources",
+             "Packages/GatefoldCore/Package.swift", "Packages/GatefoldCloud/Package.swift",
+             "Packages/GatefoldCloud/Package.resolved", "project.yml", "GatefoldListingShots", "screenshots",
+             "scripts/screenshots", ".github/actions/select-xcode", ".github/workflows/screenshots.yml"]
+# The watcher gives up after SHOOT_LIMIT seconds; the scene test waits longer (ListingShotsUITests: 120 s).
+STABLE_FRAMES, SHOOT_LIMIT, FRAME_GAP = 3, 80, 0.8
+# Books in the public domain everywhere; the shelf launch argument may name only these.
+PUBLIC_DOMAIN = {"moby-dick", "pride-and-prejudice", "frankenstein", "dracula", "alice-in-wonderland",
+                 "sherlock-holmes", "emma"}
 
 
 def load(spec):
@@ -63,8 +70,14 @@ def settled(hashes, n=STABLE_FRAMES):
 def shoot(udid, display, out, spec):
     """Shoots until the screen holds still. Returns (ok, why)."""
     hashes = []
-    tmp = pathlib.Path(tempfile.mkdtemp(prefix="shot-"))
-    for i in range(MAX_FRAMES):
+    with tempfile.TemporaryDirectory(prefix="shot-") as t:
+        return shoot_into(pathlib.Path(t), udid, display, out, spec, hashes)
+
+
+def shoot_into(tmp, udid, display, out, spec, hashes):
+    started = time.monotonic()
+    i = 0
+    while time.monotonic() - started < SHOOT_LIMIT:
         if i % 5 == 0:
             status_bar(udid, spec)  # again: after a launch the iPad's bar works out its weekday anew
         frame = tmp / f"{i}.png"
@@ -76,8 +89,9 @@ def shoot(udid, display, out, spec):
         if settled(hashes):
             frame.replace(out)
             return True, f"settled after {i + 1} frames"
+        i += 1
         time.sleep(FRAME_GAP)
-    return False, f"the screen never held still for {STABLE_FRAMES} frames in {MAX_FRAMES}"
+    return False, f"the screen never held still for {STABLE_FRAMES} frames in {SHOOT_LIMIT} s"
 
 
 def watch(udid, device, d, spec):
@@ -93,6 +107,8 @@ def watch(udid, device, d, spec):
                 ok, why = shoot(udid, display, d / f"{scene}.png", spec)
             except subprocess.CalledProcessError as exc:
                 ok, why = False, f"simctl failed: {exc.stderr.decode(errors='replace').strip()[:200]}"
+            except Exception as exc:  # never leave the scene waiting: say why
+                ok, why = False, f"the watcher failed: {type(exc).__name__}: {exc}"[:300]
             if ok:
                 print(f"{scene}: {why}, sha256 {sha(d / f'{scene}.png')[:16]}", flush=True)
                 (d / f"{scene}.done").write_text(why)
@@ -144,16 +160,20 @@ def fingerprint(root=ROOT):
 
 
 def device_name(device, spec):
-    """The first of the device's names this Mac's simulators offer."""
+    """The first of the device's names this Mac's simulators offer, as a prefix: "iPad Pro 13-inch" is offered as
+    "iPad Pro 13-inch (M5)". ci-simulator.py matches the same way (a whole name never picks a sibling)."""
     d = spec["devices"][device]
     names = [d["name"], *d.get("fallbacks", [])]
     listing = json.loads(subprocess.run(["xcrun", "simctl", "list", "devicetypes", "-j"], check=True,
                                         capture_output=True, text=True).stdout)
-    offered = {t["name"] for t in listing["devicetypes"]}
+    return pick_name(names, [t["name"] for t in listing["devicetypes"]])
+
+
+def pick_name(names, offered):
     for n in names:
-        if n in offered:
+        if any(o == n or o.startswith(n + " (") for o in offered):
             return n
-    raise SystemExit(f"capture: this Mac offers none of {names}")
+    raise SystemExit(f"capture: this Mac offers none of {names} (it offers {sorted(offered)})")
 
 
 def selftest():
@@ -172,12 +192,21 @@ def selftest():
                 "scenes": [{"id": "shelf", "devices": ["iphone"]}, {"id": "papers", "devices": ["iphone"]}]}
         assert check("iphone", a, spec) == ["iphone papers: no shot"], check("iphone", a, spec)
         assert png_size(a / "shelf.png") == (1206, 2622)
+    assert pick_name(["iPad Pro 13-inch"], ["iPad Pro 11-inch (M5)", "iPad Pro 13-inch (M5)"]) == "iPad Pro 13-inch"
+    assert pick_name(["iPhone Duo"], ["iPhone Duo Pro", "iPhone Duo"]) == "iPhone Duo"
+    assert pick_name(["iPhone 17 Pro", "iPhone 16 Pro"], ["iPhone 17 Pro Max", "iPhone 16 Pro"]) == "iPhone 16 Pro"
     spec = load(SPEC)
     for s in spec["scenes"]:
         assert set(s["devices"]) <= set(spec["devices"]), s["id"]
         assert len(s["headline"]) == 2 and s["subline"] and s["bg"] in ("paper", "ink"), s["id"]
         assert "PocketBook" not in " ".join(s["headline"]) + s["subline"], f"{s['id']}: no trademarks (2.3.7)"
-    assert "the-great-gatsby" not in " ".join(spec["launch"]), "public-domain-everywhere books only"
+    shelf = spec["launch"][spec["launch"].index("-GatefoldFakeShelf") + 1].split(",")
+    assert set(shelf) <= PUBLIC_DOMAIN and len(shelf) == len(set(shelf)), f"public-domain books, once each: {shelf}"
+    seeds = (ROOT / "Gatefold" / "Sync" / "FakeSyncService.swift").read_text()
+    for name in shelf:
+        assert f'resource: "{name}"' in seeds, f"-GatefoldFakeShelf names {name}, which the fake Cloud does not have"
+    opened = [a.split("gutenberg-", 1)[1] for s in spec["scenes"] for a in s["args"] if a.startswith("gutenberg-")]
+    assert set(opened) <= set(shelf), f"a scene opens a book that is not on the shelf: {opened}"
     assert len(fingerprint()) == 64
     print(f"capture selftest: ok ({len(spec['scenes'])} scenes)")
 
