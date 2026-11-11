@@ -1876,7 +1876,11 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         // The running head stays with the page on screen: it changes chapter as the new page is revealed.
         // Let go only while the cover is still this jump's: an abandoned one leaves a newer jump's head.
         weakModel?.heldRunningHead = .some(weakModel?.chapterTitle)
-        if riffle {
+        // A bare picture curls no leaves (gatefold#228): the jump runs under the screen as it is instead.
+        if riffle, !OldPagePicture.riffles(hold) {
+            readerLog.notice("veil: jump \(jump, privacy: .public) riffles no leaves: its old page pictured bare")
+        }
+        if riffle, OldPagePicture.riffles(hold) {
             // The thumb starts riffling at once and keeps going while the far chapter loads, so the
             // wait is the riffle, never a dimmed page.
             var arrived = false
