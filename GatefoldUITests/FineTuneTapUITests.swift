@@ -175,7 +175,7 @@ final class FineTuneTapUITests: XCTestCase {
                 print("TAPRATE miss on \(id) at tap \(tap) (changed, then back)")
             }
         }
-        print("TAPRATE \(shown) \(id) trials=\(trials) misses=\(misses) hangGuard=\(Int(HangGuard.seconds(reads: Self.landReads))) s")
+        print("TAPRATE \(shown) \(id) trials=\(trials) misses=\(misses) hangGuard=\(Int(HangGuard.seconds(reads: Self.landReads))) s, step end \(ProcessInfo.processInfo.environment["GATEFOLD_STEP_UNTIL"] == nil ? "not passed" : "passed")")
         XCTAssertEqual(misses, 0, "every one of \(trials) taps on \(id) flipped its switch")
     }
 
