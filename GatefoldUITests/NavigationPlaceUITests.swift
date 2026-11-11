@@ -380,11 +380,8 @@ final class NavigationPlaceUITests: XCTestCase {
         // cover, which has no words to scroll through. He takes the offer, as he would.
         if first.isEmpty { first = takeTheCloudsOffer() }
         XCTAssertFalse(first.isEmpty, "the page he scrolls from shows words")
-        // A tap that met the page after the offer folded may have brought up the controls already.
-        let contents = app.descendants(matching: .any)["reader.contents"].firstMatch
-        if !(contents.exists && contents.isHittable) { showChrome() }
+        showChrome()
         let appearance = app.descendants(matching: .any)["reader.appearance"].firstMatch
-        if !appearance.isHittable { showChrome() }
         appearance.tap()
         let turnStyle = app.descendants(matching: .any)["appearance.pageTurn"].firstMatch
         XCTAssertTrue(turnStyle.waitForExistence(timeout: 5))
@@ -450,6 +447,13 @@ final class NavigationPlaceUITests: XCTestCase {
     /// offer where it was just seen, until the page shows words (as `takeTheOffer` does since #178).
     /// The tap goes to the point, so an offer that folded in between makes no failed tap. Bounded by
     /// looks, not seconds.
+    /// Where to tap `element`, read from its frame. Never `isHittable`: asked of an offer in the middle of
+    /// folding, XCTest fails the test ("Activation point invalid", #171's probe 42966309493).
+    private func tappable(_ element: XCUIElement) -> CGRect? {
+        let f = element.frame
+        return f.isEmpty || f.width < 1 || f.height < 1 || !app.frame.contains(CGPoint(x: f.midX, y: f.midY)) ? nil : f
+    }
+
     private func takeTheCloudsOffer() -> String {
         let offer = app.descendants(matching: .any)["banner.jump"].firstMatch
         let tab = app.descendants(matching: .any)["banner.tab"].firstMatch
@@ -461,13 +465,11 @@ final class NavigationPlaceUITests: XCTestCase {
             // just landed would turn it or bring up the controls.
             if quiet > 0 {
                 quiet -= 1
-            } else if offer.exists, offer.isHittable {
-                let f = offer.frame
+            } else if offer.exists, let f = tappable(offer) {
                 origin.withOffset(CGVector(dx: f.midX, dy: f.midY)).tap()
                 offers += 1
                 quiet = 10
-            } else if tab.exists, tab.isHittable {
-                let f = tab.frame
+            } else if tab.exists, let f = tappable(tab) {
                 origin.withOffset(CGVector(dx: f.midX, dy: f.midY)).tap()
                 tabs += 1
                 quiet = 2
