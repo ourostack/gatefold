@@ -1583,7 +1583,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
 
     @discardableResult
     func turn(forward: Bool) -> Bool {
-        guard !isTurning else { return true }
+        guard TurnGate.starts(turning: isTurning, veiled: veil != nil, jumpStarting: jumpStarting) else { return true }
         switch model.pageTurn {
         case .scroll:
             return false
@@ -1876,7 +1876,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
 
     /// Runs a jump with the old page left on screen, dimmed to 60 %, until the new page has painted;
     /// then the old page cross-fades away over 0.2 s (no blank page, no spinner). With `riffle`, a few
-    /// leaves flick past first.
+    /// leaves flick past first, unless the old page pictured bare: then none curl (gatefold#228).
     func veiledJump(riffle: Bool, forward: Bool, jump: Int, _ body: @escaping () async -> Void) async {
         guard veil == nil, !jumpStarting, !isTurning, view.window != nil else { return await body() }
         jumpStarting = true
@@ -1935,7 +1935,11 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         // The running head stays with the page on screen: it changes chapter as the new page is revealed.
         // Let go only while the cover is still this jump's: an abandoned one leaves a newer jump's head.
         weakModel?.heldRunningHead = .some(weakModel?.chapterTitle)
-        if riffle {
+        // A bare picture curls no leaves (gatefold#228): the jump runs under the screen as it is instead.
+        if riffle, !OldPagePicture.riffles(hold) {
+            readerLog.notice("veil: jump \(jump, privacy: .public) riffles no leaves: its old page pictured bare")
+        }
+        if riffle, OldPagePicture.riffles(hold) {
             // The thumb starts riffling at once and keeps going while the far chapter loads, so the
             // wait is the riffle, never a dimmed page.
             var arrived = false
