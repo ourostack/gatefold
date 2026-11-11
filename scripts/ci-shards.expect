@@ -1,0 +1,87 @@
+# Every UI test CI runs, as tier|device|test (gatefold#39). scripts/ci-shards.py check --expect fails unless the
+# shards in .github/workflows/app.yml run exactly this set; after adding or removing a test, write it from
+# python3 -I scripts/ci-shards.py check --list (the part of each line before the tab).
+main|iPad Pro 13-inch|CountingPlaceholderUITests/testAFreshOpenNeverLeavesTheNumbersSlotBlank
+main|iPad Pro 13-inch|CountingPlaceholderUITests/testAFreshOpenOnItsSideNeverLeavesTheNumbersSlotBlank
+main|iPad Pro 13-inch|FineTuneTapUITests/testAQuickTouchChangesEverySwitchOnce
+main|iPad Pro 13-inch|FineTuneTapUITests/testAQuickTouchChangesEverySwitchOnceInLandscape
+main|iPad Pro 13-inch|FineTuneTapUITests/testATapOnTheRowsNameChangesItsSwitch
+main|iPad Pro 13-inch|FineTuneTapUITests/testEveryTapFlipsJustifyLandscape
+main|iPad Pro 13-inch|FineTuneTapUITests/testEveryTapFlipsJustifyPortrait
+main|iPad Pro 13-inch|FineTuneTapUITests/testEveryTapFlipsPageNumbersLandscape
+main|iPad Pro 13-inch|FineTuneTapUITests/testEveryTapFlipsPageNumbersPortrait
+main|iPad Pro 13-inch|FineTuneTapUITests/testEveryTapFlipsPagesLeftLandscape
+main|iPad Pro 13-inch|FineTuneTapUITests/testEveryTapFlipsPagesLeftPortrait
+main|iPad Pro 13-inch|FineTuneTapUITests/testEveryTapFlipsPositionLabelLandscape
+main|iPad Pro 13-inch|FineTuneTapUITests/testEveryTapFlipsPositionLabelPortrait
+main|iPad Pro 13-inch|NavigationPlaceUITests/testAContentsJumpKeepsThePlace
+main|iPad Pro 13-inch|NavigationPlaceUITests/testAJumpFromAPageStillLoadingStartsAtOnce
+main|iPad Pro 13-inch|NavigationPlaceUITests/testAJumpsVeilHoldsWhileTheChapterLoads
+main|iPad Pro 13-inch|NavigationPlaceUITests/testAScrubberJumpKeepsThePlace
+main|iPad Pro 13-inch|NavigationPlaceUITests/testOpenedFromTheShelfThenLeftTwiceWithoutATurnKeepsThePlace
+main|iPad Pro 13-inch|NavigationPlaceUITests/testReadInPortraitRotatedThenLeftKeepsHisFirstWords
+main|iPad Pro 13-inch|NavigationPlaceUITests/testScrolledAfterTheLaunchReflowThenLeftKeepsWhereHeScrolled
+main|iPad Pro 13-inch|NavigationPlaceUITests/testTheCloudsOfferOverTheOpeningCoverTakesHisTap
+main|iPad Pro 13-inch|NavigationPlaceUITests/testTheOpeningCoverLetsTheControlsThrough
+main|iPad Pro 13-inch|NavigationPlaceUITests/testWithPageNumbersOnReadInPortraitRotatedThenLeftKeepsHisFirstWords
+main|iPad Pro 13-inch|PageFurnitureUITests/testOffByDefaultYetVoiceOverStillHearsWhereHeIs
+main|iPad Pro 13-inch|PageFurnitureUITests/testOnTheIPadSpreadTwoTogglesThenAReopenKeepHisPage
+main|iPad Pro 13-inch|PageFurnitureUITests/testTurningNumbersOnKeepsTheWordsAndIsKept
+main|iPad Pro 13-inch|PageNumberUITests/testOnASpreadEveryTurnMovesOnTwoPages
+main|iPad Pro 13-inch|PlaceUndoUITests/testAChaptersFirstPageTurnsBackByTapAndBySwipe
+main|iPad Pro 13-inch|PlaceUndoUITests/testAJumpIsOneTapToUndoWithTheControlsHidden
+main|iPad Pro 13-inch|PlaceUndoUITests/testATapAboveYourPageClosesItAndKeepsThePage
+main|iPad Pro 13-inch|PlaceUndoUITests/testATapAtTheLeftEdgeTurnsBackPromptly
+main|iPad Pro 13-inch|PlaceUndoUITests/testATapAtTheLeftEdgeTurnsBackPromptlyWithinAChapter
+main|iPad Pro 13-inch|PlaceUndoUITests/testATapNearTheLeftEdgeOfASpreadTurnsBack
+main|iPad Pro 13-inch|PlaceUndoUITests/testATapWhileAJumpIsUnderWayLandsWhereHeChose
+main|iPad Pro 13-inch|PlaceUndoUITests/testATouchOnTheScrubberNeverJumps
+main|iPad Pro 13-inch|PositionUITests/testEveryPostureKeepsThePlace
+main|iPad Pro 13-inch|ReopenAfterControlsUITests/testAReturnAfterTheControlsAndNumbersShowsTheSameWords
+main|iPad Pro 13-inch|ReviewerChecksUITests/testEveryReopenReturnsTheSameWords
+main|iPad Pro 13-inch|ReviewerChecksUITests/testPageNumbersAreOnOrOffInEveryBook
+main|iPad Pro 13-inch|ReviewerChecksUITests/testTheDefaultSpreadIsAsFullAsAppleBooks
+main|iPad Pro 13-inch|ReviewerChecksUITests/testTheLastPagesNumberIsTheCount
+main|iPad Pro 13-inch|RotationMidTransitionUITests/testARestoreThatNeverSettlesStillShowsTheSpread
+main|iPad Pro 13-inch|RotationMidTransitionUITests/testTurningDuringAContentsJump
+main|iPad Pro 13-inch|RotationMidTransitionUITests/testTurningDuringAPageTurn
+main|iPad Pro 13-inch|RotationRepro/testRotateThenLeaveWithoutTurning
+main|iPad Pro 13-inch|RotationRepro/testRotateThenLeaveWithoutTurningAfterStalledReflows
+main|iPad Pro 13-inch|SpreadTurnSettleUITests/testSpreadTurnsLandWithoutSliding
+main|iPad Pro 13-inch|WindowFitUITests/testOnItsSide
+main|iPad Pro 13-inch|WindowFitUITests/testUpright
+main|iPhone Duo|FineTuneTapUITests/testAQuickTouchChangesEverySwitchOnce
+main|iPhone Duo|FineTuneTapUITests/testAQuickTouchChangesEverySwitchOnceInLandscape
+main|iPhone Duo|FineTuneTapUITests/testATapOnTheRowsNameChangesItsSwitch
+main|iPhone Duo|FineTuneTapUITests/testEveryTapFlipsJustifyLandscape
+main|iPhone Duo|FineTuneTapUITests/testEveryTapFlipsJustifyPortrait
+main|iPhone Duo|FineTuneTapUITests/testEveryTapFlipsPageNumbersLandscape
+main|iPhone Duo|FineTuneTapUITests/testEveryTapFlipsPageNumbersPortrait
+main|iPhone Duo|FineTuneTapUITests/testEveryTapFlipsPagesLeftLandscape
+main|iPhone Duo|FineTuneTapUITests/testEveryTapFlipsPagesLeftPortrait
+main|iPhone Duo|FineTuneTapUITests/testEveryTapFlipsPositionLabelLandscape
+main|iPhone Duo|FineTuneTapUITests/testEveryTapFlipsPositionLabelPortrait
+main|iPhone Duo|PageNumberUITests/testEveryTurnMovesOnAPageAndAReopenKeepsTheNumbers
+main|iPhone Duo|PlaceUndoUITests/testATapAtTheLeftEdgeTurnsBackPromptly
+main|iPhone Duo|PlaceUndoUITests/testATapAtTheLeftEdgeTurnsBackPromptlyWithinAChapter
+main|iPhone Duo|PositionUITests/testBookmarkInTheTopBarBookmarks
+main|iPhone Duo|PositionUITests/testEveryPostureKeepsThePlace
+main|iPhone Duo|PositionUITests/testFontChangeKeepsThePlace
+main|iPhone Duo|PositionUITests/testRotationKeepsThePlace
+main|iPhone Duo|PositionUITests/testTabletopDeckTurnsAndResizes
+main|iPhone Duo|ReviewerChecksUITests/testEveryReopenReturnsTheSameWords
+main|iPhone Duo|ReviewerChecksUITests/testPageNumbersAreOnOrOffInEveryBook
+main|iPhone Duo|ReviewerChecksUITests/testTheDefaultSpreadIsAsFullAsAppleBooks
+main|iPhone Duo|ReviewerChecksUITests/testTheLastPagesNumberIsTheCount
+pr|iPad Pro 13-inch|FineTuneTapUITests/testAQuickTouchChangesEverySwitchOnce
+pr|iPad Pro 13-inch|FineTuneTapUITests/testATapOnTheRowsNameChangesItsSwitch
+pr|iPad Pro 13-inch|NavigationPlaceUITests/testAContentsJumpKeepsThePlace
+pr|iPad Pro 13-inch|NavigationPlaceUITests/testOpenedFromTheShelfThenLeftTwiceWithoutATurnKeepsThePlace
+pr|iPad Pro 13-inch|NavigationPlaceUITests/testTheCloudsOfferOverTheOpeningCoverTakesHisTap
+pr|iPad Pro 13-inch|PlaceUndoUITests/testAJumpIsOneTapToUndoWithTheControlsHidden
+pr|iPad Pro 13-inch|PlaceUndoUITests/testATapAtTheLeftEdgeTurnsBackPromptly
+pr|iPad Pro 13-inch|PlaceUndoUITests/testATouchOnTheScrubberNeverJumps
+pr|iPad Pro 13-inch|RotationMidTransitionUITests/testTurningDuringAPageTurn
+pr|iPad Pro 13-inch|SpreadTurnSettleUITests/testSpreadTurnsLandWithoutSliding
+pr|iPhone Duo|PageNumberUITests/testEveryTurnMovesOnAPageAndAReopenKeepsTheNumbers
+pr|iPhone Duo|PlaceUndoUITests/testATapAtTheLeftEdgeTurnsBackPromptly
