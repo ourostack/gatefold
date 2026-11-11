@@ -1345,7 +1345,8 @@ final class ReaderModel {
     @MainActor private final class VeilWatch { var back = false; var letGo = false }
     /// The outer veil's jump, for the work inside it (a landing's own percent step runs there): only the
     /// outer veil is watched, and a landing inside it is that veil's. Task-local, so a jump started
-    /// alongside one still out is not taken as inside it.
+    /// alongside one still out is not taken as inside it. An unstructured `Task {}` started inside a veil
+    /// inherits it too: a jump started from one would go unwatched and land on that veil's step.
     @TaskLocal private static var outerVeil: Int?
     /// Late jumps put back where his newest move left the page (tests read it).
     @ObservationIgnored private(set) var jumpsPutBack = 0
