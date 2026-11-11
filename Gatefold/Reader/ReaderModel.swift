@@ -1963,7 +1963,14 @@ final class ReaderModel {
     /// A finger that travelled on the page: a scroll or swipe, never a tap. Only one made while a reflow
     /// lays out can be a move of his under it (gatefold#171); a finger already moving when the reflow
     /// began brings no new drag, so it never counts.
-    func noteDrag() { if keeper.reflowing != nil { reflowTouches += 1 } }
+    /// In curl and fade the page moves only by a turn (`userTurnedPage`), never under the finger, so a
+    /// drag there (one that springs back, or runs up the page) is no scroll.
+    func noteDrag() {
+        guard keeper.reflowing != nil, pageTurn == .scroll || pageTurn == .slide else { return }
+        reflowTouches += 1
+    }
+    /// A curl that sprang back turned nothing: no drag of it is left to count.
+    func dragDidNotTurn() { reflowTouches = 0 }
     /// Touches on the page since the last location report; a tap that only shows or hides the controls
     /// clears them.
     @ObservationIgnored private var touchesSinceLocation = 0

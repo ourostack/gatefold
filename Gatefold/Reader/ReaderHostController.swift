@@ -1659,6 +1659,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             }
         }
         if !complete {
+            weakModel?.dragDidNotTurn()
             // Put the navigator back where it was before lifting the overlay.
             _ = curl.mirrored
                 ? await navigator.goForward(options: .init(animated: false))
@@ -2535,8 +2536,9 @@ struct ReaderHostView: UIViewControllerRepresentable {
 private final class TouchNoticer: UIGestureRecognizer {
     private let onTouch: () -> Void
     private let onDrag: () -> Void
-    /// Where the finger went down, until it travels far enough to be a drag (a tap never does).
-    private var start: CGPoint?
+    /// The first finger down and where it went down, until it travels far enough to be a drag (a tap
+    /// never does). Only that finger is measured: two fingers apart are no drag.
+    private var first: (touch: UITouch, at: CGPoint)?
 
     init(onTouch: @escaping () -> Void, onDrag: @escaping () -> Void) {
         self.onTouch = onTouch
@@ -2549,20 +2551,21 @@ private final class TouchNoticer: UIGestureRecognizer {
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
         onTouch()
-        if start == nil { start = touches.first?.location(in: view) }
+        if first == nil, let touch = touches.first { first = (touch, touch.location(in: view)) }
     }
 
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent) {
-        guard let start, let here = touches.first?.location(in: view) else { return }
-        guard hypot(here.x - start.x, here.y - start.y) > 10 else { return }
-        self.start = nil
+        guard let first, touches.contains(first.touch) else { return }
+        let here = first.touch.location(in: view)
+        guard hypot(here.x - first.at.x, here.y - first.at.y) > 10 else { return }
+        self.first = nil
         onDrag()
         state = .failed
     }
 
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) { state = .failed }
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent) { state = .failed }
-    override func reset() { start = nil }
+    override func reset() { first = nil }
 }
 
 extension Decoration.Style.Id {

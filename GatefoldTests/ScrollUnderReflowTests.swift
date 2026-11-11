@@ -22,6 +22,7 @@ import Testing
         let model = ReaderModel(book: book, publication: publication, app: app, page: page)
         page.model = model
         await model.load()
+        model.setPreferences { $0.pageTurn = .scroll }
         await model.locationDidChange(opening)
         return (model, page, publication, app)
     }
@@ -148,6 +149,25 @@ import Testing
         await model.locationDidChange(next)
         try await Task.sleep(for: .milliseconds(200))
         #expect(model.hisMoves == before + 1, "one turn counted as \(model.hisMoves - before) moves")
+        model.close()
+    }
+
+    /// In curl the page moves only by a turn: a drag that springs back, then the layout's own report,
+    /// keeps the restore.
+    @Test func aCurlDragThatTurnsNothingIsNotAScroll() async throws {
+        let (model, page, publication, _) = try await open()
+        model.setPreferences { $0.pageTurn = .curl }
+        model.keeper.reflowWillBegin(.typography, move: model.hisMoves)
+        model.reflowDidBegin()
+        let before = model.hisMoves
+        model.noteInteraction()
+        model.noteDrag()
+        model.dragDidNotTurn()
+        let laidOut = try #require(await ReaderSyncTests.locate(publication, 0.21))
+        page.currentLocation = laidOut
+        await model.locationDidChange(laidOut)
+        #expect(model.keeper.restoreMayMove(move: model.hisMoves), "a curl drag that turned nothing took the restore away")
+        #expect(model.hisMoves == before, "a curl drag that turned nothing counted as a move of his")
         model.close()
     }
 }
