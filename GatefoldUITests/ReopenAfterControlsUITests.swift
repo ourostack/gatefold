@@ -16,6 +16,7 @@ final class ReopenAfterControlsUITests: XCTestCase {
     /// k + 10, and so on, and together they take rounds 1 to `rounds` once each. Every round is its own fresh
     /// install (`-GatefoldReset` wipes the library, its places and the reopen book; the fake Cloud starts from
     /// its seed on every launch), so no round reads what another saved and the split changes nothing they judge.
+    /// The reopen pictures in Caches survive a reset, but are read only for a launch reopen, which the reset clears.
     private static let methods = 5
 
     override func setUp() async throws { continueAfterFailure = true; app = XCUIApplication() }
