@@ -1,6 +1,7 @@
 """Checks the UI test shards' lists in app.yml against the tests in GatefoldUITests (gatefold#39).
 
     python3 -I scripts/ci-shards.py check [--list] [--expect FILE]
+    python3 -I scripts/ci-shards.py write
     python3 -I scripts/ci-shards.py --selftest
 
 Each shard job in app.yml (one that calls ui-tests.yml) lists `tests`, `skip` and `pr_tests` per matrix entry, under
@@ -12,7 +13,8 @@ main and full-list pull requests) this fails when
   - one test runs in two shards on the same device in the same tier.
 --list prints every "tier|device|test" with its shard. --expect FILE fails unless that set equals the file's (the first
 word of each line; blank lines and lines starting with # ignored). CI checks against scripts/ci-shards.expect, so a
-test leaves CI only by a visible edit there: after adding or removing a test, write the file from --list.
+test leaves CI only by a visible edit there: after adding or removing a test, `write` rewrites the file from the shards
+(keeping its comment header), and the diff shows what changed.
 Reads only; no dependencies, so it runs in the Swift container of `GatefoldCore tests`.
 """
 import os
@@ -23,6 +25,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WORKFLOW = os.path.join(ROOT, ".github", "workflows", "app.yml")
 SOURCES = os.path.join(ROOT, "GatefoldUITests")
 TIERS = ("pr", "main")
+EXPECT = os.path.join(ROOT, "scripts", "ci-shards.expect")
+WRITE = "python3 -I scripts/ci-shards.py write"
 
 
 def read_tests(sources_dir):
@@ -179,6 +183,7 @@ def check(args):
     with open(WORKFLOW, encoding="utf-8") as f:
         text = f.read()
     problems, runs = plan(text, read_tests(SOURCES))
+    listed = []
     if "--list" in args:
         for (tier, device, t), names in sorted(runs.items()):
             print(f"{tier}|{device}|{t}\t{','.join(names)}")
@@ -186,19 +191,49 @@ def check(args):
         with open(args[args.index("--expect") + 1], encoding="utf-8") as f:
             want = {l.split("\t")[0].strip() for l in f if l.strip() and not l.lstrip().startswith("#")}
         have = {f"{tier}|{device}|{t}" for tier, device, t in runs}
-        for line in sorted(want - have):
-            problems.append(f"expected but not run: {line}")
-        for line in sorted(have - want):
-            problems.append(f"run but not expected: {line}")
+        listed += expect_problems(want, have)
     for tier in TIERS:
         devices = sorted({d for (ti, d, _) in runs if ti == tier})
         print(f"{tier}: " + "; ".join(
             f"{d} {sum(1 for (ti, dd, _) in runs if ti == tier and dd == d)} tests" for d in devices))
     for p in problems:
-        print(f"::error title=UI test shards::{p}")
-    if not problems:
+        print(f"::error title=UI test shards (.github/workflows/app.yml)::{p}")
+    for p in listed:
+        print(f"::error title=UI test list (scripts/ci-shards.expect)::{p}")
+    if not problems and not listed:
         print("Every listed test exists, and each runs in exactly one shard per device and tier.")
-    return 1 if problems else 0
+    return 1 if problems or listed else 0
+
+
+def expect_problems(want, have):
+    """What differs between the expect file's set and the shards', each with the fix."""
+    out = []
+    for line in sorted(have - want):
+        out.append(f"UI test {line} runs in CI but isn't in scripts/ci-shards.expect. If you added it, run `{WRITE}` "
+                   "and commit the file.")
+    for line in sorted(want - have):
+        out.append(f"UI test {line} is in scripts/ci-shards.expect, but no shard runs it: was it renamed, removed or "
+                   f"dropped from a shard's list in app.yml? If that's intended, run `{WRITE}` and commit the file.")
+    return out
+
+
+def write(path=EXPECT, workflow=WORKFLOW, sources=SOURCES):
+    """Rewrite the expect file from the shards, keeping its leading comment lines."""
+    with open(workflow, encoding="utf-8") as f:
+        _, runs = plan(f.read(), read_tests(sources))
+    header = []
+    if os.path.exists(path):
+        with open(path, encoding="utf-8") as f:
+            for l in f:
+                if not l.lstrip().startswith("#"):
+                    break
+                header.append(l)
+    lines = sorted(f"{tier}|{device}|{t}" for tier, device, t in runs)
+    with open(path, "w", encoding="utf-8") as f:
+        f.writelines(header)
+        f.write("".join(l + "\n" for l in lines))
+    print(f"wrote {len(lines)} tests to {os.path.relpath(path, ROOT)}")
+    return 0
 
 
 def selftest():
@@ -328,6 +363,12 @@ jobs:
             tests: BUITests
 """ + base.format(cold="false"))
     assert any("two shards have this name" in p for p in same_name), same_name
+    # A new test, and one that went: each message names the test and the command that fixes the file (#195 read a
+    # missing line as a unit-test failure).
+    new, gone = expect_problems({"main|d|A/t1", "main|d|A/gone"}, {"main|d|A/t1", "main|d|A/added"})
+    assert "main|d|A/added runs in CI but isn't in scripts/ci-shards.expect" in new and WRITE in new, new
+    assert "main|d|A/gone is in scripts/ci-shards.expect, but no shard runs it" in gone and WRITE in gone, gone
+    assert expect_problems({"x"}, {"x"}) == []
     print("ci-shards selftest: ok")
     return 0
 
@@ -338,5 +379,7 @@ if __name__ == "__main__":
         sys.exit(selftest())
     if args[:1] == ["check"]:
         sys.exit(check(args[1:]))
+    if args[:1] == ["write"]:
+        sys.exit(write())
     print(__doc__, file=sys.stderr)
     sys.exit(2)
