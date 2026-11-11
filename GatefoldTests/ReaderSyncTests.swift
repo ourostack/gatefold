@@ -121,9 +121,16 @@ final class ScriptedPage: ReaderPage {
 
     /// The chapter each landing settle's words resolved to, as the host's moves look them up.
     private(set) var landingSettles: [String?] = []
+    /// Whether each landing settle was still wanted when it began; the host's settle gives up when not.
+    private(set) var landingWanted: [Bool] = []
     func settleLanding(_ anchor: ReadingAnchor, stillWanted: @escaping @MainActor () -> Bool) async {
         landingSettles.append(model?.locator(for: anchor)?.href.string)
+        landingWanted.append(stillWanted())
     }
+
+    /// Reflows the host ended because a standby swap retired the page they were laying out.
+    private(set) var reflowsEndedBySwap = 0
+    func endReflowForSwap() { reflowsEndedBySwap += 1 }
 
     /// A capture a stalled reflow cuts short: no first words to be had.
     var withholdAnchor = false
@@ -649,8 +656,30 @@ final class ScriptedPage: ReaderPage {
         await f.model.acceptSuggestion()
         #expect(f.page.promoted == [waiting])
         #expect(f.page.jumps.isEmpty, "no fresh jump: the page was already there")
+        #expect(f.page.reflowsEndedBySwap == 0, "no reflow was open to end")
         let aim = try #require(target?.parsedCFI)
         #expect(await f.sent().last?.parsedCFI.map { $0.isSameLocation(as: aim) } == true)
+    }
+
+    /// A reflow still restarting when he taps the catch-up (CI's cold iPad, gatefold#261): the swap puts
+    /// in a page laid out at the new size and retires the one the reflow was laying out, so that reflow can
+    /// never settle. Left open, it made the landing give up its settle and its words, and the place kept
+    /// was Readium's boundary, which reopened on another page.
+    @Test func aCatchUpSwappedInDuringAReflowEndsThatReflowAndSettlesItsWords() async throws {
+        let opened = Date().addingTimeInterval(-600)
+        let f = try await Self.make(remote: { pub, mapper in
+            try await Self.inkPadPlace(pub, mapper, index: 12, percent: 40)
+        }, book: { $0.totalProgression = 0.05; $0.lastOpened = opened }, startAt: 0.05)
+        await f.model.load()
+        let waiting = try #require(f.page.standby)
+        f.model.keeper.reflowWillBegin(.rotation, move: f.model.hisMoves)
+        f.model.reflowDidBegin()
+        await f.model.acceptSuggestion()
+        #expect(f.page.promoted == [waiting])
+        #expect(f.model.keeper.reflowing == nil, "the reflow on the retired page ended with the swap")
+        #expect(f.page.reflowsEndedBySwap == 1)
+        #expect(f.page.landingWanted == [true], "the landing settled its words instead of giving way to a reflow that could not end")
+        f.model.close()
     }
 
     @Test func carryingOnHereLetsTheWaitingPageGo() async throws {
