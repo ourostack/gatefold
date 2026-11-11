@@ -33,7 +33,7 @@ import Testing
         let opening = Locator(href: try #require(AnyURL(string: publication.readingOrder[0].url().string)), mediaType: .xhtml,
                               locations: .init(progression: 0, totalProgression: 0))
         // A page is a twentieth of the file; reading words waits until the web view has loaded.
-        let page = ColdLaunchPage(at: opening, span: 0.05, loadsAtRead: 4)
+        let page = ColdLaunchPage(at: opening, span: 0.05, loadsAtRead: 4, freedReadsGoFirst: true)
         let model = ReaderModel(book: book, publication: publication, app: app, page: page, goTo: goTo)
         page.model = model
 
