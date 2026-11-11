@@ -183,6 +183,38 @@ import WebKit
 
     /// Open a book, close it, and the close itself retires its page, so the page's web views go: three times
     /// over, as he opens and closes books in a session.
+    /// #275: a reader closed before its page has been drawn even once still leaves a picture in the page's place.
+    /// The page's own snapshot needs a drawn page (UIKit logs "has not been rendered at least once"), so a close
+    /// in that first moment, as on CI's loaded runner 350 ms after the open, left the page's place empty.
+    @Test func aReaderClosedBeforeItsFirstFrameStillLeavesAPicture() async throws {
+        let publication = try await HighlightTests.publication()
+        let scene = try #require(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 820, height: 1180)
+        let root = UIViewController()
+        window.rootViewController = root
+        window.isHidden = false
+        defer { window.isHidden = true }
+        let app = AppModel(sync: FakeSyncService(), libraryRoot: URL.temporaryDirectory.appending(path: "first-frame-\(UUID().uuidString)"))
+        let cloud = CloudBook(fastHash: "first-frame", name: "pride-and-prejudice.epub", title: "Pride and Prejudice")
+        await app.library.merge([cloud])
+        let entry = try #require(app.library.book("first-frame"))
+        let model = ReaderModel(book: entry, publication: publication, app: app)
+        let host = try #require(model.hostController)
+        // Shown and closed in one turn of the main thread: no frame is drawn between the two.
+        root.addChild(host)
+        host.view.frame = root.view.bounds
+        root.view.addSubview(host.view)
+        host.didMove(toParent: root)
+        try #require(host.navigator.viewIfLoaded != nil, "the reader's page is in its view")
+        model.close()
+        let picture = try #require(host.closePicture, "the reader closed before its first frame shows a picture of its page")
+        #expect(host.view.subviews.last === picture, "over everything the reader draws")
+        host.willMove(toParent: nil)
+        host.view.removeFromSuperview()
+        host.removeFromParent()
+    }
+
     @Test func aClosedReaderLetsGoOfItsWebViews() async throws {
         let publication = try await HighlightTests.publication()
         // In the app's scene, as the reader's window is.
