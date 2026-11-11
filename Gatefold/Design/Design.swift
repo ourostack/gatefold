@@ -94,7 +94,10 @@ enum LaunchOptions {
     static var stallReflow: Bool { defaults.bool(forKey: "GatefoldStallReflow") }
     /// Tests only: the first reflow after his first move waits 120 s for its page to answer its first script, as
     /// CI's landscape spread did while its chapter loaded (gatefold#94, #133); every restore of it waits.
-    static var slowRestorePage: Bool { defaults.bool(forKey: "GatefoldSlowRestorePage") }
+    static var slowRestorePage: Bool { isUITest && defaults.bool(forKey: "GatefoldSlowRestorePage") }
+    /// Tests only, with `slowRestorePage`: the page shown unsettled is noted as Readium names it and never by
+    /// its words, as on a device whose page scripts wait on the stalled install too (gatefold#133).
+    static var shownPageWithoutWords: Bool { isUITest && defaults.bool(forKey: "GatefoldShownPageWithoutWords") }
     /// Debug only: a jump's chapter counts as still loading (Readium's spinner up) for this many looks,
     /// so a test can hold the load open as a slow device does and watch the veil (#38).
     static var holdChapterLoadLooks: Int? { defaults.object(forKey: "GatefoldHoldChapterLoad") == nil ? nil : defaults.integer(forKey: "GatefoldHoldChapterLoad") }

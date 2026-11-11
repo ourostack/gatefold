@@ -1636,15 +1636,22 @@ final class ReaderModel {
 
     /// The watchdog showed the page as it is, its restore still unsettled: noted as Readium names it, then
     /// by its first words (`words`) if the page answers while the note stands.
-    func reflowShownUnsettled(_ here: Locator, words: Bool = false) {
-        guard keeper.reflowing != nil, !isClosed, !isWarming else { return }
-        if words { guard let shown = shownUnsettled, shown.move == moves else { return } }
+    /// Returns the note's number; its words come back with it (`wordsFor`), and count only while that
+    /// note is still the one standing.
+    @discardableResult
+    func reflowShownUnsettled(_ here: Locator, wordsFor note: Int? = nil) -> Int? {
+        guard keeper.reflowing != nil, !isClosed, !isWarming else { return nil }
+        if let note { guard let shown = shownUnsettled, shown.move == moves, note == shownNotes else { return nil } }
+        else { shownNotes += 1 }
         shownUnsettled = (here, moves)
         readerLog.notice("reflow: the page shown unsettled is at \(here.locations.totalProgression ?? -1, privacy: .public)")
+        return shownNotes
     }
+    @ObservationIgnored private var shownNotes = 0
 
     func reflowDidBegin() {
         shownUnsettled = nil
+        shownNotes += 1
         reflowCount += 1
         landingChecks = 0
         anchorCheck = "settling \(reflowCount)"
@@ -1682,6 +1689,7 @@ final class ReaderModel {
 
     func reflowDidFinish(visible: VisibleRange?) {
         shownUnsettled = nil
+        shownNotes += 1
         // He came back to a restore that then settled: the page it settled on is his again, not the one
         // written as he went (his words, which the restore put back on the left page).
         if let written = shownWrittenOpen {

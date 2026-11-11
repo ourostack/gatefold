@@ -852,9 +852,6 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         refreshShownProbe()
     }
 
-    /// The page just shown as it is, while its restore still runs, is the page he sees: noted at once as
-    /// Readium names it, then by its first words once the page answers (that may be the very script the
-    /// restore is waiting on), so a leave before the restore ends keeps it (gatefold#133).
     /// For UI tests: the page shown as it is, read from the screen. Its location reports wait on the
     /// restore, so without this a test reads the words from before the reflow (gatefold#133).
     private func refreshShownProbe() {
@@ -865,14 +862,18 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         }
     }
 
+    /// The page just shown as it is, while its restore still runs, is the page he sees: noted at once as
+    /// Readium names it, then by its first words once the page answers (that may be the very script the
+    /// restore is waiting on), so a leave before the restore ends keeps it (gatefold#133).
     private func noteShownUnsettled() {
-        guard let model = weakModel else { return }
-        if let here = navigator.currentLocation { model.reflowShownUnsettled(here) }
-        // The watchdog starts the restore again right after this, so a newer generation is expected: the
-        // model takes the words only while its note of this page stands (a settle or new reflow drops it).
+        guard let model = weakModel, let here = navigator.currentLocation else { return }
+        let note = model.reflowShownUnsettled(here)
+        guard note != nil, !LaunchOptions.shownPageWithoutWords else { return }
+        // The watchdog starts the restore again right after this: the model takes the words only while
+        // this very note stands (a settle, a new reflow or a newer note drops it).
         Task { [weak self] in
             guard let found = await self?.currentAnchor(), let self, let model = self.weakModel, found.0.text != nil else { return }
-            model.reflowShownUnsettled(found.1, words: true)
+            model.reflowShownUnsettled(found.1, wordsFor: note)
         }
     }
 

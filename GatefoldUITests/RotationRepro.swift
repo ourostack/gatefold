@@ -109,6 +109,12 @@ final class RotationRepro: XCTestCase {
         try rotateThenLeave(extra: ["-GatefoldSlowRestorePage", "YES"])
     }
 
+    /// The same, with the shown page noted only as Readium names it: on a device whose page scripts wait
+    /// on the stalled install too, its words never come back before he leaves.
+    func testRotateThenLeaveWhileTheRestoreWaitsOnItsPageWithoutItsWords() throws {
+        try rotateThenLeave(extra: ["-GatefoldSlowRestorePage", "YES", "-GatefoldShownPageWithoutWords", "YES"])
+    }
+
     private func rotateThenLeave(extra: [String] = []) throws {
         try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .pad, "a spread on rotation is an iPad path")
         // 1. Portrait, fresh install, open, wait for the count.
