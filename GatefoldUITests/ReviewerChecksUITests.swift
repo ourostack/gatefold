@@ -46,16 +46,34 @@ final class ReviewerChecksUITests: XCTestCase {
         return words
     }
 
+    /// Waits are judged in reads of the app, never seconds (gatefold#105, as #94 and #121): each read is a round trip
+    /// to the app, so a starved runner (a cold simulator's first reads take up to 10 s) makes reads slower instead of
+    /// failing what landed late. Each read waits at least 0.2 s, so `reads` sets the floor a fast runner gets (the old
+    /// seconds); `hangGuard` ends it on a runner so slow that the reads would run on.
+    private func readsUntil(reads: Int, hangGuard: TimeInterval, _ done: () -> Bool) -> (ok: Bool, reads: Int, hung: Bool) {
+        let hung = Date().addingTimeInterval(hangGuard)
+        for read in 1...reads {
+            if done() { return (true, read, false) }
+            if Date() > hung { return (false, read, true) }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        }
+        return (false, reads, false)
+    }
+
+    /// A turn is his tap and then different words on the page, within 75 reads (the old 15 s at 0.2 s a read). The
+    /// hang guard is well past the cap even at a cold read's 10 s (75 x 10 s is 750 s), so only a runner that has
+    /// stopped answering reaches it, and it fails as a hang, not as a page that didn't turn.
     @discardableResult
     private func turnForward() -> Bool {
         let before = words
         el("reader.page").coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.5)).tap()
-        let up = Date().addingTimeInterval(15)
-        while Date() < up {
-            if words != before, !words.isEmpty { _ = settle(15); return true }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
-        }
-        return false
+        let start = Date()
+        let turned = readsUntil(reads: 75, hangGuard: 900) { let now = words; return now != before && !now.isEmpty }
+        let secs = String(format: "%.1f", Date().timeIntervalSince(start))
+        note("TURNREADS turned=\(turned.ok) after \(turned.reads) reads in \(secs) s\(turned.hung ? " (hang guard)" : "")")
+        if turned.hung { XCTFail("hang: the turn's reads ran on for \(secs) s (\(turned.reads) reads) without a verdict") }
+        if turned.ok { _ = settle(15) }
+        return turned.ok
     }
 
     private func counted(_ timeout: TimeInterval = 300) -> Int? {
