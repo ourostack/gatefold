@@ -798,7 +798,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         // hasn't settled well past its own budgets (3 s to lay out, 4 s to jump), start it again: the stalled one is no longer current and
         // gives way as soon as it wakes.
         Task { [weak self] in
-            try? await Task.sleep(for: .seconds(12))
+            try? await Task.sleep(for: .seconds(LaunchOptions.restoreWatchdogSeconds))
             // A restore placing his words on the left page is not stalled: it is measuring, within its
             // own read budget. Starting it again threw that work away and began it once more (CI's cold
             // iPad: three restarts, a 91 s open, and a place job run out of time).

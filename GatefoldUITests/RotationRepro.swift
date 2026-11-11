@@ -11,14 +11,16 @@ import GatefoldCore
 ///
 /// Path (an ordinary reader's, no jump hook after the first open):
 ///  1. Portrait. Fresh install (`-GatefoldReset`), open Pride and Prejudice at 0.31, wait until the book
-///     is counted (`reader.pageCount` has a value; up to 300 s), let the words settle.
+///     is counted (`reader.pageCount` has a value; not in the restore tests), let the words settle.
 ///  2. Controls up, Contents, tap contents entry 11, by its identifier,
 ///     let the words settle.
 ///  3. Read two pages: two forward taps at the right edge, each waiting for the words to change and settle.
-///  4. Turn the iPad to landscape (`.landscapeLeft`), let the reflow settle (30 s cap, then 6 s more).
+///  4. Turn the iPad to landscape (`.landscapeLeft`), wait for the words to change, then a long settle.
 ///     The words now on screen are "his page".
-///  5. Three rounds: Home, 3 s, terminate, relaunch without `-GatefoldReset`, set `.landscapeLeft` again,
-///     let the words settle. Compare with his page.
+///  5. Three rounds: Home, wait for iOS to suspend Gatefold, terminate, relaunch without `-GatefoldReset`,
+///     set `.landscapeLeft` again, a long settle. Compare with his page.
+/// Every wait is counted in reads (a settle is the same words several reads running), never in seconds
+/// (gatefold#266).
 ///
 /// Judging, with no book text printed: the visible-text probe (`reader.visibleText`) is whitespace-collapsed.
 ///  - `startsSame`: SHA-256 of the first 30 characters of his page equals that of the reopened page.
@@ -54,24 +56,44 @@ final class RotationRepro: XCTestCase {
         let s = c.count / 2 - 20; return String(c[s..<(s + 40)])
     }
 
-    /// Non-empty, then unchanged for 2.5 s.
-    private func settle(_ timeout: TimeInterval = 60) -> String {
-        let deadline = Date().addingTimeInterval(timeout)
-        while Date() < deadline, vtext.isEmpty { usleep(200_000) }
-        var last = vtext, since = Date()
-        while Date() < deadline, Date().timeIntervalSince(since) < 2.5 {
-            usleep(250_000)
+    /// Reads until `done` holds, a quarter second apart. Judged in reads; the hang guard only ends a wait
+    /// whose reads stopped coming back (a starved runner takes seconds per query).
+    private func readsUntil(reads: Int, hangGuard: TimeInterval, _ done: () -> Bool) -> (ok: Bool, reads: Int, hung: Bool) {
+        let hung = Date().addingTimeInterval(hangGuard)
+        for read in 1...reads {
+            if done() { return (true, read, false) }
+            if Date() > hung { return (false, read, true) }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        }
+        return (false, reads, false)
+    }
+    /// Non-empty, then the same words `quiet` reads in a row. A short settle (4 reads) stands for the old
+    /// 2.5 s of quiet; a long one (10 reads) for the old settle, 4 s and a second settle, so late moves
+    /// after the first quiet are still seen.
+    private func settle(quiet: Int = 4, hangGuard: TimeInterval = 60) -> String {
+        let hung = Date().addingTimeInterval(hangGuard)
+        var last = "", same = 0
+        while Date() < hung {
             let now = vtext
-            if now != last { last = now; since = Date() }
+            if now.isEmpty || now != last { last = now; same = now.isEmpty ? 0 : 1 } else { same += 1 }
+            if same >= quiet { break }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
         }
         return last
     }
     private func turnForward() {
         let old = vtext
         el("reader.page").coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.5)).tap()
-        let deadline = Date().addingTimeInterval(15)
-        while Date() < deadline, vtext == old || vtext.isEmpty { usleep(200_000) }
-        _ = settle(20)
+        _ = readsUntil(reads: 60, hangGuard: 15) { let now = vtext; return !now.isEmpty && now != old }
+        _ = settle(hangGuard: 20)
+    }
+    /// He leaves: Home, then iOS suspends Gatefold once its leaving work (the place sent, the reopen
+    /// picture kept) has ended, then it is ended.
+    private func leave(_ when: String) {
+        XCUIDevice.shared.press(.home)
+        let suspended = app.wait(for: .runningBackgroundSuspended, timeout: 10)
+        note("left \(when) suspended=\(suspended)")
+        app.quit()
     }
     /// Every move a settle made was behind a cover or a held picture: none on a page he could see.
     private func assertNoVisibleSettleMove(_ when: String) {
@@ -79,14 +101,11 @@ final class RotationRepro: XCTestCase {
         note("visibleSettleMove \(when)=\(seen)")
         XCTAssertFalse(seen, "\(when): a settle moved the page with nothing over it")
     }
-    private func waitCounted(_ timeout: TimeInterval = 300) -> Bool {
+    private func waitCounted() -> Bool {
         let count = el("reader.pageCount")
-        let deadline = Date().addingTimeInterval(timeout)
-        while Date() < deadline {
-            if count.exists, let v = count.value as? String, !v.isEmpty { return true }
-            usleep(500_000)
-        }
-        return false
+        return readsUntil(reads: 1200, hangGuard: 300) {
+            count.exists && !((count.value as? String) ?? "").isEmpty
+        }.ok
     }
 
     func testRotateThenLeaveWithoutTurning() throws {
@@ -104,39 +123,44 @@ final class RotationRepro: XCTestCase {
     /// The same path with the rotation's page slow to answer (`-GatefoldSlowRestorePage`, first launch only):
     /// the restore waits on its first script past the 12 s watchdog, which shows the page as it is, and he
     /// leaves on that page before the restore settles, as on CI's iPad (gatefold#133). The reopen must start
-    /// on the page he saw.
+    /// on the page he saw. The watchdog waits 4 s here, not 12, and the book isn't counted first: nothing
+    /// here judges numbers (gatefold#266).
     func testRotateThenLeaveWhileTheRestoreWaitsOnItsPage() throws {
-        try rotateThenLeave(extra: ["-GatefoldSlowRestorePage", "YES"])
+        try rotateThenLeave(extra: Self.slowRestore, counted: false)
     }
 
     /// The same, with the shown page noted only as Readium names it: on a device whose page scripts wait
     /// on the stalled install too, its words never come back before he leaves.
     func testRotateThenLeaveWhileTheRestoreWaitsOnItsPageWithoutItsWords() throws {
-        try rotateThenLeave(extra: ["-GatefoldSlowRestorePage", "YES", "-GatefoldShownPageWithoutWords", "YES"])
+        try rotateThenLeave(extra: Self.slowRestore + ["-GatefoldShownPageWithoutWords", "YES"], counted: false)
     }
 
-    private func rotateThenLeave(extra: [String] = []) throws {
+    private static let slowRestore = ["-GatefoldSlowRestorePage", "YES", "-GatefoldRestoreWatchdog", "4"]
+
+    /// `counted`: wait for the book's count before the rotation, for the tests whose path was found counted.
+    private func rotateThenLeave(extra: [String] = [], counted waitForCount: Bool = true) throws {
         try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .pad, "a spread on rotation is an iPad path")
         // 1. Portrait, fresh install, open, wait for the count.
         XCUIDevice.shared.orientation = .portrait
-        sleep(1)
         app.launchArguments = base + extra + ["-GatefoldReset", "YES", "-GatefoldDownloadAll", "YES",
                                       "-GatefoldOpenBook", "gutenberg-pride-and-prejudice", "-GatefoldGoTo", "0.31"]
         app.launch()
-        let counted = waitCounted()
-        XCTAssertTrue(counted, "the book was counted before the rotation")
-        _ = settle(60)
-        sleep(3)
+        if waitForCount {
+            XCTAssertTrue(waitCounted(), "the book was counted before the rotation")
+        }
+        let counted = waitForCount ? "true" : "not waited"
+        _ = settle()
 
         // 2. A Contents jump.
         el("reader.page").coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
-        sleep(2)
-        XCTAssertTrue(el("reader.contents").waitForExistence(timeout: 5))
-        el("reader.contents").tap()
-        sleep(2)
+        let contents = el("reader.contents")
+        XCTAssertTrue(readsUntil(reads: 20, hangGuard: 5) { contents.exists && contents.isHittable }.ok)
+        contents.tap()
         let rows = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH 'contents.entry.'"))
         XCTAssertTrue(rows.firstMatch.waitForExistence(timeout: 15), "the contents list is up")
-        sleep(1)
+        // The lazy list's rows, once it stops loading more: the same count two reads running.
+        var loadedCount = -1
+        _ = readsUntil(reads: 12, hangGuard: 10) { let n = rows.count; defer { loadedCount = n }; return n == loadedCount }
         let beforeJump = vtext
         let rowCount = rows.count
         // One entry, named, every run: the last row the lazy list had loaded was 12 rows on some runs and
@@ -164,26 +188,23 @@ final class RotationRepro: XCTestCase {
         pick.tap()
         // The old page stays put while the jump loads (over 10 s on a hosted runner), so wait for the
         // words to change before waiting for them to settle.
-        let jumpStart = Date()
-        while Date().timeIntervalSince(jumpStart) < 60, vtext.isEmpty || head(vtext) == head(beforeJump) { usleep(250_000) }
-        print("REPRO jump landed after \(String(format: "%.1f", Date().timeIntervalSince(jumpStart))) s")
-        _ = settle(60)
-        sleep(4)
+        let landed = readsUntil(reads: 240, hangGuard: 60) { let now = vtext; return !now.isEmpty && head(now) != head(beforeJump) }
+        print("REPRO jump landed after \(landed.reads) reads\(landed.hung ? " (hang guard)" : "")")
+        _ = settle()
         let jumped = !vtext.isEmpty && head(vtext) != head(beforeJump)
         XCTAssertTrue(jumped, "the Contents jump moved the page")
 
         // 3. Two pages read.
         turnForward()
         turnForward()
-        sleep(3)
 
-        // 4. Turn the iPad.
+        // 4. Turn the iPad. The words change once the spread is shown (settled, or shown as it is by the
+        // watchdog), then a long settle: a restore started again can still move it.
+        let beforeTurn = vtext
         XCUIDevice.shared.orientation = .landscapeLeft
-        _ = settle(30)
-        sleep(6)
-        _ = settle(60)
-        sleep(3)
-        let his = vtext
+        let reflowed = readsUntil(reads: 240, hangGuard: 60) { let now = vtext; return !now.isEmpty && now != beforeTurn }
+        note("rotation shown after \(reflowed.reads) reads\(reflowed.hung ? " (hang guard)" : "")")
+        let his = settle(quiet: 10)
         XCTAssertFalse(his.isEmpty)
         note("setup counted=\(counted) contentsRows=\(rowCount) jumped=\(jumped) hisHead=\(hash(head(his)))")
         assertNoVisibleSettleMove("the rotation")
@@ -191,16 +212,11 @@ final class RotationRepro: XCTestCase {
         // 5. Leave without turning, three times.
         var green = 0
         for round in 1...3 {
-            XCUIDevice.shared.press(.home)
-            sleep(3)
-            app.quit()
+            leave("round \(round)")
             app.launchArguments = base
             app.relaunch()
             XCUIDevice.shared.orientation = .landscapeLeft
-            sleep(2)
-            _ = settle(60)
-            sleep(4)
-            let back = settle(10)
+            let back = settle(quiet: 10, hangGuard: 70)
             let startsSame = head(back) == head(his)
             let middleSame = back.contains(middle(his))
             let at = back.range(of: head(his)).map { back.distance(from: back.startIndex, to: $0.lowerBound) } ?? -1
@@ -215,19 +231,13 @@ final class RotationRepro: XCTestCase {
         // leave: the reopen lands on the spread he turned to, not one the fresh layout's own columns make.
         turnForward()
         turnForward()
-        sleep(3)
-        let turned = settle(20)
+        let turned = settle(quiet: 6, hangGuard: 20)
         let savedAtTurn = (el("reader.savedWords").value as? String) ?? ""
-        XCUIDevice.shared.press(.home)
-        sleep(3)
-        app.quit()
+        leave("after two turns")
         app.launchArguments = base
         app.relaunch()
         XCUIDevice.shared.orientation = .landscapeLeft
-        sleep(2)
-        _ = settle(60)
-        sleep(4)
-        let afterTurns = settle(10)
+        let afterTurns = settle(quiet: 10, hangGuard: 70)
         // His place is the page's first whole word (`ReaderJS.anchor`): a spread that opens on the end of a
         // word hyphenated across the turn reopens on the word after it. That counts only when the place the
         // app saved proves the dropped token was a word's tail (`ReopenMatch`); otherwise exact or red.
