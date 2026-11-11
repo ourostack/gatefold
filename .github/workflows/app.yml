@@ -207,10 +207,10 @@ jobs:
   # boots its new simulator while `build` builds, then waits for the build's artifact. On main each shard holds about
   # 5 min of tests by its median pass on main (eight runs, 42605267361 to 42905906538). On a pull request a shard runs
   # its `pr_tests` only when its `pr_when` group is in `changes`' `fired`; every other shard reports from a no-op job.
-  # Each `timeout` is 30 min of setup (the simulator wait step's own limit, so a boot that runs that long still leaves
-  # the tests their time; gatefold#198), plus twice the sum of its tests' slowest passes in those runs (the tests'
-  # budget, which the test step gets however long the boot took; .github/actions/time-left), plus 12 for the logs after
-  # the tests (gatefold#141). A green run takes no longer for the extra setup minutes. Twice, because on these overloaded runners
+  # Each `timeout` is 30 min of setup (the simulator wait step's own limit; gatefold#198), plus twice the sum of its
+  # tests' slowest passes in those runs (the tests' budget), plus 12 for the logs after the tests (gatefold#141). The
+  # test step gets that whole budget whenever setup ends within 30 min of the job's start (.github/actions/time-left);
+  # boots of 9 to 14 min leave room to spare, and a green run takes no longer. Twice, because on these overloaded runners
   # a test that passes can run 2-3x its usual time; a shard that still hits its limit is a red to fix at its cause, not
   # a limit to raise. The rotation shards (`cold`) run on the job's new iPad, before anything warms it.
   # scripts/ci-shards.py (in `CI scripts, offline`, which `GatefoldCore tests` stands for) fails when a listed test does
@@ -239,7 +239,7 @@ jobs:
             skip: ""
             pr_tests: none
             cold: false
-            timeout: 53 # 30 + 2 x 5.5 + 12
+            timeout: 54 # 30 + 2 x 5.5 + 12
           - shard: ipad-place-loading
             # 264 + 68
             tests: >-
@@ -428,7 +428,7 @@ jobs:
             skip: ""
             pr_tests: none
             cold: false
-            timeout: 55 # 30 + 2 x 6.5 + 12
+            timeout: 56 # 30 + 2 x 6.5 + 12
           - shard: ipad-taps-portrait
             # Main only, every tap, one switch each (#200): 168 + 135
             tests: >-
@@ -577,7 +577,7 @@ jobs:
               FineTuneTapUITests/testEveryTapFlipsJustifyPortrait FineTuneTapUITests/testEveryTapFlipsPageNumbersPortrait FineTuneTapUITests/testEveryTapFlipsPositionLabelPortrait FineTuneTapUITests/testEveryTapFlipsPagesLeftPortrait FineTuneTapUITests/testAQuickTouchChangesEverySwitchOnce FineTuneTapUITests/testATapOnTheRowsNameChangesItsSwitch
             pr_tests: none
             cold: false
-            timeout: 51 # 30 + 2 x 4.5 + 12
+            timeout: 52 # 30 + 2 x 4.5 + 12
           - shard: duo-position
             # 151 + 137
             tests: >-
@@ -585,7 +585,7 @@ jobs:
             skip: ""
             pr_tests: none
             cold: false
-            timeout: 56 # 30 + 2 x 7.0 + 12
+            timeout: 57 # 30 + 2 x 7.0 + 12
           - shard: duo-position-rest
             # The catch-all for new position tests: 66, rotation and posture
             tests: >-

@@ -11,7 +11,7 @@ main and full-list pull requests) this fails when
   - a skipped test is not in its shard's `tests`, or runs in no other shard on that device on main,
   - a shard has no `tests` list (an empty list would run the whole suite), or a PR list with no `pr_when`,
   - one test runs in two shards on the same device in the same tier,
-  - a shard's `timeout` is not its comment's `<setup> + 2 x <slowest> + 12` rounded up, with <setup> the `boot` that
+  - a shard's `timeout` is under its comment's `<setup> + 2 x <slowest> + 12` rounded up, with <setup> the `boot` that
     ui-tests.yml gives the time-left action: the test step's budget is the limit less those two (gatefold#198).
 --list prints every "tier|device|test" with its shard. --expect FILE fails unless that set equals the file's (the first
 word of each line; blank lines and lines starting with # ignored). CI checks against scripts/ci-shards.expect, so a
@@ -194,7 +194,7 @@ def boot_of(shard_text):
 
 
 def limit_problems(text, boot):
-    """A shard whose `timeout` isn't `boot + 2 x slowest + 12` rounded up, as its comment shows (gatefold#198)."""
+    """A shard whose `timeout` is under `boot + 2 x slowest + 12` rounded up, as its comment shows (gatefold#198)."""
     if boot is None:
         return ["ui-tests.yml gives the time-left action no `boot`, so no shard's tests' budget can be checked"]
     out = []
@@ -209,9 +209,9 @@ def limit_problems(text, boot):
             continue
         slowest = float(m.group(2))
         need = boot + RESERVE + -(-int(round(2 * slowest * 10)) // 10)
-        if s.get("timeout") != str(need):
-            out.append(f"{where}: timeout {s.get('timeout')} should be {need} ({note}, rounded up), or its tests get "
-                       "less than twice their slowest passes")
+        if not s.get("timeout", "").isdigit() or int(s["timeout"]) < need:
+            out.append(f"{where}: timeout {s.get('timeout')} should be at least {need} ({note}, rounded up), or its "
+                       "tests get less than twice their slowest passes")
     return out
 
 
@@ -424,7 +424,8 @@ jobs:
     assert limits("54 # 30 + 2 x 5.8 + 12") == [], limits("54 # 30 + 2 x 5.8 + 12")
     assert limits("42 # 30 + 2 x 0.0 + 12") == []
     assert limits("54 # 30 + 2 x 5.95 + 12") == []  # 11.9 -> 12
-    assert any("should be 54" in p for p in limits("53 # 30 + 2 x 5.8 + 12")), limits("53 # 30 + 2 x 5.8 + 12")
+    assert limits("55 # 30 + 2 x 5.8 + 12") == []  # a minute over, as some shards kept
+    assert any("at least 54" in p for p in limits("53 # 30 + 2 x 5.8 + 12")), limits("53 # 30 + 2 x 5.8 + 12")
     assert any("should read" in p for p in limits("36 # 12 + 2 x 5.8 + 12")), limits("36 # 12 + 2 x 5.8 + 12")
     assert any("no formula" in p for p in limits("54")), limits("54")
     assert limit_problems(wf(""), None) != []
