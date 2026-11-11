@@ -18,6 +18,7 @@ main|iPad Pro 13-inch|NavigationPlaceUITests/testAContentsJumpKeepsThePlace
 main|iPad Pro 13-inch|NavigationPlaceUITests/testAJumpFromAPageStillLoadingStartsAtOnce
 main|iPad Pro 13-inch|NavigationPlaceUITests/testAJumpsVeilHoldsWhileTheChapterLoads
 main|iPad Pro 13-inch|NavigationPlaceUITests/testAScrubberJumpKeepsThePlace
+main|iPad Pro 13-inch|NavigationPlaceUITests/testAScrubberJumpLeftWhileItsChapterLoadsKeepsItsTarget
 main|iPad Pro 13-inch|NavigationPlaceUITests/testOpenedFromTheShelfThenLeftTwiceWithoutATurnKeepsThePlace
 main|iPad Pro 13-inch|NavigationPlaceUITests/testReadInPortraitRotatedThenLeftKeepsHisFirstWords
 main|iPad Pro 13-inch|NavigationPlaceUITests/testScrolledAfterTheLaunchReflowThenLeftKeepsWhereHeScrolled
@@ -50,10 +51,10 @@ main|iPad Pro 13-inch|ReviewerChecksUITests/testTheLastPagesNumberIsTheCount
 main|iPad Pro 13-inch|RotationMidTransitionUITests/testARestoreThatNeverSettlesStillShowsTheSpread
 main|iPad Pro 13-inch|RotationMidTransitionUITests/testTurningDuringAContentsJump
 main|iPad Pro 13-inch|RotationMidTransitionUITests/testTurningDuringAPageTurn
-main|iPad Pro 13-inch|RotationRepro/testRotateThenLeaveWithoutTurning
-main|iPad Pro 13-inch|RotationRepro/testRotateThenLeaveWithoutTurningAfterStalledReflows
 main|iPad Pro 13-inch|RotationRepro/testRotateThenLeaveWhileTheRestoreWaitsOnItsPage
 main|iPad Pro 13-inch|RotationRepro/testRotateThenLeaveWhileTheRestoreWaitsOnItsPageWithoutItsWords
+main|iPad Pro 13-inch|RotationRepro/testRotateThenLeaveWithoutTurning
+main|iPad Pro 13-inch|RotationRepro/testRotateThenLeaveWithoutTurningAfterStalledReflows
 main|iPad Pro 13-inch|SpreadTurnSettleUITests/testSpreadTurnsLandWithoutSliding
 main|iPad Pro 13-inch|WindowFitUITests/testOnItsSide
 main|iPad Pro 13-inch|WindowFitUITests/testUpright
