@@ -5,14 +5,15 @@ import Foundation
 /// waits on the app's main thread; if it was held, the stall is the app's, not the runner's.
 ///
 /// A timer on its own queue sends the main queue a ping every 250 ms, one at a time. When a ping comes
-/// back a second or more late, the hold is logged with its length; while one is still out, every 5 s
-/// it is logged as still held, so a hold the test never outlives still shows.
+/// back a second or more late, the hold is logged with its length; while one is still out it is logged
+/// as still held at 1 s and every 5 s after, so a hold the app doesn't outlive (a test relaunching it)
+/// still shows. Pings go out on the 250 ms tick, so lengths read up to 250 ms short.
 final class MainThreadWatch: @unchecked Sendable {
     // Everything below is touched only on `queue`.
     private let queue = DispatchQueue(label: "bot.ouro.gatefold.main-watch", qos: .userInitiated)
     private var timer: DispatchSourceTimer?
     private var outstanding: DispatchTime?
-    private var nextStillHeldMark = 5_000
+    private var nextStillHeldMark = MainThreadWatch.logAtMs
 
     private static let shared = MainThreadWatch()
     private static let logAtMs = 1_000
@@ -40,12 +41,12 @@ final class MainThreadWatch: @unchecked Sendable {
             let waited = Self.ms(from: sent, to: now)
             if waited >= nextStillHeldMark {
                 readerLog.notice("main: still held after \(waited, privacy: .public) ms")
-                nextStillHeldMark += 5_000
+                nextStillHeldMark = waited + 5_000
             }
             return
         }
         outstanding = now
-        nextStillHeldMark = 5_000
+        nextStillHeldMark = Self.logAtMs
         DispatchQueue.main.async { [self] in
             let answered = DispatchTime.now()
             queue.async { self.answered(sent: now, at: answered) }
