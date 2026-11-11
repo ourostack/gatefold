@@ -54,9 +54,13 @@ final class FineTuneTapUITests: XCTestCase {
     private static let landReads = 40
     /// Reads after the change in which it must not go back: a touch that changed it twice shows here.
     private static let stayReads = 5
-    /// Only a hang guard, not the bar: reads so slow that `landReads` of them take over 3 minutes. (A single
-    /// read that never returns is ended by XCTest's own query timeout.)
-    private static let hangGuard: TimeInterval = 180
+    /// The slowest look at the app seen on CI: 18.6 s, in #207's green probe (run 42973604069, job 130368394864,
+    /// "offer taken after 1 looks in 18.6 s"). That look was up to five queries, so it bounds one read from above.
+    private static let worstRead: TimeInterval = 18.6
+    /// Only a hang guard, not the bar: `landReads` reads at the worst read seen, plus a quarter, so only a real hang
+    /// trips it (gatefold#221; at 180 s it tripped after about 10 such reads, before the cap). A single read that
+    /// never returns is ended by XCTest's own query timeout.
+    private static let hangGuard: TimeInterval = Double(landReads) * worstRead * 1.25
 
     /// Reads until the value is a real one other than `before`, or `landReads` run out (or the hang guard).
     private func readsUntilChanged(_ toggle: XCUIElement, from before: String)
