@@ -145,7 +145,7 @@ import Testing
         #expect(atOnce.href.string == shownPage.href.string)
         #expect(atOnce.locations.progression == shownPage.locations.progression,
                 "kept at \(atOnce.locations.progression ?? -1), not the shown page (\(shownPage.locations.progression ?? -1)), while the words' path waits")
-        #expect(atOnce.text.highlight != nil, "his words noted before he left were not written with it")
+        #expect(atOnce.text.highlight == withWords.text.highlight, "the first write didn't carry the words noted before he left")
 
         // The words come: on the same place, never another.
         await held.open()
@@ -154,7 +154,7 @@ import Testing
         #expect(model.shownLeaveSteps == ["written", "position mapped"], "steps \(model.shownLeaveSteps)")
         let after = try #require(savedPlace())
         #expect(after.locations.progression == shownPage.locations.progression, "the mapped position moved the place")
-        #expect(after.text.highlight != nil, "the mapped position dropped his words")
+        #expect(after.text.highlight == withWords.text.highlight, "the mapped position's write replaced his noted words")
     }
 }
 
