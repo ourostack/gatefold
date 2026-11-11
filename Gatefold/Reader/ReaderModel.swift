@@ -1583,6 +1583,7 @@ final class ReaderModel {
                 self.pagesLeft = []
                 self.newestWrittenMove = max(self.newestWrittenMove, self.moves)
                 readerLog.notice("place write [r\(self.readerNumber, privacy: .public)]: landing (\(fresh != nil ? "his first words" : "Readium's boundary", privacy: .public)) \(Self.placeTag(settledLocator), privacy: .public); kept total \(chosen?.totalProgression ?? here.locations.totalProgression ?? 0, privacy: .public); move \(self.moves, privacy: .public)")
+                self.placeRecords += 1
                 self.app.library.recordPlace(
                     bookID: self.bookID,
                     locatorJSON: json,
@@ -1704,6 +1705,7 @@ final class ReaderModel {
         suggestionRemote = nil
         suggestionCloud = nil
         if let owed {
+            keepShownPageNow(owed)
             Task {
                 await keepOwedPlace(owed)
                 // Sent now: the close's own send may have gone before this write.
@@ -1716,21 +1718,123 @@ final class ReaderModel {
     /// before the page goes, so a reflow that never settles (a slow device, a load stuck as in gatefold#94)
     /// can't drop the move he made under it (gatefold#96).
     func owedPlaceOnLeaving() -> Locator? {
-        guard placeOwed, !isClosed, !isWarming else { return nil }
+        guard !isClosed, !isWarming else { return nil }
+        // No move owed, but a restore that never settled left him the page as it was: that page is what he
+        // saw, so it is what the reopen shows (gatefold#133).
+        if !placeOwed {
+            leavingOnShownPage = shownOnLeaving
+            return leavingOnShownPage
+        }
         return owedJumpTarget.flatMap { $0.1 == moves && !touchedSinceLocation ? $0.0 : nil } ?? page?.currentLocation
     }
 
     /// Writes the place a reflow owed, as he leaves: the reader may have closed, and the reflow may
     /// still be under way. Only the place; nothing on screen changes. If he hasn't closed the book
     /// (the app only went inactive), the debt stands: a reflow that settles later still records his
-    /// own words over this write, as it would have without it.
+    /// own words over this write, as it would have without it. So does the page a stalled restore left
+    /// him (`reflowDidFinish` writes the settled page back over it).
     func keepOwedPlace(_ here: Locator) async {
-        guard placeOwed, !isWarming else { return }
-        if isClosed { owedJumpTarget = nil }
+        keepShownPageNow(here)
+        let shown = shownKeptNow.map { $0.href == here.href && $0.locations.progression == here.locations.progression } == true
+        shownKeptNow = nil
+        leavingOnShownPage = nil
+        guard placeOwed || shown, !isWarming else { return }
         let recordedBefore = recordedMoves
-        readerLog.notice("place: recorded the move a reflow held, on leaving, at \(here.locations.totalProgression ?? -1, privacy: .public) moves \(self.moves, privacy: .public) recorded \(self.recordedMoves, privacy: .public)")
-        await locationDidChange(here, hisMove: true, placeOnly: true, leaving: true)
+        if !shown {
+            readerLog.notice("place: recorded the move a reflow held, on leaving, at \(here.locations.totalProgression ?? -1, privacy: .public) moves \(self.moves, privacy: .public) recorded \(self.recordedMoves, privacy: .public)")
+        }
+        if isClosed { owedJumpTarget = nil }
+        // Still open (the app only went inactive): once the restore settles, the page it settles on is
+        // the one he sees again, and it is written back over this one. Noted before the write's own wait.
+        // The shown page's write took its move when it was written (`keepShownPageNow`), not now.
+        let movesAtWrite = shown ? (shownLeaveWrite?.move ?? moves) : moves
+        if shown { await mapShownPagePosition(here) } else {
+            await locationDidChange(here, hisMove: true, placeOnly: true, leaving: true)
+        }
+        // The restore settled during that wait: its write-back may have gone first, so this one follows it.
+        if shown, !isClosed, keeper.reflowing == nil, moves == movesAtWrite, !touchedSinceLocation, let words = anchorLocator {
+            shownWrittenOpen = nil
+            readerLog.notice("place: the restore settled while the page it left was written; its page written back at \(words.locations.totalProgression ?? -1, privacy: .public)")
+            layoutOnly = false
+            await locationDidChange(words, hisMove: true, placeOnly: true)
+            if moves == movesAtWrite, !touchedSinceLocation { layoutOnly = true }
+        }
         if !isClosed, placeOwed, recordedMoves == moves { recordedMoves = recordedBefore }
+    }
+
+    /// Leaving on the page a stalled restore left him: written now, in the caller's own turn (the close,
+    /// the app going inactive), before any Task or wait. The page under a stalled restore can hold any
+    /// script or resource load, and the app may be ended a moment after he leaves (gatefold#133: the
+    /// write waited on the chapter's mapping, and the reopen kept the page from before the rotation).
+    /// His words go with it if the page gave them; the mapped position follows on the same place (`keepOwedPlace`).
+    /// Does nothing unless `owedPlaceOnLeaving` named that page; safe to call again.
+    func keepShownPageNow(_ here: Locator) {
+        guard let leaving = leavingOnShownPage, !isWarming else { return }
+        leavingOnShownPage = nil
+        guard leaving.href == here.href, leaving.locations.progression == here.locations.progression else { return }
+        shownKeptNow = here
+        // The page as shown is the place now: no longer the layout's, whatever the reflow before it set.
+        layoutOnly = false
+        readerLog.notice("place write [r\(self.readerNumber, privacy: .public)]: the page a restore left unsettled, on leaving, at \(here.locations.totalProgression ?? -1, privacy: .public)")
+        writeShownPageAtOnce(here)
+        if !isClosed, let written = shownLeaveWrite { shownWrittenOpen = written.move }
+        // Sent now too: the caller's own send may already have gone.
+        app.library.flushPushes()
+    }
+    @ObservationIgnored private var shownKeptNow: Locator?
+
+    /// The shown page's leave write, at once: the place as noted (with his first words if the page gave
+    /// them before he left, `reflowShownUnsettled`), no position mapped, no wait. The words matter: under a
+    /// stalled restore Readium's progression can name a page beside the one shown, and the reopen found
+    /// that page (CI 43034011191: written at once, words never attached before the app was ended).
+    @ObservationIgnored private var shownLeaveWrite: (records: Int, move: Int, json: String)?
+    /// Each step of that write, for tests: "written", "position mapped (cfi)" or "(percent only)", "gave up".
+    @ObservationIgnored private(set) var shownLeaveSteps: [String] = []
+    private func writeShownPageAtOnce(_ here: Locator) {
+        guard let json = try? here.jsonString() else {
+            readerLog.notice("place write [r\(self.readerNumber, privacy: .public)]: the page left unsettled could not be encoded; not written")
+            return
+        }
+        // As the ordinary leave write keeps it (`locationDidChange(leaving:)`): kept as of now.
+        if isClosed { placeOwed = false }
+        lastReported = here
+        recordedMoves = moves
+        pagesLeft = []
+        newestWrittenMove = max(newestWrittenMove, moves)
+        placeRecords += 1
+        app.library.recordPlace(bookID: bookID, locatorJSON: json, totalProgression: here.locations.totalProgression ?? 0,
+                                progression: here.locations.progression ?? 0, at: Date())
+        shownLeaveWrite = (placeRecords, moves, json)
+        shownLeaveSteps.append("written")
+        if LaunchOptions.isUITest { savedWordsProbe = here.text.highlight.map(ReaderJS.normalize) ?? "" }
+        readerLog.notice("place write [r\(self.readerNumber, privacy: .public)]: the page left unsettled written on leaving, at once, at \(here.locations.totalProgression ?? -1, privacy: .public), \(here.text.highlight == nil ? "Readium's location" : "with his first words", privacy: .public)")
+    }
+    /// The exact position for that same write, when the chapter's mapping comes (it reads the chapter, which a
+    /// stalled page can hold: gatefold#240): written only over that very write (no newer place, no newer
+    /// move, the library still holding it), the same locator, never anywhere else.
+    private func mapShownPagePosition(_ here: Locator) async {
+        guard let written = shownLeaveWrite else { return }
+        guard here.text.highlight != nil else {
+            readerLog.notice("place write [r\(self.readerNumber, privacy: .public)]: no words for the page left unsettled; Readium's location kept")
+            return
+        }
+        let now = Date()
+        await placeWriteWait()
+        let exact = await mapper?.position(for: BookLocation(here), at: now)
+        guard placeRecords == written.records, moves == written.move, newestWrittenMove == written.move,
+              app.library.book(bookID)?.locatorJSON == written.json else {
+            shownLeaveSteps.append("gave up")
+            readerLog.notice("place write [r\(self.readerNumber, privacy: .public)]: the position for the page left unsettled gave up (a newer place or move came first)")
+            return
+        }
+        placeRecords += 1
+        app.library.recordPlace(bookID: bookID, locatorJSON: written.json, totalProgression: here.locations.totalProgression ?? 0,
+                                progression: here.locations.progression ?? 0,
+                                position: exact.map { var p = $0; p.totalProgression = here.locations.totalProgression ?? p.totalProgression; return p },
+                                at: now)
+        shownLeaveWrite = (placeRecords, written.move, written.json)
+        shownLeaveSteps.append(exact?.cfi != nil ? "position mapped (cfi)" : "position mapped (percent only)")
+        readerLog.notice("place write [r\(self.readerNumber, privacy: .public)]: position mapped for the page left unsettled, at \(here.locations.totalProgression ?? -1, privacy: .public), cfi \(exact?.cfi != nil, privacy: .public)")
     }
 
     func dismissSuggestion() {
@@ -1763,7 +1867,38 @@ final class ReaderModel {
 
     private var reflowCount = 0
 
+    /// The page the 12 s watchdog showed him while the restore under it hadn't settled, and `moves` then.
+    /// Until that restore ends or he moves, that page is the one he sees (gatefold#133).
+    @ObservationIgnored private var shownUnsettled: (locator: Locator, move: Int)?
+    /// Leaving on that page: `keepOwedPlace` keeps it though no move is owed. Set as he leaves, before
+    /// `close()` counts its own move.
+    @ObservationIgnored private var leavingOnShownPage: Locator?
+    private var shownOnLeaving: Locator? {
+        guard let shown = shownUnsettled, shown.move == moves, keeper.reflowing != nil, !touchedSinceLocation else { return nil }
+        return shown.locator
+    }
+
+    /// `moves` when the page a stalled restore left him was written while the book stayed open.
+    @ObservationIgnored private var shownWrittenOpen: Int?
+
+    /// The watchdog showed the page as it is, its restore still unsettled: noted as Readium names it, then
+    /// by its first words (`words`) if the page answers while the note stands.
+    /// Returns the note's number; its words come back with it (`wordsFor`), and count only while that
+    /// note is still the one standing.
+    @discardableResult
+    func reflowShownUnsettled(_ here: Locator, wordsFor note: Int? = nil) -> Int? {
+        guard keeper.reflowing != nil, !isClosed, !isWarming else { return nil }
+        if let note { guard let shown = shownUnsettled, shown.move == moves, note == shownNotes else { return nil } }
+        else { shownNotes += 1 }
+        shownUnsettled = (here, moves)
+        readerLog.notice("reflow: the page shown unsettled is at \(here.locations.totalProgression ?? -1, privacy: .public)")
+        return shownNotes
+    }
+    @ObservationIgnored private var shownNotes = 0
+
     func reflowDidBegin() {
+        shownUnsettled = nil
+        shownNotes += 1
         reflowCount += 1
         reflowTouches = 0
         landingChecks = 0
@@ -1801,6 +1936,25 @@ final class ReaderModel {
     }
 
     func reflowDidFinish(visible: VisibleRange?) {
+        shownUnsettled = nil
+        shownNotes += 1
+        // He came back to a restore that then settled: the page it settled on is his again, not the one
+        // written as he went (his words, which the restore put back on the left page).
+        if let written = shownWrittenOpen {
+            shownWrittenOpen = nil
+            if written == moves, !isClosed, !isWarming, !touchedSinceLocation, let words = anchorLocator {
+                Task { [weak self] in
+                    guard let self, self.moves == written, !self.isClosed, !self.touchedSinceLocation, self.keeper.reflowing == nil else {
+                        readerLog.notice("place: the settled page's write-back skipped (a move, a touch or a new reflow first)")
+                        return
+                    }
+                    readerLog.notice("place: the restore settled after he came back; its page written back at \(words.locations.totalProgression ?? -1, privacy: .public)")
+                    self.layoutOnly = false
+                    await self.locationDidChange(words, hisMove: true, placeOnly: true)
+                    if self.moves == written, !self.touchedSinceLocation { self.layoutOnly = true }
+                }
+            }
+        }
         reflowSettledAt = Date()
         if LaunchOptions.isUITest { reflowProbe = "\(reflowCount) placed" }
         // A reflow throws away the page loading behind this one; the catch-up still on offer gets a new one.
@@ -1859,6 +2013,8 @@ final class ReaderModel {
     @ObservationIgnored private var newestWrittenMove = -1
     /// Every place write as it starts, numbered: one still on its way when a newer one starts yields.
     @ObservationIgnored private var placeWrites = 0
+    /// Every place recorded, by any path: a later write-back of words counts only if none came since.
+    @ObservationIgnored private var placeRecords = 0
     /// The move whose first report is still reading his words before its write (`locationDidChange`).
     @ObservationIgnored private var claimedMove: Int?
     /// A launch jump that never landed, and its move: owed by a reflow, its target is the place kept.
@@ -2143,6 +2299,7 @@ final class ReaderModel {
             }
             if LaunchOptions.isUITest { savedWordsProbe = here.text.highlight.map(ReaderJS.normalize) ?? "" }
             readerLog.notice("place write [r\(self.readerNumber, privacy: .public)]: his move (\(fresh != nil ? "his first words" : "Readium's boundary", privacy: .public)) \(Self.placeTag(here), privacy: .public); reported \(Self.placeTag(locator), privacy: .public); move \(self.moves, privacy: .public), touched \(self.touchedSinceLocation, privacy: .public), layoutOnly \(self.layoutOnly, privacy: .public)")
+            placeRecords += 1
             app.library.recordPlace(
                 bookID: bookID,
                 locatorJSON: json,
@@ -2671,6 +2828,11 @@ final class ReaderModel {
     /// reported until the live page takes its place (CI's reviewer check hashed the page under a
     /// picture that stayed up 24 s on a slow runner, and called a correct reopen a miss).
     private(set) var visibleTextProbe = ""
+    /// The words of a page shown before its location is reported (a restore that left it unsettled).
+    func probeShownPage(_ text: String) {
+        guard LaunchOptions.isUITest, reopenPicture == nil, !isClosed else { return }
+        visibleTextProbe = String(text.prefix(2400))
+    }
 
     /// For UI tests: the words of the place his last move saved, so a test can tell a word's tail the
     /// place skipped (`ReaderJS.anchor`) from a page that skipped his place (`ReopenMatch`).
