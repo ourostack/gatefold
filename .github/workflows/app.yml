@@ -305,7 +305,7 @@ jobs:
             cold: true
             timeout: 61 # 12 + 2 x 18.1 + 12
           - shard: ipad-rotate-stalled
-            # Main only: the stalled-reflow repro and #133's two restore tests (#251), slowest passes seen 586 + 504 + 405
+            # Main only: the stalled-reflow repro and #133's two restore tests (#251), slowest passes seen 586 + 504 + 427
             # (#266: launches and relaunches are about a fifth of each; the rest is the app's restore, read by reads).
             tests: >-
               RotationRepro
@@ -313,7 +313,7 @@ jobs:
               RotationRepro/testRotateThenLeaveWithoutTurning
             pr_tests: none
             cold: true
-            timeout: 74 # 12 + 2 x 24.9 + 12
+            timeout: 75 # 12 + 2 x 25.3 + 12
     uses: ./.github/workflows/ui-tests.yml
     with:
       device: "iPad Pro 13-inch"

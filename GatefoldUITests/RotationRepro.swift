@@ -68,7 +68,7 @@ final class RotationRepro: XCTestCase {
         return (false, reads, false)
     }
     /// Non-empty, then the same words `quiet` reads in a row. A short settle (3 reads) stands for the old
-    /// 2.5 s of quiet. A long one (12 reads, at least 9 s on the fastest runner's 0.5 s reads) stands for the
+    /// 2.5 s of quiet. A long one (12 reads, about 9 s on the fastest runner's 0.5 s reads) stands for the
     /// old settle, 4 s and a second settle, so a late move after the first quiet is still seen. A settle the
     /// hang guard ended is logged: its words are the latest read, not a quiet page.
     private static let longQuiet = 12
