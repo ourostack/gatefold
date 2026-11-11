@@ -42,11 +42,13 @@ CONFIRM_LIMIT="$(limit "${BOOT_SIM_CONFIRM_LIMIT:-}" 15)" || exit 2
 # pkill, so it runs the same on macOS's /bin/bash 3.2 and in the core job's swift:6.2 container.
 WITHIN_DIR="$(mktemp -d "${TMPDIR:-/tmp}/boot-sim.XXXXXX")" || exit 2
 trap 'rm -rf "$WITHIN_DIR"' EXIT
-WITHIN_N=0
+trap 'exit 143' TERM
 within() {
   local secs="$1"; shift
-  WITHIN_N=$(( WITHIN_N + 1 ))
-  local out="$WITHIN_DIR/$WITHIN_N.out" err="$WITHIN_DIR/$WITHIN_N.err" code
+  # Fresh files per call (mktemp, not a counter: most calls run in a `$(...)` subshell, where a counter never moves),
+  # so a child an earlier, killed call left behind can't write into this call's output.
+  local out err code
+  out="$(mktemp "$WITHIN_DIR/out.XXXXXX")" && err="$(mktemp "$WITHIN_DIR/err.XXXXXX")" || return 125
   "$@" >"$out" 2>"$err" </dev/null &
   local pid=$! end=$(( SECONDS + secs ))
   _within_wait "$pid" "$end" "$secs" "$@"; code=$?
