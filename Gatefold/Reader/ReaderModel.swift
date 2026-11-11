@@ -117,6 +117,7 @@ final class ReaderModel {
         if pageReady { readerLog.notice("first page ready after 0 s (opened ahead of the tap)") }
         activation?.resume()
         activation = nil
+        foldOnceSeen()
         if let record = pendingRecord {
             pendingRecord = nil
             record(Date())
@@ -742,6 +743,7 @@ final class ReaderModel {
 
     private func showPage() {
         withAnimation(.easeOut(duration: 0.3)) { pageReady = true } completion: { [weak self] in self?.coverLifted = true }
+        foldOnceSeen()
         if reopenPicture == nil { pageShownAt = Date() }
         // Counting the book's pages waits until the open has settled (the reopen picture gone too), so
         // it never slows the first page.
@@ -1024,6 +1026,7 @@ final class ReaderModel {
     func foldSlip() {
         guard slipKind == .ahead, slip != nil, !slipFolded else { return }
         slipTask?.cancel()
+        foldOwed = false
         withAnimation(reduceMotion ? .easeOut(duration: 0.2) : .spring(duration: 0.4, bounce: 0.15)) { slipFolded = true }
     }
 
@@ -1034,14 +1037,32 @@ final class ReaderModel {
         foldSlipLater()
     }
 
-    /// Unanswered, the offer folds itself away after a while rather than sitting on the page.
+    /// Unanswered, the offer folds itself away after a while rather than sitting on the page. The while
+    /// counts from when he can see it and answer: an offer made behind the shelf, or under the opening
+    /// cover, waits for the tap and the page (`foldOnceSeen`). Made at a warm open's start, it folded about
+    /// 10 s later, before a starved iPad's page had shown, and Catch up found only its tab (gatefold#156).
     private func foldSlipLater() {
         slipTask?.cancel()
+        guard !isWarming, pageReady else {
+            foldOwed = true
+            return
+        }
+        foldOwed = false
         slipTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(LaunchOptions.offerFoldSeconds))
             guard !Task.isCancelled else { return }
             self?.foldSlip()
         }
+    }
+
+    /// An offer whose fold waits for him to see it.
+    @ObservationIgnored private var foldOwed = false
+
+    /// He can see the offer now (the book tapped, its page up): its wait before folding starts.
+    private func foldOnceSeen() {
+        guard foldOwed else { return }
+        guard slipKind == .ahead, slip != nil, !slipFolded, !isClosed else { foldOwed = false; return }
+        foldSlipLater()
     }
 
     private func showLanded(_ landed: SyncSlip, underline: Locator?) {
@@ -1067,6 +1088,7 @@ final class ReaderModel {
 
     func hideSlip() {
         slipTask?.cancel()
+        foldOwed = false
         withAnimation(.easeOut(duration: 0.35)) {
             slip = nil
             slipKind = nil
