@@ -637,14 +637,14 @@ jobs:
             ${{ runner.temp }}/duo.xcresult
 
   ipad-docs:
-    # A skipped matrix job reports under its unexpanded name, so a Markdown-only pull request gets the three iPad checks
+    # A skipped matrix job reports under its unexpanded name, so a Markdown-only pull request gets the four iPad checks
     # from here instead (gatefold#42). It runs only when `changes` found nothing but Markdown.
     name: iPad (${{ matrix.name }})
     needs: changes
     if: needs.changes.outputs.app != 'true'
     strategy:
       matrix:
-        name: [place, taps, reviewer]
+        name: [place, taps, reviewer, undo]
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
