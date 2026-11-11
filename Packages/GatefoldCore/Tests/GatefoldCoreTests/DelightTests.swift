@@ -229,6 +229,11 @@ struct FinishLineTests {
                                sessions: 1, here: "phone", calendar: cal) == "Started on your e-reader, finished here on your phone\nRead over 6 days")
         #expect(ReadStory.shelfLine(otherDevice: "e-reader", otherSince: start, started: today, finished: today,
                                     sessions: 1, here: "phone", calendar: cal) == "Read over 6 days, e-reader to phone")
+        // A book an older build noted as begun on the "InkPad" tells the same story, generically (#253).
+        #expect(ReadStory.text(otherDevice: "InkPad", otherSince: start, started: today, finished: today,
+                               sessions: 1, here: "phone", calendar: cal) == "Started on your e-reader, finished here on your phone\nRead over 6 days")
+        #expect(ReadStory.shelfLine(otherDevice: "InkPad", otherSince: start, started: today, finished: today,
+                                    sessions: 1, here: "phone", calendar: cal) == "Read over 6 days, e-reader to phone")
     }
 
     @Test func theShelfLineForABookBegunHere() {
