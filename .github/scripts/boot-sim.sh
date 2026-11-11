@@ -39,7 +39,7 @@ CONFIRM_LIMIT="$(limit "${BOOT_SIM_CONFIRM_LIMIT:-}" 15)" || exit 2
 # files, not to the caller's pipe, and they are copied out when it ends or is killed: a child of the command that
 # outlives the kill would otherwise hold that pipe open, and the caller's `$(...)` waited on it (gatefold#227: 60 s
 # slices took 79 and 96 s, and a listing bounded at 60 s held the boot about 140 s more, in probe 43007631651). No
-# pkill, so it runs the same on macOS's /bin/bash 3.2 and in the core job's swift:6.2 container.
+# pkill, so it runs the same on macOS's /bin/bash 3.2 and on Linux's bash 5 (the job `CI scripts, offline`).
 WITHIN_DIR="$(mktemp -d "${TMPDIR:-/tmp}/boot-sim.XXXXXX")" || exit 2
 trap 'rm -rf "$WITHIN_DIR"' EXIT
 trap 'exit 143' TERM
