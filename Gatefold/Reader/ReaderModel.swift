@@ -1412,7 +1412,7 @@ final class ReaderModel {
             defer { if publishes { publishBack(back) } }
             let move = moves + 1
             landingMove = move
-            landingStep = Self.outerVeil ?? steps
+            landingStep = steps
             landingAim = progression
             landingAimFile = file(atTotal: progression)
             await go(toProgression: progression, rememberBack: false, his: false)
@@ -1443,7 +1443,7 @@ final class ReaderModel {
         let move = moves
         let step = steps
         landingMove = move
-        landingStep = Self.outerVeil ?? steps
+        landingStep = steps
         landingAim = locator.locations.totalProgression ?? progression
         landingAimFile = locator.href.string
         defer { if landingMove == move { landingMove = nil } }
