@@ -36,6 +36,9 @@ protocol ReaderPage: AnyObject {
     func keepWordsOnLeft(_ anchor: ReadingAnchor, stillWanted: @escaping @MainActor () -> Bool) async
     /// A jump's landing put on the spread a restore of its place would show (`SpreadSettler`, `.restore`).
     func settleLanding(_ anchor: ReadingAnchor, stillWanted: @escaping @MainActor () -> Bool) async
+    /// A standby swap retired the page an open reflow was laying out: that reflow's cover, retries and
+    /// generation end with it (the model ends its own side, `keeper` and the reflow's notes).
+    func endReflowForSwap()
 }
 
 extension ReaderPage {
@@ -49,4 +52,5 @@ extension ReaderPage {
     func pageRange() async -> VisibleRange? { await visibleRange() }
     func countPages(_ hrefs: [String], record: @escaping @MainActor (String, Int) -> Void, finished: @escaping @MainActor () -> Void) {}
     func stopCounting() {}
+    func endReflowForSwap() {}
 }

@@ -378,6 +378,12 @@ struct ReaderScreen: View {
                 .accessibilityIdentifier("reader.countingShown")
                 .accessibilityValue(model.countingShownProbe ? "1" : "0")
                 .allowsHitTesting(false)
+            Text("slot blank")
+                .font(.system(size: 1))
+                .opacity(0.01)
+                .accessibilityIdentifier("reader.slotBlankFrames")
+                .accessibilityValue(String(model.slotBlankProbe))
+                .allowsHitTesting(false)
             Text("ready")
                 .font(.system(size: 1))
                 .opacity(0.01)
@@ -518,7 +524,10 @@ struct ReaderScreen: View {
     @ViewBuilder
     private func pageNumbers(pages: [CGRect], hidden: Bool, shown: Bool) -> some View {
         let band = model.textBand.bottom
-        if model.preferences.showsPageNumbers, let numbers = model.screenNumbers, numbers.count == pages.count {
+        // Numbers for a different count of pages (the page reflowed into a spread or out of one, and its numbers
+        // aren't asked for yet) don't fit these pages: the slot says it's counting until they do, never blank (gatefold#262).
+        let fitting = model.screenNumbers.flatMap { $0.count == pages.count ? $0 : nil }
+        if model.preferences.showsPageNumbers, let numbers = fitting {
             ZStack(alignment: .topLeading) {
                 ForEach(Array(pages.enumerated()), id: \.offset) { i, r in
                     if let n = numbers[i] {
@@ -534,7 +543,7 @@ struct ReaderScreen: View {
             .opacity(hidden || !model.pageReady ? 0 : 1)
             .animation(.easeOut(duration: 0.25), value: hidden)
             .allowsHitTesting(false)
-        } else if model.preferences.showsPageNumbers, model.countingPages, let first = pages.first, let last = pages.last {
+        } else if model.preferences.showsPageNumbers, model.awaitingNumber, let first = pages.first, let last = pages.last {
             // Where the number will be, in its face and grey, a little fainter: one line under the
             // page (or centred under the spread). Drawn over the band, so the words never move.
             let r = first.union(last)
@@ -554,6 +563,17 @@ struct ReaderScreen: View {
                 .onChange(of: shown, initial: true) { _, shown in
                     if LaunchOptions.isUITest, shown { model.countingShownProbe = true }
                 }
+        } else if LaunchOptions.isUITest, model.preferences.showsPageNumbers, model.screenLayout != nil {
+            #if DEBUG
+            // UI tests: the slot drawn with neither in it. Counted each time it is drawn so on a page he can see.
+            Color.clear
+                .frame(width: 1, height: 1)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+                .onChange(of: shown, initial: true) { _, shown in
+                    if shown { model.slotBlankProbe += 1 }
+                }
+            #endif
         }
     }
 

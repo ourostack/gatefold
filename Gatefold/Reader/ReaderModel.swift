@@ -382,9 +382,16 @@ final class ReaderModel {
     /// Not after a count that ended with chapters still uncounted, nor after a minute in which nothing
     /// was counted (a count stopped and not restarted, or one that never began): the slot goes quiet
     /// again rather than promising a number that isn't coming. Counting moving again brings it back.
-    var countingPages: Bool {
-        pageReady && screenNumbers == nil && screenLayout != nil && !countGaveUp && !countStalled
+    /// A count held back (the page not up, the reopen picture, a reflow, Your Page) isn't stalled: the
+    /// minute starts once it can run (gatefold#262).
+    var countingPages: Bool { screenNumbers == nil && awaitingNumber }
+    /// The page is up in a paged layout and its number is still coming: no count has given up or stalled.
+    var awaitingNumber: Bool {
+        pageReady && screenLayout != nil && !countGaveUp && !countStalled
     }
+    /// The count can't run yet: the page isn't up, the reopen picture still covers it, or a reflow is under way
+    /// (each one's end starts the count).
+    private var countHeld: Bool { !pageReady || reopenPicture != nil || keeper.reflowing != nil }
     /// Your Page is open: he is still tuning the page, so no count starts behind it (gatefold#162). Each
     /// Justify tap in a landscape spread began a count (four to six hidden web views) that the next tap
     /// threw away before it counted a chapter, and making them held the page for seconds a tap. Closing it
@@ -407,16 +414,24 @@ final class ReaderModel {
         countStalled = false
         stallTimer?.cancel()
         stallTimer = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(60))
+            try? await Task.sleep(for: Self.countStallWait)
             guard !Task.isCancelled, let self else { return }
+            // Held, not stalled (gatefold#262): a count waiting on the page or its reflow hasn't stopped, and its
+            // minute starts again. A fresh open on the iPad's side whose opening reflow ran past a minute blanked the slot.
+            if self.countHeld { self.countMoved(); return }
             self.countStalled = true
             if self.screenNumbers == nil, self.screenLayout != nil {
                 readerLog.error("pages: nothing counted for a minute and no number yet; the slot goes quiet")
             }
         }
     }
+    /// How long a count may go without counting a chapter before the slot goes quiet; unit tests shorten it.
+    static var countStallWait: Duration = .seconds(60)
     /// UI tests: "Counting pages…" was drawn at least once (CI's slow reads can miss it on screen).
     var countingShownProbe = false
+    /// UI tests: how many times the number's slot was drawn empty on a page he can see, with page numbers on
+    /// in a paged layout: neither the number nor "Counting pages…" (gatefold#262). Never set outside UI tests.
+    var slotBlankProbe = 0
     /// UI tests only: the latest reflow's number and how far it has got ("3 reflowing", "3 placed", then
     /// "3 settled" once its page is fully shown, its cover faded or its swing played; a restore that gave way
     /// to his move counts as settled when its page starts showing), so a test can let a reflow settle before
@@ -1341,6 +1356,7 @@ final class ReaderModel {
         defer { if landingMove == move { landingMove = nil } }
         let started = ContinuousClock.now
         let ready = await page?.promoteStandby(for: locator) ?? false
+        if ready, keeper.reflowing != nil { endReflowForSwap() }
         if !ready { await page?.go(to: locator) }
         let went = Self.ms(since: started)
         // Opening another chapter, Readium places the page by progression before the chapter has laid
@@ -1372,6 +1388,18 @@ final class ReaderModel {
         landed(step, at: here)
         await recordLanding(here, target: target, cloud: cloud)
         readerLog.notice("landing timing (standby \(ready, privacy: .public)): go \(went, privacy: .public) ms, settled \(settled, privacy: .public) ms, anchored \(anchored, privacy: .public) ms, recorded \(Self.ms(since: started), privacy: .public) ms")
+    }
+
+    /// The standby page swapped in was laid out at the size the open reflow brought; the page that
+    /// reflow was laying out is retired, so it can never settle. Left open, it held every settle and
+    /// retake of the landing's words for good, and the place kept was Readium's boundary, which
+    /// reopened on another page (gatefold#261, a catch-up tapped while a reflow restarted).
+    private func endReflowForSwap() {
+        readerLog.notice("reflow: a standby page swapped in during reflow \(self.reflowCount, privacy: .public); the reflow ends with the page it was laying out")
+        keeper.restoreGaveWay()
+        page?.endReflowForSwap()
+        reflowDidFinish(visible: nil)
+        reflowShown(reflowCount)
     }
 
     /// Keeps the page a percent landing settled on, unless he has moved since.
@@ -1476,6 +1504,8 @@ final class ReaderModel {
         if !isClosed, moves == move, let orKeep {
             readerLog.notice("place: no first words for the landing; keeping Readium's boundary")
             orKeep(Date())
+        } else if !isClosed, moves == move {
+            readerLog.notice("place: no first words for the landing after \(captures, privacy: .public) captures (reflow open \(self.keeper.reflowing != nil, privacy: .public)); Readium's boundary stays")
         }
     }
 
