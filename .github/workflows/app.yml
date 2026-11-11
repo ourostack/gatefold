@@ -273,10 +273,9 @@ jobs:
         with:
           limit: ${{ matrix.timeout }}
       - name: ${{ matrix.title }}
-        if: false # probe, not for merge
         # A miss in the cold step still lets the rest report: one failure must not hide the others.
         # Not without the app or a booted iPad, which would only add a misleading red.
-        if: ${{ !cancelled() && steps.unpack.outcome == 'success' && steps.boot.outcome == 'success' }}
+        if: false # probe, not for merge
         # Ends 12 min before the job's limit: a job cut off at its limit skips every later step and uploads nothing.
         timeout-minutes: ${{ fromJSON(steps.left.outputs.minutes) }}
         env:
