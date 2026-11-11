@@ -61,14 +61,14 @@ final class PlaceUndoUITests: XCTestCase {
 
     /// A jump has landed: its veil is gone and the page shows other words than `old`. The words change
     /// beneath the veil, which swallows a tap (`handleTap`), so a tap waits for this, not for the words.
-    private func landed(from old: String, reads: Int = 300, hangGuard: TimeInterval = 150) -> (words: String, reads: Int) {
+    private func landed(from old: String, reads: Int = 300, hangGuard: TimeInterval = 150) -> (words: String, reads: Int, ok: Bool) {
         let veil = el("reader.veil")
         var words = ""
         let wait = readsUntil(reads: reads, hangGuard: hangGuard) {
             words = visibleText
             return !words.isEmpty && words != old && !veil.exists
         }
-        return (words, wait.reads)
+        return (words, wait.reads, wait.ok)
     }
 
     /// Settled: the same words in two reads a second apart.
@@ -146,6 +146,7 @@ final class PlaceUndoUITests: XCTestCase {
         let jump = landed(from: first)
         print("UNDO jump landed after \(jump.reads) reads")
         XCTAssertNotEqual(opening(jump.words), opening(first), "the jump moved the page")
+        XCTAssertTrue(jump.ok, "the jump's veil lifts")
         let jumped = jump.words
         // A jump made from the controls leaves them up, perhaps still fading in: once they are, a tap in
         // the middle puts them down.
@@ -167,10 +168,12 @@ final class PlaceUndoUITests: XCTestCase {
         let returned = landed(from: jumped)
         print("UNDO back landed after \(returned.reads) reads")
         XCTAssertEqual(opening(returned.words), opening(first), "Back did not return to his page")
+        XCTAssertTrue(returned.ok, "Back's veil lifts")
         // And Back itself is one tap to undo.
         let again = readsUntil(reads: 50, hangGuard: 60) { app.buttons["reader.back"].exists }
         XCTAssertTrue(again.ok, "going back can't be undone")
         // And the page still answers: a tap in its middle brings the controls up.
+        XCTAssertFalse(contents.exists, "the controls stayed down through Back")
         el("reader.page").coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
         let answers = readsUntil(reads: 50, hangGuard: 60) { contents.exists }
         print("UNDO back again after \(again.reads) reads; controls after \(answers.reads) reads")
