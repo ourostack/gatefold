@@ -10,8 +10,13 @@ import XCTest
 final class ReopenAfterControlsUITests: XCTestCase {
     private var app: XCUIApplication!
     private var pad: Bool { UIDevice.current.userInterfaceIdiom == .pad }
-    /// Rounds per run: 20 by default, `GATEFOLD_REOPEN_ROUNDS` to change it.
+    /// Rounds per run, over all five methods: 20 by default, `GATEFOLD_REOPEN_ROUNDS` to change it.
     private var rounds: Int { Int(ProcessInfo.processInfo.environment["GATEFOLD_REOPEN_ROUNDS"] ?? "") ?? 20 }
+    /// The rounds are split over this many methods, so each fits one CI shard: method k takes rounds k, k + 5,
+    /// k + 10, and so on, and together they take rounds 1 to `rounds` once each. Every round is its own fresh
+    /// install (`-GatefoldReset` wipes the library, its places and the reopen book; the fake Cloud starts from
+    /// its seed on every launch), so no round reads what another saved and the split changes nothing they judge.
+    private static let methods = 5
 
     override func setUp() async throws { continueAfterFailure = true; app = XCUIApplication() }
     override func tearDown() async throws { XCUIDevice.shared.orientation = .portrait }
@@ -94,11 +99,20 @@ final class ReopenAfterControlsUITests: XCTestCase {
         sleep(2)
     }
 
-    func testAReturnAfterTheControlsAndNumbersShowsTheSameWords() {
+    func testAReturnAfterTheControlsAndNumbersShowsTheSameWords1() throws { try returns(1) }
+    func testAReturnAfterTheControlsAndNumbersShowsTheSameWords2() throws { try returns(2) }
+    func testAReturnAfterTheControlsAndNumbersShowsTheSameWords3() throws { try returns(3) }
+    func testAReturnAfterTheControlsAndNumbersShowsTheSameWords4() throws { try returns(4) }
+    func testAReturnAfterTheControlsAndNumbersShowsTheSameWords5() throws { try returns(5) }
+
+    /// Method `k`'s rounds: k, k + 5, ... up to `rounds`.
+    private func returns(_ k: Int) throws {
+        let mine = Array(stride(from: k, through: rounds, by: Self.methods))
+        try XCTSkipIf(mine.isEmpty, "\(rounds) rounds leave none for method \(k)")
         if pad { XCUIDevice.shared.orientation = .landscapeLeft; sleep(1) }
         var same = 0
         let clock = DateFormatter(); clock.dateFormat = "HH:mm:ss.SSS"
-        for round in 1...rounds {
+        for round in mine {
             print("REOPEN round \(round) starts \(clock.string(from: Date()))")
             app.launchArguments = ["-GatefoldUITest", "YES", "-GatefoldFakeCloud", "YES", "-GatefoldSkipWelcome", "YES",
                                    "-GatefoldSignedIn", "YES", "-GatefoldAllowReopen", "YES", "-GatefoldNoLatency", "YES",
@@ -122,6 +136,6 @@ final class ReopenAfterControlsUITests: XCTestCase {
             XCTAssertTrue(ok, "round \(round) returned other words (\(Self.hash(left)) then \(Self.hash(back)))")
             app.quit()
         }
-        print("REOPEN SUMMARY same=\(same) of \(rounds)")
+        print("REOPEN SUMMARY method \(k): same=\(same) of \(mine.count) (rounds \(mine.map(String.init).joined(separator: ",")))")
     }
 }
