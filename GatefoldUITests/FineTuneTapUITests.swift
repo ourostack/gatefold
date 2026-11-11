@@ -146,41 +146,42 @@ final class FineTuneTapUITests: XCTestCase {
     }
 
     /// The review's bar: one ordinary tap at the switch's centre, then the switch must have flipped.
-    /// 25 on each of the four switches, no retry, every tap counted.
-    private func tapRate(_ shown: String) {
+    /// 25 on each of the four switches, no retry, every tap counted. Each method below takes one switch's
+    /// 25 taps in a row, in one launch, in one posture, so a method fits one CI shard; together they are the
+    /// old two methods' 4 x 25 taps in each posture, each judged the same way. One difference, accepted: each
+    /// switch now starts on a freshly opened reader, not one still busy from the switches tapped before it.
+    private func tapRate(_ shown: String, _ id: String) {
         let panel = app.descendants(matching: .any)["appearance.panel"].firstMatch
         var trials = 0, misses = 0
-        for id in switches {
-            let toggle = app.switches[id].firstMatch
-            XCTAssertTrue(toggle.waitForExistence(timeout: 10), id)
-            for _ in 0..<4 where !toggle.isHittable { panel.swipeUp() }
-            for _ in 0..<25 {
-                let before = valueBefore(toggle, "a tap on \(id)")
-                toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
-                trials += 1
-                let (changed, reads, hung) = readsUntilChanged(toggle, from: before)
-                if !changed {
-                    misses += 1
-                    print("TAPRATE miss on \(id) at trial \(trials) (no change in \(reads) reads\(hung ? ", hang guard" : ""))")
-                } else if readsBack(toggle, to: before) > 0 {
-                    // Changed twice: as much a miss as no change, as the old 1 s wait then one read counted it.
-                    misses += 1
-                    print("TAPRATE miss on \(id) at trial \(trials) (changed, then back)")
-                }
+        let toggle = app.switches[id].firstMatch
+        XCTAssertTrue(toggle.waitForExistence(timeout: 10), id)
+        for _ in 0..<4 where !toggle.isHittable { panel.swipeUp() }
+        for tap in 1...25 {
+            let before = valueBefore(toggle, "a tap on \(id)")
+            toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+            trials += 1
+            let (changed, reads, hung) = readsUntilChanged(toggle, from: before)
+            if !changed {
+                misses += 1
+                print("TAPRATE miss on \(id) at tap \(tap) (no change in \(reads) reads\(hung ? ", hang guard" : ""))")
+            } else if readsBack(toggle, to: before) > 0 {
+                // Changed twice: as much a miss as no change, as the old 1 s wait then one read counted it.
+                misses += 1
+                print("TAPRATE miss on \(id) at tap \(tap) (changed, then back)")
             }
         }
-        print("TAPRATE \(shown) trials=\(trials) misses=\(misses)")
-        XCTAssertEqual(misses, 0, "every one of \(trials) taps flipped its switch")
+        print("TAPRATE \(shown) \(id) trials=\(trials) misses=\(misses)")
+        XCTAssertEqual(misses, 0, "every one of \(trials) taps on \(id) flipped its switch")
     }
 
-    func testEveryTapFlipsItsSwitchPortrait() {
+    private func portrait(_ id: String) {
         openFineTune()
-        tapRate("portrait")
+        tapRate("portrait", id)
     }
 
     /// Turned for real: the app's window (where the taps land, not the runner's idea of the device)
     /// swaps its width and height. The opened-out Duo is near square, so its shape alone can't say.
-    func testEveryTapFlipsItsSwitchLandscape() throws {
+    private func landscape(_ id: String) throws {
         launchReader()
         let upright = app.windows.firstMatch.frame
         XCUIDevice.shared.orientation = .landscapeLeft
@@ -201,8 +202,20 @@ final class FineTuneTapUITests: XCTestCase {
             print("TAPRATE window is square: the turn is not provable by its shape")
         }
         openFineTune(launching: false)
-        tapRate("landscape")
+        tapRate("landscape", id)
     }
+
+    // Portrait: each switch's 25 taps.
+    func testEveryTapFlipsJustifyPortrait() { portrait("appearance.justify") }
+    func testEveryTapFlipsPageNumbersPortrait() { portrait("appearance.pageNumbers") }
+    func testEveryTapFlipsPositionLabelPortrait() { portrait("appearance.positionLabel") }
+    func testEveryTapFlipsPagesLeftPortrait() { portrait("appearance.pagesLeft") }
+
+    // Landscape: the same, turned.
+    func testEveryTapFlipsJustifyLandscape() throws { try landscape("appearance.justify") }
+    func testEveryTapFlipsPageNumbersLandscape() throws { try landscape("appearance.pageNumbers") }
+    func testEveryTapFlipsPositionLabelLandscape() throws { try landscape("appearance.positionLabel") }
+    func testEveryTapFlipsPagesLeftLandscape() throws { try landscape("appearance.pagesLeft") }
 
     /// The whole row is the control: a tap on its name changes the switch too.
     func testATapOnTheRowsNameChangesItsSwitch() {
