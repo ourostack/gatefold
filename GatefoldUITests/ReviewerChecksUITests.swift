@@ -152,8 +152,9 @@ final class ReviewerChecksUITests: XCTestCase {
     /// The Cloud's place offered on a first open here: take it (the tab brings back an offer that folded).
     /// The offer is tapped only while it is hittable: it can fold into its tab between a look and the tap (#207).
     /// Any type, never `app.buttons` (#165). Judged in looks, not seconds (#94): 200 at least 0.3 s apart (the old
-    /// 60 s on a fast runner); the 2400 s guard only catches a hang: a look is up to five
-        // queries of the app, and a starved runner has taken 1-2 s a query, so 200 looks can run to about 2000 s.
+    /// 60 s on a fast runner); the 2400 s guard only catches a hang: a look is up to five queries of the app, and a
+    /// starved runner has taken 1-2 s a query, so 200 looks can run to about 2000 s. No 600 s hold here, unlike
+    /// ReopenAfterControls: the offers of the books this test opens and leaves untaken must still fold off the page.
     private func takeTheOffer() {
         let offer = el("banner.jump"), tab = el("banner.tab")
         let start = Date(), hung = start.addingTimeInterval(2400)
@@ -248,9 +249,7 @@ final class ReviewerChecksUITests: XCTestCase {
     /// words never move.
     func testPageNumbersAreOnOrOffInEveryBook() {
         app.launchArguments = base + ["-GatefoldReset", "YES", "-GatefoldDownloadAll", "YES",
-                                      "-GatefoldOpenBook", "gutenberg-emma", "-GatefoldGoTo", "0.2",
-                                      // The second book's Cloud offer mustn't fold between a look and the tap (#207).
-                                      "-GatefoldOfferFoldSeconds", "600"]
+                                      "-GatefoldOpenBook", "gutenberg-emma", "-GatefoldGoTo", "0.2"]
         app.launch()
         XCTAssertTrue(el("reader.page").waitForExistence(timeout: 120))
         XCTAssertNotNil(counted(), "the book was counted")
