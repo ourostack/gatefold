@@ -67,11 +67,14 @@ final class ReopenAfterControlsUITests: XCTestCase {
         // straight away by a look for the offer it opened (no quiet looks): opened, it folds again 10 s later, and on
         // a loaded runner two quiet looks outlasted that every time (#238's run 43030197427: 30 tab taps, the offer
         // seen between them and never tapped), where `element.tap()` on the next look took it (main, 4.7 s after).
-        var looks = 0, taps = 0, quiet = 0, gone = 0, taken = false
+        // That look skips even the words read: a tab just up means an offer to take. An offer still up once a tap's
+        // quiet looks are spent is tapped again (the old loop stopped there and failed).
+        var looks = 0, taps = 0, quiet = 0, gone = 0, taken = false, afterTab = false
         while looks < 200 {
             if Date() > hung { XCTFail("hang: looking for the Cloud's offer ran \(looks) looks over 2400 s"); return }
             looks += 1
-            let wordsShown = !words.isEmpty
+            let wordsShown = afterTab ? false : !words.isEmpty
+            afterTab = false
             if wordsShown, taps == 0 { break }
             let offerAt = HitCheck.frame(of: offer)
             if quiet == 0, let f = offerAt.flatMap({ HitCheck.usable($0, within: window) }) {
@@ -86,7 +89,7 @@ final class ReopenAfterControlsUITests: XCTestCase {
             if quiet > 0 {
                 quiet -= 1
             } else if let f = tabAt.flatMap({ HitCheck.usable($0, within: window) }) {
-                HitCheck.tap(f, in: app)
+                HitCheck.tap(f, in: app); afterTab = true
             }
             RunLoop.current.run(until: Date().addingTimeInterval(0.3))
         }
