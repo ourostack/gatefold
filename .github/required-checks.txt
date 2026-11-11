@@ -1,0 +1,10 @@
+# The required checks on main's branch protection. TestFlight publishes a main commit only when every one of these
+# passed on it (scripts/ci-green-gate.py). The names never change; when a check is added to the protection, add it here.
+GatefoldCore tests
+Build and unit-test the app
+iPad (taps)
+iPad (place)
+iPad (reviewer)
+iPad (undo)
+Duo (the reviewers' checks)
+Real unfold
