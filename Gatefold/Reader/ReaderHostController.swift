@@ -873,6 +873,13 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         // this very note stands (a settle, a new reflow or a newer note drops it).
         Task { [weak self] in
             guard let found = await self?.currentAnchor(), let self, let model = self.weakModel, found.0.text != nil else { return }
+            // The words are read after the location: a restore that moved the page meanwhile, inside the same
+            // spread, would pair them with the page before. Only words from the page still named are kept.
+            guard let now = self.navigator.currentLocation, now.href == found.1.href,
+                  now.locations.progression == found.1.locations.progression else {
+                readerLog.notice("reflow: the page shown unsettled moved while its words were read; words dropped")
+                return
+            }
             model.reflowShownUnsettled(found.1, wordsFor: note)
         }
     }

@@ -1622,7 +1622,7 @@ final class ReaderModel {
     /// stalled restore Readium's progression can name a page beside the one shown, and the reopen found
     /// that page (CI 43034011191: written at once, words never attached before the app was ended).
     @ObservationIgnored private var shownLeaveWrite: (records: Int, move: Int, json: String)?
-    /// Each step of that write, for tests: "written", "position mapped", "gave up".
+    /// Each step of that write, for tests: "written", "position mapped (cfi)" or "(percent only)", "gave up".
     @ObservationIgnored private(set) var shownLeaveSteps: [String] = []
     private func writeShownPageAtOnce(_ here: Locator) {
         guard let json = try? here.jsonString() else {
@@ -1667,7 +1667,7 @@ final class ReaderModel {
                                 position: exact.map { var p = $0; p.totalProgression = here.locations.totalProgression ?? p.totalProgression; return p },
                                 at: now)
         shownLeaveWrite = (placeRecords, written.move, written.json)
-        shownLeaveSteps.append("position mapped")
+        shownLeaveSteps.append(exact?.cfi != nil ? "position mapped (cfi)" : "position mapped (percent only)")
         readerLog.notice("place write [r\(self.readerNumber, privacy: .public)]: position mapped for the page left unsettled, at \(here.locations.totalProgression ?? -1, privacy: .public), cfi \(exact?.cfi != nil, privacy: .public)")
     }
 

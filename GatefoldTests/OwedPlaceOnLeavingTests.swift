@@ -151,7 +151,7 @@ import Testing
         await held.open()
         // The mapping reads the chapter off the main actor: bounded polls, as the tests above wait on writes.
         for _ in 0..<200 where model.shownLeaveSteps.count < 2 { try await Task.sleep(for: .milliseconds(25)) }
-        #expect(model.shownLeaveSteps == ["written", "position mapped"], "steps \(model.shownLeaveSteps)")
+        #expect(model.shownLeaveSteps == ["written", "position mapped (cfi)"], "steps \(model.shownLeaveSteps)")
         let after = try #require(savedPlace())
         #expect(after.locations.progression == shownPage.locations.progression, "the mapped position moved the place")
         #expect(after.text.highlight == withWords.text.highlight, "the mapped position's write replaced his noted words")
