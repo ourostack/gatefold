@@ -1817,7 +1817,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
 
     /// Runs a jump with the old page left on screen, dimmed to 60 %, until the new page has painted;
     /// then the old page cross-fades away over 0.2 s (no blank page, no spinner). With `riffle`, a few
-    /// leaves flick past first.
+    /// leaves flick past first, unless the old page pictured bare: then none curl (gatefold#228).
     func veiledJump(riffle: Bool, forward: Bool, jump: Int, _ body: @escaping () async -> Void) async {
         guard veil == nil, !jumpStarting, !isTurning, view.window != nil else { return await body() }
         jumpStarting = true
