@@ -47,13 +47,23 @@ final class PlaceUndoUITests: XCTestCase {
 
     /// Waits judged in reads of the app, never seconds (gatefold#196, as #177 and #121): each read is a
     /// round trip to the app, so a starved runner makes reads slower instead of failing what landed late.
-    /// Each read waits at least 0.1 s, so `reads` is the floor a fast runner gets; `hangGuard` ends a
-    /// runner so slow that the reads would run on.
-    private func readsUntil(reads: Int, hangGuard: TimeInterval, _ done: () -> Bool) -> (ok: Bool, reads: Int) {
-        let hung = Date().addingTimeInterval(hangGuard)
+    /// Each read waits at least 0.1 s, so `reads` is the floor a fast runner gets. The hang guard ends only a
+    /// hang: `HangGuard` sizes it from `reads` and ends it before the step does (gatefold#223). The fixed guards
+    /// it replaces (30 s to 240 s) would end a wait after 2 to 13 reads at the slowest read seen, before its cap.
+    /// After one wait hangs, every later wait in the test answers at once, not done, so the test runs to its end
+    /// with its own failures and leaves the shard's later tests their time, instead of each wait in turn running
+    /// on toward the step's end (gatefold#223 review). A test method gets a fresh instance, so this is per test.
+    private var hung = false
+    private func readsUntil(reads: Int, _ done: () -> Bool) -> (ok: Bool, reads: Int) {
+        if hung { return (false, 0) }
+        let guardEnds = Date().addingTimeInterval(HangGuard.seconds(reads: reads))
         for read in 1...reads {
             if done() { return (true, read) }
-            if Date() > hung { return (false, read) }
+            if Date() > guardEnds {
+                hung = true
+                XCTFail("hang: a wait ran \(read) of its \(reads) reads past its hang guard")
+                return (false, read)
+            }
             RunLoop.current.run(until: Date().addingTimeInterval(0.1))
         }
         return (false, reads)
@@ -61,10 +71,10 @@ final class PlaceUndoUITests: XCTestCase {
 
     /// A jump has landed: its veil is gone and the page shows other words than `old`. The words change
     /// beneath the veil, which swallows a tap (`handleTap`), so a tap waits for this, not for the words.
-    private func landed(from old: String, reads: Int = 300, hangGuard: TimeInterval = 150) -> (words: String, reads: Int, ok: Bool) {
+    private func landed(from old: String, reads: Int = 300) -> (words: String, reads: Int, ok: Bool) {
         let veil = el("reader.veil")
         var words = ""
-        let wait = readsUntil(reads: reads, hangGuard: hangGuard) {
+        let wait = readsUntil(reads: reads) {
             words = visibleText
             return !words.isEmpty && words != old && !veil.exists
         }
@@ -99,20 +109,20 @@ final class PlaceUndoUITests: XCTestCase {
         // A tap under a jump's veil is swallowed (the veil is the page changing), so wait it out.
         // Judged in reads (gatefold#166), as every wait here: a starved runner's queries take seconds.
         let veil = el("reader.veil")
-        XCTAssertTrue(readsUntil(reads: 600, hangGuard: 240) { !veil.exists }.ok, "the veil lifts")
+        XCTAssertTrue(readsUntil(reads: 600) { !veil.exists }.ok, "the veil lifts")
         // Already up (a jump made from them leaves them up), or fading in or out: wait for one or the
         // other and never tap them down. 2 s of wall time ran out on a starved runner while they were
         // up, and the tap that followed put them down.
         let contents = app.buttons["reader.contents"]
         if contents.exists {
-            _ = readsUntil(reads: 30, hangGuard: 180) { !contents.exists || contents.isHittable }
+            _ = readsUntil(reads: 30) { !contents.exists || contents.isHittable }
             if contents.exists {
                 XCTAssertTrue(contents.isHittable, "the controls that are up become hittable")
                 return
             }
         }
         el("reader.page").coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
-        XCTAssertTrue(readsUntil(reads: 50, hangGuard: 120) { contents.exists && contents.isHittable }.ok,
+        XCTAssertTrue(readsUntil(reads: 50) { contents.exists && contents.isHittable }.ok,
                       "a tap in the middle brings up the controls")
     }
 
@@ -121,7 +131,7 @@ final class PlaceUndoUITests: XCTestCase {
     /// frame holds still for two reads in a row, or it isn't there.
     private func holdsStill(_ e: XCUIElement) {
         var last = CGRect.null
-        _ = readsUntil(reads: 30, hangGuard: 30) {
+        _ = readsUntil(reads: 30) {
             guard e.exists else { return true }
             let now = e.frame
             defer { last = now }
@@ -136,7 +146,7 @@ final class PlaceUndoUITests: XCTestCase {
         // The list opens centred on the current chapter, so the first rows are not built yet.
         XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label BEGINSWITH[c] %@", "Chapter")).firstMatch.waitForExistence(timeout: 10),
                       "the contents list opens")
-        for _ in 0..<20 {
+        for _ in 0..<20 where !hung {
             holdsStill(row)
             if row.exists && row.isHittable { break }
             app.swipeUp(velocity: .slow)
@@ -158,13 +168,13 @@ final class PlaceUndoUITests: XCTestCase {
         // A jump made from the controls leaves them up, perhaps still fading in: once they are, a tap in
         // the middle puts them down.
         let contents = app.buttons["reader.contents"]
-        let up = readsUntil(reads: 20, hangGuard: 30) { contents.exists && contents.isHittable }
+        let up = readsUntil(reads: 20) { contents.exists && contents.isHittable }
         if up.ok { el("reader.page").coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap() }
-        let hidden = readsUntil(reads: 50, hangGuard: 60) { !contents.exists }
+        let hidden = readsUntil(reads: 50) { !contents.exists }
         print("UNDO controls up=\(up.ok) after \(up.reads) reads; hidden after \(hidden.reads) reads")
         XCTAssertTrue(hidden.ok, "the controls are hidden")
         let back = app.buttons["reader.back"]
-        let shown = readsUntil(reads: 50, hangGuard: 60) { back.exists }
+        let shown = readsUntil(reads: 50) { back.exists }
         print("UNDO back shown after \(shown.reads) reads")
         XCTAssertTrue(shown.ok, "no way back on the page without opening the controls")
         // Still there a while later: he may notice the jump late.
@@ -177,12 +187,12 @@ final class PlaceUndoUITests: XCTestCase {
         XCTAssertEqual(opening(returned.words), opening(first), "Back did not return to his page")
         XCTAssertTrue(returned.ok, "Back's veil lifts")
         // And Back itself is one tap to undo.
-        let again = readsUntil(reads: 50, hangGuard: 60) { app.buttons["reader.back"].exists }
+        let again = readsUntil(reads: 50) { app.buttons["reader.back"].exists }
         XCTAssertTrue(again.ok, "going back can't be undone")
         // And the page still answers: a tap in its middle brings the controls up.
         XCTAssertFalse(contents.exists, "the controls stayed down through Back")
         el("reader.page").coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
-        let answers = readsUntil(reads: 50, hangGuard: 60) { contents.exists }
+        let answers = readsUntil(reads: 50) { contents.exists }
         print("UNDO back again after \(again.reads) reads; controls after \(answers.reads) reads")
         XCTAssertTrue(answers.ok, "after Back a tap no longer shows the controls")
     }
@@ -383,14 +393,14 @@ final class PlaceUndoUITests: XCTestCase {
         contentsJump(to: "Chapter XL")
         let veil = el("reader.veil")
         let contents = app.buttons["reader.contents"]
-        let up = readsUntil(reads: 100, hangGuard: 120) { veil.exists }
+        let up = readsUntil(reads: 100) { veil.exists }
         print("UNDO tapped jump: veil up after \(up.reads) reads")
         XCTAssertTrue(up.ok, "the jump's veil is up")
         XCTAssertTrue(contents.exists, "the controls are up under the veil")
         el("reader.page").coordinate(withNormalizedOffset: CGVector(dx: 0.97, dy: 0.5)).tap()
         // One veil a jump: still up after the tap means it was up when the tap landed.
         XCTAssertTrue(veil.exists, "the tap landed under the jump's veil")
-        let jump = landed(from: first, reads: 1200, hangGuard: 240)
+        let jump = landed(from: first, reads: 1200)
         print("UNDO tapped jump landed after \(jump.reads) reads")
         XCTAssertTrue(jump.ok, "the jump's veil lifts")
         XCTAssertTrue(contents.exists, "the tap under the veil was swallowed (the controls it would have put down are up)")
@@ -398,13 +408,13 @@ final class PlaceUndoUITests: XCTestCase {
         XCTAssertNotEqual(opening(chosen), opening(first))
         // The same jump again, untouched, from his first page: the page it lands on is where he chose.
         app.buttons["reader.back"].tap()
-        let back = landed(from: chosen, reads: 1200, hangGuard: 240)
+        let back = landed(from: chosen, reads: 1200)
         print("UNDO back landed after \(back.reads) reads")
         XCTAssertTrue(back.ok, "Back's veil lifts")
         contentsJump(to: "Chapter XL")
-        let again = readsUntil(reads: 100, hangGuard: 120) { veil.exists }
+        let again = readsUntil(reads: 100) { veil.exists }
         XCTAssertTrue(again.ok, "the untouched jump's veil is up")
-        let untouched = landed(from: back.words, reads: 1200, hangGuard: 240)
+        let untouched = landed(from: back.words, reads: 1200)
         print("UNDO untouched jump: veil up after \(again.reads) reads, landed after \(untouched.reads) reads")
         XCTAssertTrue(untouched.ok, "the untouched jump's veil lifts")
         XCTAssertEqual(opening(settledWords()), opening(chosen), "a tap during the jump moved the page off where he chose")

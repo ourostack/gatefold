@@ -1,6 +1,6 @@
 # Every UI test CI runs, as tier|device|test (gatefold#39). scripts/ci-shards.py check --expect fails unless the
-# shards in .github/workflows/app.yml run exactly this set; after adding or removing a test, write it from
-# python3 -I scripts/ci-shards.py check --list (the part of each line before the tab).
+# shards in .github/workflows/app.yml run exactly this set; after adding or removing a test, rewrite it with
+# python3 -I scripts/ci-shards.py write (it keeps these comment lines).
 main|iPad Pro 13-inch|CountingPlaceholderUITests/testAFreshOpenNeverLeavesTheNumbersSlotBlank
 main|iPad Pro 13-inch|CountingPlaceholderUITests/testAFreshOpenOnItsSideNeverLeavesTheNumbersSlotBlank
 main|iPad Pro 13-inch|FineTuneTapUITests/testAQuickTouchChangesEverySwitchOnce
