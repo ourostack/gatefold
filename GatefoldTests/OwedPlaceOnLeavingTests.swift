@@ -95,4 +95,80 @@ import Testing
         #expect(saved.text.highlight != nil, "the settled reflow's capture of his words was not kept last")
         model.close()
     }
+
+    /// A restore that stalls after a rotation leaves him the page as it was (gatefold#133). Closing writes
+    /// that page in the close itself, before any Task or wait: the words and their mapped position may
+    /// never come while the page is stalled, and the app may be ended a moment later. His words, noted
+    /// before he left, go with it; the mapped position, when it comes, lands on the same place. Fails if
+    /// the leave write waits on the mapping's path (`placeWriteWait`, then the mapping) or on a Task hop.
+    @Test func thePageAStalledRestoreLeftIsWrittenBeforeAnyWait() async throws {
+        let sync = StubSync()
+        await sync.setLibrary(.success([ReaderSyncTests.frankenstein]))
+        await sync.setRemote(nil)
+        let app = AppModel(sync: sync, libraryRoot: URL.temporaryDirectory.appending(path: "shown-on-leaving-\(UUID().uuidString)"))
+        await app.library.refresh()
+        let publication = try await ReaderSyncTests.publication()
+        let book = try #require(app.library.book(ReaderSyncTests.frankenstein.fastHash))
+        let first = publication.readingOrder[0].url().string
+        let opening = Locator(href: try #require(AnyURL(string: first)), mediaType: .xhtml,
+                              locations: .init(progression: 0, totalProgression: 0))
+        let page = TwoStepJumpPage(at: opening, readsToLand: 1)
+        let model = ReaderModel(book: book, publication: publication, app: app, page: page)
+        page.model = model
+        await model.load()
+        func savedPlace() -> Locator? {
+            app.library.book(ReaderSyncTests.frankenstein.fastHash)?.locatorJSON.flatMap { try? Locator(jsonString: $0) }
+        }
+
+        // He reads on a little: a turn, kept as his place.
+        let read = try #require(await ReaderSyncTests.locate(publication, 0.12))
+        page.currentLocation = read
+        model.userTurnedPage()
+        await model.locationDidChange(read)
+        for _ in 0..<200 where savedPlace()?.locations.progression != read.locations.progression { await Task.yield() }
+        try #require(savedPlace()?.locations.progression == read.locations.progression, "his turn was kept")
+
+        // He rotates; the restore stalls, and the page is shown as it is, not the page he turned to.
+        model.keeper.reflowWillBegin(.rotation)
+        model.reflowDidBegin()
+        let shownPage = try #require(await ReaderSyncTests.locate(publication, 0.31))
+        let withWords = shownPage.copy(text: { $0.highlight = "placeholder words" })
+        let note = try #require(model.reflowShownUnsettled(shownPage))
+        try #require(model.reflowShownUnsettled(withWords, wordsFor: note) != nil, "his words noted for the page shown")
+
+        // The words' path never comes back while he is leaving.
+        let held = LeaveGate()
+        model.placeWriteWait = { await held.wait() }
+        // He closes the book: the place is the shown page by the time the close returns, with no yield.
+        model.close()
+        let atOnce = try #require(savedPlace(), "leaving kept no place")
+        #expect(atOnce.href.string == shownPage.href.string)
+        #expect(atOnce.locations.progression == shownPage.locations.progression,
+                "kept at \(atOnce.locations.progression ?? -1), not the shown page (\(shownPage.locations.progression ?? -1)), while the words' path waits")
+        #expect(atOnce.text.highlight == withWords.text.highlight, "the first write didn't carry the words noted before he left")
+
+        // The words come: on the same place, never another.
+        await held.open()
+        // The mapping reads the chapter off the main actor: bounded polls, as the tests above wait on writes.
+        for _ in 0..<200 where model.shownLeaveSteps.count < 2 { try await Task.sleep(for: .milliseconds(25)) }
+        #expect(model.shownLeaveSteps == ["written", "position mapped (cfi)"], "steps \(model.shownLeaveSteps)")
+        let after = try #require(savedPlace())
+        #expect(after.locations.progression == shownPage.locations.progression, "the mapped position moved the place")
+        #expect(after.text.highlight == withWords.text.highlight, "the mapped position's write replaced his noted words")
+    }
+}
+
+/// A wait that holds until it is opened.
+actor LeaveGate {
+    private var isOpen = false
+    private var waiting: [CheckedContinuation<Void, Never>] = []
+    func wait() async {
+        if isOpen { return }
+        await withCheckedContinuation { waiting.append($0) }
+    }
+    func open() {
+        isOpen = true
+        waiting.forEach { $0.resume() }
+        waiting = []
+    }
 }
