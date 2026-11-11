@@ -1,6 +1,6 @@
 # Every UI test CI runs, as tier|device|test (gatefold#39). scripts/ci-shards.py check --expect fails unless the
-# shards in .github/workflows/app.yml run exactly this set; after adding or removing a test, write it from
-# python3 -I scripts/ci-shards.py check --list (the part of each line before the tab).
+# shards in .github/workflows/app.yml run exactly this set; after adding or removing a test, rewrite it with
+# python3 -I scripts/ci-shards.py write (it keeps these comment lines).
 main|iPad Pro 13-inch|CountingPlaceholderUITests/testAFreshOpenNeverLeavesTheNumbersSlotBlank
 main|iPad Pro 13-inch|CountingPlaceholderUITests/testAFreshOpenOnItsSideNeverLeavesTheNumbersSlotBlank
 main|iPad Pro 13-inch|FineTuneTapUITests/testAQuickTouchChangesEverySwitchOnce
@@ -36,6 +36,7 @@ main|iPad Pro 13-inch|PlaceUndoUITests/testATapAtTheLeftEdgeTurnsBackPromptlyWit
 main|iPad Pro 13-inch|PlaceUndoUITests/testATapNearTheLeftEdgeOfASpreadTurnsBack
 main|iPad Pro 13-inch|PlaceUndoUITests/testATapWhileAJumpIsUnderWayLandsWhereHeChose
 main|iPad Pro 13-inch|PlaceUndoUITests/testATouchOnTheScrubberNeverJumps
+main|iPad Pro 13-inch|PlaceUndoUITests/testBackToAChapterStillLoadingWaitsForItAndTakesHimBack
 main|iPad Pro 13-inch|PositionUITests/testEveryPostureKeepsThePlace
 main|iPad Pro 13-inch|ReopenAfterControlsUITests/testAReturnAfterTheControlsAndNumbersShowsTheSameWords1
 main|iPad Pro 13-inch|ReopenAfterControlsUITests/testAReturnAfterTheControlsAndNumbersShowsTheSameWords2
@@ -51,6 +52,8 @@ main|iPad Pro 13-inch|RotationMidTransitionUITests/testTurningDuringAContentsJum
 main|iPad Pro 13-inch|RotationMidTransitionUITests/testTurningDuringAPageTurn
 main|iPad Pro 13-inch|RotationRepro/testRotateThenLeaveWithoutTurning
 main|iPad Pro 13-inch|RotationRepro/testRotateThenLeaveWithoutTurningAfterStalledReflows
+main|iPad Pro 13-inch|RotationRepro/testRotateThenLeaveWhileTheRestoreWaitsOnItsPage
+main|iPad Pro 13-inch|RotationRepro/testRotateThenLeaveWhileTheRestoreWaitsOnItsPageWithoutItsWords
 main|iPad Pro 13-inch|SpreadTurnSettleUITests/testSpreadTurnsLandWithoutSliding
 main|iPad Pro 13-inch|WindowFitUITests/testOnItsSide
 main|iPad Pro 13-inch|WindowFitUITests/testUpright
