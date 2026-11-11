@@ -1838,16 +1838,27 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         // The jump he chose starts now: the old page is pictured as it is, never waited on while it
         // loads (its spinner held the jump back up to 60 s, and the page never moved: gatefold#73).
         let old = await renderedSnapshot(afterChange: false, waitsForLoad: false)
+        // A picture that came back bare or black (a page still loading, or a test's held load pictured
+        // as one) is never held over the jump: the screen stays as it is beneath the veil instead.
+        let paper = PageSignature.rgb(weakModel?.theme.uiBackground ?? .white)
+        let bare = (LaunchOptions.isUITest && LaunchOptions.holdOldPageLoadLooks != nil && heldLoadLooks > 0)
+            || PageSignature(old).map { $0.isBlack(paper: paper) || $0.isBare(paper: paper) } ?? true
+        let hold = OldPagePicture.hold(bare: bare)
         if LaunchOptions.isUITest, LaunchOptions.holdOldPageLoadLooks != nil { heldLoadLooks = heldBefore }
         jumpStarting = false
-        readerLog.notice("veil: jump \(jump, privacy: .public) pictured the old page in \(ReaderModel.ms(since: jumpTapped), privacy: .public) ms, \(self.lastSnapshotLooks, privacy: .public) looks")
+        readerLog.notice("veil: jump \(jump, privacy: .public) pictured the old page in \(ReaderModel.ms(since: jumpTapped), privacy: .public) ms, \(self.lastSnapshotLooks, privacy: .public) looks\(hold == .onScreen ? "; bare, so the veil keeps the screen as it is" : "", privacy: .public)")
         // Let go of while its old page was being pictured (`abandonVeil`): no cover goes up.
         guard veilJump == jump else { return await body() }
         // The old page, opaque, with a wash of paper over it: it reads as dimmed to 60 %, and nothing
         // of the new page shows through until the cross-fade.
         let cover = UIView(frame: navigator.view.frame)
         cover.isUserInteractionEnabled = false
-        let image = UIImageView(image: old)
+        let image: UIView
+        if hold == .onScreen, let screen = navigator.view.snapshotView(afterScreenUpdates: false) {
+            image = screen
+        } else {
+            image = UIImageView(image: old)
+        }
         image.frame = cover.bounds
         image.backgroundColor = weakModel?.theme.uiBackground
         let wash = UIView(frame: cover.bounds)
@@ -2418,7 +2429,8 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         var loadingLooks = 0
         var attempt = 0
         defer { lastSnapshotLooks = loadingLooks + attempt }
-        let attempts = waitsForLoad ? 40 : 10
+        // A jump's old page still loading is looked at once: the jump starts after it (gatefold#155).
+        let attempts = waitsForLoad ? 40 : OldPagePicture.tries(stillLoading: !afterChange && (heldLoadLooks > 0 || readiumSpinner != nil))
         while attempt < attempts {
             if afterChange || attempt > 0 || loadingLooks > 0 { try? await Task.sleep(for: .milliseconds(attempt == 0 && loadingLooks == 0 ? 60 : 50)) }
             if attempt == 0, loadingLooks == 0, heldLoadLooks == 0, readiumSpinner != nil {
