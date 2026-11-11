@@ -117,6 +117,7 @@ final class ReaderModel {
         if pageReady { readerLog.notice("first page ready after 0 s (opened ahead of the tap)") }
         activation?.resume()
         activation = nil
+        foldOnceSeen()
         if let record = pendingRecord {
             pendingRecord = nil
             record(Date())
@@ -456,6 +457,11 @@ final class ReaderModel {
     }
     /// UI tests: "Counting pages…" was drawn at least once (CI's slow reads can miss it on screen).
     var countingShownProbe = false
+    /// UI tests only: the latest reflow's number and how far it has got ("3 reflowing", "3 placed", then
+    /// "3 settled" once its page is fully shown, its cover faded or its swing played; a restore that gave way
+    /// to his move counts as settled when its page starts showing), so a test can let a reflow settle before
+    /// its next touch (gatefold#175). Never set outside UI tests.
+    var reflowProbe = ""
     /// The last count ended by itself with chapters it couldn't count; cleared when a count starts.
     private(set) var countGaveUp = false
     private var lastGeometry: (href: String, geometry: ScreenPageGeometry)?
@@ -784,6 +790,7 @@ final class ReaderModel {
 
     private func showPage() {
         withAnimation(.easeOut(duration: 0.3)) { pageReady = true } completion: { [weak self] in self?.coverLifted = true }
+        foldOnceSeen()
         if reopenPicture == nil { pageShownAt = Date() }
         // Counting the book's pages waits until the open has settled (the reopen picture gone too), so
         // it never slows the first page.
@@ -1066,6 +1073,7 @@ final class ReaderModel {
     func foldSlip() {
         guard slipKind == .ahead, slip != nil, !slipFolded else { return }
         slipTask?.cancel()
+        foldOwed = false
         withAnimation(reduceMotion ? .easeOut(duration: 0.2) : .spring(duration: 0.4, bounce: 0.15)) { slipFolded = true }
     }
 
@@ -1076,14 +1084,32 @@ final class ReaderModel {
         foldSlipLater()
     }
 
-    /// Unanswered, the offer folds itself away after a while rather than sitting on the page.
+    /// Unanswered, the offer folds itself away after a while rather than sitting on the page. The while
+    /// counts from when he can see it and answer: an offer made behind the shelf, or under the opening
+    /// cover, waits for the tap and the page (`foldOnceSeen`). Made at a warm open's start, it folded about
+    /// 10 s later, before a starved iPad's page had shown, and Catch up found only its tab (gatefold#156).
     private func foldSlipLater() {
         slipTask?.cancel()
+        guard !isWarming, pageReady else {
+            foldOwed = true
+            return
+        }
+        foldOwed = false
         slipTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(LaunchOptions.offerFoldSeconds))
             guard !Task.isCancelled else { return }
             self?.foldSlip()
         }
+    }
+
+    /// An offer whose fold waits for him to see it.
+    @ObservationIgnored private var foldOwed = false
+
+    /// He can see the offer now (the book tapped, its page up): its wait before folding starts.
+    private func foldOnceSeen() {
+        guard foldOwed else { return }
+        guard slipKind == .ahead, slip != nil, !slipFolded, !isClosed else { foldOwed = false; return }
+        foldSlipLater()
     }
 
     private func showLanded(_ landed: SyncSlip, underline: Locator?) {
@@ -1109,6 +1135,7 @@ final class ReaderModel {
 
     func hideSlip() {
         slipTask?.cancel()
+        foldOwed = false
         withAnimation(.easeOut(duration: 0.35)) {
             slip = nil
             slipKind = nil
@@ -1736,6 +1763,7 @@ final class ReaderModel {
         reflowCount += 1
         landingChecks = 0
         anchorCheck = "settling \(reflowCount)"
+        if LaunchOptions.isUITest { reflowProbe = "\(reflowCount) reflowing" }
     }
 
     private var reflowSettledAt: Date?
@@ -1758,8 +1786,18 @@ final class ReaderModel {
         }
     }
 
+    /// The latest reflow's number, for `reflowShown`.
+    var reflowNumber: Int { reflowCount }
+
+    /// UI tests only: reflow `number`'s page is fully shown. A newer reflow begun meanwhile keeps its own state.
+    func reflowShown(_ number: Int) {
+        guard LaunchOptions.isUITest, number == reflowCount else { return }
+        reflowProbe = "\(number) settled"
+    }
+
     func reflowDidFinish(visible: VisibleRange?) {
         reflowSettledAt = Date()
+        if LaunchOptions.isUITest { reflowProbe = "\(reflowCount) placed" }
         // A reflow throws away the page loading behind this one; the catch-up still on offer gets a new one.
         if let waiting = suggestionLocator, !isClosed { page?.prepareStandby(at: waiting) }
         if let visible, let anchor = keeper.anchor {
