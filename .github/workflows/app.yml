@@ -210,7 +210,7 @@ jobs:
   # Each `timeout` is 30 min of setup (the simulator wait step's own limit; gatefold#198), plus twice the sum of its
   # tests' slowest passes in those runs (the tests' budget), plus 12 for the logs after the tests (gatefold#141). The
   # test step gets that whole budget whenever setup ends within 30 min of the job's start (.github/actions/time-left);
-  # boots of 9 to 14 min leave room to spare, and a green run takes no longer. Twice, because on these overloaded runners
+  # the 9 to 14 min boots in gatefold#198 leave room to spare, and a green run takes no longer. Twice, because on these overloaded runners
   # a test that passes can run 2-3x its usual time; a shard that still hits its limit is a red to fix at its cause, not
   # a limit to raise. The rotation shards (`cold`) run on the job's new iPad, before anything warms it.
   # scripts/ci-shards.py (in `CI scripts, offline`, which `GatefoldCore tests` stands for) fails when a listed test does
