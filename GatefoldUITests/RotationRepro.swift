@@ -245,8 +245,8 @@ final class RotationRepro: XCTestCase {
             let savedNow = (el("reader.savedWords").value as? String) ?? ""
             let keptWords = !keepsHisWords || !savedNow.isEmpty
             // A place that carries his turn's words opens on them: never his words on another page (the leave
-            // keeps them only on the page his turn kept). Not wanted when no words were saved before the turn.
-            let keptAt = backFlat.range(of: flat(head(turnedBeforeRotation)))
+            // keeps them only on the page his turn kept). Searched as saved, so a hyphenated page start can't hide them.
+            let keptAt = backFlat.range(of: flat(head(savedNow)))
                 .map { backFlat.distance(from: backFlat.startIndex, to: $0.lowerBound) } ?? -1
             let borrowed = !savedNow.isEmpty && savedNow == savedBeforeRotation && !(0...160).contains(keptAt)
             if startsSame && keptWords && !borrowed { green += 1 }
