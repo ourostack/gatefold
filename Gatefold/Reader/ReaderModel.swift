@@ -265,8 +265,7 @@ final class ReaderModel {
         if let aimFile = landingAimFile, l.href.string == aimFile, (l.locations.progression ?? 0) == 0 {
             guard let before else { return true }
             if before.href.string == aimFile, (before.locations.progression ?? 0) > 0 { return false }
-            guard let i = readingOrderHrefs.firstIndex(of: aimFile), i > 0, before.href.string == readingOrderHrefs[i - 1] else { return true }
-            return false
+            return true
         }
         if let a = screenPage(atTotal: total), let b = screenPage(atTotal: landingAim) { return a == b }
         guard chapterMap.positionCount > 1 else { return abs(total - landingAim) < 0.000_1 }
