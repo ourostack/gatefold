@@ -204,8 +204,12 @@ final class RotationRepro: XCTestCase {
             let startsSame = head(back) == head(his)
             let middleSame = back.contains(middle(his))
             let at = back.range(of: head(his)).map { back.distance(from: back.startIndex, to: $0.lowerBound) } ?? -1
-            if startsSame { green += 1 }
-            note("round \(round) \(startsSame ? "GREEN" : "RED") startsSame=\(startsSame) middleSame=\(middleSame) hisStartAt=\(at) reopenedHead=\(hash(head(back)))")
+            // His turn kept his words; leaving on that same page, with or without words from it, keeps them
+            // (gatefold#133: a bare progression reopened one page boundary early). Never printed, only tested.
+            let keptWords = !((el("reader.savedWords").value as? String) ?? "").isEmpty
+            if startsSame && keptWords { green += 1 }
+            note("round \(round) \(startsSame && keptWords ? "GREEN" : "RED") startsSame=\(startsSame) keptWords=\(keptWords) middleSame=\(middleSame) hisStartAt=\(at) reopenedHead=\(hash(head(back)))")
+            XCTAssertTrue(keptWords, "round \(round): the place reopened carries his words")
             XCTAssertTrue(startsSame, "round \(round): reopened on his page")
             assertNoVisibleSettleMove("round \(round)")
         }
