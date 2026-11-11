@@ -149,7 +149,8 @@ import Testing
 
         // The words come: on the same place, never another.
         await held.open()
-        for _ in 0..<200 where savedPlace()?.text.highlight == nil { await Task.yield() }
+        // The mapping reads the chapter off the main actor: bounded polls, as the tests above wait on writes.
+        for _ in 0..<200 where savedPlace()?.text.highlight == nil { try await Task.sleep(for: .milliseconds(25)) }
         let after = try #require(savedPlace())
         #expect(after.locations.progression == shownPage.locations.progression, "the words moved the place")
         #expect(after.text.highlight != nil, "his words were not attached once they came")

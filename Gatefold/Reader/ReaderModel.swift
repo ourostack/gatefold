@@ -1580,8 +1580,8 @@ final class ReaderModel {
         if isClosed { owedJumpTarget = nil }
         // Still open (the app only went inactive): once the restore settles, the page it settles on is
         // the one he sees again, and it is written back over this one. Noted before the write's own wait.
-        let movesAtWrite = moves
-        if shown, !isClosed { shownWrittenOpen = movesAtWrite }
+        // The shown page's write took its move when it was written (`keepShownPageNow`), not now.
+        let movesAtWrite = shown ? (shownLeaveWrite?.move ?? moves) : moves
         if shown { await attachShownPageWords(here) } else {
             await locationDidChange(here, hisMove: true, placeOnly: true, leaving: true)
         }
@@ -1611,6 +1611,7 @@ final class ReaderModel {
         layoutOnly = false
         readerLog.notice("place [r\(self.readerNumber, privacy: .public)]: the page a restore left unsettled, on leaving, at \(here.locations.totalProgression ?? -1, privacy: .public)")
         writeShownPageAtOnce(here)
+        if !isClosed, let written = shownLeaveWrite { shownWrittenOpen = written.move }
         // Sent now too: the caller's own send may already have gone.
         app.library.flushPushes()
     }
