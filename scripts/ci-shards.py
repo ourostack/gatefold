@@ -15,7 +15,8 @@ main and full-list pull requests) this fails when
 word of each line; blank lines and lines starting with # ignored). CI checks against scripts/ci-shards.expect, so a
 test leaves CI only by a visible edit there: after adding or removing a test, `write` rewrites the file from the shards
 (keeping its comment header), and the diff shows what changed.
-Reads only; no dependencies, so it runs in the Swift container of `GatefoldCore tests`.
+Reads only; no dependencies beyond python3. It runs in the job `CI scripts, offline`, which `GatefoldCore tests` (a
+required check) stands for (gatefold#241).
 """
 import os
 import re
