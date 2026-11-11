@@ -108,8 +108,9 @@ final class ReopenAfterControlsUITests: XCTestCase {
     /// The controls, judged in reads (gatefold#233). A tap under a jump's veil is swallowed, and the veil can stay
     /// up for a chapter that loads for minutes (#94: 135.7 s in run 43010124019), so each tap waits for the veil
     /// to lift first. Then up to 30 reads for the controls to come up, never a second tap while they fade in
-    /// (it would put them down). If they never come up, the test says so, not a tap on a missing control.
-    private func numbersOn() {
+    /// (it would put them down). If they never come up, the test says so, not a tap on a missing control, and
+    /// returns false: the caller ends the test there, since every later step and round would wait on them too.
+    private func numbersOn() -> Bool {
         let appearance = el("reader.appearance")
         let veil = el("reader.veil")
         for tap in 1...4 where !appearance.exists {
@@ -119,13 +120,13 @@ final class ReopenAfterControlsUITests: XCTestCase {
                 break
             }
             el("reader.page").coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
-            let up = readsUntil(reads: 30) { appearance.exists }
+            let up = readsUntil(reads: 30) { appearance.exists && appearance.isHittable }
             print("REOPEN controls: tap \(tap) up=\(up.ok) after \(up.reads) reads\(up.hung ? " (hang guard)" : "")")
             if up.hung { break }
         }
         guard appearance.exists else {
             XCTFail("the controls come up for Page Numbers (veil up: \(veil.exists))")
-            return
+            return false
         }
         appearance.tap()
         let fine = el("appearance.customize")
@@ -140,6 +141,7 @@ final class ReopenAfterControlsUITests: XCTestCase {
         for id in ["appearance.close", "appearance.back", "appearance.close"] where el(id).exists { el(id).tap(); sleep(1) }
         if el("appearance.panel").exists { el("reader.page").coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.15)).tap() }
         sleep(2)
+        return true
     }
 
     func testAReturnAfterTheControlsAndNumbersShowsTheSameWords() {
@@ -158,7 +160,7 @@ final class ReopenAfterControlsUITests: XCTestCase {
             open()
             takeTheOffer(round: round)
             let opened = settle()
-            numbersOn()
+            guard numbersOn() else { app.quit(); return }
             // The number takes the "Counting pages…" slot: the layout report this guards against.
             _ = el("reader.pageNumber").waitForExistence(timeout: 180)
             let left = settle()
