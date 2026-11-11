@@ -873,12 +873,16 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         // no page behind it (gatefold#109), and runs again on the spread that replaced it.
         _ = await Self.onSpread { () async throws -> Void? in
             let navigator = self.navigator // the one on screen now, on each try
+            readerLog.notice("reflow step: g\(generation, privacy: .public) try, current \(current(), privacy: .public)")
             guard current() else { return nil }
             _ = try await navigator.answer(ReaderJS.install)
+            readerLog.notice("reflow step: g\(generation, privacy: .public) install back")
             self.firstScriptBack = max(self.firstScriptBack, generation)
             _ = try await navigator.answer(ReaderJS.setColumns(self.columns))
+            readerLog.notice("reflow step: g\(generation, privacy: .public) columns back")
             return ()
         }
+        readerLog.notice("reflow step: g\(generation, privacy: .public) on spread done")
         guard current() else { return }
         if LaunchOptions.stallReflow, reflowCover != nil || leaf != nil {
             readerLog.notice("reflow: held for the test (GatefoldStallReflow)")
@@ -898,6 +902,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             return range
         }
         let visible = await laidOutRange(within: .seconds(3))
+        readerLog.notice("reflow step: g\(generation, privacy: .public) laid out \(visible != nil, privacy: .public) text \(visible?.text != nil, privacy: .public) current \(current(), privacy: .public)")
         guard current() else { return }
         var after = visible
         let action = visible.map { model.keeper.reflowDidSettle(visible: $0) } ?? RestoreAction.none
@@ -929,6 +934,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         if columns == 2, let target {
             placingGeneration = generation
             let moved = await keepOnLeft(target, purpose: .restore, current: current)
+            readerLog.notice("reflow step: g\(generation, privacy: .public) kept on left \(moved != nil, privacy: .public)")
             if placingGeneration == generation { placingGeneration = -1 }
             if let moved { after = moved }
         }
@@ -940,6 +946,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         guard current() else { return }
         model.keeper.restoreDidComplete()
         model.reflowDidFinish(visible: after)
+        readerLog.notice("reflow step: g\(generation, privacy: .public) complete")
         // Settled now, not when the swing below has played: the 12 s watchdog took a slow, finished
         // restore whose swing was still running for a stalled one and started it again.
         settledGeneration = generation
