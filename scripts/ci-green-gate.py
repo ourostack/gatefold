@@ -6,19 +6,20 @@ Reads the commit's check runs from the GitHub API and judges the required ones, 
 run counts, so a rerun that turned green counts as green.
 
     python3 -I scripts/ci-green-gate.py --sha <sha>      # prints the state, writes state= to $GITHUB_OUTPUT
+    python3 -I scripts/ci-green-gate.py --sha <sha> --newer   # also covered_by=<the newest green commit after it>
     python3 -I scripts/ci-green-gate.py --selftest
 
 States:
   green       every required check concluded success, skipped or neutral
   pending     a required check has not reported or has not finished; a later completion asks again
-  superseded  none failed, but one was cancelled (main's newest push replaced this run, gatefold#246): the newer
-              commit's run covers it
+  superseded  none failed, but one was cancelled (replaced by a newer push to main, gatefold#246, or stopped)
   red         a required check failed, timed out or could not start
 It exits 0 for every state; the workflow decides what each one means. It exits 2 when it cannot ask GitHub.
 """
 import json
 import os
 import pathlib
+import subprocess
 import sys
 import urllib.request
 
@@ -81,6 +82,21 @@ def fetch_runs(repo, sha, token):
         page += 1
 
 
+def newer_green(sha, repo, token, limit=20):
+    """The newest commit on main's first-parent line after sha that is green, or "".
+
+    A publish queue holds one waiting job, and the last to turn green takes the place. An older commit that turns
+    green after a newer one must not take it: the newer one carries its changes.
+    """
+    revs = subprocess.run(["git", "rev-list", "--first-parent", "-n", str(limit), f"{sha}..origin/main"],
+                          check=True, capture_output=True, text=True).stdout.split()
+    required = required_names()
+    for rev in revs:  # newest first
+        if judge(required, fetch_runs(repo, rev, token))[0] == "green":
+            return rev
+    return ""
+
+
 def selftest():
     req = ["A", "B"]
     ok = lambda n, i=1: {"name": n, "status": "completed", "conclusion": "success", "id": i}
@@ -127,10 +143,19 @@ def main(argv):
     print(f"{sha[:7]} is {state}")
     for line in lines:
         print(f"  {line}")
+    covered = ""
+    if state == "green" and "--newer" in argv:
+        try:
+            covered = newer_green(sha, repo, token)
+        except Exception as exc:
+            print(f"ci-green-gate: could not judge the commits after {sha}: {exc}", file=sys.stderr)
+            return 2
+        if covered:
+            print(f"  a newer commit on main, {covered[:7]}, is green too and carries this one")
     out = os.environ.get("GITHUB_OUTPUT")
     if out:
         with open(out, "a") as fh:
-            fh.write(f"state={state}\n")
+            fh.write(f"state={state}\ncovered_by={covered}\n")
     return 0
 
 

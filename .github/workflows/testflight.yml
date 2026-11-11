@@ -5,7 +5,8 @@ name: TestFlight
 # judged by scripts/ci-green-gate.py). This workflow starts each time App or Real unfold finishes on a
 # main push and asks whether that commit is now green; the second of the two to finish publishes it.
 # A red commit never publishes. A commit whose run was replaced by a newer push (gatefold#246) is
-# covered by that newer commit's publish. A Markdown-only push runs no App, so it never publishes.
+# covered by that newer commit's publish, and so is an older commit that turns green after a newer one
+# did. A Markdown-only push runs no App, so it stays "not green yet" and never publishes by itself.
 on:
   workflow_run:
     workflows: [App, Real unfold]
@@ -52,29 +53,35 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
           persist-credentials: false
+      # Before running any of the commit's own code.
+      - name: The commit is on main
+        env:
+          SHA: ${{ steps.sha.outputs.sha }}
+        run: git merge-base --is-ancestor "$SHA" origin/main || { echo "::error::$SHA is not on main."; exit 1; }
       - name: The gate passes its selftest
         run: python3 -I scripts/ci-green-gate.py --selftest
       - name: Every required check passed on this commit
         id: gate
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: python3 -I scripts/ci-green-gate.py --sha "${{ steps.sha.outputs.sha }}"
+          SHA: ${{ steps.sha.outputs.sha }}
+        run: python3 -I scripts/ci-green-gate.py --sha "$SHA" --newer
       - name: Decide
         id: decide
         env:
           SHA: ${{ steps.sha.outputs.sha }}
           STATE: ${{ steps.gate.outputs.state }}
+          COVERED_BY: ${{ steps.gate.outputs.covered_by }}
           EVENT: ${{ github.event_name }}
         run: |
           set -euo pipefail
-          git merge-base --is-ancestor "$SHA" origin/main || { echo "::error::$SHA is not on main."; exit 1; }
           say() { echo "::notice::$1"; echo "$1" >> "$GITHUB_STEP_SUMMARY"; }
           case "$STATE" in
             green) ;;
             pending) say "${SHA:0:7} is not green yet (a required check is still running); its last check to finish asks again."
                      [[ "$EVENT" == workflow_dispatch ]] && exit 1
                      echo "publish=false" >> "$GITHUB_OUTPUT"; exit 0 ;;
-            superseded) say "${SHA:0:7}'s checks were replaced by a newer push to main; that commit's publish covers it."
+            superseded) say "A required check on ${SHA:0:7} was cancelled (replaced by a newer push to main, or stopped): not published."
                      [[ "$EVENT" == workflow_dispatch ]] && exit 1
                      echo "publish=false" >> "$GITHUB_OUTPUT"; exit 0 ;;
             # Red: App or Real unfold already reports it; this run only says it held the build back.
@@ -83,17 +90,26 @@ jobs:
                [[ "$EVENT" == workflow_dispatch ]] && exit 1
                echo "publish=false" >> "$GITHUB_OUTPUT"; exit 0 ;;
           esac
+          # A manual run publishes this commit even when it went out before (a new build number, new notes).
+          if [[ "$EVENT" == workflow_dispatch ]]; then
+            echo "publish=true" >> "$GITHUB_OUTPUT"; say "${SHA:0:7} is green on main: publishing by hand."; exit 0
+          fi
+          # A newer green commit carries this one; publishing this would push it out of the queue.
+          if [[ -n "$COVERED_BY" ]]; then
+            say "${COVERED_BY:0:7}, newer on main, is green too and carries ${SHA:0:7}: it publishes instead."
+            echo "publish=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
           # Each published build is tagged testflight/build-N. A tag at or after this commit means it is out already.
-          done_at="$(git tag --list 'testflight/build-*' --contains "$SHA" | head -1)"
+          done_at="$(git tag --list 'testflight/build-*' --contains "$SHA")"
           if [[ -n "$done_at" ]]; then
-            say "${SHA:0:7} is already on TestFlight ($done_at is at or after it)."
+            say "${SHA:0:7} is already on TestFlight (${done_at%%$'\n'*} is at or after it)."
             echo "publish=false" >> "$GITHUB_OUTPUT"; exit 0
           fi
           # Nothing in the app changed since the last build (only Markdown or the website): nothing to send.
           last="$(git describe --tags --match 'testflight/build-*' --abbrev=0 "$SHA" 2>/dev/null || true)"
           app_files=""
           [[ -n "$last" ]] && app_files="$(git diff --name-only "$last" "$SHA" | grep -vE '(\.md$|^docs/)' || true)"
-          if [[ -n "$last" && -z "$app_files" && "$EVENT" != workflow_dispatch ]]; then
+          if [[ -n "$last" && -z "$app_files" ]]; then
             say "Only Markdown or docs/ changed since $last: nothing new for TestFlight."
             echo "publish=false" >> "$GITHUB_OUTPUT"; exit 0
           fi
@@ -120,8 +136,8 @@ jobs:
     environment: internal-testflight
     runs-on: xcode-27
     timeout-minutes: 90
-    permissions:
-      contents: write # the testflight/build-N tag, after the build is in the group
+    outputs:
+      build: ${{ steps.publish.outputs.build }}
     # One publish at a time and never cancelled mid-upload. A newer green commit waiting behind a running
     # publish replaces an older waiting one, so main's newest green commit is always the next published.
     concurrency:
@@ -139,12 +155,14 @@ jobs:
 
       # It may have waited behind another publish; one at or after this commit may have gone out meanwhile.
       - name: Still the newest green commit to publish
+        env:
+          EVENT: ${{ github.event_name }}
         run: |
           set -euo pipefail
           git fetch --quiet --tags origin
-          done_at="$(git tag --list 'testflight/build-*' --contains "$GATEFOLD_SHA" | head -1)"
-          if [[ -n "$done_at" ]]; then
-            echo "::notice::${GATEFOLD_SHA:0:7} went out while this run waited ($done_at). Nothing to publish."
+          done_at="$(git tag --list 'testflight/build-*' --contains "$GATEFOLD_SHA")"
+          if [[ -n "$done_at" && "$EVENT" != workflow_dispatch ]]; then
+            echo "::notice::${GATEFOLD_SHA:0:7} went out while this run waited (${done_at%%$'\n'*}). Nothing to publish."
             echo "GATEFOLD_FRESH=false" >> "$GITHUB_ENV"
           else
             echo "GATEFOLD_FRESH=true" >> "$GITHUB_ENV"
@@ -271,18 +289,6 @@ jobs:
           GATEFOLD_ARTIFACT_DIR: ${{ runner.temp }}/ci-testflight
         run: scripts/ci-publish-testflight.sh
 
-      # Marks what went out, so the next publish knows where it starts (and a commit at or before it is never sent twice).
-      - name: Tag the published commit testflight/build-N
-        if: env.GATEFOLD_FRESH == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          BUILD: ${{ steps.publish.outputs.build }}
-        run: |
-          set -euo pipefail
-          [[ "$BUILD" =~ ^[0-9]+$ ]] || { echo "::error::The publish step gave no build number."; exit 1; }
-          gh api "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/testflight/build-$BUILD" -f sha="$GATEFOLD_SHA" --silent
-          echo "Tagged ${GATEFOLD_SHA:0:7} testflight/build-$BUILD"
-
       # Safety net: a normal run creates no certificate, so this logs "Nothing to revoke".
       - name: Revoke API-created development certificates (safety net)
         if: always() && steps.asc_credentials.outcome == 'success' && env.GATEFOLD_FRESH == 'true'
@@ -316,3 +322,30 @@ jobs:
             ${{ runner.temp }}/ci-testflight/*.sha256
           if-no-files-found: warn
           retention-days: 30
+
+  # Marks what went out, so the next publish knows where it starts and a commit at or before it is never sent
+  # twice. Its own job, so the publish job's token stays read-only.
+  tag:
+    name: Tag the published commit testflight/build-N
+    needs: [gate, publish]
+    if: needs.publish.result == 'success' && needs.publish.outputs.build != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          BUILD: ${{ needs.publish.outputs.build }}
+          SHA: ${{ needs.gate.outputs.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$BUILD" =~ ^[0-9]+$ ]] || { echo "::error::The publish job gave build number '$BUILD'."; exit 1; }
+          for try in 1 2 3 4 5; do
+            if gh api "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/testflight/build-$BUILD" -f sha="$SHA" --silent; then
+              echo "Tagged ${SHA:0:7} testflight/build-$BUILD"; exit 0
+            fi
+            sleep $((try * 10))
+          done
+          echo "::error::Build $BUILD is on TestFlight but its tag failed; add it by hand (refs/tags/testflight/build-$BUILD at $SHA) before the next publish."
+          exit 1
