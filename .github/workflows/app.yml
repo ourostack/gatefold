@@ -247,10 +247,10 @@ jobs:
             cold: true
             timeout: 36 # 12 + 2 x 5.7 + 12
           - shard: ipad-rotate-midturn
-            # Rotation: 182 + 160, then on main the rotate-then-leave repro, 545. The repro catches #133 only after the
-            # mid-turn tests on the same simulator: alone on a new one it went 3 of 3 with #176's fix taken out
-            # (run 42938626774), and 0 of 3 after them on main (run 42861501662). On a pull request only the mid-turn
-            # tests run, unless it touches the reader's place code.
+            # Rotation: 182 + 160, then on main the rotate-then-leave repro, 545, after the mid-turn tests as #167 runs
+            # it. On today's main the repro passes with #176's fix taken out in every order tried (#193), so never give
+            # it a shard of its own until #193 is fixed. On a pull request only the mid-turn tests run, unless it
+            # touches the reader's place code.
             tests: >-
               RotationMidTransitionUITests RotationRepro/testRotateThenLeaveWithoutTurning
             skip: >-
