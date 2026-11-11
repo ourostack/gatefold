@@ -1568,7 +1568,8 @@ final class ReaderModel {
     /// (the app only went inactive), the debt stands: a reflow that settles later still records his
     /// own words over this write, as it would have without it. So does the page a stalled restore left
     /// him (`reflowDidFinish` writes the settled page back over it).
-    func keepOwedPlace(_ here: Locator) async {
+    func keepOwedPlace(_ given: Locator) async {
+        let here = withKeptWords(given)
         keepShownPageNow(here)
         let shown = shownKeptNow.map { $0.href == here.href && $0.locations.progression == here.locations.progression } == true
         shownKeptNow = nil
@@ -1603,8 +1604,9 @@ final class ReaderModel {
     /// write waited on the chapter's mapping, and the reopen kept the page from before the rotation).
     /// His words go with it if the page gave them; the mapped position follows on the same place (`keepOwedPlace`).
     /// Does nothing unless `owedPlaceOnLeaving` named that page; safe to call again.
-    func keepShownPageNow(_ here: Locator) {
+    func keepShownPageNow(_ given: Locator) {
         guard let leaving = leavingOnShownPage, !isWarming else { return }
+        let here = withKeptWords(given)
         leavingOnShownPage = nil
         guard leaving.href == here.href, leaving.locations.progression == here.locations.progression else { return }
         shownKeptNow = here
@@ -1617,6 +1619,18 @@ final class ReaderModel {
         app.library.flushPushes()
     }
     @ObservationIgnored private var shownKeptNow: Locator?
+
+    /// `here` with his first words when it has none and the place kept now is that very place with words
+    /// (his turn's write before the stalled restore showed the same page). Readium's bare progression sits
+    /// on a page boundary, and a reopen can land on either side of it (gatefold#133: one page early).
+    private func withKeptWords(_ here: Locator) -> Locator {
+        guard here.text.highlight == nil,
+              let kept = app.library.book(bookID)?.locatorJSON.flatMap({ try? Locator(jsonString: $0) }),
+              kept.text.highlight != nil, kept.href == here.href,
+              kept.locations.progression == here.locations.progression else { return here }
+        readerLog.notice("place write [r\(self.readerNumber, privacy: .public)]: the page left has no words; the kept place's words go with it (same place)")
+        return here.copy(text: { $0 = kept.text })
+    }
 
     /// The shown page's leave write, at once: the place as noted (with his first words if the page gave
     /// them before he left, `reflowShownUnsettled`), no position mapped, no wait. The words matter: under a
