@@ -257,6 +257,8 @@ jobs:
         timeout-minutes: ${{ fromJSON(steps.left_cold.outputs.minutes || '65') }}
         env:
           STEP_UNTIL: ${{ steps.left_cold.outputs.until }}
+          # The tests size their hang guards to end before this step does (GatefoldUITests/HangGuard.swift, gatefold#221).
+          TEST_RUNNER_GATEFOLD_STEP_UNTIL: ${{ steps.left_cold.outputs.until }}
           # The runner draws the spread two to four times slower than a Mac (up to 50 s seen): 90 s
           # still fails a page left stuck for good.
           TEST_RUNNER_GATEFOLD_SPREAD_FLOOR: "90"
@@ -304,6 +306,8 @@ jobs:
         timeout-minutes: ${{ fromJSON(steps.left.outputs.minutes) }}
         env:
           STEP_UNTIL: ${{ steps.left.outputs.until }}
+          # The tests size their hang guards to end before this step does (GatefoldUITests/HangGuard.swift, gatefold#221).
+          TEST_RUNNER_GATEFOLD_STEP_UNTIL: ${{ steps.left.outputs.until }}
           TESTS: ${{ needs.changes.outputs.full != 'false' && matrix.tests || matrix.pr_tests || matrix.tests }}
           # Five rounds of the controls-then-numbers reopen (about 2 min each); 30 locally.
           TEST_RUNNER_GATEFOLD_REOPEN_ROUNDS: "5"
@@ -472,6 +476,8 @@ jobs:
         timeout-minutes: ${{ fromJSON(steps.left_ui.outputs.minutes) }}
         env:
           STEP_UNTIL: ${{ steps.left_ui.outputs.until }}
+          # The tests size their hang guards to end before this step does (GatefoldUITests/HangGuard.swift, gatefold#221).
+          TEST_RUNNER_GATEFOLD_STEP_UNTIL: ${{ steps.left_ui.outputs.until }}
         run: |
           set -o pipefail
           sh scripts/ci-crashes.sh mark
@@ -584,6 +590,8 @@ jobs:
         timeout-minutes: ${{ fromJSON(steps.left.outputs.minutes) }}
         env:
           STEP_UNTIL: ${{ steps.left.outputs.until }}
+          # The tests size their hang guards to end before this step does (GatefoldUITests/HangGuard.swift, gatefold#221).
+          TEST_RUNNER_GATEFOLD_STEP_UNTIL: ${{ steps.left.outputs.until }}
           FULL: ${{ needs.changes.outputs.full }}
         run: |
           set -o pipefail

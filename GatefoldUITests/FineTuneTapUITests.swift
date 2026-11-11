@@ -54,18 +54,14 @@ final class FineTuneTapUITests: XCTestCase {
     private static let landReads = 40
     /// Reads after the change in which it must not go back: a touch that changed it twice shows here.
     private static let stayReads = 5
-    /// The slowest look at the app seen on CI: 18.6 s, in #207's green probe (run 42973604069, job 130368394864,
-    /// "offer taken after 1 looks in 18.6 s"). That look was up to five queries, so it bounds one read from above.
-    private static let worstRead: TimeInterval = 18.6
-    /// Only a hang guard, not the bar: `landReads` reads at the worst read seen, plus a quarter, so only a real hang
-    /// trips it (gatefold#221; at 180 s it tripped after about 10 such reads, before the cap). A single read that
-    /// never returns is ended by XCTest's own query timeout.
-    private static let hangGuard: TimeInterval = Double(landReads) * worstRead * 1.25
+    /// Only a hang guard, not the bar: `HangGuard` sizes it from `landReads` (gatefold#221; a fixed 180 s would trip
+    /// after about 10 reads at the slowest read seen, long before the cap). A single read that never returns is
+    /// ended by XCTest's own query timeout.
 
     /// Reads until the value is a real one other than `before`, or `landReads` run out (or the hang guard).
     private func readsUntilChanged(_ toggle: XCUIElement, from before: String)
         -> (changed: Bool, reads: Int, hung: Bool) {
-        let hung = Date().addingTimeInterval(Self.hangGuard)
+        let hung = Date().addingTimeInterval(HangGuard.seconds(reads: Self.landReads))
         for read in 1...Self.landReads {
             let now = value(toggle)
             if now != before, now != "?" { return (true, read, false) }
@@ -94,14 +90,17 @@ final class FineTuneTapUITests: XCTestCase {
 
     /// Changed once: it moved off its old value within `landReads`, and in the `stayReads` after it never
     /// moved back.
-    private func assertChangedOnce(_ toggle: XCUIElement, from before: String, _ what: String) {
+    /// False when the hang guard ran out: the caller stops there, so one hang doesn't spend the step on the rest.
+    @discardableResult
+    private func assertChangedOnce(_ toggle: XCUIElement, from before: String, _ what: String) -> Bool {
         let (changed, reads, hung) = readsUntilChanged(toggle, from: before)
         print("TAPRATE \(what): changed=\(changed) after \(reads) reads\(hung ? " (hang guard)" : "")")
         XCTAssertTrue(changed, hung ? "\(what): the hang guard ran out after \(reads) reads"
                                     : "\(what) (no change in \(reads) reads)")
-        guard changed else { return }
+        guard changed else { return !hung }
         let back = readsBack(toggle, to: before)
         XCTAssertEqual(back, 0, "\(what), and stays changed (back on \(back) of \(Self.stayReads) reads)")
+        return true
     }
 
     /// Touch (0)'s reflow (justify's typography) has settled, its page fully shown, before touch (1) goes in:
@@ -132,7 +131,7 @@ final class FineTuneTapUITests: XCTestCase {
                 if i == 1 { awaitReflowSettled("before a quick touch on \(id) (1)") }
                 let before = valueBefore(toggle, "a quick touch on \(id) (\(i))")
                 toggle.press(forDuration: 0)
-                assertChangedOnce(toggle, from: before, "a quick touch on \(id) changes it (\(i))")
+                guard assertChangedOnce(toggle, from: before, "a quick touch on \(id) changes it (\(i))") else { return }
             }
         }
     }
@@ -168,13 +167,15 @@ final class FineTuneTapUITests: XCTestCase {
             if !changed {
                 misses += 1
                 print("TAPRATE miss on \(id) at tap \(tap) (no change in \(reads) reads\(hung ? ", hang guard" : ""))")
+                // A hang ends the method: its other taps would each wait out the guard too.
+                if hung { XCTFail("hang: tap \(tap) on \(id) ran \(reads) reads past the hang guard"); break }
             } else if readsBack(toggle, to: before) > 0 {
                 // Changed twice: as much a miss as no change, as the old 1 s wait then one read counted it.
                 misses += 1
                 print("TAPRATE miss on \(id) at tap \(tap) (changed, then back)")
             }
         }
-        print("TAPRATE \(shown) \(id) trials=\(trials) misses=\(misses)")
+        print("TAPRATE \(shown) \(id) trials=\(trials) misses=\(misses) hangGuard=\(Int(HangGuard.seconds(reads: Self.landReads))) s")
         XCTAssertEqual(misses, 0, "every one of \(trials) taps on \(id) flipped its switch")
     }
 
