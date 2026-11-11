@@ -1561,6 +1561,13 @@ final class ReaderModel {
             leavingOnShownPage = shownOnLeaving
             return leavingOnShownPage
         }
+        // A contents jump still on its way (or closed mid-way) shows its file's first page, a place he never
+        // chose: nothing is written for the owed move, the place saved before stands, and a jump that goes
+        // on writes its own place where it ends (gatefold#254).
+        if fragmentJumpMove == moves {
+            readerLog.notice("place: leaving mid contents jump; the page on its way (\(self.page?.currentLocation.map(Self.placeTag) ?? "none", privacy: .public)) is not written")
+            return nil
+        }
         return owedJumpTarget.flatMap { $0.1 == moves && !touchedSinceLocation ? $0.0 : nil } ?? page?.currentLocation
     }
 
