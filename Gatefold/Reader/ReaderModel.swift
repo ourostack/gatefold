@@ -407,7 +407,7 @@ final class ReaderModel {
         countStalled = false
         stallTimer?.cancel()
         stallTimer = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(60))
+            try? await Task.sleep(for: Self.countStallWait)
             guard !Task.isCancelled, let self else { return }
             self.countStalled = true
             if self.screenNumbers == nil, self.screenLayout != nil {
@@ -415,8 +415,13 @@ final class ReaderModel {
             }
         }
     }
+    /// How long a count may go without counting a chapter before the slot goes quiet; unit tests shorten it.
+    static var countStallWait: Duration = .seconds(60)
     /// UI tests: "Counting pages…" was drawn at least once (CI's slow reads can miss it on screen).
     var countingShownProbe = false
+    /// UI tests: how many times the number's slot was drawn empty on a page he can see, with page numbers on
+    /// in a paged layout: neither the number nor "Counting pages…" (gatefold#262). Never set outside UI tests.
+    var slotBlankProbe = 0
     /// UI tests only: the latest reflow's number and how far it has got ("3 reflowing", "3 placed", then
     /// "3 settled" once its page is fully shown, its cover faded or its swing played; a restore that gave way
     /// to his move counts as settled when its page starts showing), so a test can let a reflow settle before

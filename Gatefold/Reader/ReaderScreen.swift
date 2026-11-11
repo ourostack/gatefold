@@ -378,6 +378,12 @@ struct ReaderScreen: View {
                 .accessibilityIdentifier("reader.countingShown")
                 .accessibilityValue(model.countingShownProbe ? "1" : "0")
                 .allowsHitTesting(false)
+            Text("slot blank")
+                .font(.system(size: 1))
+                .opacity(0.01)
+                .accessibilityIdentifier("reader.slotBlankFrames")
+                .accessibilityValue(String(model.slotBlankProbe))
+                .allowsHitTesting(false)
             Text("ready")
                 .font(.system(size: 1))
                 .opacity(0.01)
@@ -554,6 +560,17 @@ struct ReaderScreen: View {
                 .onChange(of: shown, initial: true) { _, shown in
                     if LaunchOptions.isUITest, shown { model.countingShownProbe = true }
                 }
+        } else if LaunchOptions.isUITest, model.preferences.showsPageNumbers, model.screenLayout != nil {
+            #if DEBUG
+            // UI tests: the slot drawn with neither in it. Counted each time it is drawn so on a page he can see.
+            Color.clear
+                .frame(width: 1, height: 1)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+                .onChange(of: shown, initial: true) { _, shown in
+                    if shown { model.slotBlankProbe += 1 }
+                }
+            #endif
         }
     }
 
