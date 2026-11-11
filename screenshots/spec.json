@@ -102,7 +102,7 @@
         "-GatefoldOpenBook",
         "gutenberg-moby-dick",
         "-GatefoldGoTo",
-        "0.31",
+        "0.47",
         "-GatefoldTheme",
         "daylight"
       ],
@@ -128,7 +128,7 @@
         "-GatefoldOpenBook",
         "gutenberg-frankenstein",
         "-GatefoldGoTo",
-        "0.2",
+        "0.71",
         "-GatefoldTheme",
         "daylight"
       ],

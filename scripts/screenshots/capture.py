@@ -20,6 +20,7 @@ import json
 import os
 import pathlib
 import struct
+import re
 import shutil
 import subprocess
 import sys
@@ -221,6 +222,17 @@ def selftest():
     for name in shelf:
         assert f'resource: "{name}"' in seeds, f"-GatefoldFakeShelf names {name}, which the fake Cloud does not have"
     opened = [a.split("gutenberg-", 1)[1] for s in spec["scenes"] for a in s["args"] if a.startswith("gutenberg-")]
+    # A scene opens its book past the fake Cloud's place for it, so no "read on without you" offer can turn up
+    # mid-capture (it did, once, over the spread: two passes, two pictures).
+    for s in spec["scenes"]:
+        if "-GatefoldOpenBook" not in s["args"]:
+            continue
+        book = s["args"][s["args"].index("-GatefoldOpenBook") + 1].split("gutenberg-", 1)[1]
+        at = float(s["args"][s["args"].index("-GatefoldGoTo") + 1])
+        m = re.search(rf'resource: "{re.escape(book)}".*?remoteProgression: (nil|[0-9.]+)', seeds)
+        assert m, f"{s['id']}: no seed for {book}"
+        assert m.group(1) == "nil" or at > float(m.group(1)) + 0.02, \
+            f"{s['id']}: opens {book} at {at}, not past the fake Cloud's {m.group(1)}"
     assert set(opened) <= set(shelf), f"a scene opens a book that is not on the shelf: {opened}"
     assert len(fingerprint()) == 64
     print(f"capture selftest: ok ({len(spec['scenes'])} scenes)")
