@@ -101,7 +101,8 @@ import Testing
 
     /// Every jump that is not a turn shows the way back without the controls.
     @Test(arguments: Jump.allCases) func everyJumpShowsTheWayBackWithoutTheControls(_ jump: Jump) async throws {
-        let f = try await S.make(remote: { _, _ in nil }, startAt: 0.05)
+        // Judged in reads: a contents jump inside its file reads for its place, and each beat only yields.
+        let f = try await S.make(remote: { _, _ in nil }, startAt: 0.05, jumpBeat: { await Task.yield() })
         await f.model.load()
         let start = try #require(f.page.currentLocation)
         await f.model.locationDidChange(start)
@@ -265,6 +266,57 @@ import Testing
         #expect(beats.count >= 2, "his input never came: the jump ended first")
         #expect(f.page.jumps.count == sent, "the page was sent to the chapter after he took it (\(input))")
         #expect((f.page.currentLocation?.locations.progression ?? 1) < 0.5, "the page moved off where he was (\(input))")
+        if input != "turn" {
+            // The trip he took over keeps the page he is on, never the chapter it didn't reach.
+            for _ in 0..<200 where !(saved(f).flatMap { try? Locator(jsonString: $0) }.map { ContentsIndex.sameResource($0.href.string, fileStart.href.string) } ?? false) {
+                await Task.yield()
+            }
+            let kept = try #require(saved(f).flatMap { try? Locator(jsonString: $0) }, "no place kept")
+            #expect(ContentsIndex.sameResource(kept.href.string, fileStart.href.string), "the place kept isn't the page he is on (\(input))")
+            #expect((kept.locations.progression ?? 1) < 0.5, "the place kept is the chapter he never reached (\(input))")
+        }
+        f.model.close()
+    }
+
+    /// A chapter whose load outlasts the flat budget of reads (Back's #170 case, here for a contents jump,
+    /// gatefold#254): the reads made while it loads come from their own count, so the jump still reaches
+    /// the chapter, and keeps it, once the load comes in. Judged in beats.
+    @Test func aContentsJumpWaitsOutASlowChapterLoad() async throws {
+        final class Beats { var count = 0; var act: (@MainActor (Int) -> Void)? }
+        let beats = Beats()
+        let f = try await S.make(remote: { _, _ in nil }, startAt: 0.05, jumpBeat: { @MainActor in
+            beats.count += 1
+            beats.act?(beats.count)
+            await Task.yield()
+        })
+        await f.model.load()
+        await f.model.locationDidChange(try #require(f.page.currentLocation))
+        let entry = try #require(f.model.toc.last(where: { $0.progression > 0.3 && $0.link.url().fragment != nil }))
+        let fragment = try #require(entry.link.url().fragment)
+        nonisolated(unsafe) let publication = f.publication
+        let opened = try #require(await publication.locate(entry.link))
+        let fileStart = opened.copy(locations: { $0.fragments = []; $0.progression = 0 }, text: { $0 = Locator.Text() })
+        f.page.linkOpens = fileStart
+        f.page.fragmentAt = [:]
+        f.page.loadingChapter = true
+        // The load comes in only after more beats than the flat budget has reads.
+        let loadsAt = JumpLanding.reads + 20
+        beats.act = { beat in
+            if beat == loadsAt {
+                f.page.loadingChapter = false
+                f.page.fragmentAt[fragment] = 0.6
+            }
+        }
+
+        await f.model.go(to: entry)
+        for _ in 0..<200 where (saved(f).flatMap { try? Locator(jsonString: $0) }?.locations.progression ?? 0) < 0.5 {
+            await Task.yield()
+        }
+
+        #expect(beats.count >= loadsAt, "the jump ended before the load came in, after \(beats.count) beats")
+        #expect((f.page.currentLocation?.locations.progression ?? 0) > 0.5, "the page stayed on the file's start")
+        let kept = try #require(saved(f).flatMap { try? Locator(jsonString: $0) }, "no place kept")
+        #expect((kept.locations.progression ?? 0) > 0.5, "the place kept is the file's start, not the chapter he chose")
         f.model.close()
     }
 

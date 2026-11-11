@@ -1421,6 +1421,7 @@ final class ReaderModel {
                 self.newestWrittenMove = max(self.newestWrittenMove, self.moves)
                 readerLog.notice("place write [r\(self.readerNumber, privacy: .public)]: landing (\(fresh != nil ? "his first words" : "Readium's boundary", privacy: .public)) \(Self.placeTag(settledLocator), privacy: .public); kept total \(chosen?.totalProgression ?? here.locations.totalProgression ?? 0, privacy: .public); move \(self.moves, privacy: .public)")
                 self.placeRecords += 1
+                if LaunchOptions.isUITest { self.savedPlaceProbe = Self.probeTag(settledLocator) }
                 self.app.library.recordPlace(
                     bookID: self.bookID,
                     locatorJSON: json,
@@ -1637,6 +1638,7 @@ final class ReaderModel {
         pagesLeft = []
         newestWrittenMove = max(newestWrittenMove, moves)
         placeRecords += 1
+        if LaunchOptions.isUITest { savedPlaceProbe = Self.probeTag(here) }
         app.library.recordPlace(bookID: bookID, locatorJSON: json, totalProgression: here.locations.totalProgression ?? 0,
                                 progression: here.locations.progression ?? 0, at: Date())
         shownLeaveWrite = (placeRecords, moves, json)
@@ -1663,6 +1665,7 @@ final class ReaderModel {
             return
         }
         placeRecords += 1
+        if LaunchOptions.isUITest { savedPlaceProbe = Self.probeTag(here) }
         app.library.recordPlace(bookID: bookID, locatorJSON: written.json, totalProgression: here.locations.totalProgression ?? 0,
                                 progression: here.locations.progression ?? 0,
                                 position: exact.map { var p = $0; p.totalProgression = here.locations.totalProgression ?? p.totalProgression; return p },
@@ -1914,7 +1917,7 @@ final class ReaderModel {
         // A landing records its place once it has settled; the steps on the way are not places. So does a
         // test's launch jump: a report on its way (its file's first page) could finish after the landing and
         // be kept as his move, and Back then went there (gatefold#83). `load()` reports where it ended.
-        guard !landing, !launchJumpInFlight, fragmentJumpMove != moves else { return }
+        guard !landing, !launchJumpInFlight, fragmentJumpMove != moves || leaving else { return }
         // Mid-turn the navigator has moved under the overlay; the turn records the place when it lands.
         // A move reported mid-reflow (a turn or a jump while an iPad's first layout is still settling)
         // is owed: the reflow's end records it, or the place he went to is never kept (build 17 reopened
@@ -2328,8 +2331,8 @@ final class ReaderModel {
         defer { publishBack(back) }
         // Scrolled, Readium's own fragment scroll finds the chapter: only columns lose it.
         if pageTurn != .scroll, let fragment = entry.link.url().fragment?.removingPercentEncoding, !fragment.isEmpty {
-            let move = moves
-            await veiled { await self.land(on: entry.link, inside: fragment, move: move) }
+            let move = moves, step = takeStep()
+            await veiled(step: step) { await self.land(on: entry.link, inside: fragment, move: move, jump: step) }
         } else {
             await veiled { await self.page?.go(to: entry.link) }
         }
@@ -2346,7 +2349,7 @@ final class ReaderModel {
     /// the layout is done, and the page is sent to it (`JumpLanding`). All of it runs under the jump's veil,
     /// which lifts on the landed page: he sees one move, to the chapter he chose. Readium's reports on the
     /// way are not places; the place is written once, where the jump ends.
-    private func land(on link: ReadiumShared.Link, inside fragment: String, move: Int) async {
+    private func land(on link: ReadiumShared.Link, inside fragment: String, move: Int, jump: Int) async {
         fragmentJumpMove = move
         await page?.go(to: link)
         let href = link.url().removingFragment().string
@@ -2358,7 +2361,17 @@ final class ReaderModel {
         let wanted = { [weak self] in self.map { $0.moves == move && !$0.isClosed && !heTookOver() } ?? false }
         var target: Double?, lastRead: Double?
         var absent = false
-        for read in 1...JumpLanding.reads where target == nil && !absent && wanted() {
+        // Reads while the chapter is still loading come from their own, larger count, as Back's do (gatefold#170,
+        // #254: a load past the flat 30 s ended the jump on the file's first page and kept it). The veil lets
+        // go at its old limit while the reads go on: from then his touch, turn or Contents ends the trip.
+        let loading = { [weak self] in self?.page?.isLoadingChapter == true }
+        var budget = JumpLanding.Budget(), read = 0
+        while target == nil, !absent, wanted(), budget.take(loading: loading()) {
+            read += 1
+            if read == JumpLanding.reads + 1, budget.waited > 0 {
+                readerLog.notice("contents: the jump to \(fragment, privacy: .public) still on its way after \(JumpLanding.reads, privacy: .public) reads; the veil lets go, the jump goes on")
+                host?.abandonVeil(jump: jump)
+            }
             if let here = page?.currentLocation, ContentsIndex.sameResource(here.href.string, href) {
                 // -1: laid out, and no such element (a broken anchor): Readium's landing stands. A place is
                 // taken once two reads agree: a layout still settling (its columns not final) can read
@@ -2387,6 +2400,7 @@ final class ReaderModel {
                         self?.page?.currentLocation.map { ReadingAnchor(href: $0.href.string, progression: $0.locations.progression ?? 0, text: nil) }
                     },
                     stillWanted: wanted,
+                    loading: loading,
                     beat: jumpBeat)
             }
         }
