@@ -490,7 +490,7 @@ import Testing
         }, book: { $0.totalProgression = 0.05; $0.lastOpened = Date().addingTimeInterval(-600) },
            startAt: 0.05, jumpBeat: { await Task.yield() })
         defer { f.model.close() }
-        // Before the open loads its counts, so none come from or go to the shared store.
+        // Before the open loads its counts.
         if counted { try await Self.countsLikeADevice(f) }
         await f.model.load()
         await f.model.locationDidChange(try #require(f.page.currentLocation))
@@ -539,7 +539,7 @@ import Testing
         }, book: { $0.totalProgression = 0.05; $0.lastOpened = Date().addingTimeInterval(-600) },
            startAt: 0.05, jumpBeat: { await Task.yield() })
         defer { f.model.close() }
-        // Before the open loads its counts, so none come from or go to the shared store.
+        // Before the open loads its counts.
         if counted { try await Self.countsLikeADevice(f) }
         await f.model.load()
         await f.model.locationDidChange(try #require(f.page.currentLocation))
@@ -552,6 +552,8 @@ import Testing
         let next = positions[at + 1]
         let aim = positions[at + 3]
         try #require(next.href == here.href && aim.href == here.href, "his page, the next and the Cloud's aren't one file")
+        // At two positions a column, an even count keeps his next page and the Cloud's a whole column apart.
+        if counted { try #require(positions.filter { $0.href == here.href }.count % 2 == 0, "an odd count can put his next page on the Cloud's") }
         f.model.forceReady()
         for _ in 0..<1_000 where !f.model.pageReady { try? await Task.sleep(for: .milliseconds(10)) }
         try #require(f.model.pageReady, "the first page never showed")
@@ -965,7 +967,6 @@ import Testing
     /// A screen page holding two of Readium's positions, as on a device (one to two each), counted into a
     /// store of this reader's own: counts saved to the shared one would reach every other fixture.
     private static func countsLikeADevice(_ f: ReaderSyncTests.Fixture) async throws {
-        f.model.pageStore = ScreenPageStore(directory: URL.temporaryDirectory.appending(path: "screen-pages-\(UUID().uuidString)"))
         nonisolated(unsafe) let p = f.publication
         let positions = try await p.positions().get()
         let perFile = Dictionary(grouping: positions, by: { $0.href.string }).mapValues { max(1, $0.count / 2) }

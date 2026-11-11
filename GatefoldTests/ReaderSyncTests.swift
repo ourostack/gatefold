@@ -248,6 +248,8 @@ final class ScriptedPage: ReaderPage {
         }
         let page = ScriptedPage(at: start)
         let model = ReaderModel(book: book, publication: publication, app: app, page: page, jumpBeat: jumpBeat)
+        // An empty store of its own, so no counts from an earlier run on this Mac reach the test.
+        model.pageStore = ScreenPageStore(directory: URL.temporaryDirectory.appending(path: "screen-pages-\(UUID().uuidString)"))
         page.model = model
         return Fixture(model: model, page: page, app: app, sync: sync, publication: publication, mapper: mapper)
     }
