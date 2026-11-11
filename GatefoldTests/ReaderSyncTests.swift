@@ -136,6 +136,8 @@ final class ScriptedPage: ReaderPage {
 
     /// A capture a stalled reflow cuts short: no first words to be had.
     var withholdAnchor = false
+    /// The words an anchor names (none by default, as a page with no text read): a stand-in, never a book's.
+    var anchorText: String?
 
     /// How long reading the first words on screen takes (the web view answers in its own time).
     var anchorDelay: Duration = .zero
@@ -168,7 +170,7 @@ final class ScriptedPage: ReaderPage {
             await mine.value
         }
         guard !withholdAnchor, let here = taken else { return nil }
-        let anchor = ReadingAnchor(href: here.href.string, progression: here.locations.progression ?? 0, text: nil)
+        let anchor = ReadingAnchor(href: here.href.string, progression: here.locations.progression ?? 0, text: anchorText)
         return (anchor, here)
     }
 }

@@ -16,6 +16,8 @@ final class ReopenAfterControlsUITests: XCTestCase {
     override func setUp() async throws { continueAfterFailure = true; app = XCUIApplication() }
     override func tearDown() async throws { XCUIDevice.shared.orientation = .portrait }
 
+    /// Any type, never `app.buttons`: a control that is a menu can be typed PopUpButton, and a Button lookup then
+    /// finds nothing (gatefold#165).
     private func el(_ id: String) -> XCUIElement { app.descendants(matching: .any)[id].firstMatch }
     private var words: String { (el("reader.visibleText").value as? String) ?? "" }
     private static func hash(_ s: String) -> String {
@@ -46,7 +48,7 @@ final class ReopenAfterControlsUITests: XCTestCase {
     /// A fresh install offers the Cloud's place and never lands on it (#46): the book opens on its
     /// cover, which has no words. He takes the offer, as he would, so the round has words to keep.
     private func takeTheOffer() {
-        let offer = app.buttons["banner.jump"], tab = el("banner.tab")
+        let offer = el("banner.jump"), tab = el("banner.tab")
         let up0 = Date().addingTimeInterval(60)
         // Unanswered for 10 s the offer folds into its tab: the tab opens it again.
         while words.isEmpty, !offer.exists, Date() < up0 {
@@ -60,7 +62,7 @@ final class ReopenAfterControlsUITests: XCTestCase {
     }
 
     private func toShelf() {
-        let close = app.buttons["reader.close"].firstMatch
+        let close = el("reader.close")
         for _ in 0..<4 where !(close.exists && close.isHittable) {
             el("reader.page").coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
             _ = close.waitForExistence(timeout: 3)
@@ -72,13 +74,13 @@ final class ReopenAfterControlsUITests: XCTestCase {
 
     /// One tap that only brings up the controls, then Page Numbers on in Fine-Tune.
     private func numbersOn() {
-        let appearance = app.buttons["reader.appearance"]
+        let appearance = el("reader.appearance")
         for _ in 0..<4 where !appearance.exists {
             el("reader.page").coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
             _ = appearance.waitForExistence(timeout: 3)
         }
         appearance.tap()
-        let fine = app.buttons["appearance.customize"]
+        let fine = el("appearance.customize")
         XCTAssertTrue(fine.waitForExistence(timeout: 10), "Fine-Tune is offered")
         if !fine.isHittable { el("appearance.panel").swipeUp() }
         fine.tap()
@@ -87,7 +89,7 @@ final class ReopenAfterControlsUITests: XCTestCase {
         for _ in 0..<4 where !t.isHittable { el("appearance.panel").swipeUp() }
         if (t.value as? String) != "1" { t.tap() }
         sleep(1)
-        for id in ["appearance.close", "appearance.back", "appearance.close"] where app.buttons[id].exists { app.buttons[id].tap(); sleep(1) }
+        for id in ["appearance.close", "appearance.back", "appearance.close"] where el(id).exists { el(id).tap(); sleep(1) }
         if el("appearance.panel").exists { el("reader.page").coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.15)).tap() }
         sleep(2)
     }
