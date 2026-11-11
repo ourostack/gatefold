@@ -28,12 +28,15 @@ enum LogMirrorOff {
               let replacement = class_getInstanceMethod(type, #selector(XCUIApplication.gatefoldLaunchWithoutLogMirror))
         else { return }
         method_exchangeImplementations(original, replacement)
+        print("LogMirrorOff: XCUIApplication.launch asks for \(variable) off (gatefold#28)")
     }()
 }
 
 extension XCUIApplication {
-    /// Swapped with `launch` (`LogMirrorOff`): sets the variable, then runs XCTest's own launch.
-    @objc fileprivate func gatefoldLaunchWithoutLogMirror() {
+    /// Swapped with `launch` (`LogMirrorOff`): asks for the variable off, then runs XCTest's own launch. The app then
+    /// sees the variable as absent, not "NO" (#28's probe run 43060812281), which keeps the mirror off just the same.
+    /// `dynamic` keeps the call below going through the swap, so it reaches XCTest's launch at any optimization.
+    @objc fileprivate dynamic func gatefoldLaunchWithoutLogMirror() {
         launchEnvironment[LogMirrorOff.variable] = "NO"
         gatefoldLaunchWithoutLogMirror()
     }
