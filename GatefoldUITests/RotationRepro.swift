@@ -191,6 +191,13 @@ final class RotationRepro: XCTestCase {
         // 5. Leave without turning, three times.
         var green = 0
         for round in 1...3 {
+            // Round 1 is the stalled leave (the slow-restore hook holds the restore past it); a restore that
+            // settled first leaves nothing to test, and a green would be luck. Its value names no book text.
+            if round == 1 {
+                let stalled = ((el("reader.reflow").value as? String) ?? "").hasSuffix("reflowing")
+                note("round 1 leaves under a stalled restore: \(stalled)")
+                XCTAssertTrue(stalled, "the restore was still stalled when he left")
+            }
             XCUIDevice.shared.press(.home)
             sleep(3)
             app.quit()
