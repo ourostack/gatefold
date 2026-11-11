@@ -2096,7 +2096,7 @@ final class ReaderModel {
                 await self.backBeat()
                 beats += 1
                 // Only while the trip still has reads to wait on the load: one about to give up says so instead.
-                if beats == JumpLanding.reads, budget.waited > 0, self.goingBack == trip {
+                if false, beats == JumpLanding.reads, budget.waited > 0, self.goingBack == trip {
                     readerLog.notice("back: trip \(trip, privacy: .public) still on its way after \(beats, privacy: .public) beats; the veil lets go, the trip goes on")
                     self.tripsPastTheVeil += 1
                     self.host?.abandonVeil(jump: jump)
