@@ -262,7 +262,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     }
 
     /// The page as it is on screen. A page not yet drawn even once has no picture to take from what is on screen,
-    /// so it is drawn for the picture (#275: closed 350 ms after its open on a loaded runner, it left no picture).
+    /// so it is drawn for the picture (#275).
     private func closeSnapshot(of page: UIView) -> UIView? {
         if let picture = page.snapshotView(afterScreenUpdates: false) { return picture }
         readerLog.notice("close: the page wasn't drawn yet; pictured after a screen update")

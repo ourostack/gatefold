@@ -181,8 +181,6 @@ import WebKit
         #expect(alive == 0, "\(alive) of \(releases.held.count) web views retired mid-load are still alive (\(waited) waited)")
     }
 
-    /// Open a book, close it, and the close itself retires its page, so the page's web views go: three times
-    /// over, as he opens and closes books in a session.
     /// #275: a reader closed before its page has been drawn even once still leaves a picture in the page's place.
     /// The page's own snapshot needs a drawn page (UIKit logs "has not been rendered at least once"), so a close
     /// in that first moment, as on CI's loaded runner 350 ms after the open, left the page's place empty.
@@ -215,6 +213,8 @@ import WebKit
         host.removeFromParent()
     }
 
+    /// Open a book, close it, and the close itself retires its page, so the page's web views go: three times
+    /// over, as he opens and closes books in a session.
     @Test func aClosedReaderLetsGoOfItsWebViews() async throws {
         let publication = try await HighlightTests.publication()
         // In the app's scene, as the reader's window is.
