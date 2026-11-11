@@ -178,6 +178,10 @@ final class RotationRepro: XCTestCase {
         turnForward()
         turnForward()
         sleep(3)
+        // The page his second turn kept, and the words it saved: the place a leave on it keeps (gatefold#133).
+        // Compared only, never printed.
+        let turnedBeforeRotation = vtext
+        let savedBeforeRotation = (el("reader.savedWords").value as? String) ?? ""
 
         // 4. Turn the iPad.
         XCUIDevice.shared.orientation = .landscapeLeft
@@ -215,7 +219,11 @@ final class RotationRepro: XCTestCase {
             _ = settle(60)
             sleep(4)
             let back = settle(10)
-            let startsSame = head(back) == head(his)
+            // Noted at the place his turn kept (the hook), the leave keeps that place and its words: the reopen
+            // puts them at the top of the left page, as a restore does. Otherwise it is the page he saw.
+            let startsSame = keepsHisWords
+                ? ReopenMatch.compare(left: turnedBeforeRotation, reopened: back, saved: savedBeforeRotation) != .different
+                : head(back) == head(his)
             let middleSame = back.contains(middle(his))
             let at = back.range(of: head(his)).map { back.distance(from: back.startIndex, to: $0.lowerBound) } ?? -1
             // His turn kept his words; leaving on that same page, with or without words from it, keeps them
