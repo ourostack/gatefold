@@ -35,7 +35,7 @@ public enum ReadingPercent {
     }
 }
 
-/// "Your InkPad is further ahead — jump?"
+/// "Your e-reader is further ahead — jump?"
 public struct JumpSuggestion: Equatable, Sendable {
     public var headline: String
     public var detail: String
@@ -78,13 +78,13 @@ public struct JumpSuggestion: Equatable, Sendable {
                        targetProgression: totalProgression)
     }
 
-    /// A plain name for the other device: "InkPad", "PocketBook", "web reader".
+    /// A plain name for the other device: "e-reader", "web reader". Never a model or brand name:
+    /// the App Store listing can't show a third party's trademark (#253).
     public static func deviceKind(_ device: String) -> String {
         let d = device.lowercased()
-        if d.contains("inkpad") { return "InkPad" }
         if d.contains("web") { return "web reader" }
         if d.isEmpty { return "other device" }
-        return "PocketBook"
+        return "e-reader"
     }
 }
 

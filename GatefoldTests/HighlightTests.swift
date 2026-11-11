@@ -96,11 +96,11 @@ actor ListSync: SyncService {
         #expect(items[0].totalProgression > 0 && items[0].totalProgression < 0.1)
         #expect(items[0].locator.text.highlight?.contains("universally acknowledged") == true)
         let now = Date()
-        #expect(items[0].provenance(now: now).hasPrefix("Highlighted on your InkPad · "))
+        #expect(items[0].provenance(now: now).hasPrefix("Highlighted on your e-reader · "))
         // Seeded 72 hours back: "3 days ago" by the calendar, or "2 days ago" late in the evening after
         // the clocks go back, when 72 hours reach only into the day before yesterday.
         #expect(["2 days ago", "3 days ago"].contains { items[0].provenance(now: now).hasSuffix($0) })
-        #expect(items[1].provenance(now: now).hasPrefix("Noted on your InkPad · "))
+        #expect(items[1].provenance(now: now).hasPrefix("Noted on your e-reader · "))
     }
 
     @Test func aSelectionBecomesAHighlightTheCloudKeeps() async throws {

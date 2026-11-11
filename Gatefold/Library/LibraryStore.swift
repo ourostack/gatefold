@@ -17,7 +17,7 @@ final class LibraryStore {
     var lastError: String?
     /// Why the last refresh didn't reach the Cloud (shown quietly on the shelf, never as an alert).
     private(set) var syncProblem: SyncProblem?
-    /// When the Cloud last answered, kept across launches for "In step with your InkPad · 5 min ago".
+    /// When the Cloud last answered, kept across launches for "In step with your e-reader · 5 min ago".
     private(set) var lastSynced: Date? {
         didSet { UserDefaults.standard.set(lastSynced, forKey: Self.lastSyncedKey) }
     }
@@ -320,7 +320,7 @@ final class LibraryStore {
         update(id) { if $0.finished == nil { $0.finished = now } }
     }
 
-    /// "Mark Finished on InkPad": 100 % and `read_status` "read" in the Cloud, so the InkPad's
+    /// "Mark Finished on Your E-reader": 100 % and `read_status` "read" in the Cloud, so the InkPad's
     /// library shows it finished too.
     func markFinishedInCloud(_ id: String, at now: Date = Date()) async {
         markFinished(id, at: now)
