@@ -197,6 +197,50 @@ import Testing
         let kept = try #require(savedPlace(), "leaving kept no place")
         #expect(kept.locations.progression == read.locations.progression)
         #expect(kept.text.highlight == his, "the leave write dropped his words on the same place")
+        // The mapped position follows on the same place, his words with it.
+        for _ in 0..<200 where model.shownLeaveSteps.count < 2 { try await Task.sleep(for: .milliseconds(25)) }
+        #expect(model.shownLeaveSteps == ["written", "position mapped (cfi)"], "steps \(model.shownLeaveSteps)")
+        #expect(savedPlace()?.text.highlight == his, "the mapped position's write dropped his words")
+    }
+
+    /// A turn under the stalled restore is a move since his kept write: the page it shows never inherits
+    /// the old page's words, even when Readium's progression happens to equal it.
+    @Test func aTurnSinceTheKeptWriteNeverInheritsItsWords() async throws {
+        let sync = StubSync()
+        await sync.setLibrary(.success([ReaderSyncTests.frankenstein]))
+        await sync.setRemote(nil)
+        let app = AppModel(sync: sync, libraryRoot: URL.temporaryDirectory.appending(path: "shown-moved-\(UUID().uuidString)"))
+        await app.library.refresh()
+        let publication = try await ReaderSyncTests.publication()
+        let book = try #require(app.library.book(ReaderSyncTests.frankenstein.fastHash))
+        let first = publication.readingOrder[0].url().string
+        let opening = Locator(href: try #require(AnyURL(string: first)), mediaType: .xhtml,
+                              locations: .init(progression: 0, totalProgression: 0))
+        let page = TwoStepJumpPage(at: opening, readsToLand: 1)
+        let model = ReaderModel(book: book, publication: publication, app: app, page: page)
+        page.model = model
+        await model.load()
+        func savedPlace() -> Locator? {
+            app.library.book(ReaderSyncTests.frankenstein.fastHash)?.locatorJSON.flatMap { try? Locator(jsonString: $0) }
+        }
+        let read = try #require(await ReaderSyncTests.locate(publication, 0.31))
+        page.currentLocation = read
+        model.userTurnedPage()
+        await model.locationDidChange(read)
+        for _ in 0..<200 where savedPlace()?.text.highlight == nil { await Task.yield() }
+        try #require(savedPlace()?.text.highlight != nil)
+
+        model.keeper.reflowWillBegin(.rotation)
+        model.reflowDidBegin()
+        try #require(model.reflowShownUnsettled(read.copy(text: { $0 = Locator.Text() })) != nil)
+        // He turns while it lays out, and the turn is owed; Readium names the same place still.
+        model.userTurnedPage()
+        await model.locationDidChange(read.copy(text: { $0 = Locator.Text() }))
+        for _ in 0..<200 where !model.placeOwed { await Task.yield() }
+        try #require(model.placeOwed, "the turn under the reflow is owed")
+        let owed = try #require(model.owedPlaceOnLeaving())
+        #expect(owed.text.highlight == nil, "a page he turned to inherited the old page's words")
+        model.close()
     }
 }
 

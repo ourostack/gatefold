@@ -275,6 +275,8 @@ final class ReaderModel {
         // the jump on a return and called the page it reached his (CI's page-numbers check).
         self.launchGoTo = initial == nil && (LaunchOptions.openBook == nil || LaunchOptions.openBook == book.id) ? (goTo ?? LaunchOptions.goTo) : nil
         readerLog.notice("place read [r\(self.readerNumber, privacy: .public)]: \(book.id, privacy: .public) opening on \(initial.map(Self.placeTag) ?? "none", privacy: .public)")
+        // UI tests: the place read carries his words or not (a reopen of a bare progression lands on a boundary).
+        if LaunchOptions.isUITest { self.savedWordsProbe = initial?.text.highlight.map(ReaderJS.normalize) ?? "" }
         // His saved words are the place from the first frame. A reflow can start before the page has
         // shown any words (an iPad relaunched in landscape lays out in portrait first, then rotates);
         // with nothing held, the spread stayed where Readium's re-layout guessed: two spreads early,
@@ -1557,7 +1559,9 @@ final class ReaderModel {
         // No move owed, but a restore that never settled left him the page as it was: that page is what he
         // saw, so it is what the reopen shows (gatefold#133).
         if !placeOwed {
-            leavingOnShownPage = shownOnLeaving
+            // Named once, here, before the close counts its move: the write, the inactive write and the
+            // reopen picture's tag all carry the same place (`withKeptWords`).
+            leavingOnShownPage = shownOnLeaving.map(withKeptWords)
             return leavingOnShownPage
         }
         return owedJumpTarget.flatMap { $0.1 == moves && !touchedSinceLocation ? $0.0 : nil } ?? page?.currentLocation
@@ -1568,8 +1572,7 @@ final class ReaderModel {
     /// (the app only went inactive), the debt stands: a reflow that settles later still records his
     /// own words over this write, as it would have without it. So does the page a stalled restore left
     /// him (`reflowDidFinish` writes the settled page back over it).
-    func keepOwedPlace(_ given: Locator) async {
-        let here = withKeptWords(given)
+    func keepOwedPlace(_ here: Locator) async {
         keepShownPageNow(here)
         let shown = shownKeptNow.map { $0.href == here.href && $0.locations.progression == here.locations.progression } == true
         shownKeptNow = nil
@@ -1604,9 +1607,8 @@ final class ReaderModel {
     /// write waited on the chapter's mapping, and the reopen kept the page from before the rotation).
     /// His words go with it if the page gave them; the mapped position follows on the same place (`keepOwedPlace`).
     /// Does nothing unless `owedPlaceOnLeaving` named that page; safe to call again.
-    func keepShownPageNow(_ given: Locator) {
+    func keepShownPageNow(_ here: Locator) {
         guard let leaving = leavingOnShownPage, !isWarming else { return }
-        let here = withKeptWords(given)
         leavingOnShownPage = nil
         guard leaving.href == here.href, leaving.locations.progression == here.locations.progression else { return }
         shownKeptNow = here
@@ -1623,8 +1625,10 @@ final class ReaderModel {
     /// `here` with his first words when it has none and the place kept now is that very place with words
     /// (his turn's write before the stalled restore showed the same page). Readium's bare progression sits
     /// on a page boundary, and a reopen can land on either side of it (gatefold#133: one page early).
+    /// Only while nothing has moved since that write (no turn, jump or landing not yet kept): a new page
+    /// never inherits the old page's words.
     private func withKeptWords(_ here: Locator) -> Locator {
-        guard here.text.highlight == nil,
+        guard here.text.highlight == nil, recordedMoves == moves,
               let kept = app.library.book(bookID)?.locatorJSON.flatMap({ try? Locator(jsonString: $0) }),
               kept.text.highlight != nil, kept.href == here.href,
               kept.locations.progression == here.locations.progression else { return here }
