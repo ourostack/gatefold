@@ -346,6 +346,29 @@ final class ScriptedPage: ReaderPage {
         f.model.close()
     }
 
+    /// An offer made behind the shelf has not been seen, so it is not "unanswered" yet: it stays open
+    /// until he has tapped the book and its page is up, and only then starts the wait before it folds
+    /// (gatefold#156: made at a warm open's start, it folded about 10 s later, before the page under
+    /// the cover had shown; CI's Catch up then found only the tab). Counted in reads of the slip.
+    @Test func anOfferMadeBehindTheShelfFoldsOnlyAfterHeHasSeenIt() async throws {
+        let f = try await Self.make(remote: { _, _ in
+            ReadingPosition(cfi: nil, totalProgression: 0.42, updated: Date(), source: .pocketBookNative)
+        }, book: { $0.remote = ReadingPosition(cfi: nil, totalProgression: 0.42, updated: Date(), source: .pocketBookNative) })
+        f.model.warm()
+        for _ in 0..<200 where f.model.slip == nil || !f.model.pageReady { try await Task.sleep(for: .milliseconds(25)) }
+        try #require(f.model.slip != nil && f.model.slipKind == .ahead && f.model.pageReady, "the Cloud's place was not offered behind the shelf, or the warm page never came up")
+        // Past the fold's whole wait, behind the shelf: nobody has seen the offer, so it must still be open.
+        let foldReads = Int((LaunchOptions.offerFoldSeconds + 2) / 0.025)
+        for _ in 0..<foldReads where !f.model.slipFolded { try await Task.sleep(for: .milliseconds(25)) }
+        #expect(!f.model.slipFolded, "the offer folded behind the shelf, before he had seen it")
+        f.model.activate()
+        #expect(f.model.slip != nil && !f.model.slipFolded, "the tap did not find the offer open")
+        // Seen and unanswered, it still folds into its tab.
+        for _ in 0..<foldReads where !f.model.slipFolded { try await Task.sleep(for: .milliseconds(25)) }
+        #expect(f.model.slipFolded && f.model.slip != nil, "the offer never folded once he had seen it")
+        f.model.close()
+    }
+
     /// His own place in the front matter is still his place: the InkPad's further one is offered.
     @Test func aPlaceInTheFrontMatterIsKeptAndTheInkPadsOffered() async throws {
         let f = try await Self.make(remote: { pub, mapper in try await Self.inkPadPlace(pub, mapper, index: 12, percent: 40) },
