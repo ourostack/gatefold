@@ -652,6 +652,7 @@ final class ReaderModel {
         if launchGoTo == nil { markReady() }
         if let goTo = launchGoTo, let locator = await publication.locate(progression: goTo) {
             launchJumpInFlight = true
+            noteLeftBehind()
             hasMoved = true
             moves += 1
             let jumpMove = moves
@@ -1257,6 +1258,24 @@ final class ReaderModel {
         return "Back to where you were"
     }
 
+    /// The pages jumps have left since his place was last kept, as Readium last named each: a report of
+    /// exactly one of them, while Readium names another page and the newest move isn't kept, is a late
+    /// one (gatefold#174). Every jump adds its page, so a second jump before the first is kept still
+    /// knows the first page left. A turn or scroll back to such a page has his touch, or Readium naming
+    /// it, so it is never taken for one. The rule rests on Readium's own page, not the jump's target:
+    /// Readium reports its page boundary, which a target needn't match, and the report reaches here
+    /// through a task hop, by which time Readium has usually moved on (when it hasn't, the late
+    /// report is still kept).
+    @ObservationIgnored private var pagesLeft: [Locator] = []
+    private func noteLeftBehind() {
+        if let here = page?.currentLocation, !pagesLeft.contains(where: { Self.samePage($0, here) }) { pagesLeft.append(here) }
+    }
+    private func isLateReportOfThePageLeft(_ l: Locator) -> Bool {
+        guard recordedMoves < moves, pagesLeft.contains(where: { Self.samePage(l, $0) }),
+              let now = page?.currentLocation, !Self.samePage(now, l) else { return false }
+        return true
+    }
+
     /// A jump keeps the old page on screen, dimmed, until the new one has painted, then cross-fades.
     /// Returns the jump's step; `step` is one the caller took for it beforehand.
     @discardableResult
@@ -1266,6 +1285,7 @@ final class ReaderModel {
         let watch = VeilWatch()
         let his = hisSteps
         let movesAtStart = moves
+        noteLeftBehind()
         // Where the newest move left the page, noted the moment its jump is back: a jump overtaken
         // meanwhile (a Back freed by its count) that lands late is put back there.
         let tracked: () async -> Void = { [weak self] in
@@ -1529,6 +1549,7 @@ final class ReaderModel {
                 self.lateLandings = []
                 self.placeWrites += 1
                 self.keptPage = settledLocator
+                self.pagesLeft = []
                 self.newestWrittenMove = max(self.newestWrittenMove, self.moves)
                 readerLog.notice("place write [r\(self.readerNumber, privacy: .public)]: landing (\(fresh != nil ? "his first words" : "Readium's boundary", privacy: .public)) \(Self.placeTag(settledLocator), privacy: .public); kept total \(chosen?.totalProgression ?? here.locations.totalProgression ?? 0, privacy: .public); move \(self.moves, privacy: .public)")
                 self.app.library.recordPlace(
@@ -1836,6 +1857,14 @@ final class ReaderModel {
     func locationDidChange(_ locator: Locator, duringTurn: Bool = false, hisMove: Bool = false, placeOnly: Bool = false,
                            leaving: Bool = false) async {
         guard !isClosed || leaving else { return }
+        // A late report of the page a jump left, once the page has moved on and before the jump's move is
+        // kept, is that page's, not a move of his: kept, it took the jump's move and his place was saved
+        // as the page he had left; the jump's own report then found it kept (gatefold#174, CI's iPad: the
+        // book's first file written 36 ms after a jump landed at 0.309).
+        if !hisMove, !duringTurn, !leaving, !touchedSinceLocation, isLateReportOfThePageLeft(locator) {
+            readerLog.notice("place: a late report of the page a jump left (\(Self.placeTag(locator), privacy: .public)); not his move, nothing kept")
+            return
+        }
         if !hisMove, !duringTurn, !leaving, !touchedSinceLocation, isLateLandingReport(locator) {
             readerLog.notice("place: a late report of a page an overtaken jump landed on (\(Self.placeTag(locator), privacy: .public)); not his move, nothing kept")
             return
@@ -1999,6 +2028,7 @@ final class ReaderModel {
         // Kept as of now, before any further wait.
         recordedMoves = moves
         lateLandings = []
+        pagesLeft = []
         let keeping = moves
         newestWrittenMove = max(newestWrittenMove, keeping)
         // Numbered here, before any wait: a write parked in the contest below must not start later than
