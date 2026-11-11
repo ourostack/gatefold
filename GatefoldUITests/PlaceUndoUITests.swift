@@ -97,15 +97,23 @@ final class PlaceUndoUITests: XCTestCase {
 
     private func showChrome() {
         // A tap under a jump's veil is swallowed (the veil is the page changing), so wait it out.
-        XCTAssertTrue(el("reader.veil").waitForNonExistence(timeout: 60), "the veil lifts")
-        // Already up (a jump made from them leaves them up), or still fading in: a tap now would put
-        // them down.
-        // Judged in reads (gatefold#166): 2 s ran out on a starved runner while they were up, and the tap
-        // that followed put them down.
+        // Judged in reads (gatefold#166), as every wait here: a starved runner's queries take seconds.
+        let veil = el("reader.veil")
+        XCTAssertTrue(readsUntil(reads: 600, hangGuard: 240) { !veil.exists }.ok, "the veil lifts")
+        // Already up (a jump made from them leaves them up), or fading in or out: wait for one or the
+        // other and never tap them down. 2 s of wall time ran out on a starved runner while they were
+        // up, and the tap that followed put them down.
         let contents = app.buttons["reader.contents"]
-        if contents.exists, readsUntil(reads: 20, hangGuard: 60, { contents.isHittable }).ok { return }
+        if contents.exists {
+            _ = readsUntil(reads: 30, hangGuard: 180) { !contents.exists || contents.isHittable }
+            if contents.exists {
+                XCTAssertTrue(contents.isHittable, "the controls that are up become hittable")
+                return
+            }
+        }
         el("reader.page").coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
-        XCTAssertTrue(readsUntil(reads: 50, hangGuard: 60) { contents.exists }.ok, "a tap in the middle brings up the controls")
+        XCTAssertTrue(readsUntil(reads: 50, hangGuard: 120) { contents.exists && contents.isHittable }.ok,
+                      "a tap in the middle brings up the controls")
     }
 
     /// After a swipe the list may still be scrolling, and asking a row whether it is hittable then can fail
