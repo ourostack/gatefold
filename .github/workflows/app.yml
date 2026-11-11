@@ -298,6 +298,7 @@ jobs:
             # Main only, like ipad-rotate-stalled (gatefold#250)
             tests: >-
               RotationRepro/testRotateThenLeaveWithoutItsWordsAndReopenOnTheChapterStart
+            skip: ""
             pr_tests: none
             cold: true
             timeout: 36 # 12 + 2 x 5.8 + 12

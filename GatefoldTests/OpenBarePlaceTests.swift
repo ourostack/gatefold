@@ -58,6 +58,22 @@ import Testing
         #expect(o.model.openPlaceToReapply(visible: range(o.saved, 0, 0.0333)) == nil, "a late jump took him off the page he turned to")
     }
 
+    @Test func aTurnStillAnimatingBlocksTheReapply() async throws {
+        let o = try await open(at: 0.31)
+        o.model.keeper.reflowWillBegin(.rotation)
+        o.page.isTurning = true
+        #expect(o.model.openPlaceToReapply(visible: range(o.saved, 0, 0.0333)) == nil, "a late jump pulled back a page he was turning")
+        o.page.isTurning = false
+        #expect(o.model.openPlaceToReapply(visible: range(o.saved, 0, 0.0333)) == nil, "put back after the turn he began")
+    }
+
+    @Test func aClosedReaderNeverReapplies() async throws {
+        let o = try await open(at: 0.31)
+        o.model.keeper.reflowWillBegin(.rotation)
+        o.model.close()
+        #expect(o.model.openPlaceToReapply(visible: range(o.saved, 0, 0.0333)) == nil, "a closed reader jumped")
+    }
+
     @Test func aTouchSinceTheLastReportBlocksTheReapply() async throws {
         let o = try await open(at: 0.31)
         o.model.keeper.reflowWillBegin(.rotation)

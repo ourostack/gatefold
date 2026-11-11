@@ -296,7 +296,7 @@ final class ReaderModel {
             hostController = try ReaderHostController(
                 model: self,
                 publication: publication,
-                initialLocation: LaunchOptions.reopenOnChapterStart && initial?.text.highlight == nil
+                initialLocation: LaunchOptions.reopenOnChapterStart && Self.openingAnchor(from: initial) == nil
                     ? initial?.copy(locations: { $0 = Locator.Locations(progression: 0) }) : initial,
                 preferences: Self.epubPreferences(prefs, theme: prefs.resolvedTheme(systemIsDark: false), columns: .one, viewWidth: layout.pageFrame.width > 0 ? layout.pageFrame.width : 402, language: Self.hyphenationLanguage(publication))
             )
@@ -1881,7 +1881,7 @@ final class ReaderModel {
     /// open. Nil once he has turned, jumped, tapped a link or Contents, or a restore has landed.
     func openPlaceToReapply(visible: VisibleRange) -> (ReadingAnchor, Locator)? {
         guard let bare = openedOnBarePlace else { return nil }
-        guard keeper.anchor == nil, hisMoves == 0, !touchedSinceLocation, host?.isTurning != true,
+        guard keeper.anchor == nil, hisMoves == 0, !touchedSinceLocation, page?.isTurning != true,
               keeper.restoreMayMove(move: hisMoves), !isClosed else {
             openedOnBarePlace = nil
             return nil
