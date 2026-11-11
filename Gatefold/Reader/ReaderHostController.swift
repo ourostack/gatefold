@@ -2429,6 +2429,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         var loadingLooks = 0
         var attempt = 0
         defer { lastSnapshotLooks = loadingLooks + attempt }
+        var firstLook: UIImage?
         // A jump's old page still loading is looked at once: the jump starts after it (gatefold#155).
         let attempts = waitsForLoad ? 40 : OldPagePicture.tries(stillLoading: !afterChange && (heldLoadLooks > 0 || readiumSpinner != nil))
         while attempt < attempts {
@@ -2442,6 +2443,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             }
             defer { attempt += 1 }
             let image = await snapshot()
+            if attempt == 0 { firstLook = image }
             guard let signature = PageSignature(image) else { return image }
             // A test's held load (`holdOldPageLoadLooks`) pictures the old page as a bare one, the
             // way a page still loading looks, so the few tries and the fallback below are what run.
@@ -2454,7 +2456,9 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         }
         if loadingLooks > 0 { readerLog.notice("veil: held the old page \(loadingLooks, privacy: .public) looks while the chapter loaded") }
         if let last { return last.0 }
-        let final = await snapshot()
+        // One look was all a page still loading gets: another would only hold the jump back again.
+        let final: UIImage
+        if attempts == 1, let firstLook { final = firstLook } else { final = await snapshot() }
         // A page pictured as it is never shows black under a jump's veil: an empty picture lets the
         // veil's paper show instead.
         if !waitsForLoad, let signature = PageSignature(final), signature.isBlack(paper: paper) {
