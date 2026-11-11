@@ -196,7 +196,10 @@
         "Your paper,",
         "your type"
       ],
-      "subline": "Six papers from Daylight to Midnight, with type, spacing and margins to taste."
+      "subline": "Six papers from Daylight to Midnight, with type, spacing and margins to taste.",
+      "whole": [
+        "ipad"
+      ]
     }
   ],
   "parked": {
@@ -253,5 +256,34 @@
         "subline": "Your cloud library, covers and all, with your place kept in each."
       }
     ]
+  },
+  "surfaces_plan": {
+    "source": "Ari, 2026-11-11 17:30Z: \"use this thinking for ALL apps and ALL surfaces\". Planned for the PRs after the first screenshots PR; nothing here is rendered yet.",
+    "app_store_connect": {
+      "custom_product_page_header": [
+        3840,
+        1646
+      ],
+      "search_results_asset": [
+        3840,
+        2560
+      ],
+      "device_classes": "every class App Store Connect takes, the iPhone Duo's included",
+      "proposals": "an in-app event and custom product pages, staged as drafts and never submitted"
+    },
+    "duo_postures": {
+      "every": [
+        "closed: the front screen",
+        "open flat: the spread",
+        "standing (tent)",
+        "half-open"
+      ],
+      "heroes": [
+        "open flat: the spread",
+        "half-open: the book in hand"
+      ],
+      "driver": "spoonjoy-apple's scripts/duo/posture-driver.swift (request/done file handoff; Device Hub's Closed, Partially Open, Open and Rotate Right), not its .github/scripts/duo/devicehub.swift, whose whole-tree walk per press outran its step in spoonjoy-apple run 42939127260. Budget the step for compiling, launching Device Hub and the first tree walk. Propose a shared tool rather than two copies."
+    },
+    "ipad_fills_the_screen": "Every iPad shot fills the 13-inch screen. A screen whose content is crammed at the top is an app layout issue for Gatefold's app owners, never hidden with framing."
   }
 }

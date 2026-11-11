@@ -20,6 +20,7 @@ import json
 import os
 import pathlib
 import struct
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -93,6 +94,12 @@ def shoot_into(tmp, udid, display, out, spec, hashes):
             return True, f"settled after {i + 1} frames"
         i += 1
         time.sleep(FRAME_GAP)
+    # Keep the last two frames in unsettled/, out of the shots' own glob, so the artifact shows what kept moving.
+    keep = out.parent / "unsettled"
+    keep.mkdir(exist_ok=True)
+    for n, j in enumerate((i - 2, i - 1), 1):
+        if j >= 0 and (tmp / f"{j}.png").exists():
+            shutil.copyfile(tmp / f"{j}.png", keep / f"{out.stem}-{int(time.time())}-{n}.png")
     return False, f"the screen never held still for {STABLE_FRAMES} frames in {SHOOT_LIMIT} s"
 
 

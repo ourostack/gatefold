@@ -157,19 +157,26 @@ func compose(scene: [String: Any], device: [String: Any], raw: String, out: Stri
 
     // The device: a drawn bezel around the capture. Portrait devices bleed off the bottom edge.
     let aspect = CGFloat(shot.height) / CGFloat(shot.width)
-    let devW: CGFloat, radiusFactor: CGFloat, bezelFactor: CGFloat
+    var devW: CGFloat; let radiusFactor: CGFloat, bezelFactor: CGFloat
     switch (kind, landscape) {
     case ("ipad", true): devW = W * 0.90; radiusFactor = 0.035; bezelFactor = 0.016
     case ("ipad", false): devW = W * 0.80; radiusFactor = 0.045; bezelFactor = 0.020
     case ("duo-outer", _): devW = W * 0.78; radiusFactor = 0.070; bezelFactor = 0.028
     default: devW = W * 0.80; radiusFactor = 0.125; bezelFactor = 0.030
     }
+    let devTop = textBottom + 96 * u
+    // A scene whose subject sits at the bottom of the screen (a panel) shows the whole device on the device kinds it
+    // names in "whole", smaller, rather than bleed its subject off the edge.
+    let whole = (scene["whole"] as? [String] ?? []).contains(kind)
+    if whole {
+        let room = H - devTop - 72 * u
+        devW = min(devW, room / ((1 - 2 * bezelFactor) * aspect + 2 * bezelFactor))
+    }
     let bezel = devW * bezelFactor
     let screenW = devW - 2 * bezel, screenH = screenW * aspect
     let devH = screenH + 2 * bezel
-    let devTop = textBottom + 96 * u
     // A landscape device sits centred in the space under the text; a portrait one hangs from it and bleeds off.
-    let devY = landscape ? (H - devTop - devH) / 2 : H - devTop - devH
+    let devY = landscape || whole ? (H - devTop - devH) / 2 : H - devTop - devH
     let body = CGRect(x: (W - devW) / 2, y: devY, width: devW, height: devH)
     let outerR = devW * radiusFactor
     ctx.saveGState()

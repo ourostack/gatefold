@@ -180,7 +180,8 @@ jobs:
       - name: Capture every scene twice
         timeout-minutes: 50
         run: |
-          set -uo pipefail
+          # The step's default shell is bash -e; a failed try must reach the retry, not end the step.
+          set +e -uo pipefail
           status=0
           scenes="$(python3 -I scripts/screenshots/capture.py scenes --device "$DEVICE")"
           mkdir -p "$RUNNER_TEMP/logs"
