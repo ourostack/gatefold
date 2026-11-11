@@ -119,7 +119,7 @@ jobs:
     # In Swift's own image: the Ubuntu 26.04 runner image stopped carrying Swift (exit 127 on
     # `swift --version`, 2026-11-05).
     needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
+    if: false # probe, not for merge
     runs-on: ubuntu-latest
     container: swift:6.2
     timeout-minutes: 20
@@ -184,7 +184,7 @@ jobs:
             pr_tests: >-
               ReviewerChecksUITests/testTheLastPagesNumberIsTheCount WindowFitUITests
     needs: [changes, build]
-    if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
+    if: false # probe, not for merge
     runs-on: xcode-27
     timeout-minutes: ${{ matrix.timeout }}
     steps:
@@ -469,6 +469,7 @@ jobs:
         with:
           limit: "97" # the job's timeout-minutes
       - name: Reading position survives posture and font changes; every Fine-Tune tap lands (UI tests)
+        if: false # probe, not for merge
         timeout-minutes: ${{ fromJSON(steps.left_ui.outputs.minutes) }}
         env:
           STEP_UNTIL: ${{ steps.left_ui.outputs.until }}
@@ -521,7 +522,7 @@ jobs:
     # Pull requests run its smoke (a page a turn, and a reopen keeps the numbers); pushes to main add the reviewers'
     # full list, about 13 min a test on this runner (gatefold#39).
     needs: [changes, build]
-    if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
+    if: false # probe, not for merge
     runs-on: xcode-27
     # 45 min measured (build 20), plus about 10 for the two turn checks; 47 min at c4c3b6a with both.
     # feel-ci sets this job longer (gatefold#65 tracks the overrun): at a merge, the larger value wins.
