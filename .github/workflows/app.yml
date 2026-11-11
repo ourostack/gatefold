@@ -180,7 +180,7 @@ jobs:
         env:
           RESULT: ${{ needs.ci-scripts.result }}
         run: |
-          [ "$RESULT" = success ] || { echo "::error title=CI scripts, offline::The job \"CI scripts, offline\" ended $RESULT: its log names the failing test (simulator helper or UI test lists, not GatefoldCore)"; exit 1; }
+          [ "$RESULT" = success ] || { echo "::error title=CI scripts%2C offline::The job \"CI scripts, offline\" ended $RESULT: see its log (simulator helper or UI test lists, not GatefoldCore)"; exit 1; }
 
   # The CI scripts' offline tests, on the runner image itself, where python3 is installed: in the Swift container they
   # had to fetch it with apt-get, and a DNS blip failed the required check before any test ran (gatefold#241).
