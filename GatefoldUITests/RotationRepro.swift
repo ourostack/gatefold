@@ -223,11 +223,13 @@ final class RotationRepro: XCTestCase {
             // puts them at the top of the left page, as a restore does. Otherwise it is the page he saw.
             // Portrait and landscape break lines apart: a restore leaves words already within two lines of a
             // column's top where they are (`pinToTop`), so under the hook his words open the left page within
-            // its first few lines (about 240 characters), not always at its very start.
+            // its first few lines (about 160 characters), not always at its very start.
             let target = keepsHisWords ? turnedBeforeRotation : his
-            let at = back.range(of: head(target)).map { back.distance(from: back.startIndex, to: $0.lowerBound) } ?? -1
+            let flat = { (t: String) in t.split(whereSeparator: \.isWhitespace).joined(separator: " ") }
+            let backFlat = flat(back)
+            let at = backFlat.range(of: flat(head(target))).map { backFlat.distance(from: backFlat.startIndex, to: $0.lowerBound) } ?? -1
             let startsSame = keepsHisWords
-                ? ((0...240).contains(at)
+                ? ((0...160).contains(at)
                    || ReopenMatch.compare(left: turnedBeforeRotation, reopened: back, saved: savedBeforeRotation) != .different)
                 : head(back) == head(his)
             let middleSame = back.contains(middle(target))
