@@ -98,9 +98,9 @@ import Testing
 
     /// A restore that stalls after a rotation leaves him the page as it was (gatefold#133). Closing writes
     /// that page in the close itself, before any Task or wait: the words and their mapped position may
-    /// never come while the page is stalled, and the app may be ended a moment later. The words, when
-    /// they come, land on the same place. Fails if the leave write waits on the words' path
-    /// (`placeWriteWait`, then the mapping) or on a Task hop.
+    /// never come while the page is stalled, and the app may be ended a moment later. His words, noted
+    /// before he left, go with it; the mapped position, when it comes, lands on the same place. Fails if
+    /// the leave write waits on the mapping's path (`placeWriteWait`, then the mapping) or on a Task hop.
     @Test func thePageAStalledRestoreLeftIsWrittenBeforeAnyWait() async throws {
         let sync = StubSync()
         await sync.setLibrary(.success([ReaderSyncTests.frankenstein]))
@@ -145,15 +145,16 @@ import Testing
         #expect(atOnce.href.string == shownPage.href.string)
         #expect(atOnce.locations.progression == shownPage.locations.progression,
                 "kept at \(atOnce.locations.progression ?? -1), not the shown page (\(shownPage.locations.progression ?? -1)), while the words' path waits")
-        #expect(atOnce.text.highlight == nil, "Readium's location first")
+        #expect(atOnce.text.highlight != nil, "his words noted before he left were not written with it")
 
         // The words come: on the same place, never another.
         await held.open()
         // The mapping reads the chapter off the main actor: bounded polls, as the tests above wait on writes.
-        for _ in 0..<200 where savedPlace()?.text.highlight == nil { try await Task.sleep(for: .milliseconds(25)) }
+        for _ in 0..<200 where model.shownLeaveSteps.count < 2 { try await Task.sleep(for: .milliseconds(25)) }
+        #expect(model.shownLeaveSteps == ["written", "position mapped"], "steps \(model.shownLeaveSteps)")
         let after = try #require(savedPlace())
-        #expect(after.locations.progression == shownPage.locations.progression, "the words moved the place")
-        #expect(after.text.highlight != nil, "his words were not attached once they came")
+        #expect(after.locations.progression == shownPage.locations.progression, "the mapped position moved the place")
+        #expect(after.text.highlight != nil, "the mapped position dropped his words")
     }
 }
 

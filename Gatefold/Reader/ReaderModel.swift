@@ -1582,7 +1582,7 @@ final class ReaderModel {
         // the one he sees again, and it is written back over this one. Noted before the write's own wait.
         // The shown page's write took its move when it was written (`keepShownPageNow`), not now.
         let movesAtWrite = shown ? (shownLeaveWrite?.move ?? moves) : moves
-        if shown { await attachShownPageWords(here) } else {
+        if shown { await mapShownPagePosition(here) } else {
             await locationDidChange(here, hisMove: true, placeOnly: true, leaving: true)
         }
         // The restore settled during that wait: its write-back may have gone first, so this one follows it.
@@ -1600,7 +1600,7 @@ final class ReaderModel {
     /// the app going inactive), before any Task or wait. The page under a stalled restore can hold any
     /// script or resource load, and the app may be ended a moment after he leaves (gatefold#133: the
     /// write waited on the chapter's mapping, and the reopen kept the page from before the rotation).
-    /// Readium's location first; his words follow if they come, on the same place (`keepOwedPlace`).
+    /// His words go with it if the page gave them; the mapped position follows on the same place (`keepOwedPlace`).
     /// Does nothing unless `owedPlaceOnLeaving` named that page; safe to call again.
     func keepShownPageNow(_ here: Locator) {
         guard let leaving = leavingOnShownPage, !isWarming else { return }
@@ -1609,7 +1609,7 @@ final class ReaderModel {
         shownKeptNow = here
         // The page as shown is the place now: no longer the layout's, whatever the reflow before it set.
         layoutOnly = false
-        readerLog.notice("place [r\(self.readerNumber, privacy: .public)]: the page a restore left unsettled, on leaving, at \(here.locations.totalProgression ?? -1, privacy: .public)")
+        readerLog.notice("place write [r\(self.readerNumber, privacy: .public)]: the page a restore left unsettled, on leaving, at \(here.locations.totalProgression ?? -1, privacy: .public)")
         writeShownPageAtOnce(here)
         if !isClosed, let written = shownLeaveWrite { shownWrittenOpen = written.move }
         // Sent now too: the caller's own send may already have gone.
@@ -1617,12 +1617,16 @@ final class ReaderModel {
     }
     @ObservationIgnored private var shownKeptNow: Locator?
 
-    /// The shown page's leave write, at once: Readium's location, no position mapped, no wait.
+    /// The shown page's leave write, at once: the place as noted (with his first words if the page gave
+    /// them before he left, `reflowShownUnsettled`), no position mapped, no wait. The words matter: under a
+    /// stalled restore Readium's progression can name a page beside the one shown, and the reopen found
+    /// that page (CI 43034011191: written at once, words never attached before the app was ended).
     @ObservationIgnored private var shownLeaveWrite: (records: Int, move: Int, json: String)?
+    /// Each step of that write, for tests: "written", "position mapped", "gave up".
+    @ObservationIgnored private(set) var shownLeaveSteps: [String] = []
     private func writeShownPageAtOnce(_ here: Locator) {
-        let bare = here.copy(text: { $0 = Locator.Text() })
-        guard let json = try? bare.jsonString() else {
-            readerLog.notice("place [r\(self.readerNumber, privacy: .public)]: the page left unsettled could not be encoded; not written")
+        guard let json = try? here.jsonString() else {
+            readerLog.notice("place write [r\(self.readerNumber, privacy: .public)]: the page left unsettled could not be encoded; not written")
             return
         }
         // As the ordinary leave write keeps it (`locationDidChange(leaving:)`): kept as of now.
@@ -1635,39 +1639,36 @@ final class ReaderModel {
         app.library.recordPlace(bookID: bookID, locatorJSON: json, totalProgression: here.locations.totalProgression ?? 0,
                                 progression: here.locations.progression ?? 0, at: Date())
         shownLeaveWrite = (placeRecords, moves, json)
-        if LaunchOptions.isUITest { savedWordsProbe = "" }
-        readerLog.notice("place [r\(self.readerNumber, privacy: .public)]: the page left unsettled written on leaving, at once, at \(here.locations.totalProgression ?? -1, privacy: .public)")
+        shownLeaveSteps.append("written")
+        if LaunchOptions.isUITest { savedWordsProbe = here.text.highlight.map(ReaderJS.normalize) ?? "" }
+        readerLog.notice("place write [r\(self.readerNumber, privacy: .public)]: the page left unsettled written on leaving, at once, at \(here.locations.totalProgression ?? -1, privacy: .public), \(here.text.highlight == nil ? "Readium's location" : "with his first words", privacy: .public)")
     }
-    /// His words for that same place, when they and its mapped position come: written only over that very
-    /// write (no newer place, no newer move), and never anywhere else.
-    private func attachShownPageWords(_ here: Locator) async {
+    /// The exact position for that same write, when the chapter's mapping comes (it reads the chapter, which a
+    /// stalled page can hold: gatefold#240): written only over that very write (no newer place, no newer
+    /// move, the library still holding it), the same locator, never anywhere else.
+    private func mapShownPagePosition(_ here: Locator) async {
         guard let written = shownLeaveWrite else { return }
         guard here.text.highlight != nil else {
-            readerLog.notice("place [r\(self.readerNumber, privacy: .public)]: no words for the page left unsettled; Readium's location kept")
+            readerLog.notice("place write [r\(self.readerNumber, privacy: .public)]: no words for the page left unsettled; Readium's location kept")
             return
         }
         let now = Date()
         await placeWriteWait()
         let exact = await mapper?.position(for: BookLocation(here), at: now)
-        // Only over that very write: no newer place from this reader, no newer move, and the library still
-        // holding it (a reader opened since, on this book, owns the place it wrote).
         guard placeRecords == written.records, moves == written.move, newestWrittenMove == written.move,
               app.library.book(bookID)?.locatorJSON == written.json else {
-            readerLog.notice("place [r\(self.readerNumber, privacy: .public)]: words for the page left unsettled gave up (a newer place or move came first)")
-            return
-        }
-        guard let json = try? here.jsonString() else {
-            readerLog.notice("place [r\(self.readerNumber, privacy: .public)]: words for the page left unsettled gave up (could not be encoded)")
+            shownLeaveSteps.append("gave up")
+            readerLog.notice("place write [r\(self.readerNumber, privacy: .public)]: the position for the page left unsettled gave up (a newer place or move came first)")
             return
         }
         placeRecords += 1
-        app.library.recordPlace(bookID: bookID, locatorJSON: json, totalProgression: here.locations.totalProgression ?? 0,
+        app.library.recordPlace(bookID: bookID, locatorJSON: written.json, totalProgression: here.locations.totalProgression ?? 0,
                                 progression: here.locations.progression ?? 0,
                                 position: exact.map { var p = $0; p.totalProgression = here.locations.totalProgression ?? p.totalProgression; return p },
                                 at: now)
-        shownLeaveWrite = (placeRecords, written.move, json)
-        if LaunchOptions.isUITest { savedWordsProbe = here.text.highlight.map(ReaderJS.normalize) ?? "" }
-        readerLog.notice("place [r\(self.readerNumber, privacy: .public)]: words attached to the page left unsettled, at \(here.locations.totalProgression ?? -1, privacy: .public)")
+        shownLeaveWrite = (placeRecords, written.move, written.json)
+        shownLeaveSteps.append("position mapped")
+        readerLog.notice("place write [r\(self.readerNumber, privacy: .public)]: position mapped for the page left unsettled, at \(here.locations.totalProgression ?? -1, privacy: .public), cfi \(exact?.cfi != nil, privacy: .public)")
     }
 
     func dismissSuggestion() {
