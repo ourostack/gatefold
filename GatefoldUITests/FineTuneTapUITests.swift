@@ -184,17 +184,51 @@ final class FineTuneTapUITests: XCTestCase {
         tapRate("portrait", id)
     }
 
+    /// Reads of the app window's frame for a turn to show (gatefold#224): 40 at 0.25 s, the old 10 s at a quick
+    /// read, but counted, so a slow simulator (one look took 18.6 s in #207's green probe, run 42973604069,
+    /// job 130368394864) still gets all 40 before the shape is judged.
+    private static let turnReads = 40
+    /// Reads in a row on which the turned frame must not move before it's judged, in place of a fixed sleep(3).
+    private static let holdReads = 3
+
+    /// Reads the window's frame until its size is no longer `upright`'s (up to `turnReads`), then until it
+    /// reads the same size `holdReads` times in a row (up to `turnReads` more). No change in `turnReads` is an
+    /// answer, not a failure: the folded Duo's cover screen doesn't turn, and the caller decides. Only a hang
+    /// guard, sized by `HangGuard` from the most reads this can take.
+    private func readsUntilTurned(from upright: CGRect)
+        -> (frame: CGRect, turnedAfter: Int?, reads: Int, hung: Bool) {
+        let hung = Date().addingTimeInterval(HangGuard.seconds(reads: 2 * Self.turnReads))
+        var frame = upright, turnedAfter: Int?, held = 0
+        for read in 1...(2 * Self.turnReads) {
+            let now = app.windows.firstMatch.frame
+            if let at = turnedAfter {
+                held = now.size == frame.size ? held + 1 : 0
+                frame = now
+                if held >= Self.holdReads { return (frame, at, read, false) }
+            } else if now.size != upright.size {
+                turnedAfter = read; frame = now
+            } else if read >= Self.turnReads {
+                return (now, nil, read, false)
+            }
+            if Date() > hung { return (now, turnedAfter, read, true) }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        }
+        // Turned but never held still for `holdReads`: judged on the last frame, said so in the log.
+        print("TAPRATE window turned but still moving after \(2 * Self.turnReads) reads")
+        return (frame, turnedAfter, 2 * Self.turnReads, false)
+    }
+
     /// Turned for real: the app's window (where the taps land, not the runner's idea of the device)
     /// swaps its width and height. The opened-out Duo is near square, so its shape alone can't say.
     private func landscape(_ id: String) throws {
         launchReader()
         let upright = app.windows.firstMatch.frame
         XCUIDevice.shared.orientation = .landscapeLeft
-        let up = Date().addingTimeInterval(10)
-        while app.windows.firstMatch.frame.size == upright.size, Date() < up { RunLoop.current.run(until: Date().addingTimeInterval(0.25)) }
-        sleep(3)
-        let turned = app.windows.firstMatch.frame
-        print("TAPRATE window upright=\(upright.size) turned=\(turned.size)")
+        let (turned, turnedAfter, reads, hung) = readsUntilTurned(from: upright)
+        print("TAPRATE window upright=\(upright.size) turned=\(turned.size) "
+              + (turnedAfter.map { "changed after \($0) reads, " } ?? "no change, ")
+              + "\(reads) reads in all\(hung ? " (hang guard)" : "")")
+        if hung { XCTFail("hang: the window's frame ran \(reads) reads past the hang guard"); return }
         // The folded Duo's cover screen is portrait only (as `PositionUITests` finds); the iPad must turn.
         if turned.size == upright.size, UIDevice.current.userInterfaceIdiom != .pad {
             throw XCTSkip("This display does not rotate (the folded Duo's cover screen is portrait only)")
