@@ -1082,7 +1082,7 @@ final class ReaderModel {
             slipKind = kind
         }
         slipCount += 1
-        // "From your InkPad" is news, not a question: it goes by itself. An offer folds away.
+        // "From your e-reader" is news, not a question: it goes by itself. An offer folds away.
         guard kind == .landed else { return foldSlipLater() }
         slipTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(4))
@@ -2081,7 +2081,7 @@ final class ReaderModel {
         UINotificationFeedbackGenerator().notificationOccurred(.success)
     }
 
-    /// "Mark Finished on InkPad": 100 % and read in the Cloud.
+    /// "Mark Finished on Your E-reader": 100 % and read in the Cloud.
     func markFinishedOnCloud() async {
         guard endLeaf?.markedOnCloud == false else { return }
         withAnimation(.snappy) { endLeaf?.markedOnCloud = true }

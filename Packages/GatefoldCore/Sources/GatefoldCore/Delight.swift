@@ -207,8 +207,9 @@ public struct SyncSlip: Equatable, Sendable {
 
     /// The slip folded away into a tab at the page's edge: who, and how far.
     public static func tab(device: String, pagesAhead: Int?) -> String {
-        if let pages = pagesAhead, pages > 0 { return "\(deviceWord(device)) +\(pages)" }
-        return deviceWord(device).prefix(1).uppercased() + deviceWord(device).dropFirst()
+        let word = deviceWord(device).prefix(1).uppercased() + deviceWord(device).dropFirst()
+        if let pages = pagesAhead, pages > 0 { return "\(word) +\(pages)" }
+        return word
     }
 
     static func deviceWord(_ device: String) -> String {
@@ -239,7 +240,7 @@ public enum ArrivalGreeting {
             return "Welcome back. \(BookTitle.display(title))’s been holding your place at \(percent)%."
         }
         let books = bookCount == 1 ? "1 book" : "\(bookCount) books"
-        return "Welcome back. \(books) came over from your InkPad, ready when you are."
+        return "Welcome back. \(books) came over from your e-reader, ready when you are."
     }
 }
 
@@ -252,9 +253,9 @@ public enum SyncHealth: Equatable, Sendable {
     public func text(now: Date) -> String {
         switch self {
         case .checking:
-            return "Checking your InkPad…"
+            return "Checking your e-reader…"
         case let .upToDate(date):
-            return "In step with your InkPad · \(RelativeAge.text(from: date, to: now))"
+            return "In step with your e-reader · \(RelativeAge.text(from: date, to: now))"
         case let .offline(last):
             guard let last else { return "Offline for now. Read on; your place will catch up later." }
             return "Offline for now · last synced \(RelativeAge.text(from: last, to: now)). Read on; your place will catch up."
@@ -282,10 +283,10 @@ public enum FinishLine {
 }
 
 /// The end leaf's line about the read itself, the two-device story when there is one:
-/// "Started on your InkPad, finished here on your phone" over "Read over 12 days".
+/// "Started on your e-reader, finished here on your phone" over "Read over 12 days".
 public enum ReadStory {
     /// - Parameters:
-    ///   - otherDevice: the other device's word ("InkPad") when the book was already being read there
+    ///   - otherDevice: the other device's word ("e-reader") when the book was already being read there
     ///     before it was first opened here; nil when it began here.
     ///   - otherSince: the earliest sign of reading there.
     ///   - started: the first open here.
@@ -303,7 +304,7 @@ public enum ReadStory {
     }
 
     /// The Finished shelf's line, the same story as the end leaf: counted from the InkPad's start when
-    /// the read began there ("Read over 6 days, InkPad to phone"), else "Read over 12 days, in 9 sittings".
+    /// the read began there ("Read over 6 days, e-reader to phone"), else "Read over 12 days, in 9 sittings".
     /// Sittings are counted only here, so a read begun elsewhere doesn't claim them. Nil when too little is known.
     public static func shelfLine(otherDevice: String?, otherSince: Date?, started: Date?, finished: Date, sessions: Int,
                                  here: String, calendar: Calendar = .current) -> String? {
