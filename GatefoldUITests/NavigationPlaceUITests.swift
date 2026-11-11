@@ -80,8 +80,8 @@ final class NavigationPlaceUITests: XCTestCase {
         let row = app.buttons.matching(NSPredicate(format: "label CONTAINS[c] %@", "Chapter XXX")).firstMatch
         XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label CONTAINS[c] %@", "Chapter I")).firstMatch.waitForExistence(timeout: 10),
                       "the contents opened")
-        for _ in 0..<20 where !(row.exists && row.isHittable) { app.swipeUp(velocity: .slow) }
-        XCTAssertTrue(row.exists && row.isHittable, "the contents list chapter XXX")
+        for _ in 0..<20 where !(HitCheck.hittable(row, in: app)) { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(HitCheck.hittable(row, in: app), "the contents list chapter XXX")
         row.tap()
         _ = waitForWords(changingFrom: first, timeout: 20)
         leaveAndReturn(expecting: first, "contents jump")
@@ -98,8 +98,8 @@ final class NavigationPlaceUITests: XCTestCase {
         let row = app.buttons.matching(NSPredicate(format: "label CONTAINS[c] %@", "Chapter XXX")).firstMatch
         XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label CONTAINS[c] %@", "Chapter I")).firstMatch.waitForExistence(timeout: 10),
                       "the contents opened")
-        for _ in 0..<20 where !(row.exists && row.isHittable) { app.swipeUp(velocity: .slow) }
-        XCTAssertTrue(row.exists && row.isHittable, "the contents list chapter XXX")
+        for _ in 0..<20 where !(HitCheck.hittable(row, in: app)) { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(HitCheck.hittable(row, in: app), "the contents list chapter XXX")
         row.tap()
         let held = app.descendants(matching: .any)["reader.loadingHeld"]
         let veil = app.descendants(matching: .any)["reader.veil"]
@@ -153,8 +153,8 @@ final class NavigationPlaceUITests: XCTestCase {
         let row = app.buttons.matching(NSPredicate(format: "label CONTAINS[c] %@", "Chapter XXX")).firstMatch
         XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label CONTAINS[c] %@", "Chapter I")).firstMatch.waitForExistence(timeout: 10),
                       "the contents opened")
-        for _ in 0..<20 where !(row.exists && row.isHittable) { app.swipeUp(velocity: .slow) }
-        XCTAssertTrue(row.exists && row.isHittable, "the contents list chapter XXX")
+        for _ in 0..<20 where !(HitCheck.hittable(row, in: app)) { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(HitCheck.hittable(row, in: app), "the contents list chapter XXX")
         row.tap()
         // Both counted from the tap: the reads until the words change, and until Back is up.
         var reads = 0, move: Int?, back: Int?
@@ -345,7 +345,7 @@ final class NavigationPlaceUITests: XCTestCase {
         app.buttons["reader.contents"].tap()
         let row = app.buttons.matching(NSPredicate(format: "label CONTAINS[c] %@", "Chapter XXX")).firstMatch
         XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label CONTAINS[c] %@", "Chapter I")).firstMatch.waitForExistence(timeout: 10))
-        for _ in 0..<20 where !(row.exists && row.isHittable) { app.swipeUp(velocity: .slow) }
+        for _ in 0..<20 where !(HitCheck.hittable(row, in: app)) { app.swipeUp(velocity: .slow) }
         row.tap()
         var words = waitForWords(changingFrom: first, timeout: 20)
         sleep(3)
@@ -457,10 +457,7 @@ final class NavigationPlaceUITests: XCTestCase {
     /// looks, not seconds.
     /// Where to tap `element`, read from its frame. Never `isHittable`: asked of an offer in the middle of
     /// folding, XCTest fails the test ("Activation point invalid", #171's probe 42966309493).
-    private func tappable(_ element: XCUIElement) -> CGRect? {
-        let f = element.frame
-        return f.isEmpty || f.width < 1 || f.height < 1 || !app.frame.contains(CGPoint(x: f.midX, y: f.midY)) ? nil : f
-    }
+    private func tappable(_ element: XCUIElement) -> CGRect? { HitCheck.frame(element, in: app) }
 
     private func takeTheCloudsOffer() -> String {
         let offer = app.descendants(matching: .any)["banner.jump"].firstMatch

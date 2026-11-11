@@ -148,11 +148,11 @@ final class PlaceUndoUITests: XCTestCase {
                       "the contents list opens")
         for _ in 0..<20 where !hung {
             holdsStill(row)
-            if row.exists && row.isHittable { break }
+            if HitCheck.hittable(row, in: app) { break }
             app.swipeUp(velocity: .slow)
         }
         holdsStill(row)
-        XCTAssertTrue(row.exists && row.isHittable, "the contents list \(chapter)")
+        XCTAssertTrue(HitCheck.hittable(row, in: app), "the contents list \(chapter)")
         row.tap()
     }
 

@@ -86,7 +86,7 @@ final class RotationMidTransitionUITests: XCTestCase {
         print("MIDTURN contents listed=\(listed.ok) after \(listed.reads) reads\(listed.hung ? " (hang guard)" : "")")
         XCTAssertTrue(listed.ok, "the contents list is up (not in \(listed.reads) reads\(listed.hung ? ", hang guard" : ""))")
         let pick = rows.element(boundBy: min(30, max(0, rows.count - 1)))
-        for _ in 0..<6 where !pick.isHittable { app.swipeUp() }
+        for _ in 0..<6 where !HitCheck.hittable(pick, in: app) { app.swipeUp() }
         pick.tap()
     }
 

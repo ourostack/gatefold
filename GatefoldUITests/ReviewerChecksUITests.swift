@@ -189,7 +189,7 @@ final class ReviewerChecksUITests: XCTestCase {
     }
 
     /// The Cloud's place offered on a first open here: take it (the tab brings back an offer that folded).
-    /// The offer is tapped only while it is hittable: it can fold into its tab between a look and the tap (#207).
+    /// The offer can fold into its tab between a look and the tap (#207), so it is tapped where its frame was just read (#236).
     /// Any type, never `app.buttons` (#165). Judged in looks, not seconds (#94): 200 at least 0.3 s apart (the old
     /// 60 s on a fast runner); the 2400 s guard only catches a hang: a look is up to five queries of the app, and a
     /// starved runner has taken 1-2 s a query, so 200 looks can run to about 2000 s. No 600 s hold here, unlike
@@ -197,20 +197,29 @@ final class ReviewerChecksUITests: XCTestCase {
     private func takeTheOffer() {
         let offer = el("banner.jump"), tab = el("banner.tab")
         let start = Date(), hung = start.addingTimeInterval(2400)
-        var looks = 0, taken = false
+        // Read from the frame and tapped at its point, never `isHittable`: asked of an offer mid-fold, it fails the
+        // test (gatefold#236). After a tap the page gets 10 looks to answer before another, as NavigationPlace's
+        // offer taps since #171: an offer that folded just before its tap is looked for again on the looks after.
+        var looks = 0, taps = 0, quiet = 0
         while looks < 200, words.isEmpty {
             if Date() > hung { XCTFail("hang: looking for the Cloud's offer ran \(looks) looks over 2400 s"); return }
             looks += 1
-            if offer.exists, offer.isHittable { offer.tap(); taken = true; break }
-            if tab.exists, tab.isHittable { tab.tap() }
+            if quiet > 0 {
+                quiet -= 1
+            } else if let f = HitCheck.frame(offer, in: app) {
+                HitCheck.tap(f, in: app); taps += 1; quiet = 10
+            } else if let f = HitCheck.frame(tab, in: app) {
+                HitCheck.tap(f, in: app); quiet = 2
+            }
             RunLoop.current.run(until: Date().addingTimeInterval(0.3))
         }
+        let taken = taps > 0
         let secs = String(format: "%.1f", Date().timeIntervalSince(start))
         guard taken else {
             if words.isEmpty { note("no Cloud offer on a page with no words after \(looks) looks in \(secs) s") }
             return
         }
-        note("offer taken after \(looks) looks in \(secs) s")
+        note("offer taken after \(looks) looks (\(taps) taps) in \(secs) s")
         // Its own clock, so a slow look above doesn't spend this loop's guard.
         let shown = Date(), stuck = shown.addingTimeInterval(2400)
         var reads = 0
