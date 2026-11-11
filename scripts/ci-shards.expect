@@ -46,10 +46,11 @@ main|iPad Pro 13-inch|ReviewerChecksUITests/testTheLastPagesNumberIsTheCount
 main|iPad Pro 13-inch|RotationMidTransitionUITests/testARestoreThatNeverSettlesStillShowsTheSpread
 main|iPad Pro 13-inch|RotationMidTransitionUITests/testTurningDuringAContentsJump
 main|iPad Pro 13-inch|RotationMidTransitionUITests/testTurningDuringAPageTurn
-main|iPad Pro 13-inch|RotationRepro/testRotateThenLeaveWithoutTurning
-main|iPad Pro 13-inch|RotationRepro/testRotateThenLeaveWithoutTurningAfterStalledReflows
+main|iPad Pro 13-inch|RotationRepro/testRotateThenLeaveWhileTheRestoreWaitsOnHisKeptPlaceWithoutItsWords
 main|iPad Pro 13-inch|RotationRepro/testRotateThenLeaveWhileTheRestoreWaitsOnItsPage
 main|iPad Pro 13-inch|RotationRepro/testRotateThenLeaveWhileTheRestoreWaitsOnItsPageWithoutItsWords
+main|iPad Pro 13-inch|RotationRepro/testRotateThenLeaveWithoutTurning
+main|iPad Pro 13-inch|RotationRepro/testRotateThenLeaveWithoutTurningAfterStalledReflows
 main|iPad Pro 13-inch|SpreadTurnSettleUITests/testSpreadTurnsLandWithoutSliding
 main|iPad Pro 13-inch|WindowFitUITests/testOnItsSide
 main|iPad Pro 13-inch|WindowFitUITests/testUpright

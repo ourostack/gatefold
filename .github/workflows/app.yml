@@ -312,7 +312,7 @@ jobs:
               RotationRepro/testRotateThenLeaveWithoutTurning
             pr_tests: none
             cold: true
-            timeout: 43 # 12 + 2 x 9.1 + 12
+            timeout: 61 # 12 + 4 x 9.1 + 12
     uses: ./.github/workflows/ui-tests.yml
     with:
       device: "iPad Pro 13-inch"

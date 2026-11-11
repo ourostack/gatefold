@@ -110,9 +110,16 @@ final class RotationRepro: XCTestCase {
     }
 
     /// The same, with the shown page noted only as Readium names it: on a device whose page scripts wait
-    /// on the stalled install too, its words never come back before he leaves. Noted at the place his turn
-    /// kept, as when Readium reports nothing new under the stall (CI 43075159905), the leave keeps his words.
+    /// on the stalled install too, its words never come back before he leaves. The reopen must start on the
+    /// page he saw, and the place never takes his turn's words for another page. Red on CI while the stalled
+    /// leave notes Readium's location one boundary before his kept place (CI 43075159905).
     func testRotateThenLeaveWhileTheRestoreWaitsOnItsPageWithoutItsWords() throws {
+        try rotateThenLeave(extra: ["-GatefoldSlowRestorePage", "YES", "-GatefoldShownPageWithoutWords", "YES"])
+    }
+
+    /// The same, noted at the place his turn kept, as when Readium reports nothing new under the stall
+    /// (CI 43075159905): the leave keeps his words, and the reopen opens on them (gatefold#133).
+    func testRotateThenLeaveWhileTheRestoreWaitsOnHisKeptPlaceWithoutItsWords() throws {
         try rotateThenLeave(extra: ["-GatefoldSlowRestorePage", "YES", "-GatefoldShownPageWithoutWords", "YES",
                                     "-GatefoldShownPageAtHisPlace", "YES"])
     }
@@ -235,10 +242,17 @@ final class RotationRepro: XCTestCase {
             let middleSame = back.contains(middle(target))
             // His turn kept his words; leaving on that same page, with or without words from it, keeps them
             // (gatefold#133: a bare progression reopened one page boundary early). Never printed, only tested.
-            let keptWords = !keepsHisWords || !((el("reader.savedWords").value as? String) ?? "").isEmpty
-            if startsSame && keptWords { green += 1 }
-            note("round \(round) \(startsSame && keptWords ? "GREEN" : "RED") startsSame=\(startsSame) keptWords=\(keptWords) middleSame=\(middleSame) hisStartAt=\(at) reopenedHead=\(hash(head(back)))")
+            let savedNow = (el("reader.savedWords").value as? String) ?? ""
+            let keptWords = !keepsHisWords || !savedNow.isEmpty
+            // A place that carries his turn's words opens on them: never his words on another page (the leave
+            // keeps them only on the page his turn kept). Not wanted when no words were saved before the turn.
+            let keptAt = backFlat.range(of: flat(head(turnedBeforeRotation)))
+                .map { backFlat.distance(from: backFlat.startIndex, to: $0.lowerBound) } ?? -1
+            let borrowed = !savedNow.isEmpty && savedNow == savedBeforeRotation && !(0...160).contains(keptAt)
+            if startsSame && keptWords && !borrowed { green += 1 }
+            note("round \(round) \(startsSame && keptWords && !borrowed ? "GREEN" : "RED") startsSame=\(startsSame) keptWords=\(keptWords) borrowed=\(borrowed) middleSame=\(middleSame) hisStartAt=\(at) keptAt=\(keptAt) reopenedHead=\(hash(head(back)))")
             XCTAssertTrue(keptWords, "round \(round): the place reopened carries his words")
+            XCTAssertFalse(borrowed, "round \(round): the place carries his turn's words only on his page")
             XCTAssertTrue(startsSame, "round \(round): reopened on his page")
             assertNoVisibleSettleMove("round \(round)")
         }
