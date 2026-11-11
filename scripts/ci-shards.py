@@ -13,7 +13,8 @@ main and full-list pull requests) this fails when
 --list prints every "tier|device|test" with its shard. --expect FILE fails unless that set equals the file's (the first
 word of each line; blank lines and lines starting with # ignored). CI checks against scripts/ci-shards.expect, so a
 test leaves CI only by a visible edit there: after adding or removing a test, write the file from --list.
-Reads only; no dependencies, so it runs in the Swift container of `GatefoldCore tests`.
+Reads only; no dependencies beyond python3. It runs in the job `CI scripts, offline`, which `GatefoldCore tests` (a
+required check) stands for (gatefold#241).
 """
 import os
 import re
