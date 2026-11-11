@@ -12,7 +12,7 @@ public enum JumpLanding {
     /// Reads more a landing may make while the page says its chapter is still loading: a slow load is
     /// waited for, not given up on (gatefold#170: CI's iPad gave Back up after 150 reads with the chapter
     /// still on its way). Past them the load has died.
-    public static let loadingReads = 450
+    public static let loadingReads = 0
 
     /// What one landing may still spend: a read while the chapter is loading comes from `loadingReads`
     /// until those run out, any other read from `reads`.
