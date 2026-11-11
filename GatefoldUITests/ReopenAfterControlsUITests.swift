@@ -47,24 +47,37 @@ final class ReopenAfterControlsUITests: XCTestCase {
 
     /// A fresh install offers the Cloud's place and never lands on it (#46): the book opens on its
     /// cover, which has no words. He takes the offer, as he would, so the round has words to keep.
-    private func takeTheOffer() {
+    private func takeTheOffer(round: Int) {
         let offer = el("banner.jump"), tab = el("banner.tab")
-        let up0 = Date().addingTimeInterval(60)
         // Unanswered for 10 s the offer folds into its tab: the tab opens it again. It can fold between
-        // two looks (gatefold#156's round 3 saw it, then lost it, and never opened the tab), so the look
-        // goes on until the offer is there to tap.
-        var taken = false
-        while words.isEmpty, Date() < up0 {
+        // two looks (gatefold#156's round 3 saw it, then lost it, and never opened the tab; #207, #211), so the
+        // look goes on until the offer is there to tap. Judged in looks, not seconds (#94): 200 looks at least
+        // 0.3 s apart (the old 60 s on a fast runner); the 2400 s guard only catches a hang: a look is up to five
+        // queries of the app, and a starved runner has taken 1-2 s a query, so 200 looks can run to about 2000 s.
+        let start = Date(), hung = start.addingTimeInterval(2400)
+        var looks = 0, taken = false
+        while looks < 200, words.isEmpty {
+            if Date() > hung { XCTFail("hang: looking for the Cloud's offer ran \(looks) looks over 2400 s"); return }
+            looks += 1
             if offer.exists, offer.isHittable { offer.tap(); taken = true; break }
             if tab.exists, tab.isHittable { tab.tap() }
             RunLoop.current.run(until: Date().addingTimeInterval(0.3))
         }
+        let secs = String(format: "%.1f", Date().timeIntervalSince(start))
+        // "REOPEN round N:" so the iPad step's log filter keeps it.
         guard taken else {
-            print("REOPEN no offer taken; tab \(tab.exists) offer \(offer.exists) words \(!words.isEmpty)")
+            print("REOPEN round \(round): no offer taken after \(looks) looks in \(secs) s; tab \(tab.exists) offer \(offer.exists) words \(!words.isEmpty)")
             return
         }
-        let up = Date().addingTimeInterval(60)
-        while words.isEmpty, Date() < up { RunLoop.current.run(until: Date().addingTimeInterval(0.3)) }
+        print("REOPEN round \(round): offer taken after \(looks) looks in \(secs) s")
+        // Its own clock, so a slow look above doesn't spend this loop's guard.
+        let shown = Date(), stuck = shown.addingTimeInterval(2400)
+        var reads = 0
+        while reads < 200, words.isEmpty {
+            if Date() > stuck { XCTFail("hang: the offer's page ran \(reads) reads over 2400 s without words"); return }
+            reads += 1
+            RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+        }
     }
 
     private func toShelf() {
@@ -108,10 +121,13 @@ final class ReopenAfterControlsUITests: XCTestCase {
             print("REOPEN round \(round) starts \(clock.string(from: Date()))")
             app.launchArguments = ["-GatefoldUITest", "YES", "-GatefoldFakeCloud", "YES", "-GatefoldSkipWelcome", "YES",
                                    "-GatefoldSignedIn", "YES", "-GatefoldAllowReopen", "YES", "-GatefoldNoLatency", "YES",
-                                   "-GatefoldReset", "YES", "-GatefoldDownloadAll", "YES"]
+                                   "-GatefoldReset", "YES", "-GatefoldDownloadAll", "YES",
+                                   // This host's looks take seconds; the offer mustn't fold between a look and the tap (#207, as
+                                   // NavigationPlace's cover test). The fold isn't what this test checks.
+                                   "-GatefoldOfferFoldSeconds", "600"]
             app.relaunch()
             open()
-            takeTheOffer()
+            takeTheOffer(round: round)
             let opened = settle()
             numbersOn()
             // The number takes the "Counting pages…" slot: the layout report this guards against.

@@ -118,12 +118,12 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
 
         // Any touch on the page means the next location is the reader's own (slide and scroll swipes
         // belong to Readium, so they're noticed here rather than in the pan handler).
-        let noticer = TouchNoticer { [weak self] in
+        let noticer = TouchNoticer(onTouch: { [weak self] in
             // Web views loaded since the last location change bring their own scroll pans; switch them
             // off before this touch can drag the page sideways under the curl.
             self?.disablePanningIfNeeded()
             self?.weakModel?.noteInteraction()
-        }
+        }, onDrag: { [weak self] in self?.weakModel?.noteDrag() })
         noticer.delegate = self
         self.noticer = noticer
 
@@ -1696,6 +1696,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             }
         }
         if !complete {
+            weakModel?.dragDidNotTurn()
             // Put the navigator back where it was before lifting the overlay.
             _ = curl.mirrored
                 ? await navigator.goForward(options: .init(animated: false))
@@ -1874,16 +1875,27 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         // The jump he chose starts now: the old page is pictured as it is, never waited on while it
         // loads (its spinner held the jump back up to 60 s, and the page never moved: gatefold#73).
         let old = await renderedSnapshot(afterChange: false, waitsForLoad: false)
+        // A picture that came back bare or black (a page still loading, or a test's held load pictured
+        // as one) is never held over the jump: the screen stays as it is beneath the veil instead.
+        let paper = PageSignature.rgb(weakModel?.theme.uiBackground ?? .white)
+        let bare = (LaunchOptions.isUITest && LaunchOptions.holdOldPageLoadLooks != nil && heldLoadLooks > 0)
+            || PageSignature(old).map { $0.isBlack(paper: paper) || $0.isBare(paper: paper) } ?? true
+        let hold = OldPagePicture.hold(bare: bare)
         if LaunchOptions.isUITest, LaunchOptions.holdOldPageLoadLooks != nil { heldLoadLooks = heldBefore }
         jumpStarting = false
-        readerLog.notice("veil: jump \(jump, privacy: .public) pictured the old page in \(ReaderModel.ms(since: jumpTapped), privacy: .public) ms, \(self.lastSnapshotLooks, privacy: .public) looks")
+        readerLog.notice("veil: jump \(jump, privacy: .public) pictured the old page in \(ReaderModel.ms(since: jumpTapped), privacy: .public) ms, \(self.lastSnapshotLooks, privacy: .public) looks\(hold == .onScreen ? "; bare, so the veil keeps the screen as it is" : "", privacy: .public)")
         // Let go of while its old page was being pictured (`abandonVeil`): no cover goes up.
         guard veilJump == jump else { return await body() }
         // The old page, opaque, with a wash of paper over it: it reads as dimmed to 60 %, and nothing
         // of the new page shows through until the cross-fade.
         let cover = UIView(frame: navigator.view.frame)
         cover.isUserInteractionEnabled = false
-        let image = UIImageView(image: old)
+        let image: UIView
+        if hold == .onScreen, let screen = navigator.view.snapshotView(afterScreenUpdates: false) {
+            image = screen
+        } else {
+            image = UIImageView(image: old)
+        }
         image.frame = cover.bounds
         image.backgroundColor = weakModel?.theme.uiBackground
         let wash = UIView(frame: cover.bounds)
@@ -2454,7 +2466,9 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         var loadingLooks = 0
         var attempt = 0
         defer { lastSnapshotLooks = loadingLooks + attempt }
-        let attempts = waitsForLoad ? 40 : 10
+        var firstLook: UIImage?
+        // A jump's old page still loading is looked at once: the jump starts after it (gatefold#155).
+        let attempts = waitsForLoad ? 40 : OldPagePicture.tries(stillLoading: !afterChange && (heldLoadLooks > 0 || readiumSpinner != nil))
         while attempt < attempts {
             if afterChange || attempt > 0 || loadingLooks > 0 { try? await Task.sleep(for: .milliseconds(attempt == 0 && loadingLooks == 0 ? 60 : 50)) }
             if attempt == 0, loadingLooks == 0, heldLoadLooks == 0, readiumSpinner != nil {
@@ -2466,6 +2480,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             }
             defer { attempt += 1 }
             let image = await snapshot()
+            if attempt == 0 { firstLook = image }
             guard let signature = PageSignature(image) else { return image }
             // A test's held load (`holdOldPageLoadLooks`) pictures the old page as a bare one, the
             // way a page still loading looks, so the few tries and the fallback below are what run.
@@ -2478,7 +2493,9 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         }
         if loadingLooks > 0 { readerLog.notice("veil: held the old page \(loadingLooks, privacy: .public) looks while the chapter loaded") }
         if let last { return last.0 }
-        let final = await snapshot()
+        // One look was all a page still loading gets: another would only hold the jump back again.
+        let final: UIImage
+        if attempts == 1, let firstLook { final = firstLook } else { final = await snapshot() }
         // A page pictured as it is never shows black under a jump's veil: an empty picture lets the
         // veil's paper show instead.
         if !waitsForLoad, let signature = PageSignature(final), signature.isBlack(paper: paper) {
@@ -2571,9 +2588,14 @@ struct ReaderHostView: UIViewControllerRepresentable {
 /// Reports that a touch began, then steps aside without claiming it.
 private final class TouchNoticer: UIGestureRecognizer {
     private let onTouch: () -> Void
+    private let onDrag: () -> Void
+    /// The first finger down and where it went down, until it travels far enough to be a drag (a tap
+    /// never does). Only that finger is measured: two fingers apart are no drag.
+    private var first: (touch: UITouch, at: CGPoint)?
 
-    init(onTouch: @escaping () -> Void) {
+    init(onTouch: @escaping () -> Void, onDrag: @escaping () -> Void) {
         self.onTouch = onTouch
+        self.onDrag = onDrag
         super.init(target: nil, action: nil)
         cancelsTouchesInView = false
         delaysTouchesBegan = false
@@ -2582,8 +2604,21 @@ private final class TouchNoticer: UIGestureRecognizer {
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
         onTouch()
+        if first == nil, let touch = touches.first { first = (touch, touch.location(in: view)) }
+    }
+
+    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent) {
+        guard let first, touches.contains(first.touch) else { return }
+        let here = first.touch.location(in: view)
+        guard hypot(here.x - first.at.x, here.y - first.at.y) > 10 else { return }
+        self.first = nil
+        onDrag()
         state = .failed
     }
+
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) { state = .failed }
+    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent) { state = .failed }
+    override func reset() { first = nil }
 }
 
 extension Decoration.Style.Id {
