@@ -100,13 +100,12 @@ final class PlaceUndoUITests: XCTestCase {
         XCTAssertTrue(el("reader.veil").waitForNonExistence(timeout: 60), "the veil lifts")
         // Already up (a jump made from them leaves them up), or still fading in: a tap now would put
         // them down.
+        // Judged in reads (gatefold#166): 2 s ran out on a starved runner while they were up, and the tap
+        // that followed put them down.
         let contents = app.buttons["reader.contents"]
-        if contents.exists {
-            let hittable = XCTNSPredicateExpectation(predicate: NSPredicate(format: "isHittable == true"), object: contents)
-            if XCTWaiter.wait(for: [hittable], timeout: 2) == .completed { return }
-        }
+        if contents.exists, readsUntil(reads: 20, hangGuard: 60, { contents.isHittable }).ok { return }
         el("reader.page").coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
-        XCTAssertTrue(app.buttons["reader.contents"].waitForExistence(timeout: 5))
+        XCTAssertTrue(readsUntil(reads: 50, hangGuard: 60) { contents.exists }.ok, "a tap in the middle brings up the controls")
     }
 
     /// After a swipe the list may still be scrolling, and asking a row whether it is hittable then can fail
