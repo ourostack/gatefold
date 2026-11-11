@@ -197,6 +197,45 @@ final class PlaceUndoUITests: XCTestCase {
         XCTAssertTrue(answers.ok, "after Back a tap no longer shows the controls")
     }
 
+    /// Back to a chapter still loading takes him back once it has loaded: on CI's iPad (job 129949744000,
+    /// gatefold#170) Back gave up and he stayed where he had jumped to. Back's first 25 sends are each
+    /// taken at its chapter's start, the chapter still loading meanwhile (`-GatefoldHoldBackSends`), as a
+    /// web view still loading takes a jump: past the 15 a trip of 150 plain reads makes (one each 10).
+    /// The veil may let go at its limit meanwhile (the chapter shows its own loading); the trip goes on.
+    /// Judged in samples of the held load.
+    func testBackToAChapterStillLoadingWaitsForItAndTakesHimBack() {
+        // Opened inside a chapter (0.31), not at one's start: a Back to a chapter's start sends once, and
+        // the hold would never run out.
+        let first = openFresh(["-GatefoldHoldBackSends", "25"])
+        let held = el("reader.loadingHeld"), veil = el("reader.veil")
+        contentsJump(to: "Chapter XL")
+        XCTAssertTrue(veil.waitForExistence(timeout: 10) && veil.waitForNonExistence(timeout: 240), "the jump's veil lifts")
+        let jumped = waitForWords(changingFrom: first, timeout: 30)
+        XCTAssertNotEqual(opening(jumped), opening(first), "the jump moved the page")
+        if app.buttons["reader.contents"].exists { el("reader.page").coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap() }
+        let back = app.buttons["reader.back"]
+        XCTAssertTrue(back.waitForExistence(timeout: 10), "a way back")
+        back.tap()
+        XCTAssertTrue(held.waitForExistence(timeout: 30), "Back's chapter load is held open")
+        // Sampled until the held load ends: how long the veil stayed, for the log (it may let go at its limit).
+        // A trip that stops sending leaves it held: 400 samples, past the 25 sends' 50 s of reads.
+        var samples = 0, bare = 0
+        print("BACKHELD sendsLeftAtStart=\(held.value as? String ?? "?")")
+        var sendsLeft = "?"
+        while held.exists, samples < 400 {
+            sendsLeft = held.value as? String ?? sendsLeft
+            samples += 1
+            if !veil.exists, held.exists { bare += 1 }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+        }
+        print("BACKHELD sendsLeft=\(sendsLeft) samples=\(samples) veilGoneWhileLoading=\(bare) heldAtEnd=\(held.exists)")
+        XCTAssertFalse(held.exists, "Back stopped sending while the chapter was still loading")
+        XCTAssertTrue(veil.waitForNonExistence(timeout: 30), "Back's veil lifted once the chapter had loaded")
+        let returned = waitForWords(changingFrom: jumped, timeout: 30)
+        XCTAssertEqual(opening(returned), opening(first), "Back did not return to his page")
+        XCTAssertNotEqual(back.label, "Couldn't go back. Try again")
+    }
+
     /// A touch resting on the scrubber, and a short wobble on it, never move the page.
     func testATouchOnTheScrubberNeverJumps() {
         let first = openFresh()

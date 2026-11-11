@@ -367,6 +367,147 @@ import Testing
         f.model.close()
     }
 
+    /// A Back whose chapter is still loading waits for the load, not a fixed count of reads: a slow load
+    /// (CI's iPad, job 129949744000, gatefold#170: Back gave up after 34 s and left him where he had
+    /// jumped to) still takes him back, and his page is the place kept. The veil doesn't wait with it:
+    /// at its limit it lets go (the chapter shows its own loading) while the trip goes on.
+    @Test func aBackPastTheVeilsLimitLetsTheVeilGoAndStillLands() async throws {
+        let f = try await S.make(remote: { _, _ in nil }, startAt: 0.05)
+        await f.model.load()
+        await f.model.locationDidChange(try #require(f.page.currentLocation))
+        let first = try #require(f.page.currentLocation?.locations.totalProgression)
+        await f.model.go(toProgression: 0.7, rememberBack: true)
+        f.model.backBeat = { await Task.yield() }
+        f.page.holdsJumps = true
+        f.page.loadingChapter = true
+        let trip = Task { await f.model.goBack() }
+        for _ in 0..<(JumpLanding.reads * 4) where !f.model.isGoingBack { await Task.yield() }
+        // Past the reads a trip may spend on a page that isn't loading: waited on as the event itself,
+        // counted in yields as the trip's beats are (a fixed count raced them on a busy runner). Never
+        // in sleeps: each beat is a yield, so a sleep spends the whole loading budget and Back rightly
+        // gives up.
+        for _ in 0..<(JumpLanding.reads * 20) where f.model.tripsPastTheVeil < 1 { await Task.yield() }
+        try #require(f.model.tripsPastTheVeil >= 1, "the trip never got past its veil's limit")
+        #expect(f.model.isGoingBack, "Back gave up while its chapter was still loading")
+        #expect(f.model.tripsPastTheVeil == 1, "the veil held the screen past its limit")
+        // The load comes in.
+        f.page.loadingChapter = false
+        f.page.holdsJumps = false
+        f.page.releaseJumps()
+        await trip.value
+        // The place is written on its own task after the landing's report: waited on as an event.
+        await Self.settle { abs((Self.kept(f) ?? -1) - first) < 0.03 }
+        let at = try #require(f.page.currentLocation?.locations.totalProgression)
+        #expect(abs(at - first) < 0.03, "Back did not take him back")
+        #expect(abs((Self.kept(f) ?? -1) - first) < 0.03, "his page is not the place kept")
+        #expect(f.model.backLabel == "Back to where you were")
+        f.model.close()
+    }
+
+    /// A move of his while Back is still on its way (past the veil's limit, the chapter still loading)
+    /// ends the trip quietly: no "couldn't go back", and when the hung jump comes back at last his page
+    /// stands and is the place kept (gatefold#170).
+    @Test func aTurnWhileBackIsStillOnItsWayEndsItQuietly() async throws {
+        let f = try await S.make(remote: { _, _ in nil }, startAt: 0.05)
+        await f.model.load()
+        await f.model.locationDidChange(try #require(f.page.currentLocation))
+        await f.model.go(toProgression: 0.7, rememberBack: true)
+        let wayBack = try #require(f.model.backLocator)
+        f.model.backBeat = { await Task.yield() }
+        f.page.holdsJumps = true
+        f.page.loadingChapter = true
+        let trip = Task { await f.model.goBack() }
+        for _ in 0..<(JumpLanding.reads * 4) where !f.model.isGoingBack { await Task.yield() }
+        // Waited on as the event, in yields as the trip's beats are (a fixed count raced them).
+        for _ in 0..<(JumpLanding.reads * 20) where f.model.tripsPastTheVeil < 1 { await Task.yield() }
+        try #require(f.model.tripsPastTheVeil >= 1, "the trip never got past its veil's limit")
+        #expect(f.model.isGoingBack && f.model.tripsPastTheVeil == 1, "the trip wasn't still on its way past the veil's limit")
+        // He turns to the next page meanwhile: Readium moves itself and tells the reader.
+        let next = try #require(await S.locate(f.publication, 0.72))
+        f.page.currentLocation = next
+        f.model.userTurnedPage()
+        await Self.settle { abs((Self.kept(f) ?? -1) - (next.locations.totalProgression ?? 0)) < 0.001 }
+        for _ in 0..<(JumpLanding.reads) where f.model.isGoingBack { await Task.yield() }
+        #expect(!f.model.isGoingBack, "his turn didn't end the trip")
+        #expect(f.model.backLabel != "Couldn't go back. Try again", "a trip he ended by turning said it couldn't go back")
+        // The hung jump comes back at last: his page stands.
+        f.page.loadingChapter = false
+        f.page.holdsJumps = false
+        f.page.pageStartsBefore = 0
+        f.page.releaseJumps()
+        await trip.value
+        await Self.settle { abs((f.page.currentLocation?.locations.totalProgression ?? -1) - (next.locations.totalProgression ?? 0)) < 0.00001 }
+        #expect(abs((f.page.currentLocation?.locations.totalProgression ?? -1) - (next.locations.totalProgression ?? 0)) < 0.00001, "the late Back moved the page off his turn")
+        #expect(abs((Self.kept(f) ?? -1) - (next.locations.totalProgression ?? 0)) < 0.001, "the place kept isn't his turn")
+        #expect(f.model.backLocator == wayBack, "the ended trip's late jump put up a way back to a page he had left")
+        f.model.close()
+    }
+
+    /// A Back that does give up (a load that died: no load under way, or one that never ends, or a jump
+    /// that comes back but never shows his page) says so on the pill and leaves it up, pointing at his
+    /// page, so one more tap tries again; it never just stops (gatefold#170).
+    @Test(arguments: ["hung, not loading", "loading forever", "came back short"]) func aBackThatGivesUpSaysSoAndStaysUp(how: String) async throws {
+        let f = try await S.make(remote: { _, _ in nil }, startAt: 0.05)
+        await f.model.load()
+        await f.model.locationDidChange(try #require(f.page.currentLocation))
+        await f.model.go(toProgression: 0.7, rememberBack: true)
+        let wayBack = try #require(f.model.backLocator)
+        f.model.backBeat = { await Task.yield() }
+        // Came back short: every jump opens its file's first page, never his page in it.
+        if how == "came back short" { f.page.dropsPlaceInFile = 100_000 } else { f.page.holdsJumps = true }
+        f.page.loadingChapter = how == "loading forever"
+        let hung = Task { await f.model.goBack() }
+        for _ in 0..<(JumpLanding.reads * 4) where !f.model.isGoingBack { await Task.yield() }
+        for _ in 0..<(JumpLanding.reads * 20) where f.model.isGoingBack { await Task.yield() }
+        #expect(!f.model.isGoingBack, "a Back whose load died was never given up")
+        #expect(f.model.backLabel == "Couldn't go back. Try again", "Back gave up without saying so")
+        #expect(f.model.showJumpBack && f.model.backLocator == wayBack, "the way back went away when Back gave up")
+        if how == "came back short" {
+            await hung.value
+            #expect(f.model.backLabel == "Couldn't go back. Try again", "a Back that never showed his page said it got there")
+            #expect(f.model.backLocator == wayBack, "the way back now points at the page Back was left on")
+            f.page.dropsPlaceInFile = 0
+        }
+        // One more tap tries again, and the pill says where it goes once more.
+        f.page.loadingChapter = false
+        f.page.holdsJumps = false
+        let before = f.page.jumps.count
+        await f.model.goBack()
+        #expect(f.page.jumps.count == before + 1, "the next Back made no jump")
+        #expect(f.model.backLabel != "Couldn't go back. Try again")
+        f.page.releaseJumps()
+        await hung.value
+        f.model.close()
+    }
+
+    /// The pill's "didn't go" clears once it is out of date: on a new jump of his, and when the given-up
+    /// trip lands late with no move of his since (the next Back is `aBackThatGivesUpSaysSoAndStaysUp`).
+    @Test(arguments: ["a new jump", "the late landing"]) func aGivenUpBacksWordsClear(on what: String) async throws {
+        let f = try await S.make(remote: { _, _ in nil }, startAt: 0.05)
+        await f.model.load()
+        await f.model.locationDidChange(try #require(f.page.currentLocation))
+        await f.model.go(toProgression: 0.7, rememberBack: true)
+        f.model.backBeat = { await Task.yield() }
+        f.page.holdsJumps = true
+        let hung = Task { await f.model.goBack() }
+        for _ in 0..<(JumpLanding.reads * 4) where !f.model.isGoingBack { await Task.yield() }
+        for _ in 0..<(JumpLanding.reads * 20) where f.model.isGoingBack { await Task.yield() }
+        #expect(f.model.backLabel == "Couldn't go back. Try again", "Back gave up without saying so")
+        f.page.holdsJumps = false
+        if what == "a new jump" {
+            await f.model.go(toProgression: 0.4, rememberBack: true)
+            #expect(f.model.backLabel != "Couldn't go back. Try again", "a new jump's way back still said Back didn't go")
+            f.page.releaseJumps()
+            await hung.value
+        } else {
+            f.page.releaseJumps()
+            await hung.value
+            #expect(f.model.backLabel != "Couldn't go back. Try again", "Back got there late and still said it didn't")
+        }
+        #expect(f.model.backLabel != "Couldn't go back. Try again")
+        f.model.close()
+    }
+
     /// A Back freed by its count, then a jump somewhere else, then the hung Back landing at last: the
     /// page ends where the newer jump took it, not on the stale Back's place.
     @Test func aBackThatLandsLateAfterAnotherJumpLeavesThatJumpsPage() async throws {
