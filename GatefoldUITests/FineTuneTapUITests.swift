@@ -121,6 +121,29 @@ final class FineTuneTapUITests: XCTestCase {
         print("TAPRATE \(what): reflow still running after \(Self.landReads) reads")
     }
 
+    /// The reflow's number now (0 before any): read before a turn, so the turn's own reflow can be told from
+    /// the launch's, which still reads "N settled".
+    private func reflowNumber() -> Int {
+        let now = (app.descendants(matching: .any)["reader.reflow"].firstMatch.value as? String) ?? ""
+        return Int(now.split(separator: " ").first ?? "") ?? 0
+    }
+
+    /// A turn that changes the columns reflows the book, which the window's frame doesn't show; the old sleep(3)
+    /// covered it. Reads until a reflow newer than `before` has settled (gatefold#175: touches sent just after a
+    /// reflow placed its words were lost), or `landReads` run out, which a turn that kept its columns does.
+    private func awaitReflowAfterTurn(since before: Int) {
+        let reflow = app.descendants(matching: .any)["reader.reflow"].firstMatch
+        for read in 1...Self.landReads {
+            let now = (reflow.value as? String) ?? ""
+            if (Int(now.split(separator: " ").first ?? "") ?? 0) > before, now.hasSuffix("settled") {
+                print("TAPRATE after the turn: reflow \(now) after \(read) reads")
+                return
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        }
+        print("TAPRATE after the turn: no newer reflow settled in \(Self.landReads) reads (was \(before))")
+    }
+
     private func quickTouches() {
         let panel = app.descendants(matching: .any)["appearance.panel"].firstMatch
         for id in switches {
@@ -192,7 +215,7 @@ final class FineTuneTapUITests: XCTestCase {
     private static let holdReads = 3
 
     /// Reads the window's frame until its size is no longer `upright`'s (up to `turnReads`), then until it
-    /// reads the same size `holdReads` times in a row (up to `turnReads` more). No change in `turnReads` is an
+    /// reads the same size `holdReads` times in a row (within `2 * turnReads` in all). No change in `turnReads` is an
     /// answer, not a failure: the folded Duo's cover screen doesn't turn, and the caller decides. Only a hang
     /// guard, sized by `HangGuard` from the most reads this can take.
     private func readsUntilTurned(from upright: CGRect)
@@ -223,6 +246,7 @@ final class FineTuneTapUITests: XCTestCase {
     private func landscape(_ id: String) throws {
         launchReader()
         let upright = app.windows.firstMatch.frame
+        let reflowBefore = reflowNumber()
         XCUIDevice.shared.orientation = .landscapeLeft
         let (turned, turnedAfter, reads, hung) = readsUntilTurned(from: upright)
         print("TAPRATE window upright=\(upright.size) turned=\(turned.size) "
@@ -240,6 +264,7 @@ final class FineTuneTapUITests: XCTestCase {
             // A square window looks the same either way round: the turn can't be proved by shape.
             print("TAPRATE window is square: the turn is not provable by its shape")
         }
+        awaitReflowAfterTurn(since: reflowBefore)
         openFineTune(launching: false)
         tapRate("landscape", id)
     }
