@@ -190,10 +190,13 @@ final class RotationRepro: XCTestCase {
 
         // 5. Leave without turning, three times.
         var green = 0
+        // The stalled-leave tests hold the restore past the leave (the slow-restore hook): only they test the
+        // shown page's write and the words it keeps. The others settle, and leave by other paths.
+        let stalledLeave = extra.contains("-GatefoldSlowRestorePage")
         for round in 1...3 {
             // Round 1 is the stalled leave (the slow-restore hook holds the restore past it); a restore that
             // settled first leaves nothing to test, and a green would be luck. Its value names no book text.
-            if round == 1 {
+            if round == 1, stalledLeave {
                 let stalled = ((el("reader.reflow").value as? String) ?? "").hasSuffix("reflowing")
                 note("round 1 leaves under a stalled restore: \(stalled)")
                 XCTAssertTrue(stalled, "the restore was still stalled when he left")
@@ -213,7 +216,7 @@ final class RotationRepro: XCTestCase {
             let at = back.range(of: head(his)).map { back.distance(from: back.startIndex, to: $0.lowerBound) } ?? -1
             // His turn kept his words; leaving on that same page, with or without words from it, keeps them
             // (gatefold#133: a bare progression reopened one page boundary early). Never printed, only tested.
-            let keptWords = !((el("reader.savedWords").value as? String) ?? "").isEmpty
+            let keptWords = !stalledLeave || !((el("reader.savedWords").value as? String) ?? "").isEmpty
             if startsSame && keptWords { green += 1 }
             note("round \(round) \(startsSame && keptWords ? "GREEN" : "RED") startsSame=\(startsSame) keptWords=\(keptWords) middleSame=\(middleSame) hisStartAt=\(at) reopenedHead=\(hash(head(back)))")
             XCTAssertTrue(keptWords, "round \(round): the place reopened carries his words")
