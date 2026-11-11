@@ -152,13 +152,14 @@ final class ReviewerChecksUITests: XCTestCase {
     /// The Cloud's place offered on a first open here: take it (the tab brings back an offer that folded).
     /// The offer is tapped only while it is hittable: it can fold into its tab between a look and the tap (#207).
     /// Any type, never `app.buttons` (#165). Judged in looks, not seconds (#94): 200 at least 0.3 s apart (the old
-    /// 60 s on a fast runner); the 900 s guard only catches a hang.
+    /// 60 s on a fast runner); the 2400 s guard only catches a hang: a look is up to five
+        // queries of the app, and a starved runner has taken 1-2 s a query, so 200 looks can run to about 2000 s.
     private func takeTheOffer() {
         let offer = el("banner.jump"), tab = el("banner.tab")
-        let start = Date(), hung = start.addingTimeInterval(900)
+        let start = Date(), hung = start.addingTimeInterval(2400)
         var looks = 0, taken = false
         while looks < 200, words.isEmpty {
-            if Date() > hung { XCTFail("hang: looking for the Cloud's offer ran \(looks) looks over 900 s"); return }
+            if Date() > hung { XCTFail("hang: looking for the Cloud's offer ran \(looks) looks over 2400 s"); return }
             looks += 1
             if offer.exists, offer.isHittable { offer.tap(); taken = true; break }
             if tab.exists, tab.isHittable { tab.tap() }
@@ -170,9 +171,11 @@ final class ReviewerChecksUITests: XCTestCase {
             return
         }
         note("offer taken after \(looks) looks in \(secs) s")
+        // Its own clock, so a slow look above doesn't spend this loop's guard.
+        let shown = Date(), stuck = shown.addingTimeInterval(2400)
         var reads = 0
         while reads < 200, words.isEmpty {
-            if Date() > hung { XCTFail("hang: the offer's page ran \(reads) reads past 900 s without words"); return }
+            if Date() > stuck { XCTFail("hang: the offer's page ran \(reads) reads over 2400 s without words"); return }
             reads += 1
             RunLoop.current.run(until: Date().addingTimeInterval(0.3))
         }
