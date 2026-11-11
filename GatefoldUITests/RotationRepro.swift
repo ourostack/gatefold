@@ -180,7 +180,7 @@ final class RotationRepro: XCTestCase {
         sleep(3)
         // The page his second turn kept, and the words it saved: the place a leave on it keeps (gatefold#133).
         // Compared only, never printed.
-        let turnedBeforeRotation = vtext
+        let turnedBeforeRotation = settle(20)
         let savedBeforeRotation = (el("reader.savedWords").value as? String) ?? ""
 
         // 4. Turn the iPad.
@@ -221,11 +221,16 @@ final class RotationRepro: XCTestCase {
             let back = settle(10)
             // Noted at the place his turn kept (the hook), the leave keeps that place and its words: the reopen
             // puts them at the top of the left page, as a restore does. Otherwise it is the page he saw.
+            // Portrait and landscape break lines apart: a restore leaves words already within two lines of a
+            // column's top where they are (`pinToTop`), so under the hook his words open the left page within
+            // its first few lines (about 240 characters), not always at its very start.
+            let target = keepsHisWords ? turnedBeforeRotation : his
+            let at = back.range(of: head(target)).map { back.distance(from: back.startIndex, to: $0.lowerBound) } ?? -1
             let startsSame = keepsHisWords
-                ? ReopenMatch.compare(left: turnedBeforeRotation, reopened: back, saved: savedBeforeRotation) != .different
+                ? ((0...240).contains(at)
+                   || ReopenMatch.compare(left: turnedBeforeRotation, reopened: back, saved: savedBeforeRotation) != .different)
                 : head(back) == head(his)
-            let middleSame = back.contains(middle(his))
-            let at = back.range(of: head(his)).map { back.distance(from: back.startIndex, to: $0.lowerBound) } ?? -1
+            let middleSame = back.contains(middle(target))
             // His turn kept his words; leaving on that same page, with or without words from it, keeps them
             // (gatefold#133: a bare progression reopened one page boundary early). Never printed, only tested.
             let keptWords = !keepsHisWords || !((el("reader.savedWords").value as? String) ?? "").isEmpty
