@@ -392,30 +392,32 @@ final class NavigationPlaceUITests: XCTestCase {
         scroll.tap()
         let close = app.buttons["appearance.close"].exists ? app.buttons["appearance.close"] : app.buttons["appearance.back"]
         if close.exists { close.tap() } else { app.descendants(matching: .any)["reader.page"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.2)).tap() }
+        // The switch to Scroll reflows the book: he swipes once the page has held still (the old 4 s).
         _ = steadyWords()
-        // Switching to Scroll reflows the book, and on a slow iPad the reflow restarts for about 30 s and
-        // puts the words from before the switch back (#171). He swipes again until the page has moved and
-        // holds there: six fast swipes at a time, up to four times.
         let page = app.descendants(matching: .any)["reader.page"]
         let savedBefore = savedWords
-        var scrolled = "", rounds = 0
-        while rounds < 4 {
-            rounds += 1
-            for _ in 0..<6 { page.swipeUp(velocity: .fast) }
-            scrolled = steadyWords()
-            if opening(scrolled) != opening(first) { break }
-        }
-        print("SCROLL moved after \(rounds) round(s) of six swipes")
+        for _ in 0..<6 { page.swipeUp(velocity: .fast) }
+        let scrolled = steadyWords()
         XCTAssertNotEqual(opening(scrolled), opening(first), "the scroll moved the words")
-        // He leaves once his scroll's place is written, not after a guessed number of seconds.
+        // He leaves once his scroll's place is written, not after a guessed number of seconds: the saved
+        // words are words of the page he scrolled to. A gate, not a check: the reopen below judges.
+        let lead = flat(opening(scrolled)).split(separator: " ").prefix(4).joined(separator: " ")
         var looks = 0
-        while looks < 150, savedWords == savedBefore {
+        while looks < 150 {
+            let saved = flat(savedWords)
+            if saved != flat(savedBefore), !saved.isEmpty, flat(scrolled).contains(saved.split(separator: " ").prefix(4).joined(separator: " ")) || saved.contains(lead) { break }
             looks += 1
             RunLoop.current.run(until: Date().addingTimeInterval(0.2))
         }
-        print("SCROLL saved place changed=\(savedWords != savedBefore) after \(looks) looks")
+        print("SCROLL his place written \(looks < 150) after \(looks) looks")
         leaveAndRelaunch()
         XCTAssertTrue(page.waitForExistence(timeout: 60))
+        let ready = app.descendants(matching: .any)["reader.pageReady"]
+        looks = 0
+        while looks < 300, (ready.value as? String) != "1" {
+            looks += 1
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        }
         let back = steadyWords()
         let words = opening(scrolled).split(separator: " ").prefix(6).joined(separator: " ")
         XCTAssertTrue(flat(back).contains(words), "reopened where he scrolled to")
@@ -425,7 +427,7 @@ final class NavigationPlaceUITests: XCTestCase {
 
     /// The page's words once the same non-empty words have been read `hold` times in a row. The bound
     /// is a count of reads, generous enough for a slow iPad's restarting reflow.
-    private func steadyWords(hold: Int = 12, reads limit: Int = 600) -> String {
+    private func steadyWords(hold: Int = 20, reads limit: Int = 600) -> String {
         var last = "", same = 0, reads = 0
         while reads < limit {
             reads += 1
@@ -448,17 +450,23 @@ final class NavigationPlaceUITests: XCTestCase {
         let offer = app.descendants(matching: .any)["banner.jump"].firstMatch
         let tab = app.descendants(matching: .any)["banner.tab"].firstMatch
         let origin = app.coordinate(withNormalizedOffset: .zero)
-        var looks = 0, offers = 0, tabs = 0
+        var looks = 0, offers = 0, tabs = 0, quiet = 0
         while looks < 400, visibleText.isEmpty {
             looks += 1
-            if offer.exists, offer.isHittable {
+            // After a tap the page gets some looks to answer before another: a second tap on a page that has
+            // just landed would turn it or bring up the controls.
+            if quiet > 0 {
+                quiet -= 1
+            } else if offer.exists, offer.isHittable {
                 let f = offer.frame
                 origin.withOffset(CGVector(dx: f.midX, dy: f.midY)).tap()
                 offers += 1
+                quiet = 10
             } else if tab.exists, tab.isHittable {
                 let f = tab.frame
                 origin.withOffset(CGVector(dx: f.midX, dy: f.midY)).tap()
                 tabs += 1
+                quiet = 2
             }
             RunLoop.current.run(until: Date().addingTimeInterval(0.3))
         }
