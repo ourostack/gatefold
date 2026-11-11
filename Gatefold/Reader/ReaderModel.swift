@@ -1341,6 +1341,7 @@ final class ReaderModel {
         defer { if landingMove == move { landingMove = nil } }
         let started = ContinuousClock.now
         let ready = await page?.promoteStandby(for: locator) ?? false
+        if ready, keeper.reflowing != nil { endReflowForSwap() }
         if !ready { await page?.go(to: locator) }
         let went = Self.ms(since: started)
         // Opening another chapter, Readium places the page by progression before the chapter has laid
@@ -1372,6 +1373,18 @@ final class ReaderModel {
         landed(step, at: here)
         await recordLanding(here, target: target, cloud: cloud)
         readerLog.notice("landing timing (standby \(ready, privacy: .public)): go \(went, privacy: .public) ms, settled \(settled, privacy: .public) ms, anchored \(anchored, privacy: .public) ms, recorded \(Self.ms(since: started), privacy: .public) ms")
+    }
+
+    /// The standby page swapped in was laid out at the size the open reflow brought; the page that
+    /// reflow was laying out is retired, so it can never settle. Left open, it held every settle and
+    /// retake of the landing's words for good, and the place kept was Readium's boundary, which
+    /// reopened on another page (gatefold#261, a catch-up tapped while a reflow restarted).
+    private func endReflowForSwap() {
+        readerLog.notice("reflow: a standby page swapped in during reflow \(self.reflowCount, privacy: .public); the reflow ends with the page it was laying out")
+        keeper.restoreGaveWay()
+        page?.endReflowForSwap()
+        reflowDidFinish(visible: nil)
+        reflowShown(reflowCount)
     }
 
     /// Keeps the page a percent landing settled on, unless he has moved since.
@@ -1476,6 +1489,8 @@ final class ReaderModel {
         if !isClosed, moves == move, let orKeep {
             readerLog.notice("place: no first words for the landing; keeping Readium's boundary")
             orKeep(Date())
+        } else if !isClosed, moves == move {
+            readerLog.notice("place: no first words for the landing after \(captures, privacy: .public) captures (reflow open \(self.keeper.reflowing != nil, privacy: .public)); Readium's boundary stays")
         }
     }
 
