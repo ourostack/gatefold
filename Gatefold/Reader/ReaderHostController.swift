@@ -116,12 +116,12 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
 
         // Any touch on the page means the next location is the reader's own (slide and scroll swipes
         // belong to Readium, so they're noticed here rather than in the pan handler).
-        let noticer = TouchNoticer { [weak self] in
+        let noticer = TouchNoticer(onTouch: { [weak self] in
             // Web views loaded since the last location change bring their own scroll pans; switch them
             // off before this touch can drag the page sideways under the curl.
             self?.disablePanningIfNeeded()
             self?.weakModel?.noteInteraction()
-        }
+        }, onDrag: { [weak self] in self?.weakModel?.noteDrag() })
         noticer.delegate = self
         self.noticer = noticer
 
@@ -1659,6 +1659,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             }
         }
         if !complete {
+            weakModel?.dragDidNotTurn()
             // Put the navigator back where it was before lifting the overlay.
             _ = curl.mirrored
                 ? await navigator.goForward(options: .init(animated: false))
@@ -2534,9 +2535,14 @@ struct ReaderHostView: UIViewControllerRepresentable {
 /// Reports that a touch began, then steps aside without claiming it.
 private final class TouchNoticer: UIGestureRecognizer {
     private let onTouch: () -> Void
+    private let onDrag: () -> Void
+    /// The first finger down and where it went down, until it travels far enough to be a drag (a tap
+    /// never does). Only that finger is measured: two fingers apart are no drag.
+    private var first: (touch: UITouch, at: CGPoint)?
 
-    init(onTouch: @escaping () -> Void) {
+    init(onTouch: @escaping () -> Void, onDrag: @escaping () -> Void) {
         self.onTouch = onTouch
+        self.onDrag = onDrag
         super.init(target: nil, action: nil)
         cancelsTouchesInView = false
         delaysTouchesBegan = false
@@ -2545,8 +2551,21 @@ private final class TouchNoticer: UIGestureRecognizer {
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
         onTouch()
+        if first == nil, let touch = touches.first { first = (touch, touch.location(in: view)) }
+    }
+
+    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent) {
+        guard let first, touches.contains(first.touch) else { return }
+        let here = first.touch.location(in: view)
+        guard hypot(here.x - first.at.x, here.y - first.at.y) > 10 else { return }
+        self.first = nil
+        onDrag()
         state = .failed
     }
+
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) { state = .failed }
+    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent) { state = .failed }
+    override func reset() { first = nil }
 }
 
 extension Decoration.Style.Id {
