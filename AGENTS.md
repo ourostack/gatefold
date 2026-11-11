@@ -3,7 +3,7 @@
 ## Delivery
 
 - Trunk-based. Each proven change ships as its own small pull request from `main`, opened after review and validation with auto-merge on, and merges on green ([prs-merge-within-30-minutes](https://github.com/ourostack/.github/blob/main/agents/prs-merge-within-30-minutes.md)). There is no merge order: a pull request waits on another only when it can't build without it.
-- No pull request stays open more than 30 minutes past green. Rebase it, fix it and merge it, or close it with a one-line reason and an issue for whatever is still worth doing.
+- Merge as fast as possible; 30 minutes past green is the outer alarm, not the goal. Rebase it, fix it and merge it, or close it with a one-line reason and an issue for whatever is still worth doing.
 - Don't stack fixes on a branch under review. A new finding during review is its own pull request, unless it's a defect in that pull request's own change.
 
 ## CI
