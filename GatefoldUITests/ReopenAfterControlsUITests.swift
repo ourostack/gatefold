@@ -61,13 +61,16 @@ final class ReopenAfterControlsUITests: XCTestCase {
         // hides the slip at once): an offer that folded just before its tap leaves the tab, and that tap may have
         // turned the page instead, which fails below rather than going on from the wrong page.
         let window = app.frame
-        var looks = 0, taps = 0, quiet = 0, taken = false
+        // Gone means gone on two looks in a row (one read can come back empty on a starved runner), and words seen
+        // while a tap's quiet looks run don't end the look: the slip fades out over 0.35 s after a take.
+        var looks = 0, taps = 0, quiet = 0, gone = 0, taken = false
         while looks < 200 {
             if Date() > hung { XCTFail("hang: looking for the Cloud's offer ran \(looks) looks over 2400 s"); return }
             looks += 1
             let offerAt = HitCheck.frame(of: offer), tabAt = HitCheck.frame(of: tab)
-            if taps > 0, offerAt == nil, tabAt == nil { taken = true; break }
-            if !words.isEmpty { break }
+            gone = taps > 0 && offerAt == nil && tabAt == nil ? gone + 1 : 0
+            if gone >= 2 { taken = true; break }
+            if !words.isEmpty, taps == 0 || (quiet == 0 && gone == 0) { break }
             if quiet > 0 {
                 quiet -= 1
             } else if let f = offerAt.flatMap({ HitCheck.usable($0, within: window) }) {
