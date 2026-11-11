@@ -2,8 +2,10 @@ name: Real unfold
 
 # Opens and shuts an iPhone Duo simulator's hinge through DeviceHub (the Duo tour's helper) with a book
 # open, and judges each unfold from the app's own "reflow check" log line: did the spread keep his words?
-# It drives a window, so it runs on demand and on every pull request that changes the reader; it is the
-# posture gate (the UI test can't move a hinge, and a spread forced on the folded cover is no reader's layout).
+# It drives a window; it is the posture gate (the UI test can't move a hinge, and a spread forced on the folded cover
+# is no reader's layout). It is the main tier: it runs on every push to main and on demand, never cancelled. It takes
+# 45 to 75 min, too long for the PR clock (gatefold#39), so on a pull request the job skips, which reports success
+# under the same required name. A red main is fixed as AGENTS.md says ("CI").
 
 on:
   workflow_dispatch:
@@ -11,10 +13,11 @@ on:
       rounds:
         description: Unfolds at each place in the book
         default: "3"
-  # Every pull request, because Real unfold is a required check: `changes` decides, and on a pull request that
-  # doesn't touch the reader the job skips, which reports success (a workflow-level path filter never reported, so
-  # such a pull request waited forever; gatefold#42).
+  # Every pull request, because Real unfold is a required check: the job skips there, which reports success (a
+  # workflow-level path filter never reported, so such a pull request waited forever; gatefold#42).
   pull_request:
+  push:
+    branches: [main]
 
 permissions:
   contents: read
@@ -53,8 +56,9 @@ jobs:
   real-unfold:
     name: Real unfold
     needs: changes
-    # A failed `changes` leaves the output empty, so the unfold runs rather than skipping as a pass.
-    if: ${{ !cancelled() && needs.changes.outputs.reader != 'false' }}
+    # Main and dispatch only (see the top). A failed `changes` leaves the output empty, so the unfold runs rather than
+    # skipping as a pass.
+    if: ${{ !cancelled() && github.event_name != 'pull_request' && needs.changes.outputs.reader != 'false' }}
     runs-on: xcode-27
     timeout-minutes: 75
     env:
