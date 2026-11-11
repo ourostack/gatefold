@@ -250,7 +250,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         stopCounting()
         dropStandby()
         if let view = viewIfLoaded, view.window != nil, let page = navigator.viewIfLoaded,
-           let picture = page.snapshotView(afterScreenUpdates: false) {
+           let picture = closeSnapshot(of: page) {
             picture.frame = page.frame
             picture.autoresizingMask = [.flexibleWidth, .flexibleHeight]
             // A picture, not the page: VoiceOver has nothing to find on it while it leaves.
@@ -259,6 +259,14 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             closePicture = picture
         }
         Self.retire(navigator)
+    }
+
+    /// The page as it is on screen. A page not yet drawn even once has no picture to take from what is on screen,
+    /// so it is drawn for the picture (#275: closed 350 ms after its open on a loaded runner, it left no picture).
+    private func closeSnapshot(of page: UIView) -> UIView? {
+        if let picture = page.snapshotView(afterScreenUpdates: false) { return picture }
+        readerLog.notice("close: the page wasn't drawn yet; pictured after a screen update")
+        return page.snapshotView(afterScreenUpdates: true)
     }
 
     func dropStandby() {
