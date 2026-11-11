@@ -1840,6 +1840,14 @@ final class ReaderModel {
             }
             if openedLocation == nil { openedLocation = locator }
         }
+        // A move made during those reads owns the place and its bookkeeping: this report names where the
+        // page was before it. Kept, it took that move's write (gatefold#201: the book's start, reported
+        // before a launch jump, was written as the jump's move after it landed, and every reopen opened on
+        // the cover); left to note this report, the move's own report read as the layout's and kept nothing.
+        guard moves == judgedMove else {
+            readerLog.notice("place: a report from before move \(self.moves, privacy: .public) (\(Self.placeTag(locator), privacy: .public)); that move keeps the place")
+            return
+        }
         // No turn or jump of ours since the last report: a page move his touch brought is Readium's own
         // swipe or scroll (a turn counts itself in `userTurnedPage`).
         let noMoveOfOurs = moves == movesAtLastReport
@@ -1878,11 +1886,7 @@ final class ReaderModel {
         // its words found the move not yet kept, and both wrote (build 20's loop saved two places for one
         // jump, 0.3 s apart, from one reader).
         let keptMeanwhile = moves == recordedMoves && !hisMove && !touchedAtReport
-        // A move made during those waits owns the place: this report names where the page was before it,
-        // and kept, it took that move's write (gatefold#201: the book's start, reported before a launch
-        // jump, was written as the jump's move 1.5 s after it landed, and every reopen opened on the cover).
-        let overtaken = moves != judgedMove
-        guard hasMoved, readerMoved, !keptMeanwhile, !overtaken, !fromLayout, !isWarming else {
+        guard hasMoved, readerMoved, !keptMeanwhile, !fromLayout, !isWarming else {
             // No write: the move is the next report's to keep, from now, not after the wait below.
             if let claim, claimedMove == claim { claimedMove = nil }
             return refreshBookmarkState(await page?.visibleRange())
