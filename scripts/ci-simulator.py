@@ -14,7 +14,8 @@ returns at once, so the job downloads the build while the simulator boots.
 boot-sim.sh's log, as "Simulator did not boot", when it failed or did not finish. The limit counts from `start`, so
 the time spent downloading meanwhile counts toward it; a boot that has finished is read even when the wait starts after
 the limit (the unit job's Release build can outlast it, #78). A boot has taken 10 min on a hosted runner, and boot-sim.sh
-bounds each bootstatus at 7 min so a hang falls through to its next attempt; the wait step's own timeout is longer.
+bounds its bootstatus at 7 min in all so a hang falls through to its next attempt; the wait step's own timeout is longer.
+It asks in 60 s slices, so a bootstatus that missed the end of the boot costs one slice, not the 7 min.
 
 Before it passes, `wait` checks that the device is still Booted and its runtime is still listed as available: a
 runtime that fails to mount ("Malformed bundle") can vanish after the boot, and the test launch then fails with
@@ -196,17 +197,19 @@ def export(udid):
             f.write(f"UDID={udid}\nDESTINATION=platform=iOS Simulator,arch={platform.machine()},id={udid}\n")
 
 
-# One full boot-sim.sh attempt, the slowest that passes: bootstatus 420 s + its kill grace 5 + the listing 60 + its
-# second ask 60 + the second bootstatus 90 + its grace 5 = 640 s, rounded up to 660. A fresh device never starts
+# One full boot-sim.sh attempt, the slowest that passes: bootstatus 420 s in all (its slices, and its one early listing,
+# count inside the 420) + the last slice's kill grace 5 + the listing 60 + its second ask 60 + the second bootstatus
+# 90 + its grace 5 = 640 s, plus a second of $SECONDS rounding and up to 5 s of kill grace on each of the 4 bounded
+# calls after the 420: about 664 s, rounded up to 680. A fresh device never starts
 # with less (it would be killed mid-attempt). What must be left to try one at all: that, plus the two `quietly` calls
-# (60 s each) and the runtime listing (120 s): 660 + 240 = 900 s. The offline test shortens both.
+# (60 s each) and the runtime listing (120 s): 680 + 240 = 920 s. The offline test shortens both.
 # They fit the workflow's budgets less the 30 s margin. The wait step (1740 s, so 1710): the boot is read at up to
 # 1200 s and the check takes up to 2 listings x 2 tries x 120 s = 480 s, so a fresh device fits when the first boot
-# and its check took up to 1710 - 900 = 810 s, as a typical 3 to 10 min boot does; past that it fails, out of time,
-# with its own message. The erase (1800 s, so 1770): a typical erase and check (about 130 s), a fresh device (900 s)
-# and its own erase and check (about 130 s) take about 1160 s; the worst case (1140 s of erase calls) fails the same way.
-BOOT_ATTEMPT = setting("CI_SIMULATOR_BOOT_ATTEMPT", "660")
-RETRY_RESERVE = setting("CI_SIMULATOR_RETRY_RESERVE", "900")
+# and its check took up to 1710 - 920 = 790 s, as a typical 3 to 10 min boot does; past that it fails, out of time,
+# with its own message. The erase (1800 s, so 1770): a typical erase and check (about 130 s), a fresh device (920 s)
+# and its own erase and check (about 130 s) take about 1180 s; the worst case (1140 s of erase calls) fails the same way.
+BOOT_ATTEMPT = setting("CI_SIMULATOR_BOOT_ATTEMPT", "680")
+RETRY_RESERVE = setting("CI_SIMULATOR_RETRY_RESERVE", "920")
 
 
 def quietly(*args):

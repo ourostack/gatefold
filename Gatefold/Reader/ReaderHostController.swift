@@ -30,6 +30,8 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     private var lastSize: CGSize = .zero
     private var reflowTask: Task<Void, Never>?
     private var reflowGeneration = 0
+    /// Tests only (`-GatefoldSlowRestorePage`): when the slow reflow's page starts answering.
+    private var slowRestoreDeadline: ContinuousClock.Instant?
     /// The old page, held over the web view while it repaginates, so a reflow never shows bare paper.
     private var reflowCover: UIView?
     /// Set while a reflow from one page to a spread is the unfold.
@@ -621,6 +623,10 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
 
     private func beginReflow(_ reason: ReflowReason) {
         readerLog.notice("reflow begins: \(String(describing: reason), privacy: .public)")
+        if LaunchOptions.stallReflow == false, LaunchOptions.slowRestorePage, slowRestoreDeadline == nil, model.hisMoves > 0 {
+            slowRestoreDeadline = .now + .seconds(120)
+            readerLog.notice("reflow: its page answers only in 120 s, for the test (GatefoldSlowRestorePage)")
+        }
         // A late correction's picture is the spread he was reading (the page beneath may be half moved):
         // it becomes the reflow's cover.
         if let picture = settlePicture {
@@ -842,6 +848,40 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         guard reflowCover != nil || leaf != nil || navigator.view.alpha < 1 else { return }
         readerLog.error("reflow: no settle after 12 s; showing the page as it is")
         showPageAsItIs()
+        noteShownUnsettled()
+        refreshShownProbe()
+    }
+
+    /// For UI tests: the page shown as it is, read from the screen. Its location reports wait on the
+    /// restore, so without this a test reads the words from before the reflow (gatefold#133).
+    private func refreshShownProbe() {
+        guard LaunchOptions.isUITest else { return }
+        Task { [weak self] in
+            guard let self, let visible = await self.visibleRange(), let text = visible.text else { return }
+            self.weakModel?.probeShownPage(text)
+        }
+    }
+
+    /// The page just shown as it is, while its restore still runs, is the page he sees: noted at once as
+    /// Readium names it, then by its first words once the page answers (that may be the very script the
+    /// restore is waiting on), so a leave before the restore ends keeps it (gatefold#133).
+    private func noteShownUnsettled() {
+        guard let model = weakModel, let here = navigator.currentLocation else { return }
+        let note = model.reflowShownUnsettled(here)
+        guard note != nil, !LaunchOptions.shownPageWithoutWords else { return }
+        // The watchdog starts the restore again right after this: the model takes the words only while
+        // this very note stands (a settle, a new reflow or a newer note drops it).
+        Task { [weak self] in
+            guard let found = await self?.currentAnchor(), let self, let model = self.weakModel, found.0.text != nil else { return }
+            // The words are read after the location: a restore that moved the page meanwhile, inside the same
+            // spread, would pair them with the page before. Only words from the page still named are kept.
+            guard let now = self.navigator.currentLocation, now.href == found.1.href,
+                  now.locations.progression == found.1.locations.progression else {
+                readerLog.notice("reflow: the page shown unsettled moved while its words were read; words dropped")
+                return
+            }
+            model.reflowShownUnsettled(found.1, wordsFor: note)
+        }
     }
 
     private func showPageAsItIs() {
@@ -870,6 +910,10 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             return model.keeper.restoreMayMove(move: model.hisMoves)
         }
         defer { giveWayIfHeMoved(generation: generation) }
+        // Tests only: the page doesn't answer yet, as a spread whose chapter is still loading.
+        if let until = slowRestoreDeadline {
+            while ContinuousClock.now < until, current(), !Task.isCancelled { try? await Task.sleep(for: .milliseconds(250)) }
+        }
         // Back from the page itself: a script whose spread the reflow replaced comes back at once with
         // no page behind it (gatefold#109), and runs again on the spread that replaced it.
         _ = await Self.onSpread { () async throws -> Void? in
@@ -1802,12 +1846,27 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
 
     @discardableResult
     func go(to locator: Locator) async -> Bool {
-        await navigator.go(to: locator, options: .init(animated: false))
+        if LaunchOptions.isUITest, let sends = LaunchOptions.holdBackSends, sends > 0, weakModel?.isGoingBack == true {
+            if !heldSendsArmed { heldSendsArmed = true; heldSends = sends; holdLoadForTest(looks: 0) }
+            if heldSends > 0 {
+                heldSends -= 1
+                // The sends still held, for the test to read (the log stream can drop lines).
+                heldLoadMarker?.accessibilityValue = "\(heldSends)"
+                if heldSends == 0, heldLoadLooks == 0 { heldLoadMarker?.removeFromSuperview(); heldLoadMarker = nil }
+                readerLog.notice("test: a held load takes a send at its chapter's start, \(self.heldSends, privacy: .public) left")
+                return await navigator.go(to: Locator(href: locator.href, mediaType: locator.mediaType), options: .init(animated: false))
+            }
+        }
+        return await navigator.go(to: locator, options: .init(animated: false))
     }
 
     func go(to link: ReadiumShared.Link) async {
         _ = await navigator.go(to: link, options: .init(animated: false))
     }
+
+    /// UI tests (`-GatefoldHoldBackSends`): Back's sends still to be taken at their chapter's start, the
+    /// load held meanwhile; armed by the first.
+    private var heldSendsArmed = false, heldSends = 0
 
     // MARK: Jumps
 
@@ -2181,12 +2240,27 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
 
     /// Readium's own loading spinner is showing: the page in view hasn't loaded yet.
     var isLoadingPage: Bool {
+        if heldSends > 0 { return true }
         if heldLoadLooks > 0 {
             heldLoadLooks -= 1
             if heldLoadLooks == 0 { heldLoadMarker?.removeFromSuperview(); heldLoadMarker = nil }
             return true
         }
         return readiumSpinner != nil
+    }
+
+    /// A load under way, read without spending a held load's looks: a test's held load, Readium's spinner,
+    /// or a web view in view still loading (its document can sit at about:blank for seconds, gatefold#94).
+    var isLoadingChapter: Bool {
+        if heldSends > 0 || heldLoadLooks > 0 || readiumSpinner != nil { return true }
+        let host = navigator.view!
+        // Hidden ones count too: Readium hides a web view still loading by its scroll view's alpha
+        // (`unveilPlacedPages`), so the one on its way is often the hidden one.
+        func loading(_ v: UIView) -> Bool {
+            if let w = v as? WKWebView { return w.isLoading && w.convert(w.bounds, to: host).intersects(host.bounds) }
+            return v.subviews.contains(where: loading)
+        }
+        return loading(host)
     }
 
     /// Readium's spinner in view, if one is up, and where: the frame in the navigator's view.

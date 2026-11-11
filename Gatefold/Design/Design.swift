@@ -92,9 +92,25 @@ enum LaunchOptions {
     /// a busy device, to show the old page holding until they paint.
     /// Tests only: every reflow's restore hangs after laying out, as a cold iPad's could; the page must still show.
     static var stallReflow: Bool { defaults.bool(forKey: "GatefoldStallReflow") }
+    /// Tests only: the first reflow after his first move waits 120 s for its page to answer its first script, as
+    /// CI's landscape spread did while its chapter loaded (gatefold#94, #133); every restore of it waits.
+    static var slowRestorePage: Bool { isUITest && defaults.bool(forKey: "GatefoldSlowRestorePage") }
+    /// Tests only, with `slowRestorePage`: the page shown unsettled is noted as Readium names it and never by
+    /// its words, as on a device whose page scripts wait on the stalled install too (gatefold#133).
+    static var shownPageWithoutWords: Bool { isUITest && defaults.bool(forKey: "GatefoldShownPageWithoutWords") }
     /// Debug only: a jump's chapter counts as still loading (Readium's spinner up) for this many looks,
     /// so a test can hold the load open as a slow device does and watch the veil (#38).
     static var holdChapterLoadLooks: Int? { defaults.object(forKey: "GatefoldHoldChapterLoad") == nil ? nil : defaults.integer(forKey: "GatefoldHoldChapterLoad") }
+    /// Debug only: Back's first this many sends are taken at their chapter's start, the chapter still
+    /// loading meanwhile, as a web view still loading takes a jump (gatefold#170). Counted in sends, not
+    /// looks, so a Back that stops sending stays short. Armed once per launch, by its first Back.
+    static var holdBackSends: Int? {
+        #if DEBUG
+        defaults.object(forKey: "GatefoldHoldBackSends") == nil ? nil : defaults.integer(forKey: "GatefoldHoldBackSends")
+        #else
+        nil
+        #endif
+    }
     /// Debug only: when a jump starts, the page it leaves counts as still loading (Readium's spinner
     /// up) for this many looks, as a page still loading on a slow device does (gatefold#73).
     static var holdOldPageLoadLooks: Int? {

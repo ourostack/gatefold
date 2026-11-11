@@ -163,7 +163,8 @@ jobs:
     # spends no macOS minutes. The app's build still compiles it against the iOS 27 SDK below.
     # In Swift's own image: the Ubuntu 26.04 runner image stopped carrying Swift (exit 127 on
     # `swift --version`, 2026-11-05).
-    needs: changes
+    # It also stands for `ci-scripts` (the CI scripts' offline tests), so this required check fails when they do.
+    needs: [changes, ci-scripts]
     if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
     runs-on: ubuntu-latest
     container: swift:6.2
@@ -174,12 +175,30 @@ jobs:
         run: swift --version
       - name: swift test
         run: swift test --package-path Packages/GatefoldCore
+      - name: The CI scripts' offline tests passed (job "CI scripts, offline"; gatefold#241)
+        if: ${{ !cancelled() }}
+        env:
+          RESULT: ${{ needs.ci-scripts.result }}
+        run: |
+          [ "$RESULT" = success ] || { echo "::error title=CI scripts%2C offline::The job \"CI scripts, offline\" ended $RESULT: see its log (simulator helper or UI test lists, not GatefoldCore)"; exit 1; }
+
+  # The CI scripts' offline tests, on the runner image itself, where python3 is installed: in the Swift container they
+  # had to fetch it with apt-get, and a DNS blip failed the required check before any test ran (gatefold#241).
+  ci-scripts:
+    name: CI scripts, offline
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        run: python3 --version && bash --version | head -1
       - name: The simulator helper, offline (a fake xcrun; no simulator)
         run: |
-          command -v python3 >/dev/null || { apt-get update -qq && apt-get install -y -qq python3 >/dev/null; }
           python3 -I scripts/ci-simulator.py --selftest
           bash scripts/test-ci-simulator.sh
-      - name: Every listed UI test exists, and none runs in two shards (gatefold#39)
+      - name: UI test lists (not GatefoldCore) match scripts/ci-shards.expect; fix with `python3 -I scripts/ci-shards.py write` (gatefold#39)
         run: |
           python3 -I scripts/ci-shards.py --selftest
           python3 -I scripts/ci-shards.py check --expect scripts/ci-shards.expect
@@ -192,7 +211,9 @@ jobs:
   # passes in those runs, plus 12 for the logs after the tests (gatefold#141). Twice, because on these overloaded runners
   # a test that passes can run 2-3x its usual time; a shard that still hits its limit is a red to fix at its cause, not
   # a limit to raise. The rotation shards (`cold`) run on the job's new iPad, before anything warms it.
-  # scripts/ci-shards.py (in `GatefoldCore tests`) fails when a listed test does not exist or runs in two shards.
+  # scripts/ci-shards.py (in `CI scripts, offline`, which `GatefoldCore tests` stands for) fails when a listed test does
+  # not exist, runs in two shards, or differs from scripts/ci-shards.expect; each error names the test and the fix
+  # (`python3 -I scripts/ci-shards.py write`).
   ipad-place:
     name: iPad place shard (${{ matrix.shard }})
     needs: changes
@@ -814,7 +835,7 @@ jobs:
           tar -xzf "$RUNNER_TEMP/products.tgz" -C "$RUNNER_TEMP/dd/Build"
           echo "XCTESTRUN=$(ls "$RUNNER_TEMP"/dd/Build/Products/*.xctestrun | head -1)" >> "$GITHUB_ENV"
       - name: The iPhone Duo finished booting
-        # 1200 s for the boot, the check's listings, and 900 s for one fresh device when the first boot left room
+        # 1200 s for the boot, the check's listings, and 920 s for one fresh device when the first boot left room
         # (gatefold#71; the sums are in scripts/ci-simulator.py at BOOT_ATTEMPT).
         timeout-minutes: 30
         env:
