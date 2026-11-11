@@ -116,6 +116,10 @@ if grep -qx "simctl spawn dev1 launchctl remove com.apple.PosterBoard" "$work/bo
    && [ "$(grep -c 'launchctl remove' "$work/booted and its runtime is there/fake/simctl")" = "$want" ]; then
   echo "ok   wait: the booted device's $want first-boot jobs are removed (gatefold#209)"
 else echo "FAIL wait: the booted device was not quieted"; fails=$((fails + 1)); fi
+if grep -qx "simctl spawn dev2 launchctl remove com.apple.PosterBoard" "$work/the runtime goes after the boot, a fresh device has it (gatefold#71)/fake/simctl" \
+   && ! grep -q "simctl spawn dev1 " "$work/the runtime goes after the boot, a fresh device has it (gatefold#71)/fake/simctl"; then
+  echo "ok   wait: the fresh device is quieted, the replaced one never (gatefold#209)"
+else echo "FAIL wait: the fresh device was not quieted"; fails=$((fails + 1)); fi
 if grep -qx "simctl spawn dev0 launchctl remove com.apple.PosterBoard" "$work/erase-the erased device is fine/fake/simctl"; then
   echo "ok   erase: the erased device's first-boot jobs are removed (gatefold#209)"
 else echo "FAIL erase: the erased device was not quieted"; fails=$((fails + 1)); fi
