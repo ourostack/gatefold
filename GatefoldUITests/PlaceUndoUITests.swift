@@ -220,9 +220,7 @@ final class PlaceUndoUITests: XCTestCase {
         // Sampled until the held load ends: how long the veil stayed, for the log (it may let go at its limit).
         // A trip that stops sending leaves it held: 400 samples, past the 25 sends' 50 s of reads.
         var samples = 0, bare = 0
-        // The count is read from a snapshot that may come back empty: the held load can end between `exists`
-        // and the read, and a plain `value` on an element gone by then fails the test (gatefold#213: both
-        // attempts on #238's run 43060712326 failed so, at "Find the reader.loadingHeld", three retries).
+        // Read from a snapshot: the held load can end between `exists` and a plain `value`, which then fails (#213).
         func sendsLeftNow() -> String? { (try? held.snapshot())?.value as? String }
         print("BACKHELD sendsLeftAtStart=\(sendsLeftNow() ?? "?")")
         var sendsLeft = "?"
@@ -237,7 +235,8 @@ final class PlaceUndoUITests: XCTestCase {
         XCTAssertTrue(veil.waitForNonExistence(timeout: 30), "Back's veil lifted once the chapter had loaded")
         let returned = waitForWords(changingFrom: jumped, timeout: 30)
         XCTAssertEqual(opening(returned), opening(first), "Back did not return to his page")
-        XCTAssertNotEqual(back.label, "Couldn't go back. Try again")
+        // The button may have gone by now (#213): a gone button shows no failure either.
+        XCTAssertNotEqual((try? back.snapshot())?.label, "Couldn't go back. Try again")
     }
 
     /// A touch resting on the scrubber, and a short wobble on it, never move the page.
