@@ -824,6 +824,12 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             self.settleReflowSoon()
         }
     }
+    func endReflowForSwap() {
+        settledGeneration = reflowGeneration
+        reflowRetries = 0
+        showPageAsItIs()
+    }
+
     /// A restore he overtook (he turned or jumped while it ran, the 12 s watchdog's retry on a page it had
     /// shown him among them): it ends where his move left the page, never bringing the old place back, and
     /// his page becomes the anchor again.
