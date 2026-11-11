@@ -139,7 +139,7 @@ struct SyncSlipTests {
 
     @Test func aLandingSaysWhereItCameFrom() {
         let slip = SyncSlip.landed(device: "PocketBook InkPad", updated: now.addingTimeInterval(-7200), now: now)
-        #expect(slip.title == "From your InkPad · 2 h ago")
+        #expect(slip.title == "From your e-reader · 2 h ago")
         #expect(slip.passage == nil)
     }
 
@@ -147,13 +147,13 @@ struct SyncSlipTests {
     @Test func ourOwnPlaceIsNotTheInkPads() {
         let slip = SyncSlip.resumed(updated: now.addingTimeInterval(-3600), now: now)
         #expect(slip.title == "Right where you left off · 1 h ago")
-        #expect(!slip.title.contains("InkPad"))
+        #expect(!slip.title.contains("e-reader"))
     }
 
     @Test func anOfferNamesThePassage() {
         let slip = SyncSlip.ahead(device: "PocketBook InkPad", pagesAhead: 23, percentAhead: nil, updated: now.addingTimeInterval(-30 * 3600), now: now,
                                   passage: "She thought her the model of all that was good and kind, and more besides")
-        #expect(slip.title == "Your InkPad read on without you")
+        #expect(slip.title == "Your e-reader read on without you")
         #expect(slip.detail == "23 pages ahead · yesterday")
         #expect(slip.passage == "She thought her the model of all that was good…")
     }
@@ -167,7 +167,7 @@ struct SyncSlipTests {
     }
 
     @Test func theFoldedTabSaysWhoAndHowFar() {
-        #expect(SyncSlip.tab(device: "PocketBook InkPad", pagesAhead: 23) == "InkPad +23")
+        #expect(SyncSlip.tab(device: "PocketBook InkPad", pagesAhead: 23) == "E-reader +23")
         #expect(SyncSlip.tab(device: "Web reader", pagesAhead: nil) == "Web reader")
     }
 }
@@ -177,7 +177,7 @@ struct GreetingTests {
     @Test func namesTheBookWaiting() {
         #expect(ArrivalGreeting.text(bookCount: 11, waitingTitle: "Moby-Dick; or, The Whale", waitingPercent: 42)
             == "Welcome back. Moby-Dick’s been holding your place at 42%.")
-        #expect(ArrivalGreeting.text(bookCount: 1, waitingTitle: nil, waitingPercent: nil) == "Welcome back. 1 book came over from your InkPad, ready when you are.")
+        #expect(ArrivalGreeting.text(bookCount: 1, waitingTitle: nil, waitingPercent: nil) == "Welcome back. 1 book came over from your e-reader, ready when you are.")
         #expect(ArrivalGreeting.text(bookCount: 0, waitingTitle: nil, waitingPercent: nil) == nil)
     }
 }
@@ -198,12 +198,12 @@ struct FinishLineTests {
     @Test func theTwoDeviceStory() {
         let start = Date(timeIntervalSince1970: 1_800_000_000)
         let end = start.addingTimeInterval(11 * 86400 + 3600)
-        #expect(ReadStory.text(otherDevice: "InkPad", otherSince: start, started: start.addingTimeInterval(86400), finished: end,
-                               sessions: 4, here: "phone", calendar: cal) == "Started on your InkPad, finished here on your phone\nRead over 12 days")
-        #expect(ReadStory.text(otherDevice: "InkPad", otherSince: end.addingTimeInterval(-3600), started: nil, finished: end,
-                               sessions: 1, here: "iPad", calendar: cal) == "Started on your InkPad, finished here on your iPad\nRead in a single day")
-        #expect(ReadStory.text(otherDevice: "InkPad", otherSince: start, started: start, finished: start.addingTimeInterval(86400),
-                               sessions: 2, here: "phone", calendar: cal) == "Started on your InkPad, finished here on your phone\nRead over 2 days")
+        #expect(ReadStory.text(otherDevice: "e-reader", otherSince: start, started: start.addingTimeInterval(86400), finished: end,
+                               sessions: 4, here: "phone", calendar: cal) == "Started on your e-reader, finished here on your phone\nRead over 12 days")
+        #expect(ReadStory.text(otherDevice: "e-reader", otherSince: end.addingTimeInterval(-3600), started: nil, finished: end,
+                               sessions: 1, here: "iPad", calendar: cal) == "Started on your e-reader, finished here on your iPad\nRead in a single day")
+        #expect(ReadStory.text(otherDevice: "e-reader", otherSince: start, started: start, finished: start.addingTimeInterval(86400),
+                               sessions: 2, here: "phone", calendar: cal) == "Started on your e-reader, finished here on your phone\nRead over 2 days")
     }
 
     @Test func beganHereOrUnknown() {
@@ -213,7 +213,7 @@ struct FinishLineTests {
         #expect(ReadStory.text(otherDevice: nil, otherSince: nil, started: start, finished: end, sessions: 9, here: "phone", calendar: cal)
             == "Finished · 11 days, 9 sessions")
         // The InkPad's first sign came after the first open here: it began here.
-        #expect(ReadStory.text(otherDevice: "InkPad", otherSince: end, started: start, finished: end, sessions: 9, here: "phone", calendar: cal)
+        #expect(ReadStory.text(otherDevice: "e-reader", otherSince: end, started: start, finished: end, sessions: 9, here: "phone", calendar: cal)
             == "Finished · 11 days, 9 sessions")
         #expect(ReadStory.text(otherDevice: nil, otherSince: nil, started: nil, finished: end, sessions: 0, here: "phone", calendar: cal)
             == "Closed on the very last page")
@@ -225,10 +225,15 @@ struct FinishLineTests {
     @Test func theShelfCountsFromWhereTheReadBegan() {
         let start = Date(timeIntervalSince1970: 1_800_000_000)
         let today = start.addingTimeInterval(5 * 86400 + 3600)
+        #expect(ReadStory.text(otherDevice: "e-reader", otherSince: start, started: today, finished: today,
+                               sessions: 1, here: "phone", calendar: cal) == "Started on your e-reader, finished here on your phone\nRead over 6 days")
+        #expect(ReadStory.shelfLine(otherDevice: "e-reader", otherSince: start, started: today, finished: today,
+                                    sessions: 1, here: "phone", calendar: cal) == "Read over 6 days, e-reader to phone")
+        // A book an older build noted as begun on the "InkPad" tells the same story, generically (#253).
         #expect(ReadStory.text(otherDevice: "InkPad", otherSince: start, started: today, finished: today,
-                               sessions: 1, here: "phone", calendar: cal) == "Started on your InkPad, finished here on your phone\nRead over 6 days")
+                               sessions: 1, here: "phone", calendar: cal) == "Started on your e-reader, finished here on your phone\nRead over 6 days")
         #expect(ReadStory.shelfLine(otherDevice: "InkPad", otherSince: start, started: today, finished: today,
-                                    sessions: 1, here: "phone", calendar: cal) == "Read over 6 days, InkPad to phone")
+                                    sessions: 1, here: "phone", calendar: cal) == "Read over 6 days, e-reader to phone")
     }
 
     @Test func theShelfLineForABookBegunHere() {
@@ -238,7 +243,7 @@ struct FinishLineTests {
         #expect(ReadStory.shelfLine(otherDevice: nil, otherSince: nil, started: start, finished: start.addingTimeInterval(11 * 86400),
                                     sessions: 9, here: "iPad", calendar: cal) == "Read over 12 days, in 9 sittings")
         // The InkPad's first sign came after the first open here: it began here.
-        #expect(ReadStory.shelfLine(otherDevice: "InkPad", otherSince: start.addingTimeInterval(86400), started: start,
+        #expect(ReadStory.shelfLine(otherDevice: "e-reader", otherSince: start.addingTimeInterval(86400), started: start,
                                     finished: start.addingTimeInterval(3600 * 30), sessions: 2, here: "phone", calendar: cal)
             == "Read over 2 days, in 2 sittings")
         #expect(ReadStory.shelfLine(otherDevice: nil, otherSince: nil, started: nil, finished: start,
@@ -250,9 +255,9 @@ struct FinishLineTests {
 struct SyncHealthTests {
     @Test func words() {
         let now = Date(timeIntervalSince1970: 1_800_000_000)
-        #expect(SyncHealth.checking.text(now: now) == "Checking your InkPad…")
-        #expect(SyncHealth.upToDate(now.addingTimeInterval(-10)).text(now: now) == "In step with your InkPad · just now")
-        #expect(SyncHealth.upToDate(now.addingTimeInterval(-300)).text(now: now) == "In step with your InkPad · 5 min ago")
+        #expect(SyncHealth.checking.text(now: now) == "Checking your e-reader…")
+        #expect(SyncHealth.upToDate(now.addingTimeInterval(-10)).text(now: now) == "In step with your e-reader · just now")
+        #expect(SyncHealth.upToDate(now.addingTimeInterval(-300)).text(now: now) == "In step with your e-reader · 5 min ago")
         #expect(SyncHealth.offline(lastSynced: nil).text(now: now) == "Offline for now. Read on; your place will catch up later.")
         #expect(SyncHealth.offline(lastSynced: now.addingTimeInterval(-7200)).text(now: now).hasPrefix("Offline for now · last synced 2 h ago"))
     }
