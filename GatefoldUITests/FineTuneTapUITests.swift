@@ -129,7 +129,8 @@ final class FineTuneTapUITests: XCTestCase {
     /// The review's bar: one ordinary tap at the switch's centre, then the switch must have flipped.
     /// 25 on each of the four switches, no retry, every tap counted. Each method below takes one switch's
     /// 25 taps in a row, in one launch, in one posture, so a method fits one CI shard; together they are the
-    /// old two methods' 4 x 25 taps in each posture, each judged the same way.
+    /// old two methods' 4 x 25 taps in each posture, each judged the same way. One difference, accepted: each
+    /// switch now starts on a freshly opened reader, not one still busy from the switches tapped before it.
     private func tapRate(_ shown: String, _ id: String) {
         let panel = app.descendants(matching: .any)["appearance.panel"].firstMatch
         var trials = 0, misses = 0
