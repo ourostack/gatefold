@@ -792,6 +792,7 @@ import Testing
         f.page.reportsBeforeReturn = true
         f.page.holdsJumps = true
         f.page.loadingChapter = true
+        ReaderModel.probeNotes = []
         let first = Task { await f.model.go(toProgression: 0.7, rememberBack: true) }
         await Self.settle { f.model.jumpsPastTheVeil == 1 }
         let second = Task { await f.model.go(toProgression: 0.5, rememberBack: true) }
@@ -807,6 +808,7 @@ import Testing
         f.model.placeWriteWait = {
             guard gate.armed else { return }
             gate.armed = false
+            ReaderModel.probeNotes.append("held page=\(f.page.currentLocation?.locations.totalProgression ?? -1)")
             await withCheckedContinuation { gate.held = $0 }
         }
         f.page.loadingChapter = false
@@ -825,6 +827,7 @@ import Testing
         await Self.settle { abs((Self.kept(f) ?? -1) - 0.5) >= 0.03 }
         #expect(abs((f.page.currentLocation?.locations.totalProgression ?? -1) - 0.5) < 0.03, "the second jump's page didn't stand")
         #expect(abs((Self.kept(f) ?? -1) - 0.5) < 0.03, "the slow late write kept \(Self.kept(f) ?? -1) over the second jump")
+        #expect(Bool(false), "PROBE \(ReaderModel.probeNotes.joined(separator: " | ")) kept=\(Self.kept(f) ?? -1)")
     }
 
     /// A bookmark's jump ended quietly by a move of his offers no way back, as any other jump

@@ -1529,6 +1529,7 @@ final class ReaderModel {
                 self.lateLandings = []
                 self.placeWrites += 1
                 self.keptPage = settledLocator
+                Self.probeNotes.append("land moves=\(self.moves) writes=\(self.placeWrites) total=\(chosen?.totalProgression ?? here.locations.totalProgression ?? -1)")
                 self.newestWrittenMove = max(self.newestWrittenMove, self.moves)
                 readerLog.notice("place write [r\(self.readerNumber, privacy: .public)]: landing (\(fresh != nil ? "his first words" : "Readium's boundary", privacy: .public)) \(Self.placeTag(settledLocator), privacy: .public); kept total \(chosen?.totalProgression ?? here.locations.totalProgression ?? 0, privacy: .public); move \(self.moves, privacy: .public)")
                 self.app.library.recordPlace(
@@ -1793,6 +1794,7 @@ final class ReaderModel {
     @ObservationIgnored private var newestWrittenMove = -1
     /// Every place write as it starts, numbered: one still on its way when a newer one starts yields.
     @ObservationIgnored private var placeWrites = 0
+    nonisolated(unsafe) static var probeNotes: [String] = [] // probe, not for merge
     /// The move whose first report is still reading his words before its write (`locationDidChange`).
     @ObservationIgnored private var claimedMove: Int?
     /// A launch jump that never landed, and its move: owed by a reflow, its target is the place kept.
@@ -2029,6 +2031,7 @@ final class ReaderModel {
             // over it (#46 at c4c3b6a: the Contents jump's write landed after Back's and kept the jump's page).
             // So does a newer write for this same move: the newest jump back past its veil keeps its
             // page over a late report's write still on its way (gatefold#173 re-review).
+            Self.probeNotes.append("w keeping=\(keeping) newest=\(newestWrittenMove) write=\(write) writes=\(placeWrites) moves=\(moves) total=\(reported.locations.totalProgression ?? -1)")
             guard newestWrittenMove == keeping else {
                 readerLog.notice("place write [r\(self.readerNumber, privacy: .public)]: move \(keeping, privacy: .public) overtaken by move \(self.newestWrittenMove, privacy: .public)'s write, not written")
                 return refreshBookmarkState(await page?.visibleRange())
