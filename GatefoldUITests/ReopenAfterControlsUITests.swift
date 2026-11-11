@@ -56,13 +56,19 @@ final class ReopenAfterControlsUITests: XCTestCase {
     private func takeTheOffer() {
         let offer = el("banner.jump"), tab = el("banner.tab")
         let up0 = Date().addingTimeInterval(60)
-        // Unanswered for 10 s the offer folds into its tab: the tab opens it again.
-        while words.isEmpty, !offer.exists, Date() < up0 {
+        // Unanswered for 10 s the offer folds into its tab: the tab opens it again. It can fold between
+        // two looks (gatefold#156's round 3 saw it, then lost it, and never opened the tab), so the look
+        // goes on until the offer is there to tap.
+        var taken = false
+        while words.isEmpty, Date() < up0 {
+            if offer.exists, offer.isHittable { offer.tap(); taken = true; break }
             if tab.exists, tab.isHittable { tab.tap() }
             RunLoop.current.run(until: Date().addingTimeInterval(0.3))
         }
-        guard offer.exists, words.isEmpty else { return }
-        offer.tap()
+        guard taken else {
+            print("REOPEN no offer taken; tab \(tab.exists) offer \(offer.exists) words \(!words.isEmpty)")
+            return
+        }
         let up = Date().addingTimeInterval(60)
         while words.isEmpty, Date() < up { RunLoop.current.run(until: Date().addingTimeInterval(0.3)) }
     }
