@@ -380,7 +380,15 @@ final class NavigationPlaceUITests: XCTestCase {
         // cover, which has no words to scroll through. He takes the offer, as he would.
         if first.isEmpty { first = takeTheCloudsOffer() }
         XCTAssertFalse(first.isEmpty, "the page he scrolls from shows words")
-        showChrome()
+        // The controls: a tap of the offer's that met the page as it folded may have brought them up already,
+        // and then a tap would put them away (#171's probe 42969303572). Up to three taps, each looked for.
+        let contents = app.buttons["reader.contents"]
+        var taps = 0
+        while !contents.waitForExistence(timeout: 5), taps < 3 {
+            taps += 1
+            app.descendants(matching: .any)["reader.page"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        }
+        XCTAssertTrue(contents.exists, "a tap brings up the controls")
         let appearance = app.descendants(matching: .any)["reader.appearance"].firstMatch
         appearance.tap()
         let turnStyle = app.descendants(matching: .any)["appearance.pageTurn"].firstMatch
