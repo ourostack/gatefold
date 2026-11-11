@@ -10,7 +10,7 @@ struct JumpSuggestionTests {
         let local = ProgressSnapshot(totalProgression: 0.31, updated: now.addingTimeInterval(-3600), device: "iPhone")
         let remote = ProgressSnapshot(totalProgression: 0.42, updated: now, device: "InkPad 4")
         let s = try! #require(JumpSuggestion.make(local: local, remote: remote, totalPages: 500))
-        #expect(s.headline == "Your InkPad is further ahead")
+        #expect(s.headline == "Your e-reader is further ahead")
         #expect(s.detail == "Page 211 of 500. Jump there?")
         #expect(s.targetProgression == 0.42)
     }
@@ -34,13 +34,13 @@ struct JumpSuggestionTests {
     @Test func aBookNeverOpenedHereJumpsToTheOtherDevicesPlace() {
         let remote = ProgressSnapshot(totalProgression: 0.08, updated: now, device: "PocketBook InkPad 4")
         let s = try! #require(JumpSuggestion.make(local: nil, remote: remote, totalPages: nil))
-        #expect(s.headline == "Your InkPad is further ahead")
+        #expect(s.headline == "Your e-reader is further ahead")
         #expect(s.detail == "8% through. Jump there?")
     }
 
     @Test func namesTheDeviceKindPlainly() {
-        #expect(JumpSuggestion.deviceKind("PocketBook InkPad 4") == "InkPad")
-        #expect(JumpSuggestion.deviceKind("PB Era") == "PocketBook")
+        #expect(JumpSuggestion.deviceKind("PocketBook InkPad 4") == "e-reader")
+        #expect(JumpSuggestion.deviceKind("PB Era") == "e-reader")
         #expect(JumpSuggestion.deviceKind("Web reader") == "web reader")
         #expect(JumpSuggestion.deviceKind("") == "other device")
     }

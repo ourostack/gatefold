@@ -730,7 +730,7 @@ final class ScriptedPage: ReaderPage {
         #expect(!(await f.sent()).isEmpty, "the book opens on the place it was left at")
         let title = f.model.slip?.title
         #expect(title?.hasPrefix("Right where you left off") == true, "got \(title ?? "no slip")")
-        #expect(title?.contains("InkPad") == false)
+        #expect(title?.contains("e-reader") == false)
     }
 
     @Test func aRemotePlaceArrivingWhileTheOpeningSettleRunsWinsAndIsNotPulledBack() async throws {
