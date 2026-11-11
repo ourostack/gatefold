@@ -198,7 +198,7 @@ jobs:
         run: |
           python3 -I scripts/ci-simulator.py --selftest
           bash scripts/test-ci-simulator.sh
-      - name: Every listed UI test exists, and none runs in two shards (gatefold#39)
+      - name: UI test lists (not GatefoldCore) match scripts/ci-shards.expect; fix with `python3 -I scripts/ci-shards.py write` (gatefold#39)
         run: |
           python3 -I scripts/ci-shards.py --selftest
           python3 -I scripts/ci-shards.py check --expect scripts/ci-shards.expect
@@ -212,7 +212,8 @@ jobs:
   # a test that passes can run 2-3x its usual time; a shard that still hits its limit is a red to fix at its cause, not
   # a limit to raise. The rotation shards (`cold`) run on the job's new iPad, before anything warms it.
   # scripts/ci-shards.py (in `CI scripts, offline`, which `GatefoldCore tests` stands for) fails when a listed test does
-  # not exist or runs in two shards.
+  # not exist, runs in two shards, or differs from scripts/ci-shards.expect; each error names the test and the fix
+  # (`python3 -I scripts/ci-shards.py write`).
   ipad-place:
     name: iPad place shard (${{ matrix.shard }})
     needs: changes
@@ -834,7 +835,7 @@ jobs:
           tar -xzf "$RUNNER_TEMP/products.tgz" -C "$RUNNER_TEMP/dd/Build"
           echo "XCTESTRUN=$(ls "$RUNNER_TEMP"/dd/Build/Products/*.xctestrun | head -1)" >> "$GITHUB_ENV"
       - name: The iPhone Duo finished booting
-        # 1200 s for the boot, the check's listings, and 900 s for one fresh device when the first boot left room
+        # 1200 s for the boot, the check's listings, and 920 s for one fresh device when the first boot left room
         # (gatefold#71; the sums are in scripts/ci-simulator.py at BOOT_ATTEMPT).
         timeout-minutes: 30
         env:

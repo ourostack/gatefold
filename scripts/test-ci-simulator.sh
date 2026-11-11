@@ -143,7 +143,7 @@ else echo "FAIL no labels file"; fails=$((fails + 1)); fi
 # The wait path's fresh device: boot-sim.sh hangs. Its whole process group is ended at the timeout (not only its
 # bash, which left its children running), and the timeout reported is the one that applied. With less left than one
 # boot attempt, no fresh device is tried, and it says so.
-# gone <pid>: the process has exited. A zombie counts as exited: in the core job's container PID 1 is Actions'
+# gone <pid>: the process has exited. A zombie counts as exited: in a container such as swift:6.2 PID 1 is Actions'
 # `tail -f /dev/null`, which never reaps, so a killed orphan stays a zombie and `kill -0` still finds it (job
 # 129026427008). Reads /proc where there is one (Linux, with no procps), else ps (macOS).
 gone() {
@@ -190,14 +190,25 @@ cat > "$real/bin/xcrun" <<'FAKE'
 state() { cat "$FAKE/state-$1" 2>/dev/null || echo Shutdown; }
 case "$1 $2" in
   "simctl create") n=$(( $(cat "$FAKE/created" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$FAKE/created"; echo "dev$n" ;;
-  "simctl boot") for u in ${FAKE_NO_BOOT:-}; do [ "$u" = "$3" ] && exit 0; done; echo Booted > "$FAKE/state-$3" ;;
+  "simctl boot") for u in ${FAKE_NO_BOOT:-}; do [ "$u" = "$3" ] && exit 0; done
+    for u in ${FAKE_BOOTING:-}; do [ "$u" = "$3" ] && { echo Booting > "$FAKE/state-$3"; exit 0; }; done
+    echo Booted > "$FAKE/state-$3" ;;
   "simctl shutdown") [ "$3" = all ] || echo Shutdown > "$FAKE/state-$3"; echo "shutdown $3" >> "$FAKE/calls" ;;
   "simctl delete") echo "delete $3" >> "$FAKE/calls" ;;
   "simctl bootstatus")
     n=$(( $(cat "$FAKE/bootstatus" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$FAKE/bootstatus"
-    echo "bootstatus $3" >> "$FAKE/calls"
+    echo "bootstatus $3${4:+ $4}" >> "$FAKE/calls"
     for u in ${FAKE_HANGS:-}; do [ "$u" = "$n" ] && { echo "Monitoring boot status for $3."; exec /bin/sleep 30; }; done
+    # Call N hangs, and leaves a child behind that holds its output for 60 s and writes "Failed" into it 4 s in (after
+    # its own call has been cut off and read), when N is in $FAKE_ORPHAN_HANGS.
+    for u in ${FAKE_ORPHAN_HANGS:-}; do [ "$u" = "$n" ] && { ( /bin/sleep 4; echo "Data Migration Failed (orphan of call $n)"; exec /bin/sleep 56 ) &
+      echo "Monitoring boot status for $3."; exec /bin/sleep 30; }; done
+    # Call N reports a failed migration, then hangs (cut off by its slice) when N is in $FAKE_FAILED_HANGS.
+    for u in ${FAKE_FAILED_HANGS:-}; do [ "$u" = "$n" ] && { echo "Data Migration Failed"; exec /bin/sleep 30; }; done
+    # A device that never comes up never answers bootstatus either.
+    for u in ${FAKE_NO_BOOT:-}; do [ "$u" = "$3" ] && { echo "Monitoring boot status for $3."; exec /bin/sleep 30; }; done
     for u in ${FAKE_BOOTSTATUS_EXITS:-}; do [ "$u" = "$n" ] && { echo "Unable to boot: the service went away."; exit 1; }; done
+    [ -e "$FAKE/state-$3" ] && echo Booted > "$FAKE/state-$3"
     echo "Device already booted, nothing to do." ;;
   "simctl list")
     if [ "${3:-}" = devices ] && [ "${4:-}" = -j ]; then
@@ -217,11 +228,12 @@ printf '#!/usr/bin/env bash\nexit 0\n' > "$real/bin/xcodebuild"
 chmod +x "$real/bin/"*
 # real_case <name> <hanging bootstatus calls> <devices that never boot> <expected UDID> <expected log text> \
 #   <text the log must not have> [a line the fake's call log must have]. $FAKE_LIST_HANGS: device listings that hang.
-# Under /bin/bash, macOS's 3.2, unless $BOOT_SIM_BASH names another (the core job's container has bash 5).
+# Under /bin/bash, macOS's 3.2, unless $BOOT_SIM_BASH names another (Linux's bash 5 in the job `CI scripts, offline`).
 real_case() {
   local d="$real/$(echo "$1" | tr -c 'a-zA-Z0-9\n' -)"; mkdir -p "$d/fake"
   local began got code took; began=$(date +%s)
-  got="$(PATH="$real/bin:$PATH" FAKE="$d/fake" FAKE_HANGS="$2" FAKE_NO_BOOT="$3" BOOT_SIM_BOOTSTATUS_LIMIT=2 \
+  got="$(PATH="$real/bin:$PATH" FAKE="$d/fake" FAKE_HANGS="$2" FAKE_NO_BOOT="$3" BOOT_SIM_BOOTSTATUS_LIMIT="${CASE_LIMIT:-2}" \
+    BOOT_SIM_BOOTSTATUS_SLICE="${CASE_SLICE:-}" BOOT_SIM_NOBOOT_LIMIT="${CASE_NOBOOT:-}" BOOT_SIM_CONFIRM_LIMIT=2 \
     BOOT_SIM_RECHECK_LIMIT=2 BOOT_SIM_LIST_LIMIT=2 "${BOOT_SIM_BASH:-/bin/bash}" "${BOOT_SIM_UNDER_TEST:-$here/../.github/scripts/boot-sim.sh}" gatefold-ipad iPad-Pro-13 iOS-27-1 2>"$d/err")"; code=$?
   took=$(( $(date +%s) - began ))
   # The script's last background process is gone once it returns (nothing of a watchdog left to act).
@@ -253,6 +265,35 @@ FAKE_LIST_HANGS="1 2" real_case "bootstatus hangs, the listing hangs twice: stat
 # not trusted, so not that device.
 FAKE_BOOTSTATUS_EXITS="1" FAKE_LIST_HANGS="1" real_case "bootstatus exits 1, then the listing hangs: not that device" \
   "" "" dev2 "dev1: bootstatus exited 1 and the device listing did not answer; taken as not booted" "dev1: bootstatus finished clean"
+# bootstatus missed the end of the boot (7 of 41 slow boots on 2026-11-11 waited out 420 s on a ready device): asked
+# again after one slice, it answers, so that device, without the hung-device path's second bootstatus.
+CASE_LIMIT=8 CASE_SLICE=1 real_case "bootstatus gives no answer in its first slice, the next answers: that device, no recheck" \
+  "1" "" dev1 "dev1: bootstatus gave no answer in a 1 s slice" "second bootstatus"
+# Only the first ask boots (-b); the next only waits, so it can't boot again a device whose first boot failed.
+CASE_LIMIT=8 CASE_SLICE=1 real_case "only the first slice passes -b; a slice that answered logs how long bootstatus took" \
+  "1" "" dev1 "dev1: bootstatus finished after" "second bootstatus" "bootstatus dev1"
+[ "$(head -1 "$real/only-the-first-slice-passes--b--a-slice-that-answered-logs-how-long-bootstatus-took/fake/calls" 2>/dev/null)" = "bootstatus dev1 -b" ] \
+  && echo "ok   boot-sim.sh: the first ask passes -b" || { echo "FAIL boot-sim.sh: the first ask did not pass -b"; fails=$((fails + 1)); }
+# A killed bootstatus whose child still holds its output must not hold the boot (gatefold#227, probe 43007631651:
+# 60 s slices took 79 and 96 s). Before the fix this case waited out the child's 60 s and failed the 40 s bound. The
+# child's late "Failed" belongs to the call that was cut off: it must not reach a later call's output and reject dev1.
+FAKE_ORPHAN_HANGS="1" CASE_LIMIT=8 CASE_SLICE=1 real_case "a cut-off slice leaves a child holding its output: the next slice still runs at once" \
+  "" "" dev1 "dev1: bootstatus finished after" "second bootstatus"
+# Calls 3 to 5 hang too, so a later call is running when the child writes.
+FAKE_ORPHAN_HANGS="1" CASE_LIMIT=20 CASE_SLICE=1 real_case "a cut-off slice's child writes Failed later: kept out of later calls' output" \
+  "2 3 4 5" "" dev1 "dev1: bootstatus finished after" "did not boot"
+# #57: a slice printed Failed and was cut off; the next one exits 0. Not that device.
+FAKE_FAILED_HANGS="1" CASE_LIMIT=8 CASE_SLICE=1 real_case "a slice says Failed and is cut off, the next exits 0: not that device (#57)" \
+  "" "" dev2 "attempt 1: dev1 did not boot" "dev1: bootstatus finished clean"
+# A device that never came up (listed Shutdown, or here not listed at all) is given up on once NOBOOT_LIMIT passes, not at BOOTSTATUS_LIMIT.
+CASE_LIMIT=30 CASE_SLICE=1 CASE_NOBOOT=2 real_case "a device not listed past its no-boot limit: given up early, the next device" \
+  "" "dev1" dev2 "dev1 never booted: listed Missing" "dev1 is booted" "shutdown dev1"
+# One still Booting at that point is slow, not dead (gatefold#198): it keeps slicing and passes when bootstatus answers.
+FAKE_BOOTING="dev1" CASE_LIMIT=30 CASE_SLICE=1 CASE_NOBOOT=2 real_case "a device still Booting past its no-boot limit: kept, that device" \
+  "1 2 3 4" "" dev1 "dev1: bootstatus finished after" "never booted"
+# The early listing must fit inside the limit; when it can't, the old path decides (here, "never booted" at the limit).
+CASE_LIMIT=4 CASE_SLICE=1 CASE_NOBOOT=1 real_case "no room for the early listing: the limit's own path decides" \
+  "" "dev1" dev2 "dev1 never booted" "listed Missing" "shutdown dev1"
 # A limit override: a fraction is rounded down, not a crash; one that is not a number is refused.
 fr="$real/fraction"; mkdir -p "$fr/fake"
 if got="$(PATH="$real/bin:$PATH" FAKE="$fr/fake" BOOT_SIM_LIST_LIMIT=2.5 BOOT_SIM_BOOTSTATUS_LIMIT= \
