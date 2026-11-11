@@ -1,19 +1,25 @@
 name: App
 
-# Two tiers. Every pull request runs the seven required checks: the place, taps and unit legs in full, and a smoke of
-# the reviewers' checks (the last page's number, #30; the window fit; a Duo turn-and-reopen). Every push to main runs
-# the reviewers' full lists. A red main is fixed by whoever merged the change that turned it red (AGENTS.md, "CI").
+# Two tiers (gatefold#39, #198). A pull request runs the build, the unit tests, GatefoldCore and at most five UI shards,
+# picked by the paths it touches: an iPad and a Duo smoke on every app change, and the place and taps guards when it
+# touches that code (`changes` output `fired`; the lists are the Gatefold agent's). Every push to main runs the full UI
+# suite and is never cancelled; a red main is fixed as AGENTS.md says ("CI"). Each new simulator's first boot holds the
+# runner's load at 500 to 760 for about 15 min (#198), so fewer shards per pull request is the lever, not more.
 #
 # Build once: `build` makes the app and its tests for the simulator (build-for-testing) and uploads them, named by
-# commit and Xcode version; every simulator job boots its simulator while it downloads them and runs
-# test-without-building, so no job compiles the app again (gatefold#39: each job spent 10 to 16 min building).
+# commit and Xcode version; no simulator job compiles the app again (gatefold#39: each job spent 10 to 16 min building).
+# Every simulator job starts with the run, boots its new simulator while `build` builds, waits for that artifact
+# (.github/actions/await-build) and runs test-without-building.
 #
-# A pull request that changes only Markdown still gets every required check: `changes` says so, the jobs below skip,
-# and `ipad-docs` reports the three iPad checks (a skipped matrix job reports under its unexpanded name; gatefold#42).
-# The jobs run unless `changes` said "only Markdown", and a failed `build` turns them red at the download instead of
-# letting them skip, which would count as a pass. A failed `changes` leaves `full` empty, which runs the full lists.
+# UI tests run in shards (.github/workflows/ui-tests.yml), each on its own runner; a gate job named for each required
+# check is green only when all of its shards passed.
 #
-# A pull request that edits a test in the full lists, or the CI that runs them, runs the full lists too.
+# A pull request that changes only Markdown still gets every required check: `changes` says so, the test shards skip,
+# and each gate job (`iPad (...)`, `Duo (the reviewers' checks)`, `Build and unit-test the app`) reports success
+# (gatefold#42). The jobs run unless `changes` said "only Markdown", and a failed `build` turns them red at the wait
+# instead of letting them skip, which would count as a pass. A failed `changes` leaves `full` empty, which runs the full
+# lists. A pull request that edits the CI runs the full lists; one that edits a UI test class runs it in the smoke shard
+# of each device main runs it on (`edited-ipad`, `edited-duo`).
 
 on:
   pull_request:
@@ -29,6 +35,11 @@ concurrency:
   group: app-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+# The shards and the unit job read this run's jobs and artifacts to wait for the build (.github/actions/await-build).
+permissions:
+  contents: read
+  actions: read
+
 jobs:
   changes:
     name: What this change touches
@@ -37,6 +48,9 @@ jobs:
     outputs:
       app: ${{ steps.diff.outputs.app }}
       full: ${{ steps.diff.outputs.full }}
+      fired: ${{ steps.diff.outputs.fired }}
+      edited-ipad: ${{ steps.diff.outputs.edited-ipad }}
+      edited-duo: ${{ steps.diff.outputs.edited-duo }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -48,15 +62,46 @@ jobs:
           HEAD: ${{ github.event.pull_request.head.sha }}
         run: |
           set -eu
-          if [ "$EVENT" != pull_request ]; then printf 'app=true\nfull=true\n' >> "$GITHUB_OUTPUT"; exit 0; fi
+          if [ "$EVENT" != pull_request ]; then printf 'app=true\nfull=true\nfired=\nedited-ipad=\nedited-duo=\n' >> "$GITHUB_OUTPUT"; exit 0; fi
           git diff --name-only "$BASE...$HEAD" > changed.txt
           cat changed.txt
-          if grep -qE '^(GatefoldUITests/(ReviewerChecks|PageNumber|SpreadTurnSettle|ReopenAfterControls|WindowFit)UITests\.swift|\.github/(workflows/app\.yml|scripts/boot-sim\.sh|actions/)|scripts/ci-simulator\.py)$|^\.github/actions/' changed.txt; then
-            echo "::notice::This change edits a full-list test or the CI that runs it: the full lists run."
-            echo "full=true" >> "$GITHUB_OUTPUT"
+          # The CI that runs the UI tests: the full lists.
+          if grep -qE '^(\.github/(workflows/(app|ui-tests)\.yml|scripts/|actions/)|scripts/ci-(simulator|shards)\.py|scripts/ci-shards\.expect)' changed.txt; then
+            echo "::notice::This change edits the CI that runs the UI tests: the full lists run."
+            full=true
           else
-            echo "full=false" >> "$GITHUB_OUTPUT"
+            full=false
           fi
+          # Which guards this change needs (the Gatefold agent's lists). Anything that builds into the app gets the smoke;
+          # a unit-test-only or Markdown-only change gets none.
+          place='^(Gatefold/Reader/(ReaderModel|ReaderHostController|ReaderScreen|LandingPlace|BookPositions|ReopenSnapshot|BookOpener|ReaderPage|ReaderJS|Highlights)\.swift|Packages/GatefoldCore/)'
+          taps='^(Gatefold/Reader/(ReaderChrome|CurlOverlay|ReaderMoments|ReaderSheets|SettingsPanel|ReaderScreen)\.swift|Gatefold/Reader/PageCurl\.metal|Gatefold/Design/)'
+          everything='^(project\.yml|Gatefold\.xcodeproj/|Package\.(swift|resolved)|Gatefold/Resources/|Gatefold/Support/)'
+          fired=""
+          if grep -qvE '(\.md$|^GatefoldTests/)' changed.txt; then fired="smoke"; fi
+          if grep -qE "$place|$everything|^Gatefold/App/" changed.txt; then fired="$fired place-undo"; fi
+          if grep -qE "$place|$everything" changed.txt; then fired="$fired place-jumps"; fi
+          if grep -qE "$taps|$everything" changed.txt; then fired="$fired taps"; fi
+          echo "::notice::Guards for this change: ${fired:-none}"
+          echo "fired=$fired" >> "$GITHUB_OUTPUT"
+          # A UI test class this change edits runs in the smoke shard of each device main runs it on (the iPad when main
+          # runs it nowhere yet), so a new or changed test proves itself here. An edited helper (a file with no test
+          # class) changes every test: the full lists.
+          python3 -I scripts/ci-shards.py check --list | cut -f1 | grep '^main|' | cut -d'|' -f2,3 | cut -d/ -f1 | sort -u > on-main.txt || true
+          ipad="" duo=""
+          for f in $(grep -E '^GatefoldUITests/[^/]+\.swift$' changed.txt || true); do
+            [ -f "$f" ] || continue
+            classes=$(grep -oE 'class [A-Za-z0-9_]+: XCTestCase' "$f" | awk '{print $2}' | tr -d ':')
+            if [ -z "$classes" ]; then echo "::notice::$f has no test class: the full lists run."; full=true; fi
+            for c in $classes; do
+              on_ipad=$(grep -cxF "iPad Pro 13-inch|$c" on-main.txt || true)
+              on_duo=$(grep -cxF "iPhone Duo|$c" on-main.txt || true)
+              if [ "$on_ipad" != 0 ] || [ "$on_duo" = 0 ]; then ipad="$ipad $c"; fi
+              if [ "$on_duo" != 0 ]; then duo="$duo $c"; fi
+            done
+          done
+          # shellcheck disable=SC2086 # word splitting trims the lists
+          { echo "full=$full"; set -- $ipad; echo "edited-ipad=$*"; set -- $duo; echo "edited-duo=$*"; } >> "$GITHUB_OUTPUT"
           if grep -qv '\.md$' changed.txt; then echo "app=true" >> "$GITHUB_OUTPUT"; else
             echo "::notice::Only Markdown changed: the app checks report success without running."
             echo "app=false" >> "$GITHUB_OUTPUT"
@@ -134,251 +179,554 @@ jobs:
           command -v python3 >/dev/null || { apt-get update -qq && apt-get install -y -qq python3 >/dev/null; }
           python3 -I scripts/ci-simulator.py --selftest
           bash scripts/test-ci-simulator.sh
+      - name: Every listed UI test exists, and none runs in two shards (gatefold#39)
+        run: |
+          python3 -I scripts/ci-shards.py --selftest
+          python3 -I scripts/ci-shards.py check --expect scripts/ci-shards.expect
 
-  ipad:
-    name: iPad (${{ matrix.name }})
-    # The spread on rotation and the iPad's slow launch reflow are iPad paths: a rotation that
-    # reopened a page early (build 17) and a jump lost in the launch reflow. No retry: a red here is
-    # a real miss. The Duo job's posture test skips on the folded cover; this one runs it on a spread.
-    # Three jobs side by side, each with at least 30% headroom (one job took 94 of 100 min in build
-    # 19). Measured on a hosted runner: about 13 min to set up and build, then the tests' own time.
-    # Each limit is that plus the 12 min the time-left action keeps after the tests for the logs, so the
-    # tests keep the time they had before the logs were kept (gatefold#141): green place jobs took up to
-    # 79 min, and a cap at 90 - 12 would have stopped them.
+  # UI tests run in shards, each on its own runner (.github/workflows/ui-tests.yml). Every shard starts with the run: it
+  # boots its new simulator while `build` builds, then waits for the build's artifact. On main each shard holds about
+  # 5 min of tests by its median pass on main (eight runs, 42605267361 to 42905906538). On a pull request a shard runs
+  # its `pr_tests` only when its `pr_when` group is in `changes`' `fired`; every other shard reports from a no-op job.
+  # Each `timeout` is 12 min of setup (the boot and the wait for the build), plus twice the sum of its tests' slowest
+  # passes in those runs, plus 12 for the logs after the tests (gatefold#141). Twice, because on these overloaded runners
+  # a test that passes can run 2-3x its usual time; a shard that still hits its limit is a red to fix at its cause, not
+  # a limit to raise. The rotation shards (`cold`) run on the job's new iPad, before anything warms it.
+  # scripts/ci-shards.py (in `GatefoldCore tests`) fails when a listed test does not exist or runs in two shards.
+  ipad-place:
+    name: iPad place shard (${{ matrix.shard }})
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - name: place
-            # 48 min measured with the erased-iPad rotation at 23; it has taken 38, so 63 / 0.7. Green runs now take up to
-            # 79 min (gatefold#141), so the headroom is down to about 12% (gatefold#39).
-            timeout: 102 # 90 for the job, 12 for the logs
-            # Rotation first, on an erased iPad (the cold step), then the rest on the same one.
+          - shard: ipad-place-portrait
+            # 299 s median
+            tests: >-
+              NavigationPlaceUITests/testReadInPortraitRotatedThenLeftKeepsHisFirstWords
+            skip: ""
+            pr_tests: none
+            cold: false
+            timeout: 36 # 12 + 2 x 5.8 + 12
+          - shard: ipad-place-numbers
+            # 303
+            tests: >-
+              NavigationPlaceUITests/testWithPageNumbersOnReadInPortraitRotatedThenLeftKeepsHisFirstWords
+            skip: ""
+            pr_tests: none
+            cold: false
+            timeout: 36 # 12 + 2 x 5.5 + 12
+          - shard: ipad-place-loading
+            # 264 + 68
+            tests: >-
+              NavigationPlaceUITests/testAJumpFromAPageStillLoadingStartsAtOnce CountingPlaceholderUITests/testAFreshOpenOnItsSideNeverLeavesTheNumbersSlotBlank
+            skip: ""
+            pr_tests: none
+            cold: false
+            timeout: 38 # 12 + 2 x 7.0 + 12
+          - shard: ipad-place-jumps
+            # 180 + 165
+            tests: >-
+              NavigationPlaceUITests/testAContentsJumpKeepsThePlace NavigationPlaceUITests/testScrolledAfterTheLaunchReflowThenLeftKeepsWhereHeScrolled
+            skip: ""
+            pr_tests: none
+            cold: false
+            timeout: 39 # 12 + 2 x 7.5 + 12
+          - shard: ipad-place-shelf
+            # 155 + 155
+            tests: >-
+              NavigationPlaceUITests/testOpenedFromTheShelfThenLeftTwiceWithoutATurnKeepsThePlace PositionUITests/testEveryPostureKeepsThePlace
+            skip: ""
+            pr_tests: none
+            cold: false
+            timeout: 39 # 12 + 2 x 7.4 + 12
+          - shard: ipad-place-counting
+            # The catch-all for new placeholder tests: 85 + 40
+            tests: >-
+              CountingPlaceholderUITests NavigationPlaceUITests/testTheOpeningCoverLetsTheControlsThrough
+            skip: >-
+              CountingPlaceholderUITests/testAFreshOpenOnItsSideNeverLeavesTheNumbersSlotBlank
+            pr_tests: none
+            cold: false
+            timeout: 30 # 12 + 2 x 2.8 + 12
+          - shard: ipad-place-rest
+            # The catch-all for new place tests: 130 + 124 + 94
+            tests: >-
+              NavigationPlaceUITests
+            skip: >-
+              NavigationPlaceUITests/testReadInPortraitRotatedThenLeftKeepsHisFirstWords NavigationPlaceUITests/testWithPageNumbersOnReadInPortraitRotatedThenLeftKeepsHisFirstWords NavigationPlaceUITests/testAJumpFromAPageStillLoadingStartsAtOnce NavigationPlaceUITests/testAContentsJumpKeepsThePlace NavigationPlaceUITests/testScrolledAfterTheLaunchReflowThenLeftKeepsWhereHeScrolled NavigationPlaceUITests/testOpenedFromTheShelfThenLeftTwiceWithoutATurnKeepsThePlace NavigationPlaceUITests/testTheOpeningCoverLetsTheControlsThrough
+            pr_tests: none
+            cold: false
+            timeout: 39 # 12 + 2 x 7.2 + 12
+          - shard: ipad-rotate-contents
+            # Rotation, on this job's new iPad: 204
+            tests: >-
+              RotationMidTransitionUITests/testTurningDuringAContentsJump
+            skip: ""
+            pr_tests: none
             cold: true
-            title: Jumps keep his place; the number's slot is never blank
+            timeout: 36 # 12 + 2 x 5.7 + 12
+          - shard: ipad-rotate-midturn
+            # Rotation: 182 + 160, then on main the rotate-then-leave repro, 545, after the mid-turn tests as #167 runs
+            # it. On today's main the repro passes with #176's fix taken out in every order tried (#193), so never give
+            # it a shard of its own until #193 is fixed. On a pull request only the mid-turn tests run, unless it
+            # touches the reader's place code.
             tests: >-
-              NavigationPlaceUITests PositionUITests/testEveryPostureKeepsThePlace
-              CountingPlaceholderUITests
-          - name: undo
-            # Every jump's one-tap Back (#46), on its own: in the place leg it pushed a slow host past that job's
-            # limit (c4c3b6a, gatefold#39). 9 min of tests at c8d3084 plus about 13 to set up and build: 31 / 0.7.
-            timeout: 57 # 45 for the job, 12 for the logs
-            title: Every jump that isn't a turn is one tap to undo
-            tests: PlaceUndoUITests
-          - name: taps
-            # 53 min measured (a 10 min simulator boot among them); measured / 0.7 keeps 30% headroom.
-            timeout: 92 # 80 for the job, 12 for the logs
-            title: Every Fine-Tune tap lands; the furniture never moves the words
-            tests: FineTuneTapUITests PageFurnitureUITests
-          - name: reviewer
-            # 65 min measured with the full list; measured / 0.7 keeps 30% headroom. Green runs now take up to 78 min
-            # (gatefold#141), so the headroom is down to about 18% (gatefold#39).
-            timeout: 107 # 95 for the job, 12 for the logs
-            title: The reviewers' checks - reopen by hash, true numbers, reader-wide toggles, density, landing; the reader fits its window
-            # Pushes to main run the whole list.
-            tests: >-
-              ReviewerChecksUITests PageNumberUITests/testOnASpreadEveryTurnMovesOnTwoPages
-              SpreadTurnSettleUITests/testSpreadTurnsLandWithoutSliding
-              ReopenAfterControlsUITests WindowFitUITests
-            # Pull requests run its smoke: the last page's number is the count (#30), and the reader fits its window.
+              RotationMidTransitionUITests RotationRepro/testRotateThenLeaveWithoutTurning
+            skip: >-
+              RotationMidTransitionUITests/testTurningDuringAContentsJump
             pr_tests: >-
-              ReviewerChecksUITests/testTheLastPagesNumberIsTheCount WindowFitUITests
-    needs: [changes, build]
-    if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
-    runs-on: xcode-27
-    timeout-minutes: ${{ matrix.timeout }}
-    steps:
-      - name: Note when the job began, so each test step can stop in time to upload its logs (gatefold#126)
-        run: echo "JOB_START=$(date +%s)" >> "$GITHUB_ENV"
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/select-xcode
-      - name: Start an iPad Pro 13-inch booting
-        run: python3 -I scripts/ci-simulator.py start gatefold-ipad "iPad Pro 13-inch"
-      - id: fetch
-        # Usually 4 s, but 13 of 144 took over 2 min and one 10.6 min (gatefold#144), in bunches across jobs: the
-        # artifact store, not the runner. A download cut off at 4 min tries once more, rather than eating the tests' time.
-        uses: actions/download-artifact@v4
-        timeout-minutes: 4
-        continue-on-error: true
-        with:
-          name: ${{ needs.build.outputs.artifact }}
-          path: ${{ runner.temp }}
-      - name: Download the build again (the first try failed or ran past 4 min; gatefold#144)
-        if: steps.fetch.outcome != 'success'
-        uses: actions/download-artifact@v4
-        timeout-minutes: 6
-        with:
-          name: ${{ needs.build.outputs.artifact }}
-          path: ${{ runner.temp }}
-      - name: Unpack the app and its tests (built once, for this commit and Xcode)
-        id: unpack
-        env:
-          ARTIFACT: ${{ needs.build.outputs.artifact }}
-        run: |
-          set -eu
-          mkdir -p "$RUNNER_TEMP/dd/Build"
-          tar -xzf "$RUNNER_TEMP/products.tgz" -C "$RUNNER_TEMP/dd/Build"
-          # The build is keyed by commit and Xcode version and build; this job must have selected the same Xcode.
-          want="gatefold-tests-$GITHUB_SHA-xcode-$(xcodebuild -version | tr -s ' \n' '-' | sed 's/-$//; s/^Xcode-//; s/-Build-version-/-/')"
-          [ "$want" = "$ARTIFACT" ] || { echo "::error::Built as $ARTIFACT, but this job's Xcode makes $want"; exit 1; }
-          echo "XCTESTRUN=$(ls "$RUNNER_TEMP"/dd/Build/Products/*.xctestrun | head -1)" >> "$GITHUB_ENV"
-      - name: The iPad finished booting
-        id: boot
-        # boot-sim.sh retries a boot that fails or hangs (#57); this step waits for it with a limit.
-        # 1200 s for the boot, the check's listings, and 900 s for one fresh device when the first boot left room
-        # (gatefold#71; the sums are in scripts/ci-simulator.py at BOOT_ATTEMPT).
-        timeout-minutes: 30
-        env:
-          CI_SIMULATOR_BUDGET: "1740" # the step's 30 min less one: it ends with its own message, never killed
-        run: python3 -I scripts/ci-simulator.py wait gatefold-ipad "iPad Pro 13-inch" 1200
-      - name: Keep the app's place log as it runs (file and progression only, never the book's words)
-        run: |
-          sh scripts/ci-crashes.sh mark
-          nohup sh -c 'xcrun simctl spawn "$0" log stream --style compact --predicate "subsystem == \"bot.ouro.gatefold\"" 2>/dev/null \
-            | grep --line-buffered -E "place (read|write)|place:|location |reflow|landing|landed|reopen|tapped|warm:|open:|first page|pages:|turn:|spread:|veil:|settle [0-9]|snapshot:|back:" \
-            | grep --line-buffered -v -E "text:|\] visible|\] anchor[: ]" >> "$1"' "$UDID" "$RUNNER_TEMP/place.log" >/dev/null 2>&1 &
-          # Why the system ended the app, when it did (gatefold#76): runningboardd's lines about it, no page text.
-          nohup sh -c 'xcrun simctl spawn "$0" log stream --style compact --predicate "process == \"runningboardd\" AND eventMessage CONTAINS \"bot.ouro.gatefold\"" 2>/dev/null \
-            | grep --line-buffered -i -E "termin|kill|jetsam|exit|reason|invalidat|memory|highwater|limit" >> "$1"' "$UDID" "$RUNNER_TEMP/rb.log" >/dev/null 2>&1 &
-      - id: left_cold
-        if: matrix.cold
-        uses: ./.github/actions/time-left
-        with:
-          limit: ${{ matrix.timeout }}
-          cap: "65"
-      - name: Turned on its side cold (an erased iPad), the spread always comes whole and keeps his place
-        # An erased simulator, not a new one: build 19 left the old page under a frozen leaf in 3 of 9
-        # rounds after an erase and 0 of 3 on a new simulator. Once a run, before anything warms it.
-        if: matrix.cold
-        # 36 and 38 min on a hosted runner (16-17 to build, the rest tests; build 20), so 55 keeps 30%
-        # headroom, and 10 more for the erase's one fresh device (gatefold#71). A runner once hung here past 90 min with
-        # nothing in the log, so the step is bounded and reports each test as it ends. Less when less of the job is
-        # left, so a hang still uploads its logs.
-        timeout-minutes: ${{ fromJSON(steps.left_cold.outputs.minutes || '65') }}
-        env:
-          STEP_UNTIL: ${{ steps.left_cold.outputs.until }}
-          # The runner draws the spread two to four times slower than a Mac (up to 50 s seen): 90 s
-          # still fails a page left stuck for good.
-          TEST_RUNNER_GATEFOLD_SPREAD_FLOOR: "90"
-        run: |
-          udid="$UDID"
-          echo "$(date -u +%T) erasing $udid"
-          # Each simctl call bounded, then the device checked; if its runtime went ("Malformed bundle"; gatefold#71),
-          # one fresh device, erased the same way. Prints the UDID to test on.
-          # Up to 30 min of the step for the erase and one fresh device, less when the step has less, so the erase
-          # ends with its own message 5 min before the step does; the rest is the tests'.
-          budget=$(( STEP_UNTIL - $(date +%s) - 300 ))
-          [ "$budget" -le 1800 ] || budget=1800
-          [ "$budget" -ge 60 ] || budget=60
-          udid="$(CI_SIMULATOR_BUDGET=$budget python3 -I scripts/ci-simulator.py erase gatefold-ipad "$udid")"
-          DESTINATION="platform=iOS Simulator,arch=$(uname -m),id=$udid"
-          # The erase ended the place log's stream; take it up again.
-          nohup sh -c 'xcrun simctl spawn "$0" log stream --style compact --predicate "subsystem == \"bot.ouro.gatefold\"" 2>/dev/null \
-            | grep --line-buffered -E "place (read|write)|place:|location |reflow|landing|landed|reopen|tapped|warm:|open:|first page|pages:|turn:|spread:|veil:|settle [0-9]|REPRO|snapshot:|back:" \
-            | grep --line-buffered -v -E "text:|\] visible|\] anchor[: ]" >> "$1"' "$udid" "$RUNNER_TEMP/place.log" >/dev/null 2>&1 &
-          # Why the system ended the app, when it did (gatefold#76): runningboardd's lines about it, no page text.
-          nohup sh -c 'xcrun simctl spawn "$0" log stream --style compact --predicate "process == \"runningboardd\" AND eventMessage CONTAINS \"bot.ouro.gatefold\"" 2>/dev/null \
-            | grep --line-buffered -i -E "termin|kill|jetsam|exit|reason|invalidat|memory|highwater|limit" >> "$1"' "$udid" "$RUNNER_TEMP/rb.log" >/dev/null 2>&1 &
-          echo "$(date -u +%T) booted; testing"
-          python3 -I scripts/ci-within.py --until "$STEP_UNTIL" -- xcodebuild test-without-building -xctestrun "$XCTESTRUN" \
-            -destination "$DESTINATION" \
-            -only-testing:GatefoldUITests/RotationRepro \
-            -only-testing:GatefoldUITests/RotationMidTransitionUITests \
-            -resultBundlePath "$RUNNER_TEMP/cold.xcresult" 2>&1 | tee "$RUNNER_TEMP/cold.log" \
-            | grep --line-buffered -E "Test Case .*(started|passed|failed|skipped)|TEST (SUCCEEDED|FAILED)|REPRO (setup|jump|round|SUMMARY|visibleSettleMove)|MIDTURN|\.swift:[0-9]+: error|::error::" \
-            | awk '{ if (match($0, /XCTAssert[A-Za-z]* failed/)) $0 = substr($0, 1, RSTART + RLENGTH - 1) " (text withheld)"; print; fflush() }'
-          status=${PIPESTATUS[0]}
-          echo "$(date -u +%T) done ($status)"
-          exit $status
-      - id: left
-        # Its minutes are the next step's limit, and that step runs after a cold-step miss too.
-        if: ${{ !cancelled() }}
-        uses: ./.github/actions/time-left
-        with:
-          limit: ${{ matrix.timeout }}
-      - name: ${{ matrix.title }}
-        # A miss in the cold step still lets the rest report: one failure must not hide the others.
-        # Not without the app or a booted iPad, which would only add a misleading red.
-        if: ${{ !cancelled() && steps.unpack.outcome == 'success' && steps.boot.outcome == 'success' }}
-        # Ends 12 min before the job's limit: a job cut off at its limit skips every later step and uploads nothing.
-        timeout-minutes: ${{ fromJSON(steps.left.outputs.minutes) }}
-        env:
-          STEP_UNTIL: ${{ steps.left.outputs.until }}
-          TESTS: ${{ needs.changes.outputs.full != 'false' && matrix.tests || matrix.pr_tests || matrix.tests }}
-          # Five rounds of the controls-then-numbers reopen (about 2 min each); 30 locally.
-          TEST_RUNNER_GATEFOLD_REOPEN_ROUNDS: "5"
-        run: |
-          set -o pipefail
-          only=()
-          for t in $TESTS; do only+=("-only-testing:GatefoldUITests/$t"); done
-          # Each test's result prints as it finishes: a job cut off at its limit still names the slow test
-          # (run 42393941976's reviewer leg printed nothing, since this read the log only at the end).
-          python3 -I scripts/ci-within.py --until "$STEP_UNTIL" -- xcodebuild test-without-building -xctestrun "$XCTESTRUN" \
-            -destination "$DESTINATION" "${only[@]}" \
-            -resultBundlePath "$RUNNER_TEMP/ipad.xcresult" 2>&1 | tee "$RUNNER_TEMP/ipad.log" \
-            | grep --line-buffered -E "Test Case .*(started|passed|failed|skipped)|TEST (SUCCEEDED|FAILED)|REPRO (round|SUMMARY)|TAPRATE|PLACEHOLDER|REVIEWER|OLDPAGEHELD|WINDOWFIT|REOPEN round [0-9]+:|\.swift:[0-9]+: error|::error::" \
-            | awk '{ if (match($0, /XCTAssert[A-Za-z]* failed/)) $0 = substr($0, 1, RSTART + RLENGTH - 1) " (text withheld)"; print; fflush() }'
-          exit ${PIPESTATUS[0]}
-      - name: The app did not crash, and the system did not end it for memory (gatefold#76)
-        if: ${{ !cancelled() }}
-        timeout-minutes: 2
-        run: sh scripts/ci-crashes.sh check
-      - name: Why each failed test failed (from the result bundles, text withheld)
-        if: failure() || cancelled()
-        timeout-minutes: 5
-        run: python3 -I scripts/ci-failures.py "$RUNNER_TEMP"/cold.xcresult "$RUNNER_TEMP"/ipad.xcresult
-      - name: The app's place log, closed off (file and progression only, never the book's words)
-        # Every run, so a green run can be audited too (gatefold#127).
-        if: always()
-        # Kept as the job ran (a `log show` over hours of a busy simulator took 23 min and ran the job
-        # out of time, losing every log), so here it is only closed off.
-        timeout-minutes: 2
-        run: |
-          pkill -f "log stream --style compact" || true
-          wc -l < "$RUNNER_TEMP/place.log" || true
-      - uses: actions/upload-artifact@v4
-        # Every run, so a green run can be audited too (gatefold#127): kept 3 days unless the job failed.
-        if: always()
-        # A green job stays green if the artifact store has a bad moment.
-        continue-on-error: true
-        with:
-          name: ipad-${{ matrix.name }}-results
-          retention-days: ${{ job.status != 'failure' && 3 || 0 }} # 0: the repository's default
-          path: |
-            ${{ runner.temp }}/place.log
-            ${{ runner.temp }}/rb.log
-            ${{ runner.temp }}/crashes
-            ${{ runner.temp }}/cold.log
-            ${{ runner.temp }}/ipad.log
-      - uses: actions/upload-artifact@v4
-        # The result bundles only when the job did not pass: they are large (gatefold#127).
-        if: failure() || cancelled()
-        continue-on-error: true
-        with:
-          name: ipad-${{ matrix.name }}-xcresults
-          path: |
-            ${{ runner.temp }}/cold.xcresult
-            ${{ runner.temp }}/ipad.xcresult
+              NavigationPlaceUITests/testAContentsJumpKeepsThePlace
+              RotationMidTransitionUITests/testTurningDuringAPageTurn
+            # On a pull request: Place kept through a jump and a rotation (#130), on place changes (359 s).
+            pr_when: place-jumps
+            cold: true
+            timeout: 61 # 12 + 2 x 18.1 + 12
+          - shard: ipad-rotate-stalled
+            # Main only: 427
+            tests: >-
+              RotationRepro
+            skip: >-
+              RotationRepro/testRotateThenLeaveWithoutTurning
+            pr_tests: none
+            cold: true
+            timeout: 43 # 12 + 2 x 9.1 + 12
+    uses: ./.github/workflows/ui-tests.yml
+    with:
+      device: "iPad Pro 13-inch"
+      sim: gatefold-ipad
+      shard: ${{ matrix.shard }}
+      tests: ${{ matrix.tests }}
+      skip: ${{ matrix.skip }}
+      pr_tests: ${{ matrix.pr_tests }}
+      pr_when: ${{ matrix.pr_when || '' }}
+      fired: ${{ needs.changes.outputs.fired }}
+      extra: ${{ needs.changes.outputs.edited-ipad }}
+      full: ${{ needs.changes.outputs.full }}
+      cold: ${{ matrix.cold }}
+      timeout: ${{ matrix.timeout }}
 
-  app:
-    name: Build and unit-test the app
-    # xcode-27 is the only hosted image with Xcode 27.1: the first SDK with the iPhone Duo fold
-    # APIs, the iOS 27 deployment target and the iPhone Duo simulator. macos-latest (macOS 26) has
-    # only Xcode 26, so this job cannot move there.
-    # ~55 min in build 19: 85 keeps 30% headroom, and 12 more for the logs after the tests (gatefold#141).
-    needs: [changes, build]
+  ipad-undo:
+    name: iPad undo shard (${{ matrix.shard }})
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - shard: ipad-undo-underway
+            # 224 + 98
+            tests: >-
+              PlaceUndoUITests/testATapWhileAJumpIsUnderWayLandsWhereHeChose PlaceUndoUITests/testATapAboveYourPageClosesItAndKeepsThePage
+            skip: ""
+            pr_tests: none
+            cold: false
+            timeout: 38 # 12 + 2 x 6.8 + 12
+          - shard: ipad-undo-chapter
+            # 173 + 127
+            tests: >-
+              PlaceUndoUITests/testAChaptersFirstPageTurnsBackByTapAndBySwipe PlaceUndoUITests/testAJumpIsOneTapToUndoWithTheControlsHidden
+            skip: ""
+            pr_tests: none
+            cold: false
+            timeout: 37 # 12 + 2 x 6.5 + 12
+          - shard: ipad-undo-edge
+            # 128 + 110
+            tests: >-
+              PlaceUndoUITests/testATapAtTheLeftEdgeTurnsBackPromptly PlaceUndoUITests/testATapAtTheLeftEdgeTurnsBackPromptlyWithinAChapter
+            skip: ""
+            pr_tests: >-
+              PlaceUndoUITests/testATouchOnTheScrubberNeverJumps
+              PlaceUndoUITests/testAJumpIsOneTapToUndoWithTheControlsHidden
+              NavigationPlaceUITests/testTheCloudsOfferOverTheOpeningCoverTakesHisTap
+            # On a pull request: Place, no accidental jumps and one-tap undo, on place and launch changes (339 s; the undo test is noisy, #196).
+            pr_when: place-undo
+            cold: false
+            timeout: 34 # 12 + 2 x 4.8 + 12
+          - shard: ipad-undo-rest
+            # The catch-all for new undo tests: 94, and the spread's left edge
+            tests: >-
+              PlaceUndoUITests
+            skip: >-
+              PlaceUndoUITests/testATapWhileAJumpIsUnderWayLandsWhereHeChose PlaceUndoUITests/testATapAboveYourPageClosesItAndKeepsThePage PlaceUndoUITests/testAChaptersFirstPageTurnsBackByTapAndBySwipe PlaceUndoUITests/testAJumpIsOneTapToUndoWithTheControlsHidden PlaceUndoUITests/testATapAtTheLeftEdgeTurnsBackPromptly PlaceUndoUITests/testATapAtTheLeftEdgeTurnsBackPromptlyWithinAChapter
+            pr_tests: none
+            cold: false
+            timeout: 33 # 12 + 2 x 4.4 + 12
+    uses: ./.github/workflows/ui-tests.yml
+    with:
+      device: "iPad Pro 13-inch"
+      sim: gatefold-ipad
+      shard: ${{ matrix.shard }}
+      tests: ${{ matrix.tests }}
+      skip: ${{ matrix.skip }}
+      pr_tests: ${{ matrix.pr_tests }}
+      pr_when: ${{ matrix.pr_when || '' }}
+      fired: ${{ needs.changes.outputs.fired }}
+      extra: ${{ needs.changes.outputs.edited-ipad }}
+      full: ${{ needs.changes.outputs.full }}
+      cold: ${{ matrix.cold }}
+      timeout: ${{ matrix.timeout }}
+
+  ipad-taps:
+    name: iPad taps shard (${{ matrix.shard }})
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - shard: ipad-taps-quick
+            # 202 + 83
+            tests: >-
+              FineTuneTapUITests/testAQuickTouchChangesEverySwitchOnce FineTuneTapUITests/testATapOnTheRowsNameChangesItsSwitch
+            skip: ""
+            pr_tests: >-
+              FineTuneTapUITests/testAQuickTouchChangesEverySwitchOnce
+              FineTuneTapUITests/testATapOnTheRowsNameChangesItsSwitch
+              SpreadTurnSettleUITests/testSpreadTurnsLandWithoutSliding
+            # On a pull request: Page and taps: quick touches (#175), a row name, spread turns, on chrome, curl and settings changes (334 s).
+            pr_when: taps
+            cold: false
+            timeout: 41 # 12 + 2 x 8.2 + 12
+          - shard: ipad-taps-rest
+            # The catch-all for new Fine-Tune tests: 183
+            tests: >-
+              FineTuneTapUITests
+            skip: >-
+              FineTuneTapUITests/testAQuickTouchChangesEverySwitchOnce FineTuneTapUITests/testATapOnTheRowsNameChangesItsSwitch FineTuneTapUITests/testEveryTapFlipsJustifyPortrait FineTuneTapUITests/testEveryTapFlipsPageNumbersPortrait FineTuneTapUITests/testEveryTapFlipsPositionLabelPortrait FineTuneTapUITests/testEveryTapFlipsPagesLeftPortrait FineTuneTapUITests/testEveryTapFlipsJustifyLandscape FineTuneTapUITests/testEveryTapFlipsPageNumbersLandscape FineTuneTapUITests/testEveryTapFlipsPositionLabelLandscape FineTuneTapUITests/testEveryTapFlipsPagesLeftLandscape
+            pr_tests: none
+            cold: false
+            timeout: 33 # 12 + 2 x 4.3 + 12
+          - shard: ipad-taps-furniture
+            # 130 + 129 + 86
+            tests: >-
+              PageFurnitureUITests
+            skip: ""
+            pr_tests: none
+            cold: false
+            timeout: 38 # 12 + 2 x 6.5 + 12
+          - shard: ipad-taps-portrait
+            # Main only, every tap, one switch each (#200): 168 + 135
+            tests: >-
+              FineTuneTapUITests/testEveryTapFlipsJustifyPortrait FineTuneTapUITests/testEveryTapFlipsPageNumbersPortrait
+            skip: ""
+            pr_tests: none
+            cold: false
+            timeout: 35 # 12 + 2 x 5.1 + 12
+          - shard: ipad-taps-portrait-more
+            # Main only, every tap (#200): 120 + 129 + 149
+            tests: >-
+              FineTuneTapUITests/testEveryTapFlipsPositionLabelPortrait FineTuneTapUITests/testEveryTapFlipsPagesLeftPortrait FineTuneTapUITests/testEveryTapFlipsPagesLeftLandscape
+            skip: ""
+            pr_tests: none
+            cold: false
+            timeout: 38 # 12 + 2 x 6.6 + 12
+          - shard: ipad-taps-landscape
+            # Main only, every tap (#200): 295
+            tests: >-
+              FineTuneTapUITests/testEveryTapFlipsJustifyLandscape
+            skip: ""
+            pr_tests: none
+            cold: false
+            timeout: 34 # 12 + 2 x 4.9 + 12
+          - shard: ipad-taps-landscape-more
+            # Main only, every tap (#200): 165 + 146
+            tests: >-
+              FineTuneTapUITests/testEveryTapFlipsPageNumbersLandscape FineTuneTapUITests/testEveryTapFlipsPositionLabelLandscape
+            skip: ""
+            pr_tests: none
+            cold: false
+            timeout: 35 # 12 + 2 x 5.2 + 12
+    uses: ./.github/workflows/ui-tests.yml
+    with:
+      device: "iPad Pro 13-inch"
+      sim: gatefold-ipad
+      shard: ${{ matrix.shard }}
+      tests: ${{ matrix.tests }}
+      skip: ${{ matrix.skip }}
+      pr_tests: ${{ matrix.pr_tests }}
+      pr_when: ${{ matrix.pr_when || '' }}
+      fired: ${{ needs.changes.outputs.fired }}
+      extra: ${{ needs.changes.outputs.edited-ipad }}
+      full: ${{ needs.changes.outputs.full }}
+      cold: ${{ matrix.cold }}
+      timeout: ${{ matrix.timeout }}
+
+  ipad-reviewer:
+    name: iPad reviewer shard (${{ matrix.shard }})
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - shard: ipad-reviewer-smoke
+            # The PR smoke: the last page's number is the count (#30), and the reader fits its window: 169 + 80 + 77
+            tests: >-
+              ReviewerChecksUITests/testTheLastPagesNumberIsTheCount WindowFitUITests
+            skip: ""
+            pr_tests: >-
+              NavigationPlaceUITests/testOpenedFromTheShelfThenLeftTwiceWithoutATurnKeepsThePlace
+              PlaceUndoUITests/testATapAtTheLeftEdgeTurnsBackPromptly
+            # On a pull request: iPad smoke, on every app change: open, leave and reopen on his page; a tap turns back (285 s).
+            pr_when: smoke
+            cold: false
+            timeout: 39 # 12 + 2 x 7.3 + 12
+          - shard: ipad-reviewer-controls
+            # Main only: 1481
+            tests: >-
+              ReopenAfterControlsUITests
+            skip: ""
+            pr_tests: none
+            cold: false
+            timeout: 90 # 12 + 2 x 32.8 + 12
+          - shard: ipad-reviewer-numbers
+            # Main only: 926
+            tests: >-
+              ReviewerChecksUITests/testPageNumbersAreOnOrOffInEveryBook
+            skip: ""
+            pr_tests: none
+            cold: false
+            timeout: 66 # 12 + 2 x 20.6 + 12
+          - shard: ipad-reviewer-spread
+            # Main only: 358 + 99
+            tests: >-
+              PageNumberUITests/testOnASpreadEveryTurnMovesOnTwoPages SpreadTurnSettleUITests/testSpreadTurnsLandWithoutSliding
+            skip: ""
+            pr_tests: none
+            cold: false
+            timeout: 48 # 12 + 2 x 12.0 + 12
+          - shard: ipad-reviewer-rest
+            # Main only, the catch-all for new reviewer checks: 842 + 88
+            tests: >-
+              ReviewerChecksUITests
+            skip: >-
+              ReviewerChecksUITests/testTheLastPagesNumberIsTheCount ReviewerChecksUITests/testPageNumbersAreOnOrOffInEveryBook
+            pr_tests: none
+            cold: false
+            timeout: 74 # 12 + 2 x 24.8 + 12
+    uses: ./.github/workflows/ui-tests.yml
+    with:
+      device: "iPad Pro 13-inch"
+      sim: gatefold-ipad
+      shard: ${{ matrix.shard }}
+      tests: ${{ matrix.tests }}
+      skip: ${{ matrix.skip }}
+      pr_tests: ${{ matrix.pr_tests }}
+      pr_when: ${{ matrix.pr_when || '' }}
+      fired: ${{ needs.changes.outputs.fired }}
+      extra: ${{ needs.changes.outputs.edited-ipad }}
+      full: ${{ needs.changes.outputs.full }}
+      cold: ${{ matrix.cold }}
+      # A smoke shard that also runs the classes this pull request edits gets 90 min, whatever their length.
+      timeout: ${{ matrix.pr_when == 'smoke' && needs.changes.outputs.edited-ipad != '' && 90 || matrix.timeout }}
+
+  duo:
+    name: Duo shard (${{ matrix.shard }})
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - shard: duo-taps-portrait
+            # Every tap, alone: 374
+            tests: >-
+              FineTuneTapUITests/testEveryTapFlipsJustifyPortrait FineTuneTapUITests/testEveryTapFlipsPageNumbersPortrait FineTuneTapUITests/testEveryTapFlipsPositionLabelPortrait FineTuneTapUITests/testEveryTapFlipsPagesLeftPortrait
+            skip: ""
+            pr_tests: none
+            cold: false
+            timeout: 40 # 12 + 2 x 7.7 + 12
+          - shard: duo-taps-quick
+            # 176 + 64
+            tests: >-
+              FineTuneTapUITests/testAQuickTouchChangesEverySwitchOnce FineTuneTapUITests/testATapOnTheRowsNameChangesItsSwitch
+            skip: ""
+            pr_tests: none
+            cold: false
+            timeout: 35 # 12 + 2 x 5.3 + 12
+          - shard: duo-taps-rest
+            # The catch-all for new Fine-Tune tests: 133, and the landscape every-tap test, which skips on the Duo
+            tests: >-
+              FineTuneTapUITests
+            skip: >-
+              FineTuneTapUITests/testEveryTapFlipsJustifyPortrait FineTuneTapUITests/testEveryTapFlipsPageNumbersPortrait FineTuneTapUITests/testEveryTapFlipsPositionLabelPortrait FineTuneTapUITests/testEveryTapFlipsPagesLeftPortrait FineTuneTapUITests/testAQuickTouchChangesEverySwitchOnce FineTuneTapUITests/testATapOnTheRowsNameChangesItsSwitch
+            pr_tests: none
+            cold: false
+            timeout: 34 # 12 + 2 x 4.5 + 12
+          - shard: duo-position
+            # 151 + 137
+            tests: >-
+              PositionUITests/testTabletopDeckTurnsAndResizes PositionUITests/testFontChangeKeepsThePlace
+            skip: ""
+            pr_tests: none
+            cold: false
+            timeout: 39 # 12 + 2 x 7.0 + 12
+          - shard: duo-position-rest
+            # The catch-all for new position tests: 66, rotation and posture
+            tests: >-
+              PositionUITests
+            skip: >-
+              PositionUITests/testTabletopDeckTurnsAndResizes PositionUITests/testFontChangeKeepsThePlace
+            pr_tests: none
+            cold: false
+            timeout: 35 # 12 + 2 x 5.5 + 12
+          - shard: duo-pagenumber
+            # A page a turn, and a reopen keeps the numbers: 295
+            tests: >-
+              PageNumberUITests/testEveryTurnMovesOnAPageAndAReopenKeepsTheNumbers
+            skip: ""
+            pr_tests: >-
+              PageNumberUITests/testEveryTurnMovesOnAPageAndAReopenKeepsTheNumbers
+              PlaceUndoUITests/testATapAtTheLeftEdgeTurnsBackPromptly
+            # On a pull request: Duo smoke, on every app change: turns, a reopen keeps the numbers, a tap turns back (358 s).
+            pr_when: smoke
+            cold: false
+            timeout: 39 # 12 + 2 x 7.3 + 12
+          - shard: duo-turnback
+            # The folded Duo's turn checks (#61): within 12 reads and 24 looks, a TURNWAIT line each: 120 + 99
+            tests: >-
+              PlaceUndoUITests/testATapAtTheLeftEdgeTurnsBackPromptly PlaceUndoUITests/testATapAtTheLeftEdgeTurnsBackPromptlyWithinAChapter
+            skip: ""
+            pr_tests: none
+            cold: false
+            timeout: 34 # 12 + 2 x 4.9 + 12
+          - shard: duo-reviewer-reopen
+            # Main only: 791
+            tests: >-
+              ReviewerChecksUITests/testEveryReopenReturnsTheSameWords
+            skip: ""
+            pr_tests: none
+            cold: false
+            timeout: 67 # 12 + 2 x 21.4 + 12
+          - shard: duo-reviewer-rest
+            # Main only, the catch-all for new reviewer checks: 964 + 204 (the default spread skips on the Duo)
+            tests: >-
+              ReviewerChecksUITests
+            skip: >-
+              ReviewerChecksUITests/testEveryReopenReturnsTheSameWords
+            pr_tests: none
+            cold: false
+            timeout: 71 # 12 + 2 x 23.2 + 12
+    uses: ./.github/workflows/ui-tests.yml
+    with:
+      device: "iPhone Duo"
+      sim: gatefold-duo
+      shard: ${{ matrix.shard }}
+      tests: ${{ matrix.tests }}
+      skip: ${{ matrix.skip }}
+      pr_tests: ${{ matrix.pr_tests }}
+      pr_when: ${{ matrix.pr_when || '' }}
+      fired: ${{ needs.changes.outputs.fired }}
+      extra: ${{ needs.changes.outputs.edited-duo }}
+      full: ${{ needs.changes.outputs.full }}
+      cold: ${{ matrix.cold }}
+      # A smoke shard that also runs the classes this pull request edits gets 90 min, whatever their length.
+      timeout: ${{ matrix.pr_when == 'smoke' && needs.changes.outputs.edited-duo != '' && 90 || matrix.timeout }}
+
+  ipad-place-gate:
+    # The required check for the iPad's place: green when every shard passed, or when only Markdown changed (gatefold#42).
+    # Always runs, so the check reports on every pull request; a failed or cancelled shard turns it red.
+    name: iPad (place)
+    needs: [changes, ipad-place]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - env:
+          APP: ${{ needs.changes.outputs.app }}
+          SHARDS: ${{ needs.ipad-place.result }}
+        run: |
+          if [ "$APP" = false ]; then echo "Only Markdown changed; nothing to test."; exit 0; fi
+          echo "Shards: $SHARDS"
+          [ "$SHARDS" = success ]
+
+  ipad-undo-gate:
+    # The required check for one-tap undo: green when every shard passed, or when only Markdown changed (gatefold#42).
+    # Always runs, so the check reports on every pull request; a failed or cancelled shard turns it red.
+    name: iPad (undo)
+    needs: [changes, ipad-undo]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - env:
+          APP: ${{ needs.changes.outputs.app }}
+          SHARDS: ${{ needs.ipad-undo.result }}
+        run: |
+          if [ "$APP" = false ]; then echo "Only Markdown changed; nothing to test."; exit 0; fi
+          echo "Shards: $SHARDS"
+          [ "$SHARDS" = success ]
+
+  ipad-taps-gate:
+    # The required check for the iPad's taps: green when every shard passed, or when only Markdown changed (gatefold#42).
+    # Always runs, so the check reports on every pull request; a failed or cancelled shard turns it red.
+    name: iPad (taps)
+    needs: [changes, ipad-taps]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - env:
+          APP: ${{ needs.changes.outputs.app }}
+          SHARDS: ${{ needs.ipad-taps.result }}
+        run: |
+          if [ "$APP" = false ]; then echo "Only Markdown changed; nothing to test."; exit 0; fi
+          echo "Shards: $SHARDS"
+          [ "$SHARDS" = success ]
+
+  ipad-reviewer-gate:
+    # The required check for the reviewers' checks on the iPad: green when every shard passed, or when only Markdown
+    # changed (gatefold#42). Always runs, so the check reports on every pull request; a failed or cancelled shard turns
+    # it red.
+    name: iPad (reviewer)
+    needs: [changes, ipad-reviewer]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - env:
+          APP: ${{ needs.changes.outputs.app }}
+          SHARDS: ${{ needs.ipad-reviewer.result }}
+        run: |
+          if [ "$APP" = false ]; then echo "Only Markdown changed; nothing to test."; exit 0; fi
+          echo "Shards: $SHARDS"
+          [ "$SHARDS" = success ]
+
+  duo-gate:
+    # The required check for the Duo's UI tests: green when every shard passed, or when only Markdown changed
+    # (gatefold#42). Always runs, so the check reports on every pull request; a failed or cancelled shard turns it red.
+    name: Duo (the reviewers' checks)
+    needs: [changes, duo]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - env:
+          APP: ${{ needs.changes.outputs.app }}
+          SHARDS: ${{ needs.duo.result }}
+        run: |
+          if [ "$APP" = false ]; then echo "Only Markdown changed; nothing to test."; exit 0; fi
+          echo "Shards: $SHARDS"
+          [ "$SHARDS" = success ]
+
+  # xcode-27 is the only hosted image with Xcode 27.1: the first SDK with the iPhone Duo fold APIs, the iOS 27
+  # deployment target and the iPhone Duo simulator. macos-latest (macOS 26) has only Xcode 26, so these jobs cannot
+  # move there. The required check `Build and unit-test the app` is `app` below, green only when the Release build and
+  # the unit tests both passed (gatefold#39): the Release build starts with the run instead of after `build`, and the
+  # Duo's position tests and Fine-Tune taps are Duo shards.
+  release:
+    name: Release build for devices
+    needs: changes
     if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
     runs-on: xcode-27
-    timeout-minutes: 97
+    # Up to 27 min measured in the old `app` job (Metal 5.1, xcodegen 4.4, Release build 16.6, and the setup;
+    # runs 42570370853 to 42675099629): / 0.7 keeps 30% headroom.
+    timeout-minutes: 39
     steps:
-      - name: Note when the job began, so each test step can stop in time to upload its logs (gatefold#126)
-        run: echo "JOB_START=$(date +%s)" >> "$GITHUB_ENV"
       - uses: actions/checkout@v4
       - uses: ./.github/actions/select-xcode
-      - name: Start an iPhone Duo booting
-        run: python3 -I scripts/ci-simulator.py start gatefold-duo "iPhone Duo"
-      # The device build runs while the Duo boots. A boot retry restarts CoreSimulatorService, which this generic
-      # device build does not use for a destination; retries are rare (#57), so the overlap is worth it.
       - name: Install the Metal toolchain (the page curl is a Metal shader)
         run: xcodebuild -downloadComponent MetalToolchain
       - name: Generate the Xcode project from project.yml
@@ -416,6 +764,26 @@ jobs:
             exit 1
           fi
           echo "No launch jump in the Release app"
+
+  unit:
+    name: Unit tests (iPhone Duo)
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
+    runs-on: xcode-27
+    # The shards' formula: 12 min of setup (the boot and the wait for the build), twice the slowest green unit step
+    # (7.8 min, run 42746464846; median 4.8 on main), and 12 for the logs after the tests (gatefold#141).
+    timeout-minutes: 40
+    steps:
+      - name: Note when the job began, so each test step can stop in time to upload its logs (gatefold#126)
+        run: echo "JOB_START=$(date +%s)" >> "$GITHUB_ENV"
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/select-xcode
+      - name: Start an iPhone Duo booting
+        run: python3 -I scripts/ci-simulator.py start gatefold-duo "iPhone Duo"
+      - name: Wait for this commit's build (Build for testing runs while the simulator boots)
+        id: artifact
+        timeout-minutes: 36
+        uses: ./.github/actions/await-build
       - id: fetch
         # Usually 4 s, but 13 of 144 took over 2 min and one 10.6 min (gatefold#144), in bunches across jobs: the
         # artifact store, not the runner. A download cut off at 4 min tries once more, rather than eating the tests' time.
@@ -423,25 +791,27 @@ jobs:
         timeout-minutes: 4
         continue-on-error: true
         with:
-          name: ${{ needs.build.outputs.artifact }}
+          name: ${{ steps.artifact.outputs.artifact }}
           path: ${{ runner.temp }}
-      - name: Download the build again (the first try failed or ran past 4 min; gatefold#144)
-        if: steps.fetch.outcome != 'success'
+      - id: whole
+        # A download can report success and still end truncated ("truncated gzip input" at the unpack; gatefold#89).
+        name: The download is whole (gzip -t)
+        if: steps.fetch.outcome == 'success'
+        continue-on-error: true
+        timeout-minutes: 2
+        run: gzip -t "$RUNNER_TEMP/products.tgz"
+      - name: Download the build again (the first try failed, ran past 4 min or came truncated; gatefold#144, gatefold#89)
+        if: steps.fetch.outcome != 'success' || steps.whole.outcome != 'success'
         uses: actions/download-artifact@v4
         timeout-minutes: 6
         with:
-          name: ${{ needs.build.outputs.artifact }}
+          name: ${{ steps.artifact.outputs.artifact }}
           path: ${{ runner.temp }}
       - name: Unpack the app and its tests (built once, for this commit and Xcode)
-        env:
-          ARTIFACT: ${{ needs.build.outputs.artifact }}
         run: |
           set -eu
           mkdir -p "$RUNNER_TEMP/dd/Build"
           tar -xzf "$RUNNER_TEMP/products.tgz" -C "$RUNNER_TEMP/dd/Build"
-          # The build is keyed by commit and Xcode version and build; this job must have selected the same Xcode.
-          want="gatefold-tests-$GITHUB_SHA-xcode-$(xcodebuild -version | tr -s ' \n' '-' | sed 's/-$//; s/^Xcode-//; s/-Build-version-/-/')"
-          [ "$want" = "$ARTIFACT" ] || { echo "::error::Built as $ARTIFACT, but this job's Xcode makes $want"; exit 1; }
           echo "XCTESTRUN=$(ls "$RUNNER_TEMP"/dd/Build/Products/*.xctestrun | head -1)" >> "$GITHUB_ENV"
       - name: The iPhone Duo finished booting
         # 1200 s for the boot, the check's listings, and 900 s for one fresh device when the first boot left room
@@ -453,7 +823,7 @@ jobs:
       - id: left_unit
         uses: ./.github/actions/time-left
         with:
-          limit: "97" # the job's timeout-minutes
+          limit: "40" # the job's timeout-minutes
       - name: Unit tests
         timeout-minutes: ${{ fromJSON(steps.left_unit.outputs.minutes) }}
         env:
@@ -463,189 +833,43 @@ jobs:
           python3 -I scripts/ci-within.py --until "$STEP_UNTIL" -- xcodebuild test-without-building -xctestrun "$XCTESTRUN" \
             -destination "$DESTINATION" \
             -only-testing:GatefoldTests \
-            -resultBundlePath "$RUNNER_TEMP/unit.xcresult" 2>&1 | tail -200
-      - id: left_ui
-        uses: ./.github/actions/time-left
-        with:
-          limit: "97" # the job's timeout-minutes
-      - name: Reading position survives posture and font changes; every Fine-Tune tap lands (UI tests)
-        timeout-minutes: ${{ fromJSON(steps.left_ui.outputs.minutes) }}
-        env:
-          STEP_UNTIL: ${{ steps.left_ui.outputs.until }}
-        run: |
-          set -o pipefail
-          sh scripts/ci-crashes.sh mark
-          python3 -I scripts/ci-within.py --until "$STEP_UNTIL" -- xcodebuild test-without-building -xctestrun "$XCTESTRUN" \
-            -destination "$DESTINATION" \
-            -only-testing:GatefoldUITests/PositionUITests \
-            -only-testing:GatefoldUITests/FineTuneTapUITests \
-            -resultBundlePath "$RUNNER_TEMP/ui.xcresult" > "$RUNNER_TEMP/ui.log" 2>&1 || status=$?
-          # No retry: a wait that runs out prints how many probe reads it made and the slowest one.
-          grep -E "error:|Test Case .*(passed|failed|skipped)|TEST (SUCCEEDED|FAILED)|probe says|probe timing|TAPRATE" "$RUNNER_TEMP/ui.log" | tail -60 || true
-          exit ${status:-0}
-      - name: The app did not crash, and the system did not end it for memory (gatefold#76)
-        if: ${{ !cancelled() }}
-        timeout-minutes: 2
-        run: sh scripts/ci-crashes.sh check
+            -resultBundlePath "$RUNNER_TEMP/unit.xcresult" 2>&1 | tee "$RUNNER_TEMP/unit.log" | tail -200
       - name: Why each failed test failed (from the result bundles, text withheld)
         if: failure() || cancelled()
         timeout-minutes: 5
-        run: python3 -I scripts/ci-failures.py "$RUNNER_TEMP"/unit.xcresult "$RUNNER_TEMP"/ui.xcresult
+        run: python3 -I scripts/ci-failures.py "$RUNNER_TEMP"/unit.xcresult
       - uses: actions/upload-artifact@v4
         # Every run, so a green run can be audited too (gatefold#127): kept 3 days unless the job failed.
         if: always()
         # A green job stays green if the artifact store has a bad moment.
         continue-on-error: true
         with:
-          name: app-results
+          name: unit-results-${{ github.run_attempt }}
           retention-days: ${{ job.status != 'failure' && 3 || 0 }} # 0: the repository's default
-          path: |
-            ${{ runner.temp }}/ui.log
-            ${{ runner.temp }}/crashes
+          path: ${{ runner.temp }}/unit.log
       - uses: actions/upload-artifact@v4
-        # The result bundles only when the job did not pass: they are large (gatefold#127).
+        # The result bundle only when the job did not pass: it is large (gatefold#127).
         if: failure() || cancelled()
         continue-on-error: true
         with:
-          name: xcresults
-          path: |
-            ${{ runner.temp }}/unit.xcresult
-            ${{ runner.temp }}/ui.xcresult
+          name: unit-xcresults-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/unit.xcresult
 
-  duo-reviewer:
-    name: Duo (the reviewers' checks)
-    # The reviewers' standing checks on the Duo: reopen by hash, true numbers and reader-wide toggles
-    # (density is the iPad's), and a page a turn with a reopen keeping its numbers. Then the folded
-    # Duo's turn checks (#61), on pull requests too: a tap at either edge turns within 12 reads and
-    # 24 looks, with a TURNWAIT line of counts for each.
-    # Pull requests run its smoke (a page a turn, and a reopen keeps the numbers); pushes to main add the reviewers'
-    # full list, about 13 min a test on this runner (gatefold#39).
-    needs: [changes, build]
-    if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
-    runs-on: xcode-27
-    # 45 min measured (build 20), plus about 10 for the two turn checks; 47 min at c4c3b6a with both.
-    # feel-ci sets this job longer (gatefold#65 tracks the overrun): at a merge, the larger value wins.
-    timeout-minutes: 85 # 73 for the tests, 12 for the logs after them (gatefold#141)
-    steps:
-      - name: Note when the job began, so each test step can stop in time to upload its logs (gatefold#126)
-        run: echo "JOB_START=$(date +%s)" >> "$GITHUB_ENV"
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/select-xcode
-      - name: Start an iPhone Duo booting
-        run: python3 -I scripts/ci-simulator.py start gatefold-duo "iPhone Duo"
-      - id: fetch
-        # Usually 4 s, but 13 of 144 took over 2 min and one 10.6 min (gatefold#144), in bunches across jobs: the
-        # artifact store, not the runner. A download cut off at 4 min tries once more, rather than eating the tests' time.
-        uses: actions/download-artifact@v4
-        timeout-minutes: 4
-        continue-on-error: true
-        with:
-          name: ${{ needs.build.outputs.artifact }}
-          path: ${{ runner.temp }}
-      - name: Download the build again (the first try failed or ran past 4 min; gatefold#144)
-        if: steps.fetch.outcome != 'success'
-        uses: actions/download-artifact@v4
-        timeout-minutes: 6
-        with:
-          name: ${{ needs.build.outputs.artifact }}
-          path: ${{ runner.temp }}
-      - name: Unpack the app and its tests (built once, for this commit and Xcode)
-        env:
-          ARTIFACT: ${{ needs.build.outputs.artifact }}
-        run: |
-          set -eu
-          mkdir -p "$RUNNER_TEMP/dd/Build"
-          tar -xzf "$RUNNER_TEMP/products.tgz" -C "$RUNNER_TEMP/dd/Build"
-          # The build is keyed by commit and Xcode version and build; this job must have selected the same Xcode.
-          want="gatefold-tests-$GITHUB_SHA-xcode-$(xcodebuild -version | tr -s ' \n' '-' | sed 's/-$//; s/^Xcode-//; s/-Build-version-/-/')"
-          [ "$want" = "$ARTIFACT" ] || { echo "::error::Built as $ARTIFACT, but this job's Xcode makes $want"; exit 1; }
-          echo "XCTESTRUN=$(ls "$RUNNER_TEMP"/dd/Build/Products/*.xctestrun | head -1)" >> "$GITHUB_ENV"
-      - name: The iPhone Duo finished booting
-        # 1200 s for the boot, the check's listings, and 900 s for one fresh device when the first boot left room
-        # (gatefold#71; the sums are in scripts/ci-simulator.py at BOOT_ATTEMPT).
-        timeout-minutes: 30
-        env:
-          CI_SIMULATOR_BUDGET: "1740" # the step's 30 min less one: it ends with its own message, never killed
-        run: python3 -I scripts/ci-simulator.py wait gatefold-duo "iPhone Duo" 1200
-      - name: Keep the app's place log as it runs (file and progression only, never the book's words)
-        run: |
-          sh scripts/ci-crashes.sh mark
-          nohup sh -c 'xcrun simctl spawn "$0" log stream --style compact --predicate "subsystem == \"bot.ouro.gatefold\"" 2>/dev/null \
-            | grep --line-buffered -E "place (read|write)|place:|location |reflow|landing|landed|reopen|tapped|warm:|open:|first page|pages:|turn:|spread:|veil:|settle [0-9]|snapshot:|back:" \
-            | grep --line-buffered -v -E "text:|\] visible|\] anchor[: ]" >> "$1"' "$UDID" "$RUNNER_TEMP/place.log" >/dev/null 2>&1 &
-          # Why the system ended the app, when it did (gatefold#76): runningboardd's lines about it, no page text.
-          nohup sh -c 'xcrun simctl spawn "$0" log stream --style compact --predicate "process == \"runningboardd\" AND eventMessage CONTAINS \"bot.ouro.gatefold\"" 2>/dev/null \
-            | grep --line-buffered -i -E "termin|kill|jetsam|exit|reason|invalidat|memory|highwater|limit" >> "$1"' "$UDID" "$RUNNER_TEMP/rb.log" >/dev/null 2>&1 &
-      - id: left
-        uses: ./.github/actions/time-left
-        with:
-          limit: "85" # the job's timeout-minutes
-      - name: The reviewers' checks on the Duo
-        timeout-minutes: ${{ fromJSON(steps.left.outputs.minutes) }}
-        env:
-          STEP_UNTIL: ${{ steps.left.outputs.until }}
-          FULL: ${{ needs.changes.outputs.full }}
-        run: |
-          set -o pipefail
-          only=(-only-testing:GatefoldUITests/PageNumberUITests/testEveryTurnMovesOnAPageAndAReopenKeepsTheNumbers
-            -only-testing:GatefoldUITests/PlaceUndoUITests/testATapAtTheLeftEdgeTurnsBackPromptly
-            -only-testing:GatefoldUITests/PlaceUndoUITests/testATapAtTheLeftEdgeTurnsBackPromptlyWithinAChapter)
-          if [ "$FULL" != false ]; then only+=(-only-testing:GatefoldUITests/ReviewerChecksUITests); fi
-          python3 -I scripts/ci-within.py --until "$STEP_UNTIL" -- xcodebuild test-without-building -xctestrun "$XCTESTRUN" \
-            -destination "$DESTINATION" "${only[@]}" \
-            -resultBundlePath "$RUNNER_TEMP/duo.xcresult" 2>&1 | tee "$RUNNER_TEMP/duo.log" \
-            | grep --line-buffered -E "Test Case .*(started|passed|failed|skipped)|TEST (SUCCEEDED|FAILED)|REVIEWER|TURNWAIT|\.swift:[0-9]+: error|::error::" \
-            | awk '{ if (match($0, /XCTAssert[A-Za-z]* failed/)) $0 = substr($0, 1, RSTART + RLENGTH - 1) " (text withheld)"; print; fflush() }'
-          exit ${PIPESTATUS[0]}
-      - name: The app did not crash, and the system did not end it for memory (gatefold#76)
-        if: ${{ !cancelled() }}
-        timeout-minutes: 2
-        run: sh scripts/ci-crashes.sh check
-      - name: Why each failed test failed (from the result bundles, text withheld)
-        if: failure() || cancelled()
-        timeout-minutes: 5
-        run: python3 -I scripts/ci-failures.py "$RUNNER_TEMP"/duo.xcresult
-      - name: The app's place log, closed off (file and progression only, never the book's words)
-        # Every run, so a green run can be audited too (gatefold#127).
-        if: always()
-        # Kept as the job ran (a `log show` over hours of a busy simulator took 23 min and ran the job
-        # out of time, losing every log), so here it is only closed off.
-        timeout-minutes: 2
-        run: |
-          pkill -f "log stream --style compact" || true
-          wc -l < "$RUNNER_TEMP/place.log" || true
-      - uses: actions/upload-artifact@v4
-        # Every run, so a green run can be audited too (gatefold#127): kept 3 days unless the job failed.
-        if: always()
-        # A green job stays green if the artifact store has a bad moment.
-        continue-on-error: true
-        with:
-          name: duo-reviewer-results
-          retention-days: ${{ job.status != 'failure' && 3 || 0 }} # 0: the repository's default
-          path: |
-            ${{ runner.temp }}/place.log
-            ${{ runner.temp }}/rb.log
-            ${{ runner.temp }}/crashes
-            ${{ runner.temp }}/duo.log
-      - uses: actions/upload-artifact@v4
-        # The result bundles only when the job did not pass: they are large (gatefold#127).
-        if: failure() || cancelled()
-        continue-on-error: true
-        with:
-          name: duo-reviewer-xcresults
-          path: |
-            ${{ runner.temp }}/duo.xcresult
-
-  ipad-docs:
-    # A skipped matrix job reports under its unexpanded name, so a Markdown-only pull request gets the four iPad checks
-    # from here instead (gatefold#42). It runs only when `changes` found nothing but Markdown.
-    name: iPad (${{ matrix.name }})
-    needs: changes
-    if: needs.changes.outputs.app != 'true'
-    strategy:
-      matrix:
-        name: [place, taps, reviewer, undo]
+  app:
+    # The required check for the app's Release build and unit tests: green when both passed, or when only Markdown
+    # changed (gatefold#42). Always runs, so the check reports on every pull request; a failed or cancelled job turns
+    # it red.
+    name: Build and unit-test the app
+    needs: [changes, release, unit]
+    if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
-      - run: echo "Only Markdown changed; nothing on the iPad to test."
+      - env:
+          APP: ${{ needs.changes.outputs.app }}
+          RELEASE: ${{ needs.release.result }}
+          UNIT: ${{ needs.unit.result }}
+        run: |
+          if [ "$APP" = false ]; then echo "Only Markdown changed; nothing to build."; exit 0; fi
+          echo "Release build: $RELEASE; unit tests: $UNIT"
+          [ "$RELEASE" = success ] && [ "$UNIT" = success ]

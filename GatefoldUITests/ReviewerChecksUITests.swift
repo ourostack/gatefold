@@ -168,20 +168,36 @@ final class ReviewerChecksUITests: XCTestCase {
     }
 
     /// The Cloud's place offered on a first open here: take it (the tab brings back an offer that folded).
+    /// The offer is tapped only while it is hittable: it can fold into its tab between a look and the tap (#207).
+    /// Any type, never `app.buttons` (#165). Judged in looks, not seconds (#94): 200 at least 0.3 s apart (the old
+    /// 60 s on a fast runner); the 2400 s guard only catches a hang: a look is up to five queries of the app, and a
+    /// starved runner has taken 1-2 s a query, so 200 looks can run to about 2000 s. No 600 s hold here, unlike
+    /// ReopenAfterControls: the offers of the books this test opens and leaves untaken must still fold off the page.
     private func takeTheOffer() {
-        let offer = app.buttons["banner.jump"], tab = el("banner.tab")
-        let up0 = Date().addingTimeInterval(60)
-        while words.isEmpty, !offer.exists, Date() < up0 {
+        let offer = el("banner.jump"), tab = el("banner.tab")
+        let start = Date(), hung = start.addingTimeInterval(2400)
+        var looks = 0, taken = false
+        while looks < 200, words.isEmpty {
+            if Date() > hung { XCTFail("hang: looking for the Cloud's offer ran \(looks) looks over 2400 s"); return }
+            looks += 1
+            if offer.exists, offer.isHittable { offer.tap(); taken = true; break }
             if tab.exists, tab.isHittable { tab.tap() }
             RunLoop.current.run(until: Date().addingTimeInterval(0.3))
         }
-        guard offer.exists, words.isEmpty else {
-            if words.isEmpty { note("no Cloud offer on a page with no words") }
+        let secs = String(format: "%.1f", Date().timeIntervalSince(start))
+        guard taken else {
+            if words.isEmpty { note("no Cloud offer on a page with no words after \(looks) looks in \(secs) s") }
             return
         }
-        offer.tap()
-        let up = Date().addingTimeInterval(60)
-        while words.isEmpty, Date() < up { RunLoop.current.run(until: Date().addingTimeInterval(0.3)) }
+        note("offer taken after \(looks) looks in \(secs) s")
+        // Its own clock, so a slow look above doesn't spend this loop's guard.
+        let shown = Date(), stuck = shown.addingTimeInterval(2400)
+        var reads = 0
+        while reads < 200, words.isEmpty {
+            if Date() > stuck { XCTFail("hang: the offer's page ran \(reads) reads over 2400 s without words"); return }
+            reads += 1
+            RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+        }
     }
 
     private func numbersShown(_ timeout: TimeInterval = 120) -> Bool {

@@ -1,0 +1,245 @@
+name: UI test shard
+
+# One shard of App's UI tests, called by app.yml. The job starts with the run, not after `build`: it boots its new
+# simulator while `Build for testing` builds, waits for that build's artifact (named by commit and Xcode version), and
+# runs this shard's tests with test-without-building (gatefold#39). The shards of one required check report through
+# that check's gate job in app.yml. scripts/ci-shards.py checks the lists in app.yml: every listed test exists, and
+# none runs in two shards of a tier.
+
+on:
+  workflow_call:
+    inputs:
+      device:
+        description: Device name, or a prefix of it ("iPad Pro 13-inch", "iPhone Duo")
+        type: string
+        required: true
+      sim:
+        description: The simulator's name (gatefold-ipad, gatefold-duo)
+        type: string
+        required: true
+      shard:
+        description: Unique name for this shard's artifacts
+        type: string
+        required: true
+      tests:
+        description: The full list, run on main and on full-list pull requests (space-separated, under GatefoldUITests)
+        type: string
+        default: ""
+      skip:
+        description: Tests skipped from the full list (for a catch-all shard)
+        type: string
+        default: ""
+      pr_tests:
+        description: The pull-request list; "none" means this shard runs only on main and on full-list pull requests.
+        type: string
+        default: "none"
+      full:
+        description: needs.changes.outputs.full ('false' on a pull request that runs the PR lists)
+        type: string
+        default: "true"
+      pr_when:
+        description: The group of paths whose change runs this shard's PR list (smoke, place-undo, place-jumps, taps)
+        type: string
+        default: ""
+      fired:
+        description: needs.changes.outputs.fired, the groups this pull request's paths touch, space-separated
+        type: string
+        default: ""
+      extra:
+        description: needs.changes.outputs.edited-ipad or edited-duo, the UI test classes this pull request edits that run on this device; a smoke shard runs them too
+        type: string
+        default: ""
+      cold:
+        description: >-
+          The rotation tests: run on this job's just-created iPad before anything else warms it, with the spread's
+          90 s floor. A new simulator is at least as cold as an erased one (gatefold#150, #167), so there is no erase.
+        type: boolean
+        default: false
+      timeout:
+        description: >-
+          The job's limit in minutes: 12 of setup (the boot and the wait for the build), twice its tests' slowest
+          passing times, and 12 for the logs after the tests (gatefold#141)
+        type: number
+        required: true
+
+jobs:
+  # A shard with nothing to run on this pull request still ends in one successful job, so its caller's result is
+  # success and the gate stays strict (a caller whose only job skipped has no documented result).
+  main-only:
+    name: Main only
+    if: ${{ !(inputs.full != 'false' || (inputs.pr_tests != 'none' && contains(format(' {0} ', inputs.fired), format(' {0} ', inputs.pr_when)))) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - run: echo "Nothing in this shard guards what this pull request touches; it runs on main."
+
+  run:
+    name: Tests
+    if: ${{ inputs.full != 'false' || (inputs.pr_tests != 'none' && contains(format(' {0} ', inputs.fired), format(' {0} ', inputs.pr_when))) }}
+    runs-on: xcode-27
+    timeout-minutes: ${{ inputs.timeout }}
+    steps:
+      - name: Note when the job began, so each test step can stop in time to upload its logs (gatefold#126)
+        run: echo "JOB_START=$(date +%s)" >> "$GITHUB_ENV"
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/select-xcode
+      - name: Start the ${{ inputs.device }} booting
+        run: python3 -I scripts/ci-simulator.py start "${{ inputs.sim }}" "${{ inputs.device }}"
+      - name: Sample the runner's load every 20 s for the whole job (gatefold#39)
+        run: |
+          # shellcheck disable=SC2016
+          nohup sh -c 'while :; do echo "== $(date -u +%T) $(sysctl -n vm.loadavg)"; ps -Aceo pcpu=,rss=,comm= -r | head -8; sleep 20; done' \
+            >> "$RUNNER_TEMP/load.log" 2>&1 &
+      - name: Wait for this commit's build (Build for testing runs while the simulator boots)
+        id: artifact
+        # Up to the build's own 35 min; it usually lands 2 to 4 min after the run starts.
+        timeout-minutes: 36
+        uses: ./.github/actions/await-build
+      - name: The ${{ inputs.device }} finished booting
+        # Before the download: a first boot holds the runner's load at 500 to 760, and a download beside it stalls to
+        # its 4-min limit (gatefold#198). boot-sim.sh retries a boot that fails or hangs (#57); this waits with a limit.
+        # 1200 s for the boot, the check's listings, and 900 s for one fresh device when the first boot left room
+        # (gatefold#71; the sums are in scripts/ci-simulator.py at BOOT_ATTEMPT).
+        timeout-minutes: 30
+        env:
+          CI_SIMULATOR_BUDGET: "1740" # the step's 30 min less one: it ends with its own message, never killed
+        run: python3 -I scripts/ci-simulator.py wait "${{ inputs.sim }}" "${{ inputs.device }}" 1200
+      - id: fetch
+        # Usually 4 s, but 13 of 144 took over 2 min and one 10.6 min (gatefold#144), in bunches across jobs: the
+        # artifact store, not the runner. A download cut off at 4 min tries once more, rather than eating the tests' time.
+        uses: actions/download-artifact@v4
+        timeout-minutes: 4
+        continue-on-error: true
+        with:
+          name: ${{ steps.artifact.outputs.artifact }}
+          path: ${{ runner.temp }}
+      - id: whole
+        # A download can report success and still end truncated ("truncated gzip input" at the unpack; gatefold#89).
+        name: The download is whole (gzip -t)
+        if: steps.fetch.outcome == 'success'
+        continue-on-error: true
+        timeout-minutes: 2
+        run: gzip -t "$RUNNER_TEMP/products.tgz"
+      - name: Download the build again (the first try failed, ran past 4 min or came truncated; gatefold#144, gatefold#89)
+        if: steps.fetch.outcome != 'success' || steps.whole.outcome != 'success'
+        uses: actions/download-artifact@v4
+        timeout-minutes: 6
+        with:
+          name: ${{ steps.artifact.outputs.artifact }}
+          path: ${{ runner.temp }}
+      - name: Unpack the app and its tests (built once, for this commit and Xcode)
+        run: |
+          set -eu
+          mkdir -p "$RUNNER_TEMP/dd/Build"
+          tar -xzf "$RUNNER_TEMP/products.tgz" -C "$RUNNER_TEMP/dd/Build"
+          echo "XCTESTRUN=$(ls "$RUNNER_TEMP"/dd/Build/Products/*.xctestrun | head -1)" >> "$GITHUB_ENV"
+      - name: Keep the app's place log as it runs (file and progression only, never the book's words)
+        run: |
+          sh scripts/ci-crashes.sh mark
+          nohup sh -c 'xcrun simctl spawn "$0" log stream --style compact --predicate "subsystem == \"bot.ouro.gatefold\"" 2>/dev/null \
+            | grep --line-buffered -E "place (read|write)|place:|location |reflow|landing|landed|reopen|tapped|warm:|open:|first page|pages:|turn:|spread:|veil:|settle [0-9]|REPRO|snapshot:|back:" \
+            | grep --line-buffered -v -E "text:|\] visible|\] anchor[: ]" >> "$1"' "$UDID" "$RUNNER_TEMP/place.log" >/dev/null 2>&1 &
+          # Why the system ended the app, when it did (gatefold#76): runningboardd's lines about it, no page text.
+          nohup sh -c 'xcrun simctl spawn "$0" log stream --style compact --predicate "process == \"runningboardd\" AND eventMessage CONTAINS \"bot.ouro.gatefold\"" 2>/dev/null \
+            | grep --line-buffered -i -E "termin|kill|jetsam|exit|reason|invalidat|memory|highwater|limit" >> "$1"' "$UDID" "$RUNNER_TEMP/rb.log" >/dev/null 2>&1 &
+          # The reader's own lines (launch-jump landings among them; gatefold#72), kept for every shard as Real unfold
+          # keeps them; lines carrying the page's text are dropped. ($0 and $1 are the inner shell's, so single quotes.)
+          # shellcheck disable=SC2016
+          nohup sh -c 'xcrun simctl spawn "$0" log stream --style compact --predicate "subsystem == \"bot.ouro.gatefold\" AND category == \"reader\"" 2>/dev/null \
+            | grep --line-buffered -v "text:" >> "$1"' "$UDID" "$RUNNER_TEMP/reader.log" >/dev/null 2>&1 &
+      - id: left
+        uses: ./.github/actions/time-left
+        with:
+          limit: ${{ inputs.timeout }}
+      - name: This shard's tests
+        # Ends 12 min before the job's limit: a job cut off at its limit skips every later step and uploads nothing.
+        timeout-minutes: ${{ fromJSON(steps.left.outputs.minutes) }}
+        env:
+          STEP_UNTIL: ${{ steps.left.outputs.until }}
+          FULL: ${{ inputs.full }}
+          TESTS: ${{ inputs.tests }}
+          SKIP: ${{ inputs.skip }}
+          PR_TESTS: ${{ inputs.pr_tests }}
+          EXTRA: ${{ inputs.pr_when == 'smoke' && inputs.extra || '' }}
+          # Five rounds of the controls-then-numbers reopen (about 2 min each); 30 locally.
+          TEST_RUNNER_GATEFOLD_REOPEN_ROUNDS: "5"
+          # The rotation shards only: the runner draws the spread two to four times slower than a Mac (up to 50 s
+          # seen), so 90 s still fails a page left stuck for good. Empty elsewhere, which the tests read as no floor.
+          TEST_RUNNER_GATEFOLD_SPREAD_FLOOR: ${{ inputs.cold && '90' || '' }}
+        run: |
+          set -o pipefail
+          # A pull request runs the PR list, and in a smoke shard the UI test classes it edits; main and full-list pull
+          # requests run the full list, less the skipped tests.
+          if [ "$FULL" = false ]; then
+            list="$PR_TESTS $EXTRA"; skip=""
+          else
+            list="$TESTS"; skip="$SKIP"
+          fi
+          # An empty list would run the whole UI suite.
+          [ -n "$list" ] || { echo "::error::A shard needs a test list"; exit 1; }
+          only=()
+          for t in $list; do only+=("-only-testing:GatefoldUITests/$t"); done
+          for t in $skip; do only+=("-skip-testing:GatefoldUITests/$t"); done
+          echo "$(date -u +%T) running: ${only[*]}"
+          # Each test's result prints as it finishes: a job cut off at its limit still names the slow test
+          # (run 42393941976's reviewer leg printed nothing, since this read the log only at the end).
+          python3 -I scripts/ci-within.py --until "$STEP_UNTIL" -- xcodebuild test-without-building -xctestrun "$XCTESTRUN" \
+            -destination "$DESTINATION" "${only[@]}" \
+            -resultBundlePath "$RUNNER_TEMP/ui.xcresult" 2>&1 | tee "$RUNNER_TEMP/ui.log" \
+            | grep --line-buffered -E "Test Case .*(started|passed|failed|skipped)|TEST (SUCCEEDED|FAILED)|REPRO (setup|jump|round|SUMMARY|visibleSettleMove)|MIDTURN|TAPRATE|PLACEHOLDER|REVIEWER|OLDPAGEHELD|TURNWAIT|WINDOWFIT|REOPEN round [0-9]+:|probe says|probe timing|\.swift:[0-9]+: error|::error::" \
+            | awk '{ if (match($0, /XCTAssert[A-Za-z]* failed/)) $0 = substr($0, 1, RSTART + RLENGTH - 1) " (text withheld)"; print; fflush() }'
+          status=${PIPESTATUS[0]}
+          echo "$(date -u +%T) done ($status)"
+          # Every entry must have run at least one test: a name that matches nothing is a red, never a quiet pass.
+          # Checked after a passing run only; a run that failed or ran out of time is red already.
+          if [ "$status" = 0 ]; then
+            for t in $list; do
+              cls="${t%%/*}"; want="-[GatefoldUITests.$cls "
+              [ "$t" != "$cls" ] && want="-[GatefoldUITests.$cls ${t#*/}]"
+              if ! grep -qF -- "$want" "$RUNNER_TEMP/ui.log"; then
+                echo "::error title=No tests ran::$t matched no test."
+                status=1
+              fi
+            done
+          fi
+          exit $status
+      - name: The app did not crash, and the system did not end it for memory (gatefold#76)
+        if: ${{ !cancelled() }}
+        timeout-minutes: 2
+        run: sh scripts/ci-crashes.sh check
+      - name: Why each failed test failed (from the result bundles, text withheld)
+        if: failure() || cancelled()
+        timeout-minutes: 5
+        run: python3 -I scripts/ci-failures.py "$RUNNER_TEMP"/ui.xcresult
+      - name: The app's place log, closed off (file and progression only, never the book's words)
+        # Every run, so a green run can be audited too (gatefold#127).
+        if: always()
+        # Kept as the job ran (a `log show` over hours of a busy simulator took 23 min and ran the job
+        # out of time, losing every log), so here it is only closed off.
+        timeout-minutes: 2
+        run: |
+          pkill -f "log stream --style compact" || true
+          wc -l < "$RUNNER_TEMP/place.log" || true
+      - uses: actions/upload-artifact@v4
+        # Every run, so a green run can be audited too (gatefold#127): kept 3 days unless the job failed.
+        if: always()
+        # A green job stays green if the artifact store has a bad moment.
+        continue-on-error: true
+        with:
+          # By attempt, so a rerun keeps the failed attempt's logs beside its own.
+          name: ${{ inputs.shard }}-results-${{ github.run_attempt }}
+          retention-days: ${{ job.status != 'failure' && 3 || 0 }} # 0: the repository's default
+          path: |
+            ${{ runner.temp }}/place.log
+            ${{ runner.temp }}/rb.log
+            ${{ runner.temp }}/reader.log
+            ${{ runner.temp }}/load.log
+            ${{ runner.temp }}/crashes
+            ${{ runner.temp }}/ui.log
+      - uses: actions/upload-artifact@v4
+        # The result bundles only when the job did not pass: they are large (gatefold#127).
+        if: failure() || cancelled()
+        continue-on-error: true
+        with:
+          name: ${{ inputs.shard }}-xcresults-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ui.xcresult

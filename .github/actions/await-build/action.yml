@@ -1,0 +1,43 @@
+name: Wait for this commit's build
+description: >-
+  Waits until `Build for testing`, in this same run, has uploaded the app and its tests for this commit and this job's
+  Xcode, so a simulator job can boot alongside the build instead of after it (gatefold#39). Fails when the build ends
+  red or cancelled, or passes with another Xcode's name: never a skip, which would count as a pass. Needs the
+  `actions: read` permission and the Xcode already selected.
+outputs:
+  artifact:
+    description: The artifact's name, gatefold-tests-<commit>-xcode-<version>-<build>.
+    value: ${{ steps.wait.outputs.artifact }}
+runs:
+  using: composite
+  steps:
+    - id: wait
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        set -eu
+        # The name `build` gives it; this job must have selected the same Xcode, so it names what it needs itself.
+        want="gatefold-tests-$GITHUB_SHA-xcode-$(xcodebuild -version | tr -s ' \n' '-' | sed 's/-$//; s/^Xcode-//; s/-Build-version-/-/')"
+        echo "artifact=$want" >> "$GITHUB_OUTPUT"
+        api="repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+        started=$(date +%s)
+        # One API call each 15 s while the build runs (about 27 jobs poll at once), the artifact list only once it ends.
+        # filter=latest: on "Re-run failed jobs" the build keeps its earlier, passing attempt.
+        while :; do
+          build=$(gh api "$api/jobs?filter=latest&per_page=100" \
+            --jq '[.jobs[] | select(.name == "Build for testing")][0] | "\(.status) \(.conclusion)"' 2>/dev/null || echo unknown)
+          case "$build" in
+            "completed success") break ;;
+            "completed "*) echo "::error::Build for testing ended ${build#completed }, so there is nothing to test"; exit 1 ;;
+          esac
+          sleep 15
+        done
+        # An artifact is listed a moment after its upload ends; if it is still missing a minute on, it is another Xcode's.
+        for _ in 1 2 3 4 5 6 7; do
+          n=$(gh api "$api/artifacts?name=$want" --jq '.total_count' 2>/dev/null || echo 0)
+          if [ "${n:-0}" -ge 1 ]; then echo "$(date -u +%T) $want is up after $(( $(date +%s) - started )) s"; exit 0; fi
+          sleep 10
+        done
+        echo "::error::Build for testing passed but uploaded no $want: it used another Xcode than this job"
+        exit 1
