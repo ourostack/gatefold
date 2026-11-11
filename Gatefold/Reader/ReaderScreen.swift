@@ -233,6 +233,8 @@ struct ReaderScreen: View {
         .sheet(isPresented: $showSearch) {
             SearchSheet(model: model)
         }
+        // A jump still on its way with no veil over the page gives way to him opening Contents (gatefold#254).
+        .onChange(of: showContents) { _, shown in if shown { model.contentsOpened() } }
         .sheet(isPresented: $showContents) {
             ContentsSheet(model: model)
         }
@@ -407,6 +409,18 @@ struct ReaderScreen: View {
                 .opacity(0.01)
                 .accessibilityIdentifier("reader.savedWords")
                 .accessibilityValue(model.savedWordsProbe)
+                .allowsHitTesting(false)
+            Text("saved place")
+                .font(.system(size: 1))
+                .opacity(0.01)
+                .accessibilityIdentifier("reader.savedPlace")
+                .accessibilityValue(model.savedPlaceProbe)
+                .allowsHitTesting(false)
+            Text("shown place")
+                .font(.system(size: 1))
+                .opacity(0.01)
+                .accessibilityIdentifier("reader.shownPlace")
+                .accessibilityValue(model.shownPlaceProbe)
                 .allowsHitTesting(false)
             Text(model.anchorCheck)
                 .font(.system(size: 1))
