@@ -1585,6 +1585,16 @@ final class ReaderModel {
     /// can't drop the move he made under it (gatefold#96).
     func owedPlaceOnLeaving() -> Locator? {
         guard !isClosed, !isWarming else { return nil }
+        // A jump of his still on its way (its chapter loading, Readium's page not yet reported) is owed its
+        // target: the page on screen is still the one before it, and with no report nothing was written,
+        // so the reopen had no place at all (gatefold#279). Not a contents jump's (gatefold#254 keeps the
+        // place before), and not once a touch or a report has made the page his.
+        if let (target, move) = jumpOnItsWay, move == moves, recordedMoves != moves, !touchedSinceLocation,
+           fragmentJumpMove != moves {
+            readerLog.notice("place: leaving a jump still on its way; its target kept at \(Self.placeTag(target), privacy: .public)")
+            owedJumpTarget = (target, move)
+            placeOwed = true
+        }
         // No move owed, but a restore that never settled left him the page as it was: that page is what he
         // saw, so it is what the reopen shows (gatefold#133).
         if !placeOwed {
@@ -1892,6 +1902,9 @@ final class ReaderModel {
     @ObservationIgnored private var claimedMove: Int?
     /// A launch jump that never landed, and its move: owed by a reflow, its target is the place kept.
     @ObservationIgnored private var owedJumpTarget: (Locator, Int)?
+    /// The newest jump of his to a place (the scrubber, a bookmark, a search result) and its move: the place
+    /// a leave keeps while that move has no report yet (gatefold#279).
+    @ObservationIgnored private var jumpOnItsWay: (Locator, Int)?
     /// The latest report of the claimed move that was dropped for the claim.
     @ObservationIgnored private var contestingReport: Locator?
     /// Set when a reflow ends (or an owed place is kept) and cleared by a move of his, or a report his
@@ -2341,6 +2354,7 @@ final class ReaderModel {
         let back = rememberBack ? rememberPlace() : nil
         defer { publishBack(back) }
         if let locator = await publication.locate(progression: progression) {
+            jumpOnItsWay = (locator, moves)
             await veiled { _ = await self.page?.go(to: locator) }
             await captureAnchor()
             // Behind the cover nothing hides a chapter still loading, so keep the cover up until the
@@ -2478,6 +2492,7 @@ final class ReaderModel {
         moves += 1
         let back = rememberBack ? rememberPlace() : nil
         defer { publishBack(back) }
+        jumpOnItsWay = (locator, moves)
         await veiled { _ = await self.page?.go(to: locator) }
         await captureAnchor()
     }
