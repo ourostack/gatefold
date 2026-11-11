@@ -490,11 +490,12 @@ import Testing
         }, book: { $0.totalProgression = 0.05; $0.lastOpened = Date().addingTimeInterval(-600) },
            startAt: 0.05, jumpBeat: { await Task.yield() })
         defer { f.model.close() }
+        // Before the open loads its counts, so none come from or go to the shared store.
+        if counted { try await Self.countsLikeADevice(f) }
         await f.model.load()
         await f.model.locationDidChange(try #require(f.page.currentLocation))
         await f.model.checkRemote()
         try #require(f.model.suggestion != nil, "the Cloud's place is offered")
-        f.page.countsColumns = counted ? 240 : nil
         f.model.forceReady()
         for _ in 0..<1_000 where !f.model.pageReady { try? await Task.sleep(for: .milliseconds(10)) }
         try #require(f.model.pageReady, "the first page never showed")
@@ -538,6 +539,8 @@ import Testing
         }, book: { $0.totalProgression = 0.05; $0.lastOpened = Date().addingTimeInterval(-600) },
            startAt: 0.05, jumpBeat: { await Task.yield() })
         defer { f.model.close() }
+        // Before the open loads its counts, so none come from or go to the shared store.
+        if counted { try await Self.countsLikeADevice(f) }
         await f.model.load()
         await f.model.locationDidChange(try #require(f.page.currentLocation))
         await f.model.checkRemote()
@@ -549,7 +552,6 @@ import Testing
         let next = positions[at + 1]
         let aim = positions[at + 3]
         try #require(next.href == here.href && aim.href == here.href, "his page, the next and the Cloud's aren't one file")
-        f.page.countsColumns = counted ? 240 : nil
         f.model.forceReady()
         for _ in 0..<1_000 where !f.model.pageReady { try? await Task.sleep(for: .milliseconds(10)) }
         try #require(f.model.pageReady, "the first page never showed")
@@ -958,6 +960,16 @@ import Testing
     /// The place kept for the book, as a total progression.
     private static func kept(_ f: S.Fixture) -> Double? {
         f.app.library.book(S.frankenstein.fastHash)?.locatorJSON.flatMap { try? Locator(jsonString: $0) }?.locations.totalProgression
+    }
+
+    /// A screen page holding two of Readium's positions, as on a device (one to two each), counted into a
+    /// store of this reader's own: counts saved to the shared one would reach every other fixture.
+    private static func countsLikeADevice(_ f: ReaderSyncTests.Fixture) async throws {
+        f.model.pageStore = ScreenPageStore(directory: URL.temporaryDirectory.appending(path: "screen-pages-\(UUID().uuidString)"))
+        nonisolated(unsafe) let p = f.publication
+        let positions = try await p.positions().get()
+        let perFile = Dictionary(grouping: positions, by: { $0.href.string }).mapValues { max(1, $0.count / 2) }
+        f.page.countsColumns = { perFile[$0] ?? 1 }
     }
 
     /// The book's screen pages counted (the page counts each chapter at once): waited on in reads.

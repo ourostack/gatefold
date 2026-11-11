@@ -457,12 +457,14 @@ final class ReaderModel {
     /// The last count ended by itself with chapters it couldn't count; cleared when a count starts.
     private(set) var countGaveUp = false
     private var lastGeometry: (href: String, geometry: ScreenPageGeometry)?
-    private static let pageStore: ScreenPageStore = {
+    private static let sharedPageStore: ScreenPageStore = {
         let directory = URL.cachesDirectory.appending(path: "ScreenPages", directoryHint: .isDirectory)
         // A clean start (`-GatefoldReset`) counts every book again.
         if LaunchOptions.resetState { try? FileManager.default.removeItem(at: directory) }
         return ScreenPageStore(directory: directory)
     }()
+    /// Where this reader keeps the book's screen-page counts; tests give each reader its own.
+    @ObservationIgnored var pageStore: ScreenPageStore = ReaderModel.sharedPageStore
 
     /// What the book's pages are cut by now; nil in scroll, which has no pages.
     var screenLayout: ScreenPageLayout? {
@@ -499,7 +501,7 @@ final class ReaderModel {
             return
         }
         if screenPages?.layout != key {
-            screenPages = Self.pageStore.load(book: bookID, layout: key, readingOrder: readingOrderHrefs)
+            screenPages = pageStore.load(book: bookID, layout: key, readingOrder: readingOrderHrefs)
             screenNumbers = nil
             lastGeometry = nil
             // A new layout's count owes nothing to the last one's.
@@ -517,7 +519,7 @@ final class ReaderModel {
             if let (again, second) = await page?.screenGeometry(), again == href, second.columns == geometry.columns,
                keeper.reflowing == nil, screenPages?.layout == key {
                 screenPages?.record(href: href, geometry: second)
-                if let map = screenPages { Self.pageStore.save(map) }
+                if let map = screenPages { pageStore.save(map) }
             }
         }
         guard screenPages?.layout == key else { return }
@@ -550,7 +552,7 @@ final class ReaderModel {
                 return
             }
             self.screenPages?.record(href: href, columns: columns)
-            if let map = self.screenPages { Self.pageStore.save(map) }
+            if let map = self.screenPages { self.pageStore.save(map) }
             if let (here, geometry) = self.lastGeometry {
                 self.screenNumbers = self.screenPages?.screen(href: here, geometry: geometry)
             } else {

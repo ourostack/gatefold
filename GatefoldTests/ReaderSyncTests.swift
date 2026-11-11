@@ -77,12 +77,12 @@ final class ScriptedPage: ReaderPage {
     /// Readium reports where a jump took it on its own (off: a test sends the reports itself, in order).
     var reportsOnGo = true
 
-    /// Counts every chapter at this many columns when asked (nil: never counts, as before), so the
+    /// Counts each chapter at the columns this gives when asked (nil: never counts, as before), so the
     /// reader's screen pages are known.
-    var countsColumns: Int?
+    var countsColumns: ((String) -> Int)?
     func countPages(_ hrefs: [String], record: @escaping @MainActor (String, Int) -> Void, finished: @escaping @MainActor () -> Void) {
         guard let columns = countsColumns else { return }
-        hrefs.forEach { record($0, columns) }
+        hrefs.forEach { record($0, columns($0)) }
         finished()
     }
 
