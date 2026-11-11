@@ -801,10 +801,11 @@ import Testing
         // can't be measured, so that write keeps its own report (0.7) rather than taking the second
         // jump's as the page on screen: only the write order can stop it.
         f.page.pageUnmeasured = true
-        final class Gate { var armed = true; var held: CheckedContinuation<Void, Never>? }
+        final class Gate { var armed = true; var calls = 0; var held: CheckedContinuation<Void, Never>? }
         let gate = Gate()
         defer { gate.held?.resume(); f.model.close() }
         f.model.placeWriteWait = {
+            gate.calls += 1
             guard gate.armed else { return }
             gate.armed = false
             await withCheckedContinuation { gate.held = $0 }
@@ -817,8 +818,21 @@ import Testing
         // Bounded, never awaited: if the held write were the newest jump's own, waiting on it would hang.
         await Self.settle { abs((Self.kept(f) ?? -1) - 0.5) < 0.03 }
         let keptBeforeRelease = Self.kept(f) ?? -1
+        // A later report's write follows and keeps the second jump's page again, so the end state alone
+        // can't tell whether the late write landed: the next write waits at the gate while the late one runs.
+        // Through the gate so far: the late write (held) and the second jump's own write (its keep above).
+        // A third would be the later report's, gone by unheld: it could put 0.5 back before the look below.
+        try #require(gate.calls == 2, "a later write passed the gate before it was re-armed (\(gate.calls) writes)")
+        gate.armed = true
         gate.held?.resume()
         gate.held = nil
+        for _ in 0..<10_000 where gate.held == nil { await Task.yield() }
+        await Self.settle { abs((Self.kept(f) ?? -1) - 0.5) >= 0.03 }
+        let keptAfterLateWrite = Self.kept(f) ?? -1
+        gate.armed = false
+        gate.held?.resume()
+        gate.held = nil
+        #expect(abs(keptAfterLateWrite - 0.5) < 0.03, "the slow late write kept \(keptAfterLateWrite) over the second jump before any later write")
         await second.value
         await first.value
         #expect(abs(keptBeforeRelease - 0.5) < 0.03, "the newest jump's keep didn't land while the late write was held: \(keptBeforeRelease)")
