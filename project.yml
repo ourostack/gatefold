@@ -85,6 +85,8 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: bot.ouro.gatefold.uitests
         GENERATE_INFOPLIST_FILE: YES
+        # Installs `LogMirrorOff` before any test (GatefoldUITests/LogMirrorOff.swift, gatefold#28).
+        INFOPLIST_KEY_NSPrincipalClass: GatefoldUITestsPrincipal
         TEST_TARGET_NAME: Gatefold
 schemes:
   Gatefold:
