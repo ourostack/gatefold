@@ -2136,7 +2136,16 @@ final class ReaderModel {
     /// A touch on the page. If the next location (outside a reflow) differs from where the book
     /// opened, it was a swipe in slide or scroll mode and the place is the reader's own. A tap that
     /// only shows the controls changes no location, so it moves nothing.
-    func noteInteraction() { touchesSinceLocation += 1 }
+    func noteInteraction() {
+        touchesSinceLocation += 1
+        if host?.veilIsUp != true { unveiledInputs += 1 }
+    }
+    /// He opened Contents: a jump still on its way with no veil over it gives way to him (gatefold#254).
+    func contentsOpened() {
+        if host?.veilIsUp != true { unveiledInputs += 1 }
+    }
+    /// His touches on the page, and his openings of Contents, made with no jump's veil over the page.
+    @ObservationIgnored private var unveiledInputs = 0
     /// A finger that travelled on the page: a scroll or swipe, never a tap. Only one made while a reflow
     /// lays out can be a move of his under it (gatefold#171); a finger already moving when the reflow
     /// began brings no new drag, so it never counts.
@@ -2341,7 +2350,12 @@ final class ReaderModel {
         fragmentJumpMove = move
         await page?.go(to: link)
         let href = link.url().removingFragment().string
-        let wanted = { [weak self] in self.map { $0.moves == move && !$0.isClosed } ?? false }
+        // His page from the moment he takes it: a turn (a new move), or, with no veil over the page (one
+        // that let go, or a jump that ran unveiled), a touch or Contents. The chapter's place arriving
+        // after that moves nothing (gatefold#254: a page that jumps once he's reading is the spazz).
+        let inputsAtStart = unveiledInputs
+        let heTookOver = { [weak self] in self.map { $0.unveiledInputs != inputsAtStart } ?? false }
+        let wanted = { [weak self] in self.map { $0.moves == move && !$0.isClosed && !heTookOver() } ?? false }
         var target: Double?, lastRead: Double?
         var absent = false
         for read in 1...JumpLanding.reads where target == nil && !absent && wanted() {
@@ -2375,6 +2389,11 @@ final class ReaderModel {
                     stillWanted: wanted,
                     beat: jumpBeat)
             }
+        }
+        if heTookOver(), moves == move {
+            readerLog.notice("contents: the jump to \(fragment, privacy: .public) inside its file gave way to his touch or Contents; the page stays at \(self.page?.currentLocation.map(Self.placeTag) ?? "none", privacy: .public)\(target.map { String(format: " (the chapter was at %.5f)", $0) } ?? "", privacy: .public)")
+        } else if moves != move {
+            readerLog.notice("contents: the jump to \(fragment, privacy: .public) inside its file gave way to his move \(self.moves, privacy: .public); the page stays at \(self.page?.currentLocation.map(Self.placeTag) ?? "none", privacy: .public)")
         }
         readerLog.notice("contents: the jump to \(fragment, privacy: .public) inside its file \(landed ? "landed" : absent ? "has no such place" : target == nil ? "found no place for it" : "ran out of reads", privacy: .public) at \(self.page?.currentLocation.map(Self.placeTag) ?? "none", privacy: .public)")
         if fragmentJumpMove == move { fragmentJumpMove = nil }

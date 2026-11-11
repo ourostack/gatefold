@@ -233,6 +233,8 @@ struct ReaderScreen: View {
         .sheet(isPresented: $showSearch) {
             SearchSheet(model: model)
         }
+        // A jump still on its way with no veil over the page gives way to him opening Contents (gatefold#254).
+        .onChange(of: showContents) { _, shown in if shown { model.contentsOpened() } }
         .sheet(isPresented: $showContents) {
             ContentsSheet(model: model)
         }

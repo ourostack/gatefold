@@ -228,6 +228,46 @@ import Testing
         f.model.close()
     }
 
+    /// A contents jump still on its way with no veil over the page (one that let go, or a jump that ran
+    /// unveiled) gives way to him: once he turns, touches the page or opens Contents, the chapter's place
+    /// arriving later moves nothing, and his page stands (gatefold#254: a page that jumps once he's reading
+    /// is the spazz). Judged in beats: his input comes on the second, the chapter's place right after.
+    @Test(arguments: ["turn", "touch", "contents"]) func aContentsJumpWithNoVeilGivesWayToHim(_ input: String) async throws {
+        final class Beats { var count = 0; var act: (@MainActor () -> Void)? }
+        let beats = Beats()
+        let f = try await S.make(remote: { _, _ in nil }, startAt: 0.05, jumpBeat: { @MainActor in
+            beats.count += 1
+            if beats.count == 2 { beats.act?() }
+            await Task.yield()
+        })
+        await f.model.load()
+        await f.model.locationDidChange(try #require(f.page.currentLocation))
+        let entry = try #require(f.model.toc.last(where: { $0.progression > 0.3 && $0.link.url().fragment != nil }))
+        let fragment = try #require(entry.link.url().fragment)
+        nonisolated(unsafe) let publication = f.publication
+        let opened = try #require(await publication.locate(entry.link))
+        let fileStart = opened.copy(locations: { $0.fragments = []; $0.progression = 0 }, text: { $0 = Locator.Text() })
+        f.page.linkOpens = fileStart
+        // The file is still laying out: no place for the chapter until after his input.
+        f.page.fragmentAt = [:]
+        beats.act = {
+            switch input {
+            case "turn": f.model.userTurnedPage()
+            case "touch": f.model.noteInteraction()
+            default: f.model.contentsOpened()
+            }
+            f.page.fragmentAt[fragment] = 0.6
+        }
+        let sent = f.page.jumps.count
+
+        await f.model.go(to: entry)
+
+        #expect(beats.count >= 2, "his input never came: the jump ended first")
+        #expect(f.page.jumps.count == sent, "the page was sent to the chapter after he took it (\(input))")
+        #expect((f.page.currentLocation?.locations.progression ?? 1) < 0.5, "the page moved off where he was (\(input))")
+        f.model.close()
+    }
+
     /// A contents anchor the file doesn't have: Readium's landing stands at once, without waiting out
     /// the reads behind the veil.
     @Test func aContentsAnchorTheFileLacksKeepsReadiumsLanding() async throws {

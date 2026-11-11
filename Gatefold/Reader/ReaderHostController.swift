@@ -1983,6 +1983,8 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     }
     /// The jump whose veil is up, or whose old page is being pictured for one.
     private var veilJump: Int?
+    /// A jump's veil is over the page: his taps don't reach it.
+    var veilIsUp: Bool { veil != nil || jumpStarting }
 
     /// Lifts the veil of a jump that never came back (a Back freed by its count): the reader gets the
     /// page and his taps back, and the next jump puts up a veil of its own. The hung jump, if it ever
