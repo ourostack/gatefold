@@ -1,0 +1,41 @@
+name: Changelog
+
+# Every pull request that changes the app adds a fragment to changelog.d/ (changelog.d/README.md has the voice and the
+# format); TestFlight's What to Test is assembled from them at publish (scripts/changelog.py). Linux only, seconds
+# long, and it reruns when a label changes, so adding `no-changelog` turns it green without rerunning App.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: changelog-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fragment:
+    name: Changelog fragment
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: The assembler passes its selftest
+        run: python3 -I scripts/changelog.py --selftest
+      - name: An app change carries a fragment, and every fragment fits the format
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+          LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+        run: python3 -I scripts/changelog.py check --base "$BASE" --head "$HEAD" --labels "$LABELS"
+      - name: What to Test, if this merged now (since the last TestFlight build)
+        env:
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          python3 -I scripts/changelog.py assemble --head "$HEAD" --out "$RUNNER_TEMP/what-to-test.txt"
+          { echo '### What to Test, if this merged now'; echo '```'; cat "$RUNNER_TEMP/what-to-test.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
