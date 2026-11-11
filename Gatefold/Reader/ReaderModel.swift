@@ -1627,9 +1627,12 @@ final class ReaderModel {
     /// on a page boundary, and a reopen can land on either side of it (gatefold#133: one page early).
     /// Only while nothing has moved since that write (no turn, jump or landing not yet kept; or no move at
     /// all since the open, the kept place being the one opened): a new page never inherits the old page's words.
+    /// The place the library keeps for this book now.
+    var keptPlace: Locator? { app.library.book(bookID)?.locatorJSON.flatMap { try? Locator(jsonString: $0) } }
+
     private func withKeptWords(_ here: Locator) -> Locator {
         guard here.text.highlight == nil, !hasMoved || recordedMoves == moves,
-              let kept = app.library.book(bookID)?.locatorJSON.flatMap({ try? Locator(jsonString: $0) }),
+              let kept = keptPlace,
               kept.text.highlight != nil, kept.href == here.href,
               kept.locations.progression == here.locations.progression else { return here }
         readerLog.notice("place write [r\(self.readerNumber, privacy: .public)]: the page left has no words; the kept place's words go with it (same place)")

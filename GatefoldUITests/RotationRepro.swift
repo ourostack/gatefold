@@ -110,9 +110,11 @@ final class RotationRepro: XCTestCase {
     }
 
     /// The same, with the shown page noted only as Readium names it: on a device whose page scripts wait
-    /// on the stalled install too, its words never come back before he leaves.
+    /// on the stalled install too, its words never come back before he leaves. Noted at the place his turn
+    /// kept, as when Readium reports nothing new under the stall (CI 43075159905), the leave keeps his words.
     func testRotateThenLeaveWhileTheRestoreWaitsOnItsPageWithoutItsWords() throws {
-        try rotateThenLeave(extra: ["-GatefoldSlowRestorePage", "YES", "-GatefoldShownPageWithoutWords", "YES"])
+        try rotateThenLeave(extra: ["-GatefoldSlowRestorePage", "YES", "-GatefoldShownPageWithoutWords", "YES",
+                                    "-GatefoldShownPageAtHisPlace", "YES"])
     }
 
     private func rotateThenLeave(extra: [String] = []) throws {
@@ -193,6 +195,8 @@ final class RotationRepro: XCTestCase {
         // The stalled-leave tests hold the restore past the leave (the slow-restore hook): only they test the
         // shown page's write and the words it keeps. The others settle, and leave by other paths.
         let stalledLeave = extra.contains("-GatefoldSlowRestorePage")
+        // Left with no words on the page his turn kept: the place keeps his words (gatefold#133, CI 43075159905).
+        let keepsHisWords = extra.contains("-GatefoldShownPageAtHisPlace")
         for round in 1...3 {
             // Round 1 is the stalled leave (the slow-restore hook holds the restore past it); a restore that
             // settled first leaves nothing to test, and a green would be luck. Its value names no book text.
@@ -216,7 +220,7 @@ final class RotationRepro: XCTestCase {
             let at = back.range(of: head(his)).map { back.distance(from: back.startIndex, to: $0.lowerBound) } ?? -1
             // His turn kept his words; leaving on that same page, with or without words from it, keeps them
             // (gatefold#133: a bare progression reopened one page boundary early). Never printed, only tested.
-            let keptWords = !stalledLeave || !((el("reader.savedWords").value as? String) ?? "").isEmpty
+            let keptWords = !keepsHisWords || !((el("reader.savedWords").value as? String) ?? "").isEmpty
             if startsSame && keptWords { green += 1 }
             note("round \(round) \(startsSame && keptWords ? "GREEN" : "RED") startsSame=\(startsSame) keptWords=\(keptWords) middleSame=\(middleSame) hisStartAt=\(at) reopenedHead=\(hash(head(back)))")
             XCTAssertTrue(keptWords, "round \(round): the place reopened carries his words")
