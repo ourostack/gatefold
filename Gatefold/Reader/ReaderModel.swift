@@ -256,13 +256,16 @@ final class ReaderModel {
     /// way is small: a stray touch on the landing's own report ends it quietly on the page it was bound
     /// for, with no way back offered. A swipe of his that ends on the landing's page is taken as the
     /// landing's: he is where it was going. So is a report naming no place (rare), his or not.
-    /// The file's first page is not the landing's when his page before it was the file just before: that
-    /// is a swipe of his onto the next chapter, one page on, not a jump's first step.
+    /// The file's first page is not the landing's when his page before it was the file just before (a
+    /// swipe of his onto the next chapter, one page on) or further into that same file (a swipe of his
+    /// back to its start): neither is a jump's first step. Before the book is indexed the percent path
+    /// has no file, and its first step is judged by page alone.
     private func isLandingsOwnPage(_ l: Locator, after before: Locator?) -> Bool {
         guard let total = l.locations.totalProgression else { return true }
         if let aimFile = landingAimFile, l.href.string == aimFile, (l.locations.progression ?? 0) == 0 {
-            guard let before, let i = readingOrderHrefs.firstIndex(of: aimFile), i > 0,
-                  before.href.string == readingOrderHrefs[i - 1] else { return true }
+            guard let before else { return true }
+            if before.href.string == aimFile, (before.locations.progression ?? 0) > 0 { return false }
+            guard let i = readingOrderHrefs.firstIndex(of: aimFile), i > 0, before.href.string == readingOrderHrefs[i - 1] else { return true }
             return false
         }
         if let a = screenPage(atTotal: total), let b = screenPage(atTotal: landingAim) { return a == b }

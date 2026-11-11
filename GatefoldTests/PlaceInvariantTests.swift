@@ -481,7 +481,9 @@ import Testing
     /// landing's, not a swipe of his: nothing is put back and its way back is offered (gatefold#173 re-review).
     /// "exact, two steps": the jump first names its file's first page (Readium on a loading web view), then
     /// the place; both reports are the landing's.
-    @Test(arguments: ["percent", "exact, two steps"]) func aStrayTouchPastTheVeilLeavesTheCatchUpItsOwnReport(place: String) async throws {
+    /// `counted`: the book's screen pages are counted, as on a real iPad once the count is done, so the
+    /// screen page decides what is the landing's own page; else Readium's positions do.
+    @Test(arguments: ["percent", "exact, two steps"], [false, true]) func aStrayTouchPastTheVeilLeavesTheCatchUpItsOwnReport(place: String, counted: Bool) async throws {
         let f = try await S.make(remote: { pub, mapper in
             place == "percent" ? ReadingPosition(cfi: nil, totalProgression: 0.7, updated: Date(), source: .pocketBookNative)
                 : try await S.inkPadPlace(pub, mapper, index: 12, percent: 40)
@@ -492,9 +494,11 @@ import Testing
         await f.model.locationDidChange(try #require(f.page.currentLocation))
         await f.model.checkRemote()
         try #require(f.model.suggestion != nil, "the Cloud's place is offered")
+        f.page.countsColumns = counted ? 240 : nil
         f.model.forceReady()
         for _ in 0..<1_000 where !f.model.pageReady { try? await Task.sleep(for: .milliseconds(10)) }
         try #require(f.model.pageReady, "the first page never showed")
+        if counted { try await Self.countScreens(f) }
         f.page.dropStandby()
         f.page.reportsBeforeReturn = true
         // Readium reports the start of the page it lands on: here, the place itself.
@@ -522,7 +526,7 @@ import Testing
     /// The common catch-up: the Cloud's place three pages on in the file he is reading. Past its veil, a
     /// swipe of his one page on is his move, not the landing's own report: his page stands and is kept,
     /// and no way back is offered (gatefold#173 re-review: a bound in fractions of the book swallowed it).
-    @Test func aSwipeAPageOnPastACatchUpThreePagesAheadIsHis() async throws {
+    @Test(arguments: [false, true]) func aSwipeAPageOnPastACatchUpThreePagesAheadIsHis(counted: Bool) async throws {
         let f = try await S.make(remote: { pub, mapper in
             nonisolated(unsafe) let p = pub
             let positions = try await p.positions().get()
@@ -545,9 +549,11 @@ import Testing
         let next = positions[at + 1]
         let aim = positions[at + 3]
         try #require(next.href == here.href && aim.href == here.href, "his page, the next and the Cloud's aren't one file")
+        f.page.countsColumns = counted ? 240 : nil
         f.model.forceReady()
         for _ in 0..<1_000 where !f.model.pageReady { try? await Task.sleep(for: .milliseconds(10)) }
         try #require(f.model.pageReady, "the first page never showed")
+        if counted { try await Self.countScreens(f) }
         f.page.dropStandby()
         f.page.holdsJumps = true
         f.page.loadingChapter = true
@@ -952,6 +958,14 @@ import Testing
     /// The place kept for the book, as a total progression.
     private static func kept(_ f: S.Fixture) -> Double? {
         f.app.library.book(S.frankenstein.fastHash)?.locatorJSON.flatMap { try? Locator(jsonString: $0) }?.locations.totalProgression
+    }
+
+    /// The book's screen pages counted (the page counts each chapter at once): waited on in reads.
+    private static func countScreens(_ f: ReaderSyncTests.Fixture) async throws {
+        for _ in 0..<500 where f.model.screenPages?.isComplete != true { try? await Task.sleep(for: .milliseconds(10)) }
+        try #require(f.model.screenPages?.isComplete == true, "the screen pages were never counted")
+        let here = try #require(f.page.currentLocation?.locations.totalProgression)
+        try #require(f.model.screenPage(atTotal: here) != nil, "no screen page for his page")
     }
 
     /// Work that runs on its own tasks (a turn's write, a late Back's report) lands in its own time: wait
