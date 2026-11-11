@@ -594,16 +594,17 @@ import Testing
     /// swipe of his one page on is his move, not the landing's own report: his page stands and is kept,
     /// and no way back is offered (gatefold#173 re-review: a bound in fractions of the book swallowed it).
     @Test(arguments: [false, true]) func aSwipeAPageOnPastACatchUpThreePagesAheadIsHis(counted: Bool) async throws {
+        let start = try await Self.midFileStart(evenCount: counted)
         let f = try await S.make(remote: { pub, mapper in
             nonisolated(unsafe) let p = pub
             let positions = try await p.positions().get()
-            let k = try #require(positions.firstIndex { ($0.locations.totalProgression ?? 0) > 0.05 })
+            let k = try #require(positions.firstIndex { ($0.locations.totalProgression ?? 0) > start })
             let aim = positions[k + 2]
             let made = try #require(await mapper.position(for: BookLocation(href: aim.href.string, progression: aim.locations.progression ?? 0), at: Date()))
             return ReadingPosition(cfi: try #require(made.cfi), pointer: "pbr:/external##" + (made.cfi ?? ""),
                                    totalProgression: aim.locations.totalProgression ?? 0, updated: Date(), source: .pocketBookNative)
-        }, book: { $0.totalProgression = 0.05; $0.lastOpened = Date().addingTimeInterval(-600) },
-           startAt: 0.05, jumpBeat: { await Task.yield() })
+        }, book: { $0.totalProgression = start; $0.lastOpened = Date().addingTimeInterval(-600) },
+           startAt: start, jumpBeat: { await Task.yield() })
         defer { f.model.close() }
         // Before the open loads its counts.
         if counted { try await Self.countsLikeADevice(f) }
@@ -654,7 +655,7 @@ import Testing
         let f = try await S.make(remote: { pub, mapper in
             nonisolated(unsafe) let p = pub
             let positions = try await p.positions().get()
-            let j = try #require(positions.indices.first { $0 > 0 && (positions[$0].locations.totalProgression ?? 0) > 0.05 && positions[$0].href != positions[$0 - 1].href })
+            let j = try #require(positions.indices.first { $0 > 0 && $0 + 2 < positions.count && (positions[$0].locations.totalProgression ?? 0) > 0.05 && positions[$0].href != positions[$0 - 1].href && positions[$0 + 2].href == positions[$0].href })
             let aim = positions[j + 2]
             let made = try #require(await mapper.position(for: BookLocation(href: aim.href.string, progression: aim.locations.progression ?? 0), at: Date()))
             return ReadingPosition(cfi: try #require(made.cfi), pointer: "pbr:/external##" + (made.cfi ?? ""),
@@ -666,7 +667,7 @@ import Testing
         await f.model.locationDidChange(try #require(f.page.currentLocation))
         nonisolated(unsafe) let p = f.publication
         let positions = try await p.positions().get()
-        let j = try #require(positions.indices.first { $0 > 0 && (positions[$0].locations.totalProgression ?? 0) > 0.05 && positions[$0].href != positions[$0 - 1].href })
+        let j = try #require(positions.indices.first { $0 > 0 && $0 + 2 < positions.count && (positions[$0].locations.totalProgression ?? 0) > 0.05 && positions[$0].href != positions[$0 - 1].href && positions[$0 + 2].href == positions[$0].href })
         let last = positions[j - 1], first = positions[j]
         try #require((first.locations.progression ?? 1) == 0 && positions[j + 2].href == first.href, "the next file's first page and the Cloud's place aren't one file")
         // He has read on to this file's last page.
@@ -1032,6 +1033,21 @@ import Testing
 
     /// A screen page holding two of Readium's positions, as on a device (one to two each), counted into a
     /// store of this reader's own: counts saved to the shared one would reach every other fixture.
+    /// A place past the book's first pages with three more positions after it in its own file, so his next
+    /// page and a Cloud place three on are one file: 0.05 sits near a file's end in this book. `evenCount`:
+    /// a file of an even number of positions (two to a column when counted).
+    private static func midFileStart(evenCount: Bool) async throws -> Double {
+        nonisolated(unsafe) let p = try await S.publication()
+        let positions = try await p.positions().get()
+        let counts = Dictionary(grouping: positions, by: { $0.href.string }).mapValues(\.count)
+        let i = try #require(positions.indices.first { i in
+            i > 0 && i + 3 < positions.count && (positions[i].locations.totalProgression ?? 0) > 0.05
+                && positions[i - 1].href == positions[i].href && positions[i + 3].href == positions[i].href
+                && (!evenCount || (counts[positions[i].href.string] ?? 1) % 2 == 0)
+        }, "no file with room for his page, the next and the Cloud's")
+        return try #require(positions[i].locations.totalProgression)
+    }
+
     private static func countsLikeADevice(_ f: ReaderSyncTests.Fixture) async throws {
         nonisolated(unsafe) let p = f.publication
         let positions = try await p.positions().get()
