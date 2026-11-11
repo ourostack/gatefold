@@ -310,9 +310,23 @@ jobs:
               RotationRepro
             skip: >-
               RotationRepro/testRotateThenLeaveWithoutTurning
+              RotationRepro/testRotateThenLeaveWhileTheRestoreWaitsOnItsPage
+              RotationRepro/testRotateThenLeaveWhileTheRestoreWaitsOnItsPageWithoutItsWords
+              RotationRepro/testRotateThenLeaveWhileTheRestoreWaitsOnHisKeptPlaceWithoutItsWords
             pr_tests: none
             cold: true
-            timeout: 61 # 12 + 4 x 9.1 + 12
+            timeout: 43 # 12 + 2 x 9.1 + 12
+          - shard: ipad-rotate-restore
+            # Main only: #133's leave-while-the-restore-waits tests, out of ipad-rotate-stalled, which they
+            # overran (stopped 19 min 58 s in on #256 and 21 min 58 s in on #195; slowest runs 586 s and 504 s,
+            # and 317 s for the leave noted at his kept place in probe 43107820601)
+            tests: >-
+              RotationRepro/testRotateThenLeaveWhileTheRestoreWaitsOnItsPage
+              RotationRepro/testRotateThenLeaveWhileTheRestoreWaitsOnItsPageWithoutItsWords
+              RotationRepro/testRotateThenLeaveWhileTheRestoreWaitsOnHisKeptPlaceWithoutItsWords
+            pr_tests: none
+            cold: true
+            timeout: 71 # 12 + 2 x 23.5 + 12
     uses: ./.github/workflows/ui-tests.yml
     with:
       device: "iPad Pro 13-inch"
