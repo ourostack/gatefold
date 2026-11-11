@@ -35,6 +35,8 @@ ON_SCREEN = ["Gatefold", "Packages/GatefoldCore/Sources", "Packages/GatefoldClou
              "scripts/screenshots", ".github/actions/select-xcode", ".github/workflows/screenshots.yml"]
 # The watcher gives up after SHOOT_LIMIT seconds; the scene test waits longer (ListingShotsUITests: 120 s).
 STABLE_FRAMES, SHOOT_LIMIT, FRAME_GAP = 3, 80, 0.8
+# Elements whose text names the e-reader ("In step with your InkPad", the catch-up offer and its tab).
+NAMES_THE_DEVICE = {"library.syncHealth", "banner", "banner.jump", "banner.tab"}
 # Books in the public domain everywhere; the shelf launch argument may name only these.
 PUBLIC_DOMAIN = {"moby-dick", "pride-and-prejudice", "frankenstein", "dracula", "alice-in-wonderland",
                  "sherlock-holmes", "emma"}
@@ -200,6 +202,12 @@ def selftest():
         assert set(s["devices"]) <= set(spec["devices"]), s["id"]
         assert len(s["headline"]) == 2 and s["subline"] and s["bg"] in ("paper", "ink"), s["id"]
         assert "PocketBook" not in " ".join(s["headline"]) + s["subline"], f"{s['id']}: no trademarks (2.3.7)"
+    for s in spec["scenes"]:
+        assert s["ready"].get("type") in ("staticText", "other", "button"), f"{s['id']}: ready needs its element type"
+    # The surfaces where the app names the reader's e-reader by its trademark stay out of the listing.
+    for s in spec["scenes"]:
+        assert s["ready"]["id"] not in NAMES_THE_DEVICE and "-GatefoldRemoteAheadAfter" not in s["args"], \
+            f"{s['id']}: shows the app's InkPad wording (see the spec's parked scenes)"
     shelf = spec["launch"][spec["launch"].index("-GatefoldFakeShelf") + 1].split(",")
     assert set(shelf) <= PUBLIC_DOMAIN and len(shelf) == len(set(shelf)), f"public-domain books, once each: {shelf}"
     seeds = (ROOT / "Gatefold" / "Sync" / "FakeSyncService.swift").read_text()

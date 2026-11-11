@@ -182,21 +182,38 @@ jobs:
         run: |
           set -uo pipefail
           status=0
+          scenes="$(python3 -I scripts/screenshots/capture.py scenes --device "$DEVICE")"
+          mkdir -p "$RUNNER_TEMP/logs"
           for pass in a b; do
             dir="$RUNNER_TEMP/shots/$pass"
-            mkdir -p "$dir"
-            python3 -I scripts/screenshots/capture.py watch --udid "$UDID" --device "$DEVICE" --dir "$dir" > "$RUNNER_TEMP/watch-$pass.log" 2>&1 &
+            mkdir -p "$dir/tries"
+            python3 -I scripts/screenshots/capture.py watch --udid "$UDID" --device "$DEVICE" --dir "$dir" > "$RUNNER_TEMP/logs/watch-$pass.log" 2>&1 &
             watcher=$!
-            TEST_RUNNER_GATEFOLD_SHOTS_DIR="$dir" TEST_RUNNER_GATEFOLD_SHOTS_DEVICE="$DEVICE" \
-            TEST_RUNNER_GATEFOLD_SHOTS_SPEC="$GITHUB_WORKSPACE/screenshots/spec.json" \
-              xcodebuild test-without-building -xctestrun "$XCTESTRUN" -destination "id=$UDID" \
-                -only-testing:GatefoldListingShots/ListingShotsUITests/testListingScenes \
-                -resultBundlePath "$RUNNER_TEMP/shots-$pass.xcresult" 2>&1 | tee "$RUNNER_TEMP/test-$pass.log" \
-                | { grep --line-buffered -E "Test Case|TEST (SUCCEEDED|FAILED)|error:" || true; }
-            [ "${PIPESTATUS[0]}" = 0 ] || { echo "::error::Pass $pass: the scenes' test failed"; status=1; }
+            # One test run per scene, and one more try for a scene whose run failed (an XCUITest query can time
+            # out on a busy runner): a timeout costs that scene a try, not the scenes after it.
+            for scene in $scenes; do
+              for try in 1 2; do
+                log="$RUNNER_TEMP/logs/test-$pass-$scene-$try.log"
+                TEST_RUNNER_GATEFOLD_SHOTS_DIR="$dir" TEST_RUNNER_GATEFOLD_SHOTS_DEVICE="$DEVICE" \
+                TEST_RUNNER_GATEFOLD_SHOTS_SCENE="$scene" \
+                TEST_RUNNER_GATEFOLD_SHOTS_SPEC="$GITHUB_WORKSPACE/screenshots/spec.json" \
+                  xcodebuild test-without-building -xctestrun "$XCTESTRUN" -destination "id=$UDID" \
+                    -only-testing:GatefoldListingShots/ListingShotsUITests/testListingScenes \
+                    -resultBundlePath "$RUNNER_TEMP/logs/$pass-$scene-$try.xcresult" > "$log" 2>&1
+                code=$?
+                grep -E "Test Case .*(passed|failed)|error:" "$log" | sed "s/^/$pass $scene #$try: /" || true
+                [ "$code" = 0 ] && [ -f "$dir/$scene.done" ] && break
+                if [ "$try" = 2 ]; then echo "::error::Pass $pass: $scene failed twice"; status=1; break; fi
+                # Clear the failed try's hand-off files so the watcher shoots the next try afresh.
+                mkdir -p "$dir/tries/$scene-$try"
+                for f in "$dir/$scene.ready" "$dir/$scene.fail" "$dir/$scene.done" "$dir/$scene.png"; do
+                  [ -e "$f" ] && mv "$f" "$dir/tries/$scene-$try/"
+                done
+              done
+            done
             kill -0 "$watcher" 2>/dev/null || { echo "::error::Pass $pass: the capture watcher had stopped"; status=1; }
             touch "$dir/finished"; wait "$watcher" || true
-            echo "== pass $pass"; cat "$RUNNER_TEMP/watch-$pass.log"
+            echo "== pass $pass"; cat "$RUNNER_TEMP/logs/watch-$pass.log"
             python3 -I scripts/screenshots/capture.py check --device "$DEVICE" --dir "$dir" || status=1
           done
           exit $status
@@ -221,7 +238,7 @@ jobs:
           path: |
             ${{ runner.temp }}/out
             ${{ runner.temp }}/shots
-            ${{ runner.temp }}/watch-*.log
+            ${{ runner.temp }}/logs
           retention-days: 7
           if-no-files-found: warn
 

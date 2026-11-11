@@ -3,7 +3,7 @@ import XCTest
 /// The App Store screenshots' scenes (screenshots/spec.json), on release only (.github/workflows/screenshots.yml).
 /// Not part of the Gatefold scheme, so no CI shard runs it.
 ///
-/// For each scene on this device it launches the app into the scene's state, waits for the scene's ready element,
+/// For each scene on this device (or only GATEFOLD_SHOTS_SCENE) it launches the app into the scene's state, waits for the scene's ready element,
 /// then hands over to the host: it writes `<scene>.ready` in the shots folder, and the host
 /// (scripts/screenshots/capture.py watch) stages the status bar, shoots until three frames in a row match and writes
 /// `<scene>.done` (or `.fail`). The host takes the picture, not this test, so the Duo's cover display and the iPad's
@@ -20,8 +20,13 @@ final class ListingShotsUITests: XCTestCase {
         let spec = try XCTUnwrap(
             JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: specPath))) as? [String: Any])
         let launch = spec["launch"] as? [String] ?? []
-        let scenes = (spec["scenes"] as? [[String: Any]] ?? []).filter { ($0["devices"] as? [String] ?? []).contains(device) }
-        XCTAssertFalse(scenes.isEmpty, "no scene in the spec runs on \(device)")
+        // The workflow runs one scene per test run (GATEFOLD_SHOTS_SCENE), so a UI query that times out costs that
+        // scene one try, not every scene after it.
+        let only = env["GATEFOLD_SHOTS_SCENE"]
+        let scenes = (spec["scenes"] as? [[String: Any]] ?? []).filter {
+            ($0["devices"] as? [String] ?? []).contains(device) && (only == nil || $0["id"] as? String == only)
+        }
+        XCTAssertFalse(scenes.isEmpty, "no scene \(only ?? "") in the spec runs on \(device)")
 
         for scene in scenes {
             let id = scene["id"] as? String ?? "?"
@@ -41,7 +46,11 @@ final class ListingShotsUITests: XCTestCase {
         defer { app.terminate() }
 
         let ready = scene["ready"] as? [String: String] ?? [:]
-        let element = app.descendants(matching: .any).matching(identifier: ready["id"] ?? "").firstMatch
+        // A query by element type and identifier, never the whole tree: the reader's web views make a whole-tree
+        // snapshot slow enough to time out on a busy runner (gatefold#28).
+        let kinds: [String: XCUIElement.ElementType] = ["staticText": .staticText, "other": .other, "button": .button]
+        let kind = kinds[ready["type"] ?? ""] ?? .any
+        let element = app.descendants(matching: kind).matching(identifier: ready["id"] ?? "").firstMatch
         guard element.waitForExistence(timeout: 90) else {
             XCTFail("\(id): \(ready["id"] ?? "?") never appeared"); return
         }
