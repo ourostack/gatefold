@@ -311,21 +311,32 @@ final class PlaceUndoUITests: XCTestCase {
     }
 
     /// A tap on the turn zone while a jump's veil is up is not a turn: the page lands where he chose.
+    /// Each wait is judged in reads (gatefold#166): a starved runner's queries take seconds each, and
+    /// 10 s for the veil ran out on #182 while the app had not yet begun the jump.
     func testATapWhileAJumpIsUnderWayLandsWhereHeChose() {
         let first = openFresh(["-GatefoldHoldChapterLoad", "60"])
         contentsJump(to: "Chapter XL")
         let veil = el("reader.veil")
-        XCTAssertTrue(veil.waitForExistence(timeout: 10), "the jump's veil is up")
+        let up = readsUntil(reads: 100, hangGuard: 120) { veil.exists }
+        print("UNDO tapped jump: veil up after \(up.reads) reads")
+        XCTAssertTrue(up.ok, "the jump's veil is up")
         el("reader.page").coordinate(withNormalizedOffset: CGVector(dx: 0.97, dy: 0.5)).tap()
-        XCTAssertTrue(veil.waitForNonExistence(timeout: 60))
-        let landed = settledWords()
-        XCTAssertNotEqual(opening(landed), opening(first))
+        let jump = landed(from: first, reads: 1200, hangGuard: 240)
+        print("UNDO tapped jump landed after \(jump.reads) reads")
+        XCTAssertTrue(jump.ok, "the jump's veil lifts")
+        let chosen = settledWords()
+        XCTAssertNotEqual(opening(chosen), opening(first))
         // The same jump again, untouched, from his first page: the page it lands on is where he chose.
         app.buttons["reader.back"].tap()
-        _ = waitForWords(changingFrom: landed, timeout: 30)
+        let back = landed(from: chosen, reads: 1200, hangGuard: 240)
+        print("UNDO back landed after \(back.reads) reads")
+        XCTAssertTrue(back.ok, "Back's veil lifts")
         contentsJump(to: "Chapter XL")
-        XCTAssertTrue(veil.waitForExistence(timeout: 10))
-        XCTAssertTrue(veil.waitForNonExistence(timeout: 60))
-        XCTAssertEqual(opening(settledWords()), opening(landed), "a tap during the jump moved the page off where he chose")
+        let again = readsUntil(reads: 100, hangGuard: 120) { veil.exists }
+        XCTAssertTrue(again.ok, "the untouched jump's veil is up")
+        let gone = readsUntil(reads: 1200, hangGuard: 240) { !veil.exists }
+        print("UNDO untouched jump: veil up after \(again.reads) reads, gone after \(gone.reads) reads")
+        XCTAssertTrue(gone.ok, "the untouched jump's veil lifts")
+        XCTAssertEqual(opening(settledWords()), opening(chosen), "a tap during the jump moved the page off where he chose")
     }
 }
