@@ -220,10 +220,14 @@ final class PlaceUndoUITests: XCTestCase {
         // Sampled until the held load ends: how long the veil stayed, for the log (it may let go at its limit).
         // A trip that stops sending leaves it held: 400 samples, past the 25 sends' 50 s of reads.
         var samples = 0, bare = 0
-        print("BACKHELD sendsLeftAtStart=\(held.value as? String ?? "?")")
+        // The count is read from a snapshot that may come back empty: the held load can end between `exists`
+        // and the read, and a plain `value` on an element gone by then fails the test (gatefold#213: both
+        // attempts on #238's run 43060712326 failed so, at "Find the reader.loadingHeld", three retries).
+        func sendsLeftNow() -> String? { (try? held.snapshot())?.value as? String }
+        print("BACKHELD sendsLeftAtStart=\(sendsLeftNow() ?? "?")")
         var sendsLeft = "?"
         while held.exists, samples < 400 {
-            sendsLeft = held.value as? String ?? sendsLeft
+            sendsLeft = sendsLeftNow() ?? sendsLeft
             samples += 1
             if !veil.exists, held.exists { bare += 1 }
             RunLoop.current.run(until: Date().addingTimeInterval(0.3))
