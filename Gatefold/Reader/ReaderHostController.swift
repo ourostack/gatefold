@@ -849,11 +849,22 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         readerLog.error("reflow: no settle after 12 s; showing the page as it is")
         showPageAsItIs()
         noteShownUnsettled()
+        refreshShownProbe()
     }
 
     /// The page just shown as it is, while its restore still runs, is the page he sees: noted at once as
     /// Readium names it, then by its first words once the page answers (that may be the very script the
     /// restore is waiting on), so a leave before the restore ends keeps it (gatefold#133).
+    /// For UI tests: the page shown as it is, read from the screen. Its location reports wait on the
+    /// restore, so without this a test reads the words from before the reflow (gatefold#133).
+    private func refreshShownProbe() {
+        guard LaunchOptions.isUITest else { return }
+        Task { [weak self] in
+            guard let self, let visible = await self.visibleRange(), let text = visible.text else { return }
+            self.weakModel?.probeShownPage(text)
+        }
+    }
+
     private func noteShownUnsettled() {
         guard let model = weakModel else { return }
         if let here = navigator.currentLocation { model.reflowShownUnsettled(here) }

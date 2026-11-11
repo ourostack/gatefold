@@ -2388,6 +2388,11 @@ final class ReaderModel {
     /// reported until the live page takes its place (CI's reviewer check hashed the page under a
     /// picture that stayed up 24 s on a slow runner, and called a correct reopen a miss).
     private(set) var visibleTextProbe = ""
+    /// The words of a page shown before its location is reported (a restore that left it unsettled).
+    func probeShownPage(_ text: String) {
+        guard LaunchOptions.isUITest, reopenPicture == nil, !isClosed else { return }
+        visibleTextProbe = String(text.prefix(2400))
+    }
 
     /// For UI tests: the words of the place his last move saved, so a test can tell a word's tail the
     /// place skipped (`ReaderJS.anchor`) from a page that skipped his place (`ReopenMatch`).
