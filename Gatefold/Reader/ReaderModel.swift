@@ -236,6 +236,9 @@ final class ReaderModel {
     private(set) var isClosed = false
     /// While a landing settles, the navigator's in-between locations are not places: the landing
     /// records once, when it has settled. Any later move ends it.
+    @ObservationIgnored var diag: [String] = []
+    private func dg(_ s: String) { diag.append(s) }
+    private func tg(_ l: Locator?) -> String { l.map(Self.placeTag) ?? "nil" }
     private var landingMove: Int?
     /// The step the landing in flight began on: the veil it may outlive is its own, or one taken inside it.
     @ObservationIgnored private var landingStep = 0
@@ -261,8 +264,10 @@ final class ReaderModel {
     /// back to its start): neither is a jump's first step. Before the book is indexed the percent path
     /// has no file, and its first step is judged by page alone.
     private func isLandingsOwnPage(_ l: Locator, after before: Locator?) -> Bool {
-        guard let total = l.locations.totalProgression else { return true }
+        guard let total = l.locations.totalProgression else { dg("own: no total"); return true }
+        dg("own? l=\(tg(l)) before=\(tg(before)) aim=\(landingAim) aimFile=\(landingAimFile?.split(separator: "/").last ?? "nil") sp(l)=\(screenPage(atTotal: total).map(String.init(describing:)) ?? "nil") sp(aim)=\(screenPage(atTotal: landingAim).map(String.init(describing:)) ?? "nil") pc=\(chapterMap.positionCount)")
         if let aimFile = landingAimFile, l.href.string == aimFile, (l.locations.progression ?? 0) == 0 {
+            dg("own: aim file start rule")
             guard let before else { return true }
             if before.href.string == aimFile, (before.locations.progression ?? 0) > 0 { return false }
             guard let i = readingOrderHrefs.firstIndex(of: aimFile), i > 0, before.href.string == readingOrderHrefs[i - 1] else { return true }
@@ -1270,6 +1275,7 @@ final class ReaderModel {
             await body()
             watch.back = true
             guard let self else { return }
+            self.dg("tracked jump=\(jump) letGo=\(watch.letGo) his0=\(his) his=\(self.hisSteps) steps=\(self.steps) moves0=\(movesAtStart) moves=\(self.moves) here=\(self.tg(self.page?.currentLocation))")
             let here = self.page?.currentLocation
             if watch.letGo {
                 // Nothing may suspend between the late jump's return and this reset: a tap swallowed
@@ -1836,6 +1842,7 @@ final class ReaderModel {
         }
         let reportedBefore = lastReported
         lastReported = locator
+        dg("ldc l=\(tg(locator)) before=\(tg(reportedBefore)) touched=\(touchedSinceLocation) landing=\(landing) lm=\(landingMove.map(String.init) ?? "nil") moves=\(moves) steps=\(steps) ls=\(landingStep) stray=\(strayJump.map { "\($0.jump) \($0.href?.string.split(separator: "/").last ?? "nil")" } ?? "nil") his=\(hisSteps) hisMove=\(hisMove) launch=\(launchJumpInFlight)")
         if !placeOnly {
             location = locator
             // The reader turning on: the other device's line has done its job.
@@ -1858,6 +1865,7 @@ final class ReaderModel {
         // nowhere makes the landing's own report look touched (gatefold#173 re-review).
         let swipePastVeil = landing && touchedSinceLocation && (strayJump.map { $0.jump >= landingStep } ?? false)
             && !isLandingsOwnPage(locator, after: reportedBefore)
+        dg("swipePastVeil=\(swipePastVeil)")
         guard !landing || swipePastVeil, !launchJumpInFlight else { return }
         // Mid-turn the navigator has moved under the overlay; the turn records the place when it lands.
         // A move reported mid-reflow (a turn or a jump while an iPad's first layout is still settling)
@@ -1968,6 +1976,7 @@ final class ReaderModel {
         // but not one in its chapter, which may be that trip landing (Readium reports before the jump
         // returns). Whatever such a report kept, the trip's return writes his place again (`goBack`),
         // unless a newer move still on its way does.
+        dg("swiped=\(swiped) tar=\(touchedAtReport) rm=\(readerMoved) fl=\(fromLayout) nmo=\(noMoveOfOurs) strayCh=\(isStrayChapter(locator)) ak=\(alreadyKept) lo=\(layoutOnly)")
         if swiped && (noMoveOfOurs || strayBack != nil || strayJump != nil) && !isStrayChapter(locator) {
             hisSteps += 1
             landed(takeStep(), at: locator)
@@ -1979,6 +1988,7 @@ final class ReaderModel {
         // its words found the move not yet kept, and both wrote (build 20's loop saved two places for one
         // jump, 0.3 s apart, from one reader).
         let keptMeanwhile = moves == recordedMoves && !hisMove && !touchedAtReport
+        dg("write? hm=\(hasMoved) rm=\(readerMoved) km=\(keptMeanwhile) his=\(hisSteps) moves=\(moves) rec=\(recordedMoves)")
         guard hasMoved, readerMoved, !keptMeanwhile, !fromLayout, !isWarming else {
             // No write: the move is the next report's to keep, from now, not after the wait below.
             if let claim, claimedMove == claim { claimedMove = nil }

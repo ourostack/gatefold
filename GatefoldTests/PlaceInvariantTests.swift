@@ -747,6 +747,8 @@ import Testing
         await Self.settle { abs((f.page.currentLocation?.locations.totalProgression ?? -1) - (next.locations.totalProgression ?? 0)) < 0.00001 }
         #expect(abs((Self.kept(f) ?? -1) - (next.locations.totalProgression ?? 0)) < 0.001, "the place kept isn't his turn")
         #expect(!f.model.showJumpBack, "a way back is offered for a catch-up he never saw land (\(how))")
+        let dump = "DIAG \(place) next=\(ReaderModel.placeTag(next)) kept=\(Self.kept(f) ?? -1) | " + f.model.diag.joined(separator: " | ")
+        #expect(how != "swipe", "\(dump)")
         f.model.close()
     }
 
