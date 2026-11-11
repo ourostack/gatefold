@@ -35,12 +35,26 @@ CONFIRM_LIMIT="$(limit "${BOOT_SIM_CONFIRM_LIMIT:-}" 15)" || exit 2
 # not.) The limit is measured on the clock ($SECONDS), not by counting polls, which run slow on a busy runner.
 # This shell watches the command itself, every 0.2 s, so no watchdog
 # process exists to race or outlive it: a watchdog subshell could be stopped between forking its sleep and noting its
-# PID, and the orphaned sleep then held `$(... 2>&1)` open for the whole limit (#74 review). No pkill or temp files,
-# so it runs the same on macOS's /bin/bash 3.2 and in the core job's swift:6.2 container.
+# PID, and the orphaned sleep then held `$(... 2>&1)` open for the whole limit (#74 review). The command writes to
+# files, not to the caller's pipe, and they are copied out when it ends or is killed: a child of the command that
+# outlives the kill would otherwise hold that pipe open, and the caller's `$(...)` waited on it (gatefold#227: 60 s
+# slices took 79 and 96 s, and a listing bounded at 60 s held the boot about 140 s more, in probe 43007631651). No
+# pkill, so it runs the same on macOS's /bin/bash 3.2 and in the core job's swift:6.2 container.
+WITHIN_DIR="$(mktemp -d "${TMPDIR:-/tmp}/boot-sim.XXXXXX")" || exit 2
+trap 'rm -rf "$WITHIN_DIR"' EXIT
+WITHIN_N=0
 within() {
   local secs="$1"; shift
-  "$@" &
+  WITHIN_N=$(( WITHIN_N + 1 ))
+  local out="$WITHIN_DIR/$WITHIN_N.out" err="$WITHIN_DIR/$WITHIN_N.err" code
+  "$@" >"$out" 2>"$err" </dev/null &
   local pid=$! end=$(( SECONDS + secs ))
+  _within_wait "$pid" "$end" "$secs" "$@"; code=$?
+  cat "$err" >&2; cat "$out"
+  return $code
+}
+_within_wait() {
+  local pid="$1" end="$2" secs="$3"; shift 3
   while kill -0 "$pid" 2>/dev/null; do
     # Past the end, not at it: $SECONDS counts whole seconds, so this fires between secs and secs + 1, never early.
     if (( SECONDS > end )); then
