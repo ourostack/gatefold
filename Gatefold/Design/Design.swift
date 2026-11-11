@@ -104,6 +104,9 @@ enum LaunchOptions {
     /// Debug only: Back's first this many sends are taken at their chapter's start, the chapter still
     /// loading meanwhile, as a web view still loading takes a jump (gatefold#170). Counted in sends, not
     /// looks, so a Back that stops sending stays short. Armed once per launch, by its first Back.
+    /// UI tests only: a jump of his to a place (the scrubber) is never sent to the page, as a chapter that
+    /// never finishes loading: Readium never reports it, and he leaves on the page before (gatefold#279).
+    static var holdJumpSends: Bool { isUITest && defaults.bool(forKey: "GatefoldHoldJumpSends") }
     static var holdBackSends: Int? {
         #if DEBUG
         defaults.object(forKey: "GatefoldHoldBackSends") == nil ? nil : defaults.integer(forKey: "GatefoldHoldBackSends")

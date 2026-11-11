@@ -1623,6 +1623,10 @@ final class ReaderModel {
         leavingOnShownPage = nil
         guard placeOwed || shown, !isWarming else { return }
         let recordedBefore = recordedMoves
+        // A jump still on its way (gatefold#279): its own report may arrive during this write's waits and
+        // be judged already kept, clearing the debt; the move stays open to it either way, so his page's
+        // words are still written once Readium reports it.
+        let jumpOwed = jumpOnItsWay.map { $0.1 == moves } == true && owedJumpTarget.map { $0.0.href == here.href && $0.0.locations.progression == here.locations.progression } == true
         if !shown {
             readerLog.notice("place: recorded the move a reflow held, on leaving, at \(here.locations.totalProgression ?? -1, privacy: .public) moves \(self.moves, privacy: .public) recorded \(self.recordedMoves, privacy: .public)")
         }
@@ -1642,7 +1646,7 @@ final class ReaderModel {
             await locationDidChange(words, hisMove: true, placeOnly: true)
             if moves == movesAtWrite, !touchedSinceLocation { layoutOnly = true }
         }
-        if !isClosed, placeOwed, recordedMoves == moves { recordedMoves = recordedBefore }
+        if !isClosed, placeOwed || jumpOwed, recordedMoves == moves { recordedMoves = recordedBefore }
     }
 
     /// Leaving on the page a stalled restore left him: written now, in the caller's own turn (the close,
@@ -1905,6 +1909,8 @@ final class ReaderModel {
     /// The newest jump of his to a place (the scrubber, a bookmark, a search result) and its move: the place
     /// a leave keeps while that move has no report yet (gatefold#279).
     @ObservationIgnored private var jumpOnItsWay: (Locator, Int)?
+    /// A jump of his to a place is being sent to the page (a UI test's `-GatefoldHoldJumpSends` holds it).
+    @ObservationIgnored private(set) var isJumpingToPlace = false
     /// The latest report of the claimed move that was dropped for the claim.
     @ObservationIgnored private var contestingReport: Locator?
     /// Set when a reflow ends (or an owed place is kept) and cleared by a move of his, or a report his
@@ -2354,8 +2360,11 @@ final class ReaderModel {
         let back = rememberBack ? rememberPlace() : nil
         defer { publishBack(back) }
         if let locator = await publication.locate(progression: progression) {
-            jumpOnItsWay = (locator, moves)
+            // His own jumps only: a Cloud landing (`his: false`) records its place once it has settled.
+            if his { jumpOnItsWay = (locator, moves) }
+            isJumpingToPlace = his
             await veiled { _ = await self.page?.go(to: locator) }
+            isJumpingToPlace = false
             await captureAnchor()
             // Behind the cover nothing hides a chapter still loading, so keep the cover up until the
             // words are there.

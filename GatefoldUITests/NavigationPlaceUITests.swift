@@ -268,18 +268,19 @@ final class NavigationPlaceUITests: XCTestCase {
         leaveAndReturn(expecting: first, "scrubber jump")
     }
 
-    /// The same jump left while its chapter still loads (`-GatefoldHoldChapterLoad`, as a slow runner's
-    /// iPad did): Readium had not reported the jump's page, nothing was written, and the reopen came back
-    /// at the book's start (gatefold#279). The reopen is on the jump's page, never the opening one.
+    /// The same jump left while its chapter still loads (`-GatefoldHoldJumpSends`: the jump never reaches
+    /// the page, so Readium never reports it, as on a slow runner's iPad): nothing was written, and the
+    /// reopen came back at the book's start (gatefold#279). The reopen is on the jump's page, never the
+    /// opening one.
     func testAScrubberJumpLeftWhileItsChapterLoadsKeepsItsTarget() {
-        let first = openFresh(["-GatefoldHoldChapterLoad", "400"])
+        let first = openFresh(["-GatefoldHoldJumpSends", "YES"])
         showChrome()
         let scrubber = app.descendants(matching: .any)["reader.scrubber"]
         XCTAssertTrue(scrubber.waitForExistence(timeout: 5))
         let from = scrubber.coordinate(withNormalizedOffset: CGVector(dx: 0.1, dy: 0.5))
         from.press(forDuration: 0.1, thenDragTo: scrubber.coordinate(withNormalizedOffset: CGVector(dx: 0.62, dy: 0.5)))
         let held = app.descendants(matching: .any)["reader.loadingHeld"]
-        XCTAssertTrue(held.waitForExistence(timeout: 10), "the jump's chapter load is held open")
+        XCTAssertTrue(held.waitForExistence(timeout: 10), "the jump is held, never sent")
         // He leaves while it is still held: no turn, no wait for the page.
         XCUIDevice.shared.press(.home)
         if !app.wait(for: .runningBackground, timeout: 3) {

@@ -1863,6 +1863,11 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
 
     @discardableResult
     func go(to locator: Locator) async -> Bool {
+        if LaunchOptions.holdJumpSends, weakModel?.isJumpingToPlace == true {
+            holdLoadForTest(looks: 0)
+            readerLog.notice("test: a jump to a place is held, never sent")
+            return true
+        }
         if LaunchOptions.isUITest, let sends = LaunchOptions.holdBackSends, sends > 0, weakModel?.isGoingBack == true {
             if !heldSendsArmed { heldSendsArmed = true; heldSends = sends; holdLoadForTest(looks: 0) }
             if heldSends > 0 {

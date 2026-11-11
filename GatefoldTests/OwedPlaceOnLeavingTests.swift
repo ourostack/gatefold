@@ -164,12 +164,21 @@ import Testing
 final class UnreportedJumpPage: ReaderPage {
     var currentLocation: Locator?
     private(set) var sent: [Locator] = []
+    /// The words of the page once its chapter has loaded (none while it loads).
+    var words: String?
     init(at location: Locator) { currentLocation = location }
     @discardableResult func go(to locator: Locator) async -> Bool { sent.append(locator); return true }
     func go(to link: ReadiumShared.Link) async {}
-    func visibleRange() async -> VisibleRange? { nil }
-    func progression(of quote: String) async -> Double? { nil }
-    func currentAnchor() async -> (ReadingAnchor, Locator)? { nil }
+    func visibleRange() async -> VisibleRange? {
+        guard let words, let here = currentLocation else { return nil }
+        let start = here.locations.progression ?? 0
+        return VisibleRange(href: here.href.string, start: start, end: min(1, start + 0.03), text: words)
+    }
+    func progression(of quote: String) async -> Double? { words == nil ? nil : currentLocation?.locations.progression }
+    func currentAnchor() async -> (ReadingAnchor, Locator)? {
+        guard let words, let here = currentLocation else { return nil }
+        return (ReadingAnchor(href: here.href.string, progression: here.locations.progression ?? 0, text: words), here)
+    }
 }
 
 /// gatefold#279: a scrubber jump from the opening page whose chapter is still loading when he leaves,
@@ -221,6 +230,15 @@ final class UnreportedJumpPage: ReaderPage {
         let saved = try #require(savedPlace(app), "leaving kept no place")
         #expect(saved.href.string == target.href.string)
         #expect(saved.locations.progression == target.locations.progression)
+
+        // He comes back, the chapter loads, and Readium reports the jump's page: that report still writes
+        // his page and its words over the target the leave kept (the debt left open for it).
+        page.words = "stand-in-words-of-the-jumped-page"
+        page.currentLocation = target
+        await model.locationDidChange(target)
+        for _ in 0..<200 where savedPlace(app)?.text.highlight == nil { try await Task.sleep(for: .milliseconds(25)) }
+        #expect(savedPlace(app)?.text.highlight != nil, "the jump's own report wrote no words after the inactive leave")
+        #expect(!model.placeOwed, "the jump's report left the leave's debt standing")
         model.close()
     }
 }
