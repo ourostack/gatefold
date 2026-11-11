@@ -97,16 +97,23 @@ final class PlaceUndoUITests: XCTestCase {
 
     private func showChrome() {
         // A tap under a jump's veil is swallowed (the veil is the page changing), so wait it out.
-        XCTAssertTrue(el("reader.veil").waitForNonExistence(timeout: 60), "the veil lifts")
-        // Already up (a jump made from them leaves them up), or still fading in: a tap now would put
-        // them down.
+        // Judged in reads (gatefold#166), as every wait here: a starved runner's queries take seconds.
+        let veil = el("reader.veil")
+        XCTAssertTrue(readsUntil(reads: 600, hangGuard: 240) { !veil.exists }.ok, "the veil lifts")
+        // Already up (a jump made from them leaves them up), or fading in or out: wait for one or the
+        // other and never tap them down. 2 s of wall time ran out on a starved runner while they were
+        // up, and the tap that followed put them down.
         let contents = app.buttons["reader.contents"]
         if contents.exists {
-            let hittable = XCTNSPredicateExpectation(predicate: NSPredicate(format: "isHittable == true"), object: contents)
-            if XCTWaiter.wait(for: [hittable], timeout: 2) == .completed { return }
+            _ = readsUntil(reads: 30, hangGuard: 180) { !contents.exists || contents.isHittable }
+            if contents.exists {
+                XCTAssertTrue(contents.isHittable, "the controls that are up become hittable")
+                return
+            }
         }
         el("reader.page").coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
-        XCTAssertTrue(app.buttons["reader.contents"].waitForExistence(timeout: 5))
+        XCTAssertTrue(readsUntil(reads: 50, hangGuard: 120) { contents.exists && contents.isHittable }.ok,
+                      "a tap in the middle brings up the controls")
     }
 
     /// After a swipe the list may still be scrolling, and asking a row whether it is hittable then can fail
@@ -366,21 +373,40 @@ final class PlaceUndoUITests: XCTestCase {
     }
 
     /// A tap on the turn zone while a jump's veil is up is not a turn: the page lands where he chose.
+    /// A Contents jump leaves the controls up, and a tap that got past the veil would put them down
+    /// (`handleTap`), so the controls still up after it prove the tap was swallowed, not just harmless.
+    /// Each wait is judged in reads (gatefold#166): a starved runner's queries take seconds each, and
+    /// 10 s for the veil ran out on #182. The chapter's load is held for 800 looks (about 20 s), so the
+    /// veil outlasts the slow reads and the tap.
     func testATapWhileAJumpIsUnderWayLandsWhereHeChose() {
-        let first = openFresh(["-GatefoldHoldChapterLoad", "60"])
+        let first = openFresh(["-GatefoldHoldChapterLoad", "800"])
         contentsJump(to: "Chapter XL")
         let veil = el("reader.veil")
-        XCTAssertTrue(veil.waitForExistence(timeout: 10), "the jump's veil is up")
+        let contents = app.buttons["reader.contents"]
+        let up = readsUntil(reads: 100, hangGuard: 120) { veil.exists }
+        print("UNDO tapped jump: veil up after \(up.reads) reads")
+        XCTAssertTrue(up.ok, "the jump's veil is up")
+        XCTAssertTrue(contents.exists, "the controls are up under the veil")
         el("reader.page").coordinate(withNormalizedOffset: CGVector(dx: 0.97, dy: 0.5)).tap()
-        XCTAssertTrue(veil.waitForNonExistence(timeout: 60))
-        let landed = settledWords()
-        XCTAssertNotEqual(opening(landed), opening(first))
+        // One veil a jump: still up after the tap means it was up when the tap landed.
+        XCTAssertTrue(veil.exists, "the tap landed under the jump's veil")
+        let jump = landed(from: first, reads: 1200, hangGuard: 240)
+        print("UNDO tapped jump landed after \(jump.reads) reads")
+        XCTAssertTrue(jump.ok, "the jump's veil lifts")
+        XCTAssertTrue(contents.exists, "the tap under the veil was swallowed (the controls it would have put down are up)")
+        let chosen = settledWords()
+        XCTAssertNotEqual(opening(chosen), opening(first))
         // The same jump again, untouched, from his first page: the page it lands on is where he chose.
         app.buttons["reader.back"].tap()
-        _ = waitForWords(changingFrom: landed, timeout: 30)
+        let back = landed(from: chosen, reads: 1200, hangGuard: 240)
+        print("UNDO back landed after \(back.reads) reads")
+        XCTAssertTrue(back.ok, "Back's veil lifts")
         contentsJump(to: "Chapter XL")
-        XCTAssertTrue(veil.waitForExistence(timeout: 10))
-        XCTAssertTrue(veil.waitForNonExistence(timeout: 60))
-        XCTAssertEqual(opening(settledWords()), opening(landed), "a tap during the jump moved the page off where he chose")
+        let again = readsUntil(reads: 100, hangGuard: 120) { veil.exists }
+        XCTAssertTrue(again.ok, "the untouched jump's veil is up")
+        let untouched = landed(from: back.words, reads: 1200, hangGuard: 240)
+        print("UNDO untouched jump: veil up after \(again.reads) reads, landed after \(untouched.reads) reads")
+        XCTAssertTrue(untouched.ok, "the untouched jump's veil lifts")
+        XCTAssertEqual(opening(settledWords()), opening(chosen), "a tap during the jump moved the page off where he chose")
     }
 }

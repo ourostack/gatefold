@@ -145,6 +145,10 @@ final class ReopenLandingUITests: XCTestCase {
             attachment.lifetime = .keepAlways
             add(attachment)
             print("REOPEN-LANDING \(book) round \(round) turns \(turns) left [\(left.prefix(60))] back [\(back.prefix(60))]")
+            // Two empty readings match trivially (gatefold#201's cover passed two rounds this way).
+            if left.isEmpty || back.isEmpty {
+                misses.append("round \(round): no words read (left \(left.count) characters, reopened \(back.count))")
+            }
             if !back.hasPrefix(head) {
                 misses.append("round \(round) after \(turns) turns: left [\(left.prefix(50))], reopened [\(back.prefix(50))]")
             }

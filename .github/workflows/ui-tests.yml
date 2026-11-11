@@ -156,6 +156,8 @@ jobs:
         timeout-minutes: ${{ fromJSON(steps.left.outputs.minutes) }}
         env:
           STEP_UNTIL: ${{ steps.left.outputs.until }}
+          # The tests size their hang guards to end before this step does (GatefoldUITests/HangGuard.swift, gatefold#221).
+          TEST_RUNNER_GATEFOLD_STEP_UNTIL: ${{ steps.left.outputs.until }}
           FULL: ${{ inputs.full }}
           TESTS: ${{ inputs.tests }}
           SKIP: ${{ inputs.skip }}
