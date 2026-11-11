@@ -145,6 +145,8 @@ jobs:
       cancel-in-progress: false
     env:
       GATEFOLD_SHA: ${{ needs.gate.outputs.sha }}
+      # wc -m counts characters only under a UTF-8 locale (What to Test's 4000 check in ci-publish-testflight.sh).
+      LC_ALL: en_US.UTF-8
     steps:
       - uses: actions/checkout@v4
         with:
