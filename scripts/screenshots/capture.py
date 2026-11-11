@@ -35,8 +35,9 @@ ON_SCREEN = ["Gatefold", "Packages/GatefoldCore/Sources", "Packages/GatefoldClou
              "Packages/GatefoldCore/Package.swift", "Packages/GatefoldCloud/Package.swift",
              "Packages/GatefoldCloud/Package.resolved", "project.yml", "GatefoldListingShots", "screenshots",
              "scripts/screenshots", ".github/actions/select-xcode", ".github/workflows/screenshots.yml"]
-# The watcher gives up after SHOOT_LIMIT seconds; the scene test waits longer (ListingShotsUITests: 120 s).
+# The watcher gives up after SHOOT_LIMIT seconds; the scene test waits longer (ListingShotsUITests: 100 s).
 STABLE_FRAMES, SHOOT_LIMIT, FRAME_GAP = 3, 80, 0.8
+SIMCTL_LIMIT = 15  # one screenshot or status-bar call; a hung simctl fails the scene instead of the step
 # Elements whose text names the e-reader ("In step with your InkPad", the catch-up offer and its tab).
 NAMES_THE_DEVICE = {"library.syncHealth", "banner", "banner.jump", "banner.tab"}
 # Books in the public domain everywhere; the shelf launch argument may name only these.
@@ -55,7 +56,7 @@ def scenes_for(spec, device):
 def status_bar(udid, spec):
     sb = spec["status_bar"]
     subprocess.run(["xcrun", "simctl", "status_bar", udid, "override", "--time", sb["time"], *sb["args"]],
-                   check=True, capture_output=True)
+                   check=True, capture_output=True, timeout=SIMCTL_LIMIT)
 
 
 def png_size(path):
@@ -71,14 +72,14 @@ def settled(hashes, n=STABLE_FRAMES):
     return len(hashes) >= n and len(set(hashes[-n:])) == 1
 
 
-def shoot(udid, display, out, spec):
+def shoot(udid, display, out, spec, handoff=None):
     """Shoots until the screen holds still. Returns (ok, why)."""
     hashes = []
     with tempfile.TemporaryDirectory(prefix="shot-") as t:
-        return shoot_into(pathlib.Path(t), udid, display, out, spec, hashes)
+        return shoot_into(pathlib.Path(t), udid, display, out, spec, hashes, handoff or out.stem)
 
 
-def shoot_into(tmp, udid, display, out, spec, hashes):
+def shoot_into(tmp, udid, display, out, spec, hashes, handoff):
     started = time.monotonic()
     i = 0
     while time.monotonic() - started < SHOOT_LIMIT:
@@ -88,7 +89,7 @@ def shoot_into(tmp, udid, display, out, spec, hashes):
         cmd = ["xcrun", "simctl", "io", udid, "screenshot", "--type=png"]
         if display:
             cmd.append(f"--display={display}")
-        subprocess.run(cmd + [str(frame)], check=True, capture_output=True)
+        subprocess.run(cmd + [str(frame)], check=True, capture_output=True, timeout=SIMCTL_LIMIT)
         hashes.append(hashlib.sha256(frame.read_bytes()).hexdigest())
         if settled(hashes):
             frame.replace(out)
@@ -100,7 +101,7 @@ def shoot_into(tmp, udid, display, out, spec, hashes):
     keep.mkdir(exist_ok=True)
     for n, j in enumerate((i - 2, i - 1), 1):
         if j >= 0 and (tmp / f"{j}.png").exists():
-            shutil.copyfile(tmp / f"{j}.png", keep / f"{out.stem}-{int(time.time())}-{n}.png")
+            shutil.copyfile(tmp / f"{j}.png", keep / f"{handoff}-{n}.png")
     return False, f"the screen never held still for {STABLE_FRAMES} frames in {SHOOT_LIMIT} s"
 
 
@@ -109,22 +110,26 @@ def watch(udid, device, d, spec):
     display = spec["devices"][device].get("display")
     print(f"watching {d} for {device} scenes", flush=True)
     while not (d / "finished").exists():
+        # <scene>.<try>.ready: each try has its own hand-off files, so a late answer to one never passes the next.
         for ready in sorted(d.glob("*.ready")):
-            scene = ready.stem
-            if (d / f"{scene}.done").exists() or (d / f"{scene}.fail").exists():
+            handoff = ready.stem
+            scene = handoff.split(".", 1)[0]
+            if (d / f"{handoff}.done").exists() or (d / f"{handoff}.fail").exists():
                 continue
             try:
-                ok, why = shoot(udid, display, d / f"{scene}.png", spec)
+                ok, why = shoot(udid, display, d / f"{scene}.png", spec, handoff)
+            except subprocess.TimeoutExpired as exc:
+                ok, why = False, f"simctl did not answer in {exc.timeout:.0f} s"
             except subprocess.CalledProcessError as exc:
                 ok, why = False, f"simctl failed: {exc.stderr.decode(errors='replace').strip()[:200]}"
             except Exception as exc:  # never leave the scene waiting: say why
                 ok, why = False, f"the watcher failed: {type(exc).__name__}: {exc}"[:300]
             if ok:
-                print(f"{scene}: {why}, sha256 {sha(d / f'{scene}.png')[:16]}", flush=True)
-                (d / f"{scene}.done").write_text(why)
+                print(f"{handoff}: {why}, sha256 {sha(d / f'{scene}.png')[:16]}", flush=True)
+                (d / f"{handoff}.done").write_text(why)
             else:
-                print(f"{scene}: {why}", flush=True)
-                (d / f"{scene}.fail").write_text(why)
+                print(f"{handoff}: {why}", flush=True)
+                (d / f"{handoff}.fail").write_text(why)
         time.sleep(0.3)
 
 
@@ -209,7 +214,11 @@ def selftest():
     for s in spec["scenes"]:
         assert set(s["devices"]) <= set(spec["devices"]), s["id"]
         assert len(s["headline"]) == 2 and s["subline"] and s["bg"] in ("paper", "ink"), s["id"]
-        assert "PocketBook" not in " ".join(s["headline"]) + s["subline"], f"{s['id']}: no trademarks (2.3.7)"
+        caption = (" ".join(s["headline"]) + " " + s["subline"]).lower()
+        assert not any(m in caption for m in ("pocketbook", "inkpad")), f"{s['id']}: no trademarks (2.3.7)"
+    kinds = {k: d["kind"] for k, d in spec["devices"].items()}
+    for s in spec["scenes"]:
+        assert set(s.get("whole", [])) <= {kinds[k] for k in s["devices"]}, f"{s['id']}: whole names device kinds it runs on"
     for s in spec["scenes"]:
         assert s["ready"].get("type") in ("staticText", "other", "button"), f"{s['id']}: ready needs its element type"
     # The surfaces where the app names the reader's e-reader by its trademark stay out of the listing.

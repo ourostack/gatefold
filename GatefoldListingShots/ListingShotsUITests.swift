@@ -23,6 +23,7 @@ final class ListingShotsUITests: XCTestCase {
         // The workflow runs one scene per test run (GATEFOLD_SHOTS_SCENE), so a UI query that times out costs that
         // scene one try, not every scene after it.
         let only = env["GATEFOLD_SHOTS_SCENE"]
+        let attempt = env["GATEFOLD_SHOTS_TRY"] ?? "1"
         let scenes = (spec["scenes"] as? [[String: Any]] ?? []).filter {
             ($0["devices"] as? [String] ?? []).contains(device) && (only == nil || $0["id"] as? String == only)
         }
@@ -31,12 +32,12 @@ final class ListingShotsUITests: XCTestCase {
         for scene in scenes {
             let id = scene["id"] as? String ?? "?"
             XCTContext.runActivity(named: "scene \(id)") { _ in
-                shoot(scene: scene, id: id, launch: launch, dir: dir)
+                shoot(scene: scene, id: id, launch: launch, dir: dir, attempt: attempt)
             }
         }
     }
 
-    private func shoot(scene: [String: Any], id: String, launch: [String], dir: String) {
+    private func shoot(scene: [String: Any], id: String, launch: [String], dir: String, attempt: String) {
         let landscape = scene["orientation"] as? String == "landscape"
         XCUIDevice.shared.orientation = landscape ? .landscapeLeft : .portrait
         let app = XCUIApplication()
@@ -51,7 +52,7 @@ final class ListingShotsUITests: XCTestCase {
         let kinds: [String: XCUIElement.ElementType] = ["staticText": .staticText, "other": .other, "button": .button]
         let kind = kinds[ready["type"] ?? ""] ?? .any
         let element = app.descendants(matching: kind).matching(identifier: ready["id"] ?? "").firstMatch
-        guard element.waitForExistence(timeout: 90) else {
+        guard element.waitForExistence(timeout: 60) else {
             XCTFail("\(id): \(ready["id"] ?? "?") never appeared"); return
         }
         var predicate: NSPredicate?
@@ -60,24 +61,32 @@ final class ListingShotsUITests: XCTestCase {
         // A rotation can lay the page out once more before it settles, so its count need not be 0.
         if let start = ready["label_begins"] { predicate = NSPredicate(format: "label BEGINSWITH %@", start) }
         if let predicate {
-            let waited = XCTWaiter.wait(for: [expectation(for: predicate, evaluatedWith: element)], timeout: 90)
+            let waited = XCTWaiter.wait(for: [expectation(for: predicate, evaluatedWith: element)], timeout: 60)
             guard waited == .completed else { XCTFail("\(id): \(ready["id"] ?? "?") never read as ready"); return }
         }
 
+        // Nothing that names the reader's e-reader (the sync slip, the catch-up offer or its tab) is in the picture.
+        for name in ["slip", "banner", "banner.tab"] {
+            if app.descendants(matching: .any).matching(identifier: name).firstMatch.exists {
+                XCTFail("\(id): \(name) is on screen, and it names the e-reader"); return
+            }
+        }
+
         let folder = URL(fileURLWithPath: dir)
-        let done = folder.appendingPathComponent("\(id).done"), fail = folder.appendingPathComponent("\(id).fail")
+        let handoff = "\(id).\(attempt)"
+        let done = folder.appendingPathComponent("\(handoff).done"), fail = folder.appendingPathComponent("\(handoff).fail")
         do {
-            try Data(id.utf8).write(to: folder.appendingPathComponent("\(id).ready"))
+            try Data(id.utf8).write(to: folder.appendingPathComponent("\(handoff).ready"))
         } catch {
             XCTFail("\(id): could not write to the shots folder: \(error)"); return
         }
         // The host shoots until the screen holds still; a scene that never settles fails there, with its reason.
-        let deadline = Date().addingTimeInterval(120)
+        let deadline = Date().addingTimeInterval(100)
         while Date() < deadline {
             if FileManager.default.fileExists(atPath: done.path) { return }
             if let why = try? String(contentsOf: fail, encoding: .utf8) { XCTFail("\(id): \(why)"); return }
             Thread.sleep(forTimeInterval: 0.5)
         }
-        XCTFail("\(id): the host took no picture within 120 s")
+        XCTFail("\(id): the host took no picture within 100 s")
     }
 }

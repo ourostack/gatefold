@@ -77,6 +77,11 @@ jobs:
             SHA="$(git rev-list -n 1 "$tag")"
             echo "sha=$SHA" >> "$GITHUB_OUTPUT"
             git checkout --quiet "$SHA"
+            if [[ ! -f scripts/screenshots/capture.py ]]; then
+              say "$tag (${SHA:0:7}) predates the screenshots pipeline: no screenshots."; echo "render=false" >> "$GITHUB_OUTPUT"; exit 0
+            fi
+            # The checks that guard what goes on screen, on the commit that renders.
+            python3 -I scripts/screenshots/capture.py --selftest
             fp="$(python3 -I scripts/screenshots/capture.py fingerprint)"
             echo "fingerprint=$fp" >> "$GITHUB_OUTPUT"
             have="$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=listing-screenshots-$fp" --jq '[.artifacts[] | select(.expired | not)] | length')"
@@ -176,9 +181,13 @@ jobs:
           xcrun simctl ui "$UDID" appearance light
           xcrun simctl ui "$UDID" content_size large
           python3 -I scripts/screenshots/capture.py status-bar --udid "$UDID"
-          xcrun simctl io "$UDID" enumerate | grep -iE "display|port|class|size|name" | head -40 || true
+          if [ "$DEVICE" = duo ]; then
+            echo "The Duo's displays (for the spec's display setting):"
+            xcrun simctl io "$UDID" enumerate | grep -iE "display|port|class|size|name" | head -40 || true
+          fi
       - name: Capture every scene twice
-        timeout-minutes: 50
+        # Worst case: 3 scenes x 2 tries x 2 passes at about 4 min a try (waits of 60 + 60 + 100 s, and launch).
+        timeout-minutes: 70
         run: |
           # The step's default shell is bash -e; a failed try must reach the retry, not end the step.
           set +e -uo pipefail
@@ -187,29 +196,28 @@ jobs:
           mkdir -p "$RUNNER_TEMP/logs"
           for pass in a b; do
             dir="$RUNNER_TEMP/shots/$pass"
-            mkdir -p "$dir/tries"
+            mkdir -p "$RUNNER_TEMP/results"
             python3 -I scripts/screenshots/capture.py watch --udid "$UDID" --device "$DEVICE" --dir "$dir" > "$RUNNER_TEMP/logs/watch-$pass.log" 2>&1 &
             watcher=$!
             # One test run per scene, and one more try for a scene whose run failed (an XCUITest query can time
             # out on a busy runner): a timeout costs that scene a try, not the scenes after it.
             for scene in $scenes; do
               for try in 1 2; do
-                log="$RUNNER_TEMP/logs/test-$pass-$scene-$try.log"
+                log="$RUNNER_TEMP/xcodebuild-$pass-$scene-$try.log"
                 TEST_RUNNER_GATEFOLD_SHOTS_DIR="$dir" TEST_RUNNER_GATEFOLD_SHOTS_DEVICE="$DEVICE" \
-                TEST_RUNNER_GATEFOLD_SHOTS_SCENE="$scene" \
+                TEST_RUNNER_GATEFOLD_SHOTS_SCENE="$scene" TEST_RUNNER_GATEFOLD_SHOTS_TRY="$try" \
                 TEST_RUNNER_GATEFOLD_SHOTS_SPEC="$GITHUB_WORKSPACE/screenshots/spec.json" \
                   xcodebuild test-without-building -xctestrun "$XCTESTRUN" -destination "id=$UDID" \
                     -only-testing:GatefoldListingShots/ListingShotsUITests/testListingScenes \
-                    -resultBundlePath "$RUNNER_TEMP/logs/$pass-$scene-$try.xcresult" > "$log" 2>&1
+                    -resultBundlePath "$RUNNER_TEMP/results/$pass-$scene-$try.xcresult" > "$log" 2>&1
                 code=$?
-                grep -E "Test Case .*(passed|failed)|error:" "$log" | sed "s/^/$pass $scene #$try: /" || true
-                [ "$code" = 0 ] && [ -f "$dir/$scene.done" ] && break
+                # Only these lines reach the (public) artifact: the full log and the result bundle can carry page text.
+                grep -E "Test Case .*(passed|failed)|ListingShotsUITests.swift:[0-9]+: error" "$log" \
+                  | sed "s/^/$pass $scene #$try: /" | tee -a "$RUNNER_TEMP/logs/tests.log" || true
+                [ "$code" = 0 ] && [ -f "$dir/$scene.$try.done" ] && break
                 if [ "$try" = 2 ]; then echo "::error::Pass $pass: $scene failed twice"; status=1; break; fi
-                # Clear the failed try's hand-off files so the watcher shoots the next try afresh.
-                mkdir -p "$dir/tries/$scene-$try"
-                for f in "$dir/$scene.ready" "$dir/$scene.fail" "$dir/$scene.done" "$dir/$scene.png"; do
-                  [ -e "$f" ] && mv "$f" "$dir/tries/$scene-$try/"
-                done
+                # The failed try's picture goes aside; its hand-off files are named by try, so none can pass the next.
+                [ -e "$dir/$scene.png" ] && mkdir -p "$dir/tries" && mv "$dir/$scene.png" "$dir/tries/$scene-$try.png"
               done
             done
             kill -0 "$watcher" 2>/dev/null || { echo "::error::Pass $pass: the capture watcher had stopped"; status=1; }
