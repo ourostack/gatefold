@@ -30,21 +30,25 @@ on:
         type: string
         default: ""
       pr_tests:
-        description: The pull-request list. Empty means the full list; "none" means this shard runs only on main.
+        description: The pull-request list; "none" means this shard runs only on main and on full-list pull requests.
         type: string
-        default: ""
+        default: "none"
       full:
         description: needs.changes.outputs.full ('false' on a pull request that runs the PR lists)
         type: string
         default: "true"
-      pr_long:
-        description: A main-only shard that also runs on a pull request whose `long` is true (it touches the reader's place code)
-        type: boolean
-        default: false
-      long:
-        description: needs.changes.outputs.long ('false' on a pull request that leaves the reader's place code alone)
+      pr_when:
+        description: The group of paths whose change runs this shard's PR list (smoke, place-undo, place-jumps, taps)
         type: string
-        default: "true"
+        default: ""
+      fired:
+        description: needs.changes.outputs.fired, the groups this pull request's paths touch, space-separated
+        type: string
+        default: ""
+      extra:
+        description: needs.changes.outputs.edited-ipad or edited-duo, the UI test classes this pull request edits that run on this device; a smoke shard runs them too
+        type: string
+        default: ""
       cold:
         description: >-
           The rotation tests: run on this job's just-created iPad before anything else warms it, with the spread's
@@ -63,15 +67,15 @@ jobs:
   # success and the gate stays strict (a caller whose only job skipped has no documented result).
   main-only:
     name: Main only
-    if: ${{ !(inputs.full != 'false' || inputs.pr_tests != 'none' || (inputs.pr_long && inputs.long != 'false')) }}
+    if: ${{ !(inputs.full != 'false' || (inputs.pr_tests != 'none' && contains(format(' {0} ', inputs.fired), format(' {0} ', inputs.pr_when)))) }}
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
-      - run: echo "This shard runs on main and on full-list pull requests only."
+      - run: echo "Nothing in this shard guards what this pull request touches; it runs on main."
 
   run:
     name: Tests
-    if: ${{ inputs.full != 'false' || inputs.pr_tests != 'none' || (inputs.pr_long && inputs.long != 'false') }}
+    if: ${{ inputs.full != 'false' || (inputs.pr_tests != 'none' && contains(format(' {0} ', inputs.fired), format(' {0} ', inputs.pr_when))) }}
     runs-on: xcode-27
     timeout-minutes: ${{ inputs.timeout }}
     steps:
@@ -91,6 +95,15 @@ jobs:
         # Up to the build's own 35 min; it usually lands 2 to 4 min after the run starts.
         timeout-minutes: 36
         uses: ./.github/actions/await-build
+      - name: The ${{ inputs.device }} finished booting
+        # Before the download: a first boot holds the runner's load at 500 to 760, and a download beside it stalls to
+        # its 4-min limit (gatefold#198). boot-sim.sh retries a boot that fails or hangs (#57); this waits with a limit.
+        # 1200 s for the boot, the check's listings, and 900 s for one fresh device when the first boot left room
+        # (gatefold#71; the sums are in scripts/ci-simulator.py at BOOT_ATTEMPT).
+        timeout-minutes: 30
+        env:
+          CI_SIMULATOR_BUDGET: "1740" # the step's 30 min less one: it ends with its own message, never killed
+        run: python3 -I scripts/ci-simulator.py wait "${{ inputs.sim }}" "${{ inputs.device }}" 1200
       - id: fetch
         # Usually 4 s, but 13 of 144 took over 2 min and one 10.6 min (gatefold#144), in bunches across jobs: the
         # artifact store, not the runner. A download cut off at 4 min tries once more, rather than eating the tests' time.
@@ -120,14 +133,6 @@ jobs:
           mkdir -p "$RUNNER_TEMP/dd/Build"
           tar -xzf "$RUNNER_TEMP/products.tgz" -C "$RUNNER_TEMP/dd/Build"
           echo "XCTESTRUN=$(ls "$RUNNER_TEMP"/dd/Build/Products/*.xctestrun | head -1)" >> "$GITHUB_ENV"
-      - name: The ${{ inputs.device }} finished booting
-        # boot-sim.sh retries a boot that fails or hangs (#57); this step waits for it with a limit.
-        # 1200 s for the boot, the check's listings, and 900 s for one fresh device when the first boot left room
-        # (gatefold#71; the sums are in scripts/ci-simulator.py at BOOT_ATTEMPT).
-        timeout-minutes: 30
-        env:
-          CI_SIMULATOR_BUDGET: "1740" # the step's 30 min less one: it ends with its own message, never killed
-        run: python3 -I scripts/ci-simulator.py wait "${{ inputs.sim }}" "${{ inputs.device }}" 1200
       - name: Keep the app's place log as it runs (file and progression only, never the book's words)
         run: |
           sh scripts/ci-crashes.sh mark
@@ -155,8 +160,7 @@ jobs:
           TESTS: ${{ inputs.tests }}
           SKIP: ${{ inputs.skip }}
           PR_TESTS: ${{ inputs.pr_tests }}
-          PR_LONG: ${{ inputs.pr_long }}
-          LONG: ${{ inputs.long }}
+          EXTRA: ${{ inputs.pr_when == 'smoke' && inputs.extra || '' }}
           # Five rounds of the controls-then-numbers reopen (about 2 min each); 30 locally.
           TEST_RUNNER_GATEFOLD_REOPEN_ROUNDS: "5"
           # The rotation shards only: the runner draws the spread two to four times slower than a Mac (up to 50 s
@@ -164,10 +168,10 @@ jobs:
           TEST_RUNNER_GATEFOLD_SPREAD_FLOOR: ${{ inputs.cold && '90' || '' }}
         run: |
           set -o pipefail
-          # A pull request runs the PR list when the shard has one; otherwise the full list, less the skipped tests.
-          # A long shard (`pr_long`) runs its full list on a pull request that touches the reader's place code.
-          if [ "$FULL" = false ] && [ -n "$PR_TESTS" ] && ! { [ "$PR_LONG" = true ] && [ "$LONG" != false ]; }; then
-            list="$PR_TESTS"; skip=""
+          # A pull request runs the PR list, and in a smoke shard the UI test classes it edits; main and full-list pull
+          # requests run the full list, less the skipped tests.
+          if [ "$FULL" = false ]; then
+            list="$PR_TESTS $EXTRA"; skip=""
           else
             list="$TESTS"; skip="$SKIP"
           fi

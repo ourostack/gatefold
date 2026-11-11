@@ -8,7 +8,7 @@ GatefoldUITests: a class, or a class and a test. For each tier (`pr`: a pull req
 main and full-list pull requests) this fails when
   - an entry names no test in the sources (a renamed test would otherwise drop out of CI quietly),
   - a skipped test is not in its shard's `tests`, or runs in no other shard on that device on main,
-  - a shard has no `tests` list (an empty list would run the whole suite),
+  - a shard has no `tests` list (an empty list would run the whole suite), or a PR list with no `pr_when`,
   - one test runs in two shards on the same device in the same tier.
 --list prints every "tier|device|test" with its shard. --expect FILE fails unless that set equals the file's (the first
 word of each line; blank lines and lines starting with # ignored). CI checks against scripts/ci-shards.expect, so a
@@ -160,6 +160,8 @@ def plan(text, tests):
             on_pr = set()
         else:
             on_pr = expand(pr, tests, problems, where + " pr_tests")
+            if not s.get("pr_when", "").strip():
+                problems.append(f"{where}: has pr_tests but no pr_when, so it never runs on a pull request")
         for tier, chosen in (("pr", on_pr), ("main", full)):
             for t in chosen:
                 runs.setdefault((tier, device, t), []).append(name)
