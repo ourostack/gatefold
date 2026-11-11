@@ -394,7 +394,7 @@ jobs:
             tests: >-
               FineTuneTapUITests
             skip: >-
-              FineTuneTapUITests/testAQuickTouchChangesEverySwitchOnce FineTuneTapUITests/testATapOnTheRowsNameChangesItsSwitch FineTuneTapUITests/testEveryTapFlipsItsSwitchLandscape FineTuneTapUITests/testEveryTapFlipsItsSwitchPortrait
+              FineTuneTapUITests/testAQuickTouchChangesEverySwitchOnce FineTuneTapUITests/testATapOnTheRowsNameChangesItsSwitch FineTuneTapUITests/testEveryTapFlipsJustifyPortrait FineTuneTapUITests/testEveryTapFlipsPageNumbersPortrait FineTuneTapUITests/testEveryTapFlipsPositionLabelPortrait FineTuneTapUITests/testEveryTapFlipsPagesLeftPortrait FineTuneTapUITests/testEveryTapFlipsJustifyLandscape FineTuneTapUITests/testEveryTapFlipsPageNumbersLandscape FineTuneTapUITests/testEveryTapFlipsPositionLabelLandscape FineTuneTapUITests/testEveryTapFlipsPagesLeftLandscape
             pr_tests: none
             cold: false
             timeout: 33 # 12 + 2 x 4.3 + 12
@@ -406,22 +406,38 @@ jobs:
             pr_tests: none
             cold: false
             timeout: 38 # 12 + 2 x 6.5 + 12
-          - shard: ipad-taps-landscape
-            # Main only, every tap: 836
-            tests: >-
-              FineTuneTapUITests/testEveryTapFlipsItsSwitchLandscape
-            skip: ""
-            pr_tests: none
-            cold: false
-            timeout: 61 # 12 + 2 x 18.4 + 12
           - shard: ipad-taps-portrait
-            # Main only, every tap: 406
+            # Main only, every tap, one switch each (#200): 168 + 135
             tests: >-
-              FineTuneTapUITests/testEveryTapFlipsItsSwitchPortrait
+              FineTuneTapUITests/testEveryTapFlipsJustifyPortrait FineTuneTapUITests/testEveryTapFlipsPageNumbersPortrait
             skip: ""
             pr_tests: none
             cold: false
-            timeout: 53 # 12 + 2 x 14.4 + 12
+            timeout: 35 # 12 + 2 x 5.1 + 12
+          - shard: ipad-taps-portrait-more
+            # Main only, every tap (#200): 120 + 129 + 149
+            tests: >-
+              FineTuneTapUITests/testEveryTapFlipsPositionLabelPortrait FineTuneTapUITests/testEveryTapFlipsPagesLeftPortrait FineTuneTapUITests/testEveryTapFlipsPagesLeftLandscape
+            skip: ""
+            pr_tests: none
+            cold: false
+            timeout: 38 # 12 + 2 x 6.6 + 12
+          - shard: ipad-taps-landscape
+            # Main only, every tap (#200): 295
+            tests: >-
+              FineTuneTapUITests/testEveryTapFlipsJustifyLandscape
+            skip: ""
+            pr_tests: none
+            cold: false
+            timeout: 34 # 12 + 2 x 4.9 + 12
+          - shard: ipad-taps-landscape-more
+            # Main only, every tap (#200): 165 + 146
+            tests: >-
+              FineTuneTapUITests/testEveryTapFlipsPageNumbersLandscape FineTuneTapUITests/testEveryTapFlipsPositionLabelLandscape
+            skip: ""
+            pr_tests: none
+            cold: false
+            timeout: 35 # 12 + 2 x 5.2 + 12
     uses: ./.github/workflows/ui-tests.yml
     with:
       device: "iPad Pro 13-inch"
@@ -517,7 +533,7 @@ jobs:
           - shard: duo-taps-portrait
             # Every tap, alone: 374
             tests: >-
-              FineTuneTapUITests/testEveryTapFlipsItsSwitchPortrait
+              FineTuneTapUITests/testEveryTapFlipsJustifyPortrait FineTuneTapUITests/testEveryTapFlipsPageNumbersPortrait FineTuneTapUITests/testEveryTapFlipsPositionLabelPortrait FineTuneTapUITests/testEveryTapFlipsPagesLeftPortrait
             skip: ""
             pr_tests: none
             cold: false
@@ -535,7 +551,7 @@ jobs:
             tests: >-
               FineTuneTapUITests
             skip: >-
-              FineTuneTapUITests/testEveryTapFlipsItsSwitchPortrait FineTuneTapUITests/testAQuickTouchChangesEverySwitchOnce FineTuneTapUITests/testATapOnTheRowsNameChangesItsSwitch
+              FineTuneTapUITests/testEveryTapFlipsJustifyPortrait FineTuneTapUITests/testEveryTapFlipsPageNumbersPortrait FineTuneTapUITests/testEveryTapFlipsPositionLabelPortrait FineTuneTapUITests/testEveryTapFlipsPagesLeftPortrait FineTuneTapUITests/testAQuickTouchChangesEverySwitchOnce FineTuneTapUITests/testATapOnTheRowsNameChangesItsSwitch
             pr_tests: none
             cold: false
             timeout: 34 # 12 + 2 x 4.5 + 12
