@@ -129,6 +129,19 @@ final class PlaceUndoUITests: XCTestCase {
         }
     }
 
+    /// After a swipe the list may still be scrolling, and asking a row whether it is hittable then can fail
+    /// the test outright ("activation point invalid": main 42855033645, gatefold#196). So ask once its
+    /// frame holds still for two reads in a row, or it isn't there.
+    private func holdsStill(_ e: XCUIElement) {
+        var last = CGRect.null
+        _ = readsUntil(reads: 30, hangGuard: 30) {
+            guard e.exists else { return true }
+            let now = e.frame
+            defer { last = now }
+            return now == last
+        }
+    }
+
     private func contentsJump(to chapter: String) {
         showChrome()
         app.buttons["reader.contents"].tap()

@@ -372,26 +372,25 @@ final class NavigationPlaceUITests: XCTestCase {
     }
 
     /// Scroll mode: a scroll is his move even after the launch reflow, through all of a long scroll's
-    /// reports, so a reopen shows where he scrolled to, not where the scroll began.
+    /// reports, so a reopen shows where he scrolled to, not where the scroll began. Every wait is a
+    /// count of reads of the page, never seconds (#171).
     func testScrolledAfterTheLaunchReflowThenLeftKeepsWhereHeScrolled() {
         var first = openFresh()
         // A fresh install offers the Cloud's place and never lands on it (#46): the book opens on its
-        // cover, which has no words to scroll through. He takes the offer, as he would. Unanswered for
-        // 10 s the offer folds into its tab, so by now it may be the tab: opened again, then taken.
-        if first.isEmpty {
-            let offer = app.buttons["banner.jump"], tab = app.descendants(matching: .any)["banner.tab"].firstMatch
-            let up = Date().addingTimeInterval(30)
-            while !offer.exists, Date() < up {
-                if tab.exists, tab.isHittable { tab.tap() }
-                RunLoop.current.run(until: Date().addingTimeInterval(0.5))
-            }
-            XCTAssertTrue(offer.exists, "a fresh install on the cover offers the Cloud's place")
-            if offer.exists { offer.tap() }
-            first = waitForWords(changingFrom: first)
-        }
+        // cover, which has no words to scroll through. He takes the offer, as he would.
+        if first.isEmpty { first = takeTheCloudsOffer() }
         XCTAssertFalse(first.isEmpty, "the page he scrolls from shows words")
-        showChrome()
-        app.buttons["reader.appearance"].tap()
+        // The controls: a tap of the offer's that met the page as it folded may have brought them up already,
+        // and then a tap would put them away (#171's probe 42969303572). Up to three taps, each looked for.
+        let contents = app.buttons["reader.contents"]
+        var taps = 0
+        while !contents.waitForExistence(timeout: 5), taps < 3 {
+            taps += 1
+            app.descendants(matching: .any)["reader.page"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        }
+        XCTAssertTrue(contents.exists, "a tap brings up the controls")
+        let appearance = app.descendants(matching: .any)["reader.appearance"].firstMatch
+        appearance.tap()
         let turnStyle = app.descendants(matching: .any)["appearance.pageTurn"].firstMatch
         XCTAssertTrue(turnStyle.waitForExistence(timeout: 5))
         turnStyle.tap()
@@ -400,16 +399,93 @@ final class NavigationPlaceUITests: XCTestCase {
         scroll.tap()
         let close = app.buttons["appearance.close"].exists ? app.buttons["appearance.close"] : app.buttons["appearance.back"]
         if close.exists { close.tap() } else { app.descendants(matching: .any)["reader.page"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.2)).tap() }
-        sleep(4)
-        for _ in 0..<6 { app.descendants(matching: .any)["reader.page"].swipeUp(velocity: .fast) }
-        sleep(4)
-        let scrolled = waitForWords()
+        // The switch to Scroll reflows the book: he swipes once the page has held still (the old 4 s).
+        let before = steadyWords()
+        let page = app.descendants(matching: .any)["reader.page"]
+        let savedBefore = savedWords
+        for _ in 0..<6 { page.swipeUp(velocity: .fast) }
+        let scrolled = steadyWords()
         XCTAssertNotEqual(opening(scrolled), opening(first), "the scroll moved the words")
+        XCTAssertNotEqual(opening(scrolled), opening(before), "the scroll moved the words from where Scroll began")
+        // He leaves once his scroll's place is written, not after a guessed number of seconds: the saved
+        // words are words of the page he scrolled to. A gate, not a check: the reopen below judges.
+        let lead = flat(opening(scrolled)).split(separator: " ").prefix(4).joined(separator: " ")
+        var looks = 0
+        while looks < 150 {
+            let saved = flat(savedWords)
+            if saved != flat(savedBefore), !saved.isEmpty, flat(scrolled).contains(saved.split(separator: " ").prefix(4).joined(separator: " ")) || saved.contains(lead) { break }
+            looks += 1
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        }
+        print("SCROLL his place written \(looks < 150) after \(looks) looks")
         leaveAndRelaunch()
-        XCTAssertTrue(app.descendants(matching: .any)["reader.page"].waitForExistence(timeout: 60))
-        sleep(4)
-        let back = waitForWords()
+        XCTAssertTrue(page.waitForExistence(timeout: 60))
+        let ready = app.descendants(matching: .any)["reader.pageReady"]
+        looks = 0
+        while looks < 300, (ready.value as? String) != "1" {
+            looks += 1
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        }
+        print("SCROLL reopen page ready \(looks < 300) after \(looks) looks")
+        let back = steadyWords()
         let words = opening(scrolled).split(separator: " ").prefix(6).joined(separator: " ")
         XCTAssertTrue(flat(back).contains(words), "reopened where he scrolled to")
+    }
+
+    private var savedWords: String { (app.descendants(matching: .any)["reader.savedWords"].value as? String) ?? "" }
+
+    /// The page's words once the same non-empty words have been read `hold` times in a row. The bound
+    /// is a count of reads, generous enough for a slow iPad's restarting reflow.
+    private func steadyWords(hold: Int = 20, reads limit: Int = 600) -> String {
+        var last = "", same = 0, reads = 0
+        while reads < limit {
+            reads += 1
+            let now = visibleText
+            if now == last { same += 1 } else { last = now; same = 1 }
+            if !now.isEmpty, same >= hold { return now }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        }
+        return visibleText
+    }
+
+    /// Takes the Cloud's offer on a fresh install's wordless cover, and returns the page's words.
+    /// Unanswered, the offer folds into its tab, and it can fold between a look and the tap: this
+    /// test's own lookup timed out on the tab (#171 at :392) and tapped an offer gone by the tap
+    /// ("Failed to tap banner.jump"). So every look opens the tab if the offer has folded and taps the
+    /// offer where it was just seen, until the page shows words (as `takeTheOffer` does since #178).
+    /// The tap goes to the point, so an offer that folded in between makes no failed tap. Bounded by
+    /// looks, not seconds.
+    /// Where to tap `element`, read from its frame. Never `isHittable`: asked of an offer in the middle of
+    /// folding, XCTest fails the test ("Activation point invalid", #171's probe 42966309493).
+    private func tappable(_ element: XCUIElement) -> CGRect? {
+        let f = element.frame
+        return f.isEmpty || f.width < 1 || f.height < 1 || !app.frame.contains(CGPoint(x: f.midX, y: f.midY)) ? nil : f
+    }
+
+    private func takeTheCloudsOffer() -> String {
+        let offer = app.descendants(matching: .any)["banner.jump"].firstMatch
+        let tab = app.descendants(matching: .any)["banner.tab"].firstMatch
+        let origin = app.coordinate(withNormalizedOffset: .zero)
+        var looks = 0, offers = 0, tabs = 0, quiet = 0
+        while looks < 400, visibleText.isEmpty {
+            looks += 1
+            // After a tap the page gets some looks to answer before another: a second tap on a page that has
+            // just landed would turn it or bring up the controls.
+            if quiet > 0 {
+                quiet -= 1
+            } else if offer.exists, let f = tappable(offer) {
+                origin.withOffset(CGVector(dx: f.midX, dy: f.midY)).tap()
+                offers += 1
+                quiet = 10
+            } else if tab.exists, let f = tappable(tab) {
+                origin.withOffset(CGVector(dx: f.midX, dy: f.midY)).tap()
+                tabs += 1
+                quiet = 2
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+        }
+        print("SCROLL offer taps \(offers), tab taps \(tabs), looks \(looks), words \(!visibleText.isEmpty)")
+        XCTAssertGreaterThan(offers, 0, "a fresh install on the cover offers the Cloud's place")
+        return waitForWords()
     }
 }
