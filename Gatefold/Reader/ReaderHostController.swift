@@ -30,6 +30,8 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     private var lastSize: CGSize = .zero
     private var reflowTask: Task<Void, Never>?
     private var reflowGeneration = 0
+    /// Tests only (`-GatefoldSlowRestorePage`): when the slow reflow's page starts answering.
+    private var slowRestoreDeadline: ContinuousClock.Instant?
     /// The old page, held over the web view while it repaginates, so a reflow never shows bare paper.
     private var reflowCover: UIView?
     /// Set while a reflow from one page to a spread is the unfold.
@@ -621,6 +623,10 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
 
     private func beginReflow(_ reason: ReflowReason) {
         readerLog.notice("reflow begins: \(String(describing: reason), privacy: .public)")
+        if LaunchOptions.stallReflow == false, LaunchOptions.slowRestorePage, slowRestoreDeadline == nil, model.hisMoves > 0 {
+            slowRestoreDeadline = .now + .seconds(120)
+            readerLog.notice("reflow: its page answers only in 120 s, for the test (GatefoldSlowRestorePage)")
+        }
         // A late correction's picture is the spread he was reading (the page beneath may be half moved):
         // it becomes the reflow's cover.
         if let picture = settlePicture {
@@ -842,6 +848,40 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         guard reflowCover != nil || leaf != nil || navigator.view.alpha < 1 else { return }
         readerLog.error("reflow: no settle after 12 s; showing the page as it is")
         showPageAsItIs()
+        noteShownUnsettled()
+        refreshShownProbe()
+    }
+
+    /// For UI tests: the page shown as it is, read from the screen. Its location reports wait on the
+    /// restore, so without this a test reads the words from before the reflow (gatefold#133).
+    private func refreshShownProbe() {
+        guard LaunchOptions.isUITest else { return }
+        Task { [weak self] in
+            guard let self, let visible = await self.visibleRange(), let text = visible.text else { return }
+            self.weakModel?.probeShownPage(text)
+        }
+    }
+
+    /// The page just shown as it is, while its restore still runs, is the page he sees: noted at once as
+    /// Readium names it, then by its first words once the page answers (that may be the very script the
+    /// restore is waiting on), so a leave before the restore ends keeps it (gatefold#133).
+    private func noteShownUnsettled() {
+        guard let model = weakModel, let here = navigator.currentLocation else { return }
+        let note = model.reflowShownUnsettled(here)
+        guard note != nil, !LaunchOptions.shownPageWithoutWords else { return }
+        // The watchdog starts the restore again right after this: the model takes the words only while
+        // this very note stands (a settle, a new reflow or a newer note drops it).
+        Task { [weak self] in
+            guard let found = await self?.currentAnchor(), let self, let model = self.weakModel, found.0.text != nil else { return }
+            // The words are read after the location: a restore that moved the page meanwhile, inside the same
+            // spread, would pair them with the page before. Only words from the page still named are kept.
+            guard let now = self.navigator.currentLocation, now.href == found.1.href,
+                  now.locations.progression == found.1.locations.progression else {
+                readerLog.notice("reflow: the page shown unsettled moved while its words were read; words dropped")
+                return
+            }
+            model.reflowShownUnsettled(found.1, wordsFor: note)
+        }
     }
 
     private func showPageAsItIs() {
@@ -870,6 +910,10 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             return model.keeper.restoreMayMove(move: model.hisMoves)
         }
         defer { giveWayIfHeMoved(generation: generation) }
+        // Tests only: the page doesn't answer yet, as a spread whose chapter is still loading.
+        if let until = slowRestoreDeadline {
+            while ContinuousClock.now < until, current(), !Task.isCancelled { try? await Task.sleep(for: .milliseconds(250)) }
+        }
         // Back from the page itself: a script whose spread the reflow replaced comes back at once with
         // no page behind it (gatefold#109), and runs again on the spread that replaced it.
         _ = await Self.onSpread { () async throws -> Void? in
@@ -1539,7 +1583,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
 
     @discardableResult
     func turn(forward: Bool) -> Bool {
-        guard !isTurning else { return true }
+        guard TurnGate.starts(turning: isTurning, veiled: veil != nil, jumpStarting: jumpStarting) else { return true }
         switch model.pageTurn {
         case .scroll:
             return false
@@ -1832,7 +1876,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
 
     /// Runs a jump with the old page left on screen, dimmed to 60 %, until the new page has painted;
     /// then the old page cross-fades away over 0.2 s (no blank page, no spinner). With `riffle`, a few
-    /// leaves flick past first.
+    /// leaves flick past first, unless the old page pictured bare: then none curl (gatefold#228).
     func veiledJump(riffle: Bool, forward: Bool, jump: Int, _ body: @escaping () async -> Void) async {
         guard veil == nil, !jumpStarting, !isTurning, view.window != nil else { return await body() }
         jumpStarting = true
@@ -1891,7 +1935,11 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         // The running head stays with the page on screen: it changes chapter as the new page is revealed.
         // Let go only while the cover is still this jump's: an abandoned one leaves a newer jump's head.
         weakModel?.heldRunningHead = .some(weakModel?.chapterTitle)
-        if riffle {
+        // A bare picture curls no leaves (gatefold#228): the jump runs under the screen as it is instead.
+        if riffle, !OldPagePicture.riffles(hold) {
+            readerLog.notice("veil: jump \(jump, privacy: .public) riffles no leaves: its old page pictured bare")
+        }
+        if riffle, OldPagePicture.riffles(hold) {
             // The thumb starts riffling at once and keeps going while the far chapter loads, so the
             // wait is the riffle, never a dimmed page.
             var arrived = false
