@@ -1,7 +1,7 @@
 import GatefoldCore
 import SwiftUI
 
-/// A slip of paper that slides out of the top of the page: the sync landed ("From your InkPad ·
+/// A slip of paper that slides out of the top of the page: the sync landed ("From your e-reader ·
 /// 2 h ago"), or the other device is further on, with its passage and Jump or Stay.
 struct SyncSlipView: View {
     let slip: SyncSlip
@@ -114,7 +114,7 @@ struct EndLeafView: View {
     /// A regular-by-regular page: the iPad, or an unfolded spread.
     private var tall: Bool { widthClass == .regular && heightClass == .regular }
 
-    /// "Started on your InkPad, finished here on your phone" over "Read over 12 days", from what the shelf knows.
+    /// "Started on your e-reader, finished here on your phone" over "Read over 12 days", from what the shelf knows.
     private var story: String {
         guard let book = app.library.book(model.bookID) else { return leaf.line }
         return ReadStory.text(
@@ -178,7 +178,7 @@ struct EndLeafView: View {
                     Button {
                         Task { await model.markFinishedOnCloud() }
                     } label: {
-                        Label(leaf.markedOnCloud ? "Finished on Your InkPad" : "Mark Finished on InkPad",
+                        Label(leaf.markedOnCloud ? "Finished on Your E-reader" : "Mark Finished on Your E-reader",
                               systemImage: leaf.markedOnCloud ? "checkmark" : "checkmark.circle")
                             .font(.subheadline.weight(.semibold))
                             .contentTransition(.symbolEffect(.replace))
@@ -371,7 +371,7 @@ struct AheadTab: View {
             .contentShape(.rect)
         }
         .buttonStyle(PressScale())
-        .accessibilityLabel("Your InkPad read on. Show the offer")
+        .accessibilityLabel("Your e-reader read on. Show the offer")
         .accessibilityIdentifier("banner.tab")
     }
 }

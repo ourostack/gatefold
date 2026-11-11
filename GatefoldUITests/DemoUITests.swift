@@ -44,7 +44,7 @@ final class DemoUITests: XCTestCase {
         let health = app.descendants(matching: .any)["library.syncHealth"]
         XCTAssertTrue(health.waitForExistence(timeout: 30))
         _ = XCTWaiter.wait(for: [expectation(for: NSPredicate(format: "label CONTAINS 'In step'"), evaluatedWith: health)], timeout: 30)
-        XCTAssertTrue(health.label.contains("In step with your InkPad"), health.label)
+        XCTAssertTrue(health.label.contains("In step with your e-reader"), health.label)
         XCTAssertTrue(app.staticTexts["Moby-Dick"].firstMatch.waitForExistence(timeout: 10))
         sleep(2)
 

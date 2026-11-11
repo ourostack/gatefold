@@ -26,7 +26,7 @@ struct WelcomeView: View {
                     Text("Gatefold")
                         .font(.wordmark(size: 44))
                         .foregroundStyle(Color.ink)
-                    Text("Your PocketBook shelf, now in your pocket. Open a book and land on the very page your InkPad left off.")
+                    Text("Your PocketBook shelf, now in your pocket. Open a book and land on the very page your e-reader left off.")
                         .font(.title3)
                         .multilineTextAlignment(.center)
                         .foregroundStyle(Color.secondaryInk)
@@ -404,7 +404,7 @@ struct SignInFlow: View {
 
     private var subtitle: String {
         switch step {
-        case .email: "Your PocketBook Cloud email: the same one your InkPad knows you by."
+        case .email: "Your PocketBook Cloud email: the same one your e-reader knows you by."
         case .store: "\(email) has a shelf in more than one PocketBook store. Which one holds your books?"
         case .password: "For \(email)\(store.map { " at \($0.name)" } ?? ""). One more step and your shelf comes over."
         }
