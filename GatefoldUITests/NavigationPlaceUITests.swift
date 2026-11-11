@@ -218,7 +218,8 @@ final class NavigationPlaceUITests: XCTestCase {
     /// the offer was never taken and the book stayed on its wordless cover (#46 at c8d3084, CI's iPad:
     /// ReopenAfterControls round 1, no words for 120 s after Catch up). Judged in reads, never seconds.
     func testTheCloudsOfferOverTheOpeningCoverTakesHisTap() {
-        app.launchArguments = common + ["-GatefoldHoldOpeningLoad", "2400", "-GatefoldReset", "YES", "-GatefoldDownloadAll", "YES",
+        // The first page loads until Catch up is taken, however slow the runner (gatefold#277: 2400 looks ran out first).
+        app.launchArguments = common + ["-GatefoldHoldOpeningLoadUntilCatchUp", "YES", "-GatefoldReset", "YES", "-GatefoldDownloadAll", "YES",
                                         "-GatefoldNoLatency", "YES", "-GatefoldOpenBook", "gutenberg-pride-and-prejudice",
                                         // This host's queries take seconds; the offer mustn't fold between seeing it and the tap.
                                         "-GatefoldOfferFoldSeconds", "600"]
@@ -236,6 +237,8 @@ final class NavigationPlaceUITests: XCTestCase {
         XCTAssertTrue(offer.exists, "the Cloud's place is offered while the first page loads")
         guard offer.exists else { return }
         let coverUp = cover.exists
+        // Read as the tap is made, as the cover is: taking it lets the held load go on.
+        let stillLoading = held.exists && (ready.value as? String) == "0"
         offer.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
         // Taken: the offer and its tab are gone at once. Missed: the offer stays, or folds into its tab.
         var reads = 0, taken = false
@@ -244,10 +247,9 @@ final class NavigationPlaceUITests: XCTestCase {
             if !offer.exists, !tab.exists { taken = true; break }
             RunLoop.current.run(until: Date().addingTimeInterval(0.2))
         }
-        let stillLoading = held.exists && (ready.value as? String) == "0"
         print("PLACEHOLDER offer taken=\(taken) after \(reads) reads; cover up=\(coverUp); still loading=\(stillLoading)")
         XCTAssertTrue(coverUp, "the opening cover was up when Catch up was tapped")
-        XCTAssertTrue(stillLoading, "the page was still loading when the tap was judged")
+        XCTAssertTrue(stillLoading, "the page was still loading when Catch up was tapped")
         XCTAssertTrue(taken, "Catch up over the opening cover takes the tap")
         // And it lands: once the page shows, it is on words (the round that missed showed none for 120 s).
         XCTAssertFalse(waitForWords(timeout: 180).isEmpty, "the page never showed words after Catch up")
