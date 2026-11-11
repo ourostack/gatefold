@@ -46,6 +46,10 @@ final class CountingPlaceholderUITests: XCTestCase {
         // From the moment the page is up, the slot holds the placeholder or the number. Only cheap reads
         // while sampling (the page's text takes seconds to read).
         let ready = app.descendants(matching: .any)["reader.pageReady"].firstMatch
+        // The app's own record of the slot drawn with neither in it (gatefold#262): a sample every 0.3 s, a
+        // query or more apart on a starved runner, can miss a blank that lasts a frame.
+        let blank = app.descendants(matching: .any)["reader.slotBlankFrames"].firstMatch
+        var blankDraws: String { (blank.value as? String) ?? "?" }
         let shows = readsUntil(reads: 1200, hangGuard: 300) { ready.exists && (ready.value as? String) == "1" }
         print("PLACEHOLDER page ready=\(shows.ok) after \(shows.reads) reads\(shows.hung ? " (hang guard)" : "")")
         XCTAssertTrue(shows.ok, shows.hung ? "the page shows (the hang guard ran out after \(shows.reads) reads)"
@@ -65,12 +69,13 @@ final class CountingPlaceholderUITests: XCTestCase {
                     words = visibleText
                 }
             } else if !number.exists {
-                XCTFail("sample \(samples): the page is up and the number's slot is blank")
+                XCTFail("sample \(samples): the page is up and the number's slot is blank (the app drew it blank \(blankDraws) times)")
                 return
             }
             RunLoop.current.run(until: Date().addingTimeInterval(0.3))
         }
         XCTAssertTrue(number.exists, "the number comes")
+        XCTAssertEqual(blankDraws, "0", "from the page showing to its number, the app never drew the number's slot blank")
         let goes = readsUntil(reads: 20, hangGuard: 60) { !counting.exists }
         print("PLACEHOLDER gone=\(goes.ok) after \(goes.reads) reads\(goes.hung ? " (hang guard)" : "")")
         XCTAssertTrue(goes.ok, goes.hung ? "and the placeholder goes (the hang guard ran out after \(goes.reads) reads)"

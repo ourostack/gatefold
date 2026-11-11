@@ -94,6 +94,32 @@ final class CountingTallyPage: ReaderPage {
         model.close()
     }
 
+    /// gatefold#262: a fresh open on the iPad's side, whose opening reflow ran on past a minute with the page
+    /// shown, quieted the slot: the count can't start mid-reflow, and the minute's watch counted that wait as a
+    /// count that had stopped. A count held behind a reflow is held, not stalled, and the slot keeps saying so.
+    @Test func aCountHeldBehindAReflowIsNeverCalledStalled() async throws {
+        let (model, page) = try await opened()
+        let wait = ReaderModel.countStallWait
+        ReaderModel.countStallWait = .milliseconds(100)
+        defer { ReaderModel.countStallWait = wait }
+        // A new layout whose reflow hasn't ended: its count waits for the reflow's end.
+        let before = page.countsStarted
+        model.keeper.reflowWillBegin(.typography)
+        model.setPreferences { $0.justify.toggle() }
+        await model.refreshScreenNumbers()
+        #expect(page.countsStarted == before, "a count started mid-reflow")
+        // Ten of the shortened minutes, read by the watch's own outcome.
+        for _ in 0..<100 where !model.countStalled { try await Task.sleep(for: .milliseconds(10)) }
+        #expect(!model.countStalled, "the minute's watch called a count held behind the reflow stalled, and the slot went blank")
+        #expect(model.countingPages, "the number's slot is blank while the count waits for the reflow")
+        // The reflow's end starts the count, and its watch with it.
+        model.keeper.restoreDidComplete()
+        await model.refreshScreenNumbers(recount: true)
+        #expect(page.countsStarted == before + 1, "the reflow's end started \(page.countsStarted - before) counts, not one")
+        #expect(model.countStallArmed, "the count the reflow's end started has no stall watch")
+        model.close()
+    }
+
     /// Opening Your Page and closing it with nothing changed leaves the count it found alone.
     @Test func closingYourPageWithNothingChangedStartsNoCount() async throws {
         let (model, page) = try await opened()

@@ -13,7 +13,7 @@ extension ReadingPosition {
     /// Who moved the place, for the "further ahead" banner (`JumpSuggestion.deviceKind` words it).
     var deviceName: String {
         switch source {
-        case .pocketBookNative: "PocketBook InkPad"
+        case .pocketBookNative: "e-reader"
         case .pocketBookWeb: "PocketBook web reader"
         case .gatefold, .unknown: ""
         }

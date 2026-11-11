@@ -1,15 +1,17 @@
 name: TestFlight
 
-# Every merge to main goes to Gatefold Internal on TestFlight, with no Mac at home involved.
-# It starts on the push rather than after App's rerun on main: every PR already passed App's
-# required checks before it could merge, and App on main takes 30-120 minutes, which would keep
-# the build from his phone for that long. Markdown-only pushes change nothing in the app.
+# Every green commit on main goes to Gatefold Internal on TestFlight, with no Mac at home involved.
+# Only green: a commit publishes once every required check on it passed (.github/required-checks.txt,
+# judged by scripts/ci-green-gate.py). This workflow starts each time App or Real unfold finishes on a
+# main push and asks whether that commit is now green; the second of the two to finish publishes it.
+# A red commit never publishes. A commit whose run was replaced by a newer push (gatefold#246) is
+# covered by that newer commit's publish, and so is an older commit that turns green after a newer one
+# did. A Markdown-only push runs no App, so it stays "not green yet" and never publishes by itself.
 on:
-  push:
+  workflow_run:
+    workflows: [App, Real unfold]
+    types: [completed]
     branches: [main]
-    paths-ignore:
-      - "**/*.md"
-      - "docs/**"
   workflow_dispatch:
     inputs:
       build_number:
@@ -17,25 +19,109 @@ on:
         required: false
         type: string
       whats_new:
-        description: What's New override (default the commit's subject)
+        description: What to Test override (default the changelog.d tales since the last build)
         required: false
         type: string
 
 permissions:
   contents: read
 
-# One publish at a time and never cancelled mid-upload. A newer push waiting behind a running
-# publish replaces an older waiting one, so main's newest commit is always the next published.
-concurrency:
-  group: gatefold-testflight-internal
-  cancel-in-progress: false
-
 jobs:
-  # Hold switch: the repository variable TESTFLIGHT_HOLD=1 stops pushes from publishing (for
-  # example while fixes land that are not yet proven on a device). A manual run still publishes.
+  # Is this commit green, and still newer than the last build published? Cheap, on Linux.
+  gate:
+    name: Main is green here
+    if: >-
+      github.ref == 'refs/heads/main' && (github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      checks: read
+    outputs:
+      sha: ${{ steps.sha.outputs.sha }}
+      state: ${{ steps.gate.outputs.state }}
+      publish: ${{ steps.decide.outputs.publish }}
+    steps:
+      - id: sha
+        env:
+          RUN_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: echo "sha=${RUN_SHA:-$GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+      # The gate's own code comes from this workflow's commit (main's tip), never from the commit it
+      # judges: a commit from before the gate existed has no scripts/ci-green-gate.py (gatefold#270).
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+      - name: The commit is on main
+        env:
+          SHA: ${{ steps.sha.outputs.sha }}
+        run: git merge-base --is-ancestor "$SHA" origin/main || { echo "::error::$SHA is not on main."; exit 1; }
+      - name: The gate passes its selftest
+        run: python3 -I scripts/ci-green-gate.py --selftest
+      - name: Every required check passed on this commit
+        id: gate
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          SHA: ${{ steps.sha.outputs.sha }}
+        run: python3 -I scripts/ci-green-gate.py --sha "$SHA" --newer
+      - name: Decide
+        id: decide
+        env:
+          SHA: ${{ steps.sha.outputs.sha }}
+          STATE: ${{ steps.gate.outputs.state }}
+          COVERED_BY: ${{ steps.gate.outputs.covered_by }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          say() { echo "::notice::$1"; echo "$1" >> "$GITHUB_STEP_SUMMARY"; }
+          case "$STATE" in
+            green) ;;
+            pending) say "${SHA:0:7} is not green yet (a required check is still running); its last check to finish asks again."
+                     [[ "$EVENT" == workflow_dispatch ]] && exit 1
+                     echo "publish=false" >> "$GITHUB_OUTPUT"; exit 0 ;;
+            superseded) say "A required check on ${SHA:0:7} was cancelled (replaced by a newer push to main, or stopped): not published."
+                     [[ "$EVENT" == workflow_dispatch ]] && exit 1
+                     echo "publish=false" >> "$GITHUB_OUTPUT"; exit 0 ;;
+            # Red: App or Real unfold already reports it; this run only says it held the build back.
+            *) echo "::warning::${SHA:0:7} is red on main, so it does not go to TestFlight. Fix main; the next green commit publishes."
+               echo "${SHA:0:7} is red on main: not published." >> "$GITHUB_STEP_SUMMARY"
+               [[ "$EVENT" == workflow_dispatch ]] && exit 1
+               echo "publish=false" >> "$GITHUB_OUTPUT"; exit 0 ;;
+          esac
+          # A manual run publishes this commit even when it went out before (a new build number, new notes).
+          if [[ "$EVENT" == workflow_dispatch ]]; then
+            echo "publish=true" >> "$GITHUB_OUTPUT"; say "${SHA:0:7} is green on main: publishing by hand."; exit 0
+          fi
+          # A newer green commit carries this one; publishing this would push it out of the queue.
+          if [[ -n "$COVERED_BY" ]]; then
+            say "${COVERED_BY:0:7}, newer on main, is green too and carries ${SHA:0:7}: it publishes instead."
+            echo "publish=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          # Each published build is tagged testflight/build-N. A tag at or after this commit means it is out already.
+          done_at="$(git tag --list 'testflight/build-*' --contains "$SHA")"
+          if [[ -n "$done_at" ]]; then
+            say "${SHA:0:7} is already on TestFlight (${done_at%%$'\n'*} is at or after it)."
+            echo "publish=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          # Nothing in the app changed since the last build (only Markdown or the website): nothing to send.
+          last="$(git describe --tags --match 'testflight/build-*' --abbrev=0 "$SHA" 2>/dev/null || true)"
+          app_files=""
+          [[ -n "$last" ]] && app_files="$(git diff --name-only "$last" "$SHA" | grep -vE '(\.md$|^docs/)' || true)"
+          if [[ -n "$last" && -z "$app_files" ]]; then
+            say "Only Markdown or docs/ changed since $last: nothing new for TestFlight."
+            echo "publish=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          echo "publish=true" >> "$GITHUB_OUTPUT"
+          say "${SHA:0:7} is green on main: publishing."
+
+  # Hold switch: the repository variable TESTFLIGHT_HOLD=1 stops automatic publishes (for example while
+  # fixes land that are not yet proven on a device). A manual run still publishes a green commit.
   held:
     name: Publishing is on hold
-    if: github.event_name == 'push' && vars.TESTFLIGHT_HOLD == '1'
+    needs: gate
+    if: needs.gate.outputs.publish == 'true' && github.event_name == 'workflow_run' && vars.TESTFLIGHT_HOLD == '1'
     runs-on: ubuntu-latest
     steps:
       - run: |
@@ -45,24 +131,58 @@ jobs:
 
   publish:
     name: Publish to Gatefold Internal
-    if: github.ref == 'refs/heads/main' && (github.event_name == 'workflow_dispatch' || vars.TESTFLIGHT_HOLD != '1')
+    needs: gate
+    if: needs.gate.outputs.publish == 'true' && (github.event_name == 'workflow_dispatch' || vars.TESTFLIGHT_HOLD != '1')
     environment: internal-testflight
     runs-on: xcode-27
     timeout-minutes: 90
+    outputs:
+      build: ${{ steps.publish.outputs.build }}
+    # One publish at a time and never cancelled mid-upload. A newer green commit waiting behind a running
+    # publish replaces an older waiting one, so main's newest green commit is always the next published.
+    concurrency:
+      group: gatefold-testflight-internal
+      cancel-in-progress: false
+    env:
+      GATEFOLD_SHA: ${{ needs.gate.outputs.sha }}
+      # wc -m counts characters only under a UTF-8 locale (What to Test's 4000 check in ci-publish-testflight.sh).
+      LC_ALL: en_US.UTF-8
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ needs.gate.outputs.sha }}
+          fetch-depth: 0
+          fetch-tags: true
           persist-credentials: false
 
+      # It may have waited behind another publish; one at or after this commit may have gone out meanwhile.
+      - name: Still the newest green commit to publish
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          git fetch --quiet --tags origin
+          done_at="$(git tag --list 'testflight/build-*' --contains "$GATEFOLD_SHA")"
+          if [[ -n "$done_at" && "$EVENT" != workflow_dispatch ]]; then
+            echo "::notice::${GATEFOLD_SHA:0:7} went out while this run waited (${done_at%%$'\n'*}). Nothing to publish."
+            echo "GATEFOLD_FRESH=false" >> "$GITHUB_ENV"
+          else
+            echo "GATEFOLD_FRESH=true" >> "$GITHUB_ENV"
+          fi
+
       - uses: ./.github/actions/select-xcode
+        if: env.GATEFOLD_FRESH == 'true'
 
       - name: Install the Metal toolchain (the page curl is a Metal shader)
+        if: env.GATEFOLD_FRESH == 'true'
         run: xcodebuild -downloadComponent MetalToolchain
 
       - name: Install XcodeGen
+        if: env.GATEFOLD_FRESH == 'true'
         run: brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
 
       - name: Check out pinned apple-distribution-kit
+        if: env.GATEFOLD_FRESH == 'true'
         uses: actions/checkout@v4
         with:
           repository: ourostack/apple-distribution-kit
@@ -71,12 +191,14 @@ jobs:
           persist-credentials: false
 
       - uses: actions/setup-node@v4
+        if: env.GATEFOLD_FRESH == 'true'
         with:
           node-version: 22.17.1
           cache: npm
           cache-dependency-path: .ci/apple-distribution-kit/package-lock.json
 
       - name: Build pinned apple-distribution-kit
+        if: env.GATEFOLD_FRESH == 'true'
         working-directory: .ci/apple-distribution-kit
         env:
           EXPECTED_DIST_SHA256: 09e0dded99208496bd96cecc6edc067188ec49bae4486b83f90b85e57db954b9
@@ -89,6 +211,7 @@ jobs:
           echo "APPLE_DISTRIBUTION_KIT_BIN=$PWD/dist/cli.js" >> "$GITHUB_ENV"
 
       - name: Write the App Store Connect key config
+        if: env.GATEFOLD_FRESH == 'true'
         id: asc_credentials
         env:
           ASC_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
@@ -113,6 +236,7 @@ jobs:
       # The long-lived Apple Distribution certificate from secrets: the run creates no certificate,
       # and xcodebuild signs manually without calling Apple.
       - name: Import long-lived signing identity
+        if: env.GATEFOLD_FRESH == 'true'
         id: signing_identity
         env:
           APPLE_DISTRIBUTION_CERTIFICATE_P12_BASE64: ${{ secrets.APPLE_DISTRIBUTION_CERTIFICATE_P12_BASE64 }}
@@ -124,6 +248,7 @@ jobs:
             --state "$RUNNER_TEMP/adk-signing/state.json"
 
       - name: Install the App Store provisioning profile
+        if: env.GATEFOLD_FRESH == 'true'
         run: |
           set -euo pipefail
           node "$APPLE_DISTRIBUTION_KIT_BIN" signing profiles \
@@ -139,6 +264,7 @@ jobs:
           } >> "$GITHUB_ENV"
 
       - name: Write What's New
+        if: env.GATEFOLD_FRESH == 'true'
         env:
           WHATS_NEW: ${{ inputs.whats_new }}
         run: |
@@ -147,16 +273,16 @@ jobs:
           if [[ -n "${WHATS_NEW//[[:space:]]/}" ]]; then
             printf '%s\n' "$WHATS_NEW" > "$notes"
           else
-            subject="$(git log -1 --format=%s "$GITHUB_SHA")"
-            # A merge commit's subject is "Merge pull request #N from ..."; its body's first line is the PR title.
-            if [[ "$subject" == "Merge pull request "* ]]; then
-              subject="$(git log -1 --format=%b "$GITHUB_SHA" | sed -n '/[^[:space:]]/{p;q;}')"
-            fi
-            printf '%s\n' "$subject" > "$notes"
+            # The tales in changelog.d added since the last testflight/build-N tag, in merge order
+            # (scripts/changelog.py; the same commits always give the same text, and no model writes it).
+            python3 -I scripts/changelog.py assemble --head "$GATEFOLD_SHA" --out "$notes"
           fi
+          echo "What to Test, $(wc -m < "$notes") characters:"
+          cat "$notes"
           echo "GATEFOLD_WHATS_NEW_FILE=$notes" >> "$GITHUB_ENV"
 
       - name: Archive, upload and publish to Gatefold Internal
+        if: env.GATEFOLD_FRESH == 'true'
         id: publish
         env:
           GATEFOLD_BUILD_NUMBER: ${{ inputs.build_number }}
@@ -166,17 +292,17 @@ jobs:
 
       # Safety net: a normal run creates no certificate, so this logs "Nothing to revoke".
       - name: Revoke API-created development certificates (safety net)
-        if: always() && steps.asc_credentials.outcome == 'success'
+        if: always() && steps.asc_credentials.outcome == 'success' && env.GATEFOLD_FRESH == 'true'
         continue-on-error: true
         run: node "$APPLE_DISTRIBUTION_KIT_BIN" signing revoke-api-certificates --best-effort
 
       - name: Delete signing keychain
-        if: always() && steps.signing_identity.outcome != 'skipped'
+        if: always() && steps.signing_identity.outcome != 'skipped' && env.GATEFOLD_FRESH == 'true'
         continue-on-error: true
         run: node "$APPLE_DISTRIBUTION_KIT_BIN" signing delete-keychain --keychain "$RUNNER_TEMP/adk-signing/gatefold-ci.keychain-db"
 
       - name: Summarize
-        if: always()
+        if: always() && env.GATEFOLD_FRESH == 'true'
         run: |
           summary="$RUNNER_TEMP/ci-testflight/testflight-publish-summary.json"
           if [[ -f "$summary" ]]; then
@@ -187,7 +313,7 @@ jobs:
           fi
 
       - uses: actions/upload-artifact@v4
-        if: always()
+        if: always() && env.GATEFOLD_FRESH == 'true'
         with:
           name: testflight-publish-${{ github.run_id }}
           path: |
@@ -197,3 +323,30 @@ jobs:
             ${{ runner.temp }}/ci-testflight/*.sha256
           if-no-files-found: warn
           retention-days: 30
+
+  # Marks what went out, so the next publish knows where it starts and a commit at or before it is never sent
+  # twice. Its own job, so the publish job's token stays read-only.
+  tag:
+    name: Tag the published commit testflight/build-N
+    needs: [gate, publish]
+    if: needs.publish.result == 'success' && needs.publish.outputs.build != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          BUILD: ${{ needs.publish.outputs.build }}
+          SHA: ${{ needs.gate.outputs.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$BUILD" =~ ^[0-9]+$ ]] || { echo "::error::The publish job gave build number '$BUILD'."; exit 1; }
+          for try in 1 2 3 4 5; do
+            if gh api "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/testflight/build-$BUILD" -f sha="$SHA" --silent; then
+              echo "Tagged ${SHA:0:7} testflight/build-$BUILD"; exit 0
+            fi
+            sleep $((try * 10))
+          done
+          echo "::error::Build $BUILD is on TestFlight but its tag failed; add it by hand (refs/tags/testflight/build-$BUILD at $SHA) before the next publish."
+          exit 1

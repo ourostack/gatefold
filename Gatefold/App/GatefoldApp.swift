@@ -13,6 +13,9 @@ struct GatefoldApp: App {
         // paper: a Midnight reopen in light mode flashes light paper. The app can't theme that screen;
         // it can only reach its own first (already Midnight) frame sooner, so the time is logged.
         let entered = LaunchClock.sinceLaunch
+        #if DEBUG
+        MainThreadWatch.startIfUITest()
+        #endif
         _app = State(initialValue: AppModel())
         readerLog.notice("launch: app entered \(entered, privacy: .public) s after the process started; model ready at \(LaunchClock.sinceLaunch, privacy: .public) s")
     }
