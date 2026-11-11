@@ -1853,7 +1853,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
                 heldSends -= 1
                 // The sends still held, for the test to read (the log stream can drop lines).
                 heldLoadMarker?.accessibilityValue = "\(heldSends)"
-                if heldSends == 0, heldLoadLooks == 0 { heldLoadMarker?.removeFromSuperview(); heldLoadMarker = nil }
+                if heldSends == 0, heldLoadLooks == 0, !heldUntilCatchUp { heldLoadMarker?.removeFromSuperview(); heldLoadMarker = nil }
                 readerLog.notice("test: a held load takes a send at its chapter's start, \(self.heldSends, privacy: .public) left")
                 return await navigator.go(to: Locator(href: locator.href, mediaType: locator.mediaType), options: .init(animated: false))
             }
@@ -2570,11 +2570,12 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     @discardableResult
     func waitWhileLoading() async -> Int {
         var looks = 0
-        // A load held until Catch up has no allowance: the test's tap ends it.
+        // A load held until Catch up has no allowance and spends none: the test's tap ends it, and the real
+        // load after it still gets its own.
         while isLoadingPage, looks < Self.loadingLooks || heldUntilCatchUp {
             await unveilPlacedPages()
             guard isLoadingPage else { break }
-            looks += 1
+            if !heldUntilCatchUp { looks += 1 }
             try? await Task.sleep(for: .milliseconds(50))
         }
         if looks > 0 { readerLog.notice("veil: waited \(looks, privacy: .public) looks for the chapter to load") }
