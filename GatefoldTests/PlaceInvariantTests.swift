@@ -217,6 +217,72 @@ import Testing
         f.model.close()
     }
 
+    /// Back goes to the page he was reading, even when "where he is" still names the chapter's start
+    /// (gatefold#143: on CI a slow opening landed on his page while `location` stayed at the chapter's
+    /// first page, so Back remembered that start and took him there).
+    @Test func backGoesToThePageOnScreenWhenWhereHeIsLagsAtTheChaptersStart() async throws {
+        let f = try await S.make(remote: { _, _ in nil }, startAt: 0.05)
+        await f.model.load()
+        let his = try #require(f.page.currentLocation)
+        try #require((his.locations.progression ?? 0) > 0.05, "his page is partway through its chapter")
+        // "Where he is" is the chapter's start; the page has moved on to his, and its report hasn't come
+        // in when he jumps (a report keeps `location` off words before the page, see the test below).
+        let start = S.boundary(of: his)
+        f.page.anchorText = "words-on-the-chapter-start"
+        f.page.currentLocation = start
+        await f.model.locationDidChange(start, hisMove: true)
+        f.page.currentLocation = his
+        let lagging = f.model.location?.locations.progression ?? -1
+        try #require(lagging < 0.001, "where he is lags at the chapter's start (it reads \(lagging))")
+        await f.model.go(toProgression: 0.7, rememberBack: true)
+        f.model.backBeat = { await Task.yield() }
+        await f.model.goBack()
+        let want = his.locations.totalProgression ?? -1
+        let at = f.page.currentLocation?.locations.totalProgression ?? -2
+        #expect(f.page.currentLocation?.href == his.href, "Back went to another chapter")
+        #expect((f.page.currentLocation?.locations.progression ?? 0) > 0.01, "Back landed on the chapter's start")
+        #expect(abs(at - want) < 0.005, "Back came back to \(at), not his page at \(want)")
+        f.model.close()
+    }
+
+    /// gatefold#143's root: after the slow launch landing, a report that isn't his move put "where he
+    /// is" back on words read on the chapter's start while his page stayed on screen. The running head
+    /// (its chapter), the scrubber and the Cloud's "here" (`JumpSuggestion.isAhead`) all read `location`,
+    /// so all three named the chapter's start. They follow the page on screen.
+    @Test func whereHeIsFollowsThePageOnScreenAfterTheSlowLaunchLanding() async throws {
+        let f = try await S.make(remote: { _, _ in nil }, startAt: 0.05)
+        await f.model.load()
+        let his = try #require(f.page.currentLocation)
+        try #require((his.locations.progression ?? 0) > 0.05, "his page is partway through its chapter")
+        await f.model.locationDidChange(his)
+        // Words read on the chapter's start and kept with a move (here a swipe; on CI, the launch landing),
+        // then his page on screen with no move of his: the report is the move already kept, and the anchor
+        // isn't read again. His page's own first words differ from the start's, as they do on a device
+        // (the same words would be the layout's report, his words still first on screen).
+        let start = S.boundary(of: his)
+        f.page.anchorText = "words-on-the-chapter-start"
+        f.page.currentLocation = start
+        f.model.noteInteraction()
+        await f.model.locationDidChange(start)
+        let kept = try #require(saved(f), "the swipe kept no place")
+        let keptAt = Self.kept(f) ?? -1, startAt = start.locations.totalProgression ?? -2
+        try #require(abs(keptAt - startAt) < 0.001, "the place kept (\(keptAt)) isn't the swipe's (\(startAt))")
+        f.page.anchorText = "words-on-his-page"
+        f.page.currentLocation = his
+        await f.model.locationDidChange(his)
+        // The place moves only on his move: the report with none leaves it where the swipe put it.
+        #expect(saved(f) == kept, "a report with no move of his moved the saved place")
+        let want = his.locations.totalProgression ?? -1
+        #expect(f.model.location?.href == his.href, "where he is names another chapter")
+        #expect((f.model.location?.locations.progression ?? 0) > 0.01, "where he is lags at the chapter's start")
+        #expect(abs(f.model.totalProgression - want) < 0.005, "the scrubber and the Cloud's here read \(f.model.totalProgression), not his page at \(want)")
+        // His words are read again from his page, so a reflow's restore or the landing check can't take
+        // the page back to the chapter's start.
+        let anchor = f.model.keeper.anchor?.progression ?? -1
+        #expect(anchor > 0.01, "his words stay those read on the chapter's start (\(anchor))")
+        f.model.close()
+    }
+
     /// A place write still on its way for an older move never lands over a newer move's place. On CI at
     /// c4c3b6a the Contents jump's write, slow to map its position, landed after Back's and kept the
     /// jump's page (0.6996) as his place once Back had brought him home.
