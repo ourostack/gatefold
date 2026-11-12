@@ -33,6 +33,12 @@ final class ScriptedPage: ReaderPage {
     var reportsBeforeReturn = false
     private var held: [CheckedContinuation<Void, Never>] = []
     func releaseJumps() { let h = held; held = []; h.forEach { $0.resume() } }
+    /// How many jumps (and link jumps) are held now.
+    var heldJumps: Int { held.count }
+    /// Lets only the oldest, or the newest, held jump come back. Two continuations resumed back to back
+    /// have no promised order on the main actor: a test that needs one jump back first releases it alone.
+    func releaseOldestJump() { if !held.isEmpty { held.removeFirst().resume() } }
+    func releaseNewestJump() { if !held.isEmpty { held.removeLast().resume() } }
 
     /// Jumps a loading web view takes at its file's first page, dropping the place inside it (Readium on
     /// CI's iPad: Back to a page mid-chapter opened the chapter's start, 8c5f294).
@@ -77,6 +83,16 @@ final class ScriptedPage: ReaderPage {
     /// Readium reports where a jump took it on its own (off: a test sends the reports itself, in order).
     var reportsOnGo = true
 
+    /// Counts each chapter at the columns this gives when asked (nil: never counts, as before), so the
+    /// reader's screen pages are known.
+    var countsColumns: ((String) -> Int)?
+    func countPages(_ hrefs: [String], record: @escaping @MainActor (String, Int) -> Void, finished: @escaping @MainActor () -> Void) {
+        guard let columns = countsColumns else { return }
+        hrefs.forEach { record($0, columns($0)) }
+        finished()
+    }
+
+
     /// Where a jump to a contents link opens, as Readium does on a web view still laying out: its file's
     /// first page, reported there, the fragment inside the file dropped (gatefold#166). Nil: the link isn't
     /// followed.
@@ -87,8 +103,12 @@ final class ScriptedPage: ReaderPage {
     /// Link jumps sent, and how many to refuse first (a web view still loading never reaches the file).
     private(set) var linkJumps = 0
     var linkRefusals = 0
+    /// Link jumps that never come back until released (a chapter's load that hangs), apart from
+    /// `holdsJumps` so tests that hold locator jumps keep their link jumps free.
+    var holdsLinkJumps = false
     func go(to link: ReadiumShared.Link) async {
         linkJumps += 1
+        if holdsLinkJumps { await withCheckedContinuation { held.append($0) } }
         if linkRefusals > 0 { linkRefusals -= 1; return }
         guard let opens = linkOpens else { return }
         currentLocation = opens
@@ -277,6 +297,8 @@ final class ScriptedPage: ReaderPage {
         }
         let page = ScriptedPage(at: start)
         let model = ReaderModel(book: book, publication: publication, app: app, page: page, jumpBeat: jumpBeat)
+        // An empty store of its own, so no counts from an earlier run on this Mac reach the test.
+        model.pageStore = ScreenPageStore(directory: URL.temporaryDirectory.appending(path: "screen-pages-\(UUID().uuidString)"))
         page.model = model
         return Fixture(model: model, page: page, app: app, sync: sync, publication: publication, mapper: mapper)
     }
