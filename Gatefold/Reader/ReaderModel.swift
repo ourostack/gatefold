@@ -1668,6 +1668,7 @@ final class ReaderModel {
             if jumpOwed { leaveWriteMove = moves; reportWroteInLeave = false }
             await locationDidChange(here, hisMove: true, placeOnly: true, leaving: true)
             if jumpOwed { leaveWriteMove = nil }
+            await afterLeaveWrite?()
             // It landed while the target was written: whichever write finished last, the landed page is written again.
             if let contentsMove, contentsLandedMove == contentsMove, moves == contentsMove, !isClosed, !touchedSinceLocation,
                let landed = page?.currentLocation {
@@ -2611,6 +2612,8 @@ final class ReaderModel {
     /// The contents jump whose target was written as he left, and the one of those that then landed.
     @ObservationIgnored private var contentsLeftMove: Int?
     @ObservationIgnored private var contentsLandedMove: Int?
+    /// Tests only: runs once the leave's write has returned, so a landing can be made to come inside it.
+    @ObservationIgnored var afterLeaveWrite: (@MainActor () async -> Void)?
 
     /// The place a contents jump on its way is going to, as a place with no words: the chapter's own place
     /// in its file if it is known, otherwise the entry's placed total progression. None for an entry not

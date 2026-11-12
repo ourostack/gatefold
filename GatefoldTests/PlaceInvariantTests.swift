@@ -343,6 +343,17 @@ import Testing
         f.page.linkOpens = fileStart
         f.page.fragmentAt = [:]
         f.page.loadingChapter = true
+        if how == "inactive, landing at once" {
+            // The chapter comes in once the target is written, and the jump lands before the leave is done:
+            // the leave's last step then finds a landing it didn't write.
+            f.model.afterLeaveWrite = { @MainActor in
+                f.model.afterLeaveWrite = nil
+                f.page.loadingChapter = false
+                f.page.fragmentAt[fragment] = 0.6
+                for _ in 0..<400 where (f.page.currentLocation?.locations.progression ?? 0) < 0.5 { await Task.yield() }
+                for _ in 0..<50 { await Task.yield() }
+            }
+        }
         for _ in 0..<20 { await Task.yield() }
         let before = saved(f)
         final class Kept { var onLeaving: String?; var leave: Task<Void, Never>? }
@@ -356,7 +367,7 @@ import Testing
             }
             // The first place written after he left is the leave's own: the chapter's place comes later.
             if kept.onLeaving == nil, saved(f) != before { kept.onLeaving = saved(f) }
-            if beat == (how == "inactive, landing at once" ? 3 : 30) {
+            if beat == 30, how != "inactive, landing at once" {
                 f.page.loadingChapter = false
                 f.page.fragmentAt[fragment] = 0.6
             }
