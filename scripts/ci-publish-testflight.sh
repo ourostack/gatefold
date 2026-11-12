@@ -40,15 +40,20 @@ asc_get() {
 # Seconds since 1970 for an ISO 8601 time, with Z or an offset (App Store Connect writes -08:00; GitHub writes Z).
 iso_epoch='def epoch: capture("^(?<t>[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2})(\\.[0-9]+)?(?<z>Z|[+-][0-9]{2}:?[0-9]{2})$")
   | (.t + "Z" | fromdateiso8601) - (if .z == "Z" then 0 else (if .z[0:1] == "-" then -1 else 1 end) * ((.z[1:3] | tonumber) * 3600 + (.z[-2:] | tonumber) * 60) end);'
-# True when the time ($1, App Store Connect's uploadedDate) falls inside an earlier attempt of this workflow run.
+# True when the time ($1, App Store Connect's uploadedDate) falls inside this step ("Archive, upload and publish to
+# Gatefold Internal") in an earlier attempt of this workflow run. The step's own times, not the run's: the publish
+# job can queue behind another run's publish, and only while the step runs does it hold the publish group.
 uploaded_in_earlier_attempt() {
-  local at="$1" n
-  [[ -n "$at" && "${GITHUB_RUN_ATTEMPT:-1}" =~ ^[0-9]+$ && -n "${GATEFOLD_GITHUB_TOKEN:-}" && -n "${GITHUB_REPOSITORY:-}" \
+  local at="$1" attempts="${GITHUB_RUN_ATTEMPT:-1}" n
+  [[ -n "$at" && "$attempts" =~ ^[0-9]+$ && -n "${GATEFOLD_GITHUB_TOKEN:-}" && -n "${GITHUB_REPOSITORY:-}" \
     && -n "${GITHUB_RUN_ID:-}" ]] || return 1
-  for (( n = 1; n < GITHUB_RUN_ATTEMPT; n++ )); do
+  for (( n = 1; n < attempts; n++ )); do
     curl -fsS -H "Authorization: Bearer $GATEFOLD_GITHUB_TOKEN" -H "Accept: application/vnd.github+json" \
-      "${GITHUB_API_URL:-https://api.github.com}/repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$n" \
-      | jq -e --arg at "$at" "$iso_epoch"' ($at | epoch) as $t | ($t >= (.run_started_at | epoch)) and ($t <= (.updated_at | epoch))' \
+      "${GITHUB_API_URL:-https://api.github.com}/repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$n/jobs?per_page=100" \
+      | jq -e --arg at "$at" "$iso_epoch"' ($at | epoch) as $t
+          | any(.jobs[]? | select(.name == "Publish to Gatefold Internal") | .steps[]?
+                | select(.name == "Archive, upload and publish to Gatefold Internal" and .started_at != null and .completed_at != null);
+              $t >= (.started_at | epoch) and $t <= (.completed_at | epoch))' \
       > /dev/null 2>&1 && return 0
   done
   return 1
@@ -103,8 +108,8 @@ shasum -a 256 "$ipa" | tee "$out/Gatefold.ipa.sha256"
 #    "UPLOAD SUCCEEDED" with a delivery UUID, waited an hour on processing (the kit passes --wait) and exited 1.
 #  - A rerun of that run: App Store Connect refuses the same build number as a duplicate
 #    (ENTITY_ERROR.ATTRIBUTE.INVALID.DUPLICATE, previousBundleVersion = this build). That counts only when App Store
-#    Connect lists a build with this number and version, uploaded while an earlier attempt of this run was running
-#    (GitHub's attempts API, with GATEFOLD_GITHUB_TOKEN). Publishing is serialized, so no other run uploads then, and
+#    Connect lists a build with this number and version, uploaded while this step ran in an earlier attempt of this
+#    run (GitHub's jobs API, with GATEFOLD_GITHUB_TOKEN). Publishing is serialized, so no other run uploads then, and
 #    a rerun publishes the same commit. A build uploaded at any other time is another run's, and the upload fails.
 upload_ok=true
 poll_checks=120

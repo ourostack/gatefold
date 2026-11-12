@@ -41,14 +41,20 @@ esac
 FAKE
 cat > "$work/bin/curl" <<'FAKE'
 #!/usr/bin/env bash
-# Fake curl for GitHub's attempts API: attempt 1 of run 43318514534 ran 22:18-23:27Z (its own times), and the
-# token must be the fake one.
+# Fake curl for GitHub's jobs API, for attempt 1 of run 43318514534 (its own times): the run started 22:17:58Z, the
+# publish job waited, and its publish step ran 22:19:01-23:26:56Z. The token must be the fake one.
 for a in "$@"; do case "$a" in
   "Authorization: Bearer fake-github-token") auth=ok ;;
-  */repos/ourostack/gatefold/actions/runs/43318514534/attempts/1) url=ok ;;
+  */repos/ourostack/gatefold/actions/runs/43318514534/attempts/1/jobs\?*) url=ok ;;
 esac; done
 [ "${auth:-}" = ok ] && [ "${url:-}" = ok ] || { echo "curl: (22) 404" >&2; exit 22; }
-echo '{"run_attempt":1,"run_started_at":"2026-11-12T22:17:58Z","updated_at":"2026-11-12T23:27:05Z"}'
+cat <<'JSON'
+{"jobs":[
+  {"name":"Is this commit green? (verdict in summary)","started_at":"2026-11-12T22:17:58Z","completed_at":"2026-11-12T22:18:05Z","steps":[]},
+  {"name":"Publish to Gatefold Internal","started_at":"2026-11-12T22:18:10Z","completed_at":"2026-11-12T23:27:05Z","steps":[
+    {"name":"Write What's New","started_at":"2026-11-12T22:18:58Z","completed_at":"2026-11-12T22:19:01Z"},
+    {"name":"Archive, upload and publish to Gatefold Internal","started_at":"2026-11-12T22:19:01Z","completed_at":"2026-11-12T23:26:56Z"}]}]}
+JSON
 FAKE
 cat > "$work/bin/xcodebuild" <<'FAKE'
 #!/usr/bin/env bash
@@ -153,6 +159,10 @@ expect duplicate-rerun-unlisted "a rerun refused as a duplicate, with no build 2
 
 run duplicate-first-attempt 1 VALID "$duplicate_err" "$duplicate_out" 1
 expect duplicate-first-attempt "a first attempt refused as a duplicate: fails with \"upload failed\" (another run's build)" \
+  "ci-publish-testflight: upload failed: App Store Connect already lists" "is processed"
+
+run duplicate-rerun-before-step 1 VALID "$duplicate_err" "$duplicate_out" 2 2026-11-12T14:18:30-08:00
+expect duplicate-rerun-before-step "a rerun refused as a duplicate of a build 28 uploaded in attempt 1 but before its publish step: fails" \
   "ci-publish-testflight: upload failed: App Store Connect already lists" "is processed"
 
 run duplicate-rerun-other-run 1 VALID "$duplicate_err" "$duplicate_out" 2 2026-11-12T15:40:00-08:00
