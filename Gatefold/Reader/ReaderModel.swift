@@ -139,10 +139,10 @@ final class ReaderModel {
     /// A jump made while the book warmed behind the shelf (a test's launch jump reaches every book that
     /// opens) wrote nothing then; at his tap it is his, so the page he sees becomes the place, and a
     /// fresh open shows that page rather than making the jump afresh.
-    /// A test's launch jump is still on its way to its page.
     /// A test's launch jump not yet made or still on its way: from init until load() has ended it. The cover's
     /// forced reveal waits for it (`forceReady`), as for the open's settle.
     @ObservationIgnored private var launchJumpOwed = false
+    /// A test's launch jump is still on its way to its page.
     @ObservationIgnored private var launchJumpInFlight = false { didSet { if !launchJumpInFlight { launchJumpDone() } } }
     @ObservationIgnored private var launchJumpWaiters: [CheckedContinuation<Void, Never>] = []
     /// Returns once a launch jump on its way has landed or given up (or the reader closed): an event,
@@ -873,9 +873,19 @@ final class ReaderModel {
             // mid-jump, the page showed where Readium first put it and moved to the jump's place 12 s later,
             // under a test reading its words (gatefold#262: iPad on its side, shown at 0.3003, landed 0.3099).
             looks = 0
-            while launchJumpOwed, looks < Self.launchJumpLooks, !isClosed {
-                looks += 1
-                try? await Task.sleep(for: .milliseconds(50))
+            if launchJumpOwed {
+                while launchJumpOwed, looks < Self.launchJumpLooks, !isClosed {
+                    looks += 1
+                    try? await Task.sleep(for: .milliseconds(50))
+                }
+                // The jump can land with its chapter still loading or a reflow still placing it: shown then, the
+                // page moves again. The same bounded waits as `markReady`.
+                looks = 0
+                while keeper.reflowing != nil, looks < Self.revealLooks, !isClosed {
+                    looks += 1
+                    try? await Task.sleep(for: .milliseconds(50))
+                }
+                await host?.waitWhileLoading()
             }
             guard !pageReady, !isClosed else { return }
             readerLog.notice("first page forced ready after \(Date().timeIntervalSince(self.openedAt), privacy: .public) s")
