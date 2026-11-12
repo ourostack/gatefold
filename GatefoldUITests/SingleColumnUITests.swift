@@ -29,6 +29,10 @@ final class SingleColumnUITests: XCTestCase {
     private var page: XCUIElement { el("reader.page") }
     private var words: String { (el("reader.visibleText").value as? String) ?? "" }
     private var columns: String { (el("reader.columns").value as? String) ?? "" }
+    /// The Contents list's chapter rows, his current one included.
+    private var contentsRows: XCUIElementQuery {
+        app.descendants(matching: .any).matching(NSPredicate(format: "identifier == %@ OR identifier BEGINSWITH %@", "contents.current", "contents.entry."))
+    }
 
     /// Reads of the app until `done`, each at least 0.2 s apart; the hang guard only catches a hang.
     private func readsUntil(reads: Int, _ done: () -> Bool) -> (ok: Bool, reads: Int, hung: Bool) {
@@ -127,11 +131,12 @@ final class SingleColumnUITests: XCTestCase {
 
         showControls()
         app.buttons["reader.contents"].tap()
-        // The list opens scrolled to the chapter he is in, so its current row says it is up.
-        let current = el("contents.current")
-        XCTAssertTrue(current.waitForExistence(timeout: 10), "the contents opened")
+        // Any chapter row says the list is up. Not chapter I (the list opens scrolled to his chapter), and not
+        // only the current row: a page the scrub left between chapters marks none.
+        let listed = contentsRows.firstMatch
+        XCTAssertTrue(listed.waitForExistence(timeout: 10), "the contents opened")
         app.swipeDown(velocity: .fast)
-        _ = readsUntil(reads: 50) { !current.exists }
+        _ = readsUntil(reads: 50) { !contentsRows.firstMatch.exists }
         hideControls()
         expectOneColumn("Contents opened and closed")
         turn()
@@ -141,7 +146,7 @@ final class SingleColumnUITests: XCTestCase {
         // A jump through Contents lays another chapter out.
         showControls()
         app.buttons["reader.contents"].tap()
-        XCTAssertTrue(el("contents.current").waitForExistence(timeout: 10), "the contents opened again")
+        XCTAssertTrue(contentsRows.firstMatch.waitForExistence(timeout: 10), "the contents opened again")
         // Another chapter than his, a few rows on from the one the list opened at.
         let entries = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", "contents.entry."))
         let row = (0..<min(entries.count, 12)).map { entries.element(boundBy: $0) }.last { $0.isHittable } ?? entries.firstMatch
