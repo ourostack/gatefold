@@ -298,6 +298,57 @@ final class NavigationPlaceUITests: XCTestCase {
         XCTAssertNotEqual(opening(visibleText), opening(first), "after a scrubber jump left while its chapter loaded, the reopen is on the jump's page, not the opening one")
     }
 
+    /// A Contents jump left while its chapter still loads keeps the chapter he chose: never the place
+    /// from before the jump, never its file's first page (gatefold#259). The reopen's saved place and page
+    /// are judged against the same jump made again, unheld, to its end: same file, near the same place.
+    func testAContentsJumpLeftWhileItsChapterLoadsKeepsTheChapter() {
+        _ = openFresh(["-GatefoldHoldChapterLoad", "400"])
+        let before = (app.descendants(matching: .any)["reader.savedPlace"].value as? String) ?? ""
+        showChrome()
+        contentsTap("Chapter XXX")
+        XCTAssertTrue(app.descendants(matching: .any)["reader.loadingHeld"].waitForExistence(timeout: 10), "the chapter's load is held open")
+        // He leaves while it is still on its way.
+        XCUIDevice.shared.press(.home)
+        if !app.wait(for: .runningBackground, timeout: 3) {
+            XCUIApplication(bundleIdentifier: "com.apple.springboard").activate()
+        }
+        sleep(3)
+        app.quit()
+        app.launchArguments = common
+        app.relaunch()
+        XCTAssertFalse(waitForWords().isEmpty, "the reopen shows words")
+        XCTAssertTrue(keptWhatIsShown(), "the reopen shows the place it kept")
+        let reopened = tag(app.descendants(matching: .any)["reader.savedPlace"])
+        // The same jump, to its end: where the chapter he chose is.
+        showChrome()
+        contentsTap("Chapter XXX")
+        sleep(1)
+        XCTAssertTrue(app.descendants(matching: .any)["reader.veil"].waitForNonExistence(timeout: 60), "the jump landed")
+        XCTAssertTrue(keptWhatIsShown(), "the jump kept the page shown")
+        let chapter = tag(app.descendants(matching: .any)["reader.savedPlace"])
+        print("CONTENTSLEFT before \(before) reopened \(reopened.map { "\($0.0)@\($0.1)" } ?? "none") chapter \(chapter.map { "\($0.0)@\($0.1)" } ?? "none")")
+        XCTAssertNotNil(reopened, "the reopen kept a place")
+        XCTAssertNotEqual(reopened.map { "\($0.0)@\(String(format: "%.5f", $0.1))" }, before, "the reopen is not the place from before the jump")
+        XCTAssertEqual(reopened?.0, chapter?.0, "the reopen is in the chapter's file")
+        XCTAssertLessThan(abs((reopened?.1 ?? -9) - (chapter?.1 ?? 9)), 0.1, "the reopen is at the chapter he chose, not its file's first page")
+    }
+
+    private func contentsTap(_ title: String) {
+        app.buttons["reader.contents"].tap()
+        let row = app.buttons.matching(NSPredicate(format: "label CONTAINS[c] %@", title)).firstMatch
+        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label CONTAINS[c] %@", "Chapter I")).firstMatch.waitForExistence(timeout: 10),
+                      "the contents opened")
+        for _ in 0..<20 where !(row.exists && row.isHittable) { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(row.exists && row.isHittable, "the contents list \(title)")
+        row.tap()
+    }
+
+    private func tag(_ e: XCUIElement) -> (String, Double)? {
+        let parts = ((e.value as? String) ?? "").split(separator: "@")
+        guard parts.count == 2, let p = Double(parts[1]) else { return nil }
+        return (String(parts[0]), p)
+    }
+
     private func turn(forward: Bool) {
         app.descendants(matching: .any)["reader.page"].coordinate(withNormalizedOffset: CGVector(dx: forward ? 0.97 : 0.03, dy: 0.5)).tap()
     }
