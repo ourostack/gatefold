@@ -1650,7 +1650,11 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         let width = navigator.view.bounds.width
         // While a jump's veil is up the page beneath is on its way somewhere: a tap then would turn
         // from wherever the jump has got to, and the place he chose is lost.
-        guard veil == nil, !jumpStarting else { return true }
+        guard veil == nil, !jumpStarting else {
+            // Logged, so a tap that does nothing still leaves a trace (gatefold#304's swallowed taps).
+            readerLog.notice("tap: under a jump's veil at x \(Int(point.x), privacy: .public) of \(Int(width), privacy: .public); no turn, no controls")
+            return true
+        }
         let edge = TapZones.edge(viewWidth: width, spread: model.layout.columns == .two)
         let zone = point.x < edge ? "back" : point.x > width - edge ? "forward" : "middle"
         readerLog.notice("tap: \(zone, privacy: .public) at x \(Int(point.x), privacy: .public) of \(Int(width), privacy: .public), controls \(self.model.chromeVisible, privacy: .public)")

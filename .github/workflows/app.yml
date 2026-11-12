@@ -475,7 +475,7 @@ jobs:
             timeout: 59 # 30 + 2 x 8.2 + 12
             lane: 10
           - shard: ipad-taps-rest
-            # The catch-all for new Fine-Tune tests: 183, and margin taps on a fresh spread (gatefold#304)
+            # The catch-all for new Fine-Tune tests: 183, and margin taps on a fresh spread (gatefold#304; no pass on main yet)
             tests: >-
               FineTuneTapUITests MarginTapUITests
             skip: >-

@@ -52,6 +52,8 @@ final class MarginTapUITests: XCTestCase {
             let didTurn = landed() == before + 1
             if didTurn { turned += 1 }
             print("MARGINTAP \(i + 1) at \(x): turned=\(didTurn) controls=\(close.exists) after \(verdict.reads) reads (\(report.label))")
+            // No verdict at all: the tap never reached the page. Counted as a miss, and the rest would only wait as long.
+            if !verdict.ok { break }
             if close.exists { hideControls("margin tap \(i + 1)") }
         }
         print("MARGINTAPS turned \(turned) of \(taps.count)")
