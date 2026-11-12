@@ -299,9 +299,9 @@ jobs:
             timeout: 48 # 30 + 2 x 2.8 + 12
             lane: 16
           - shard: ipad-place-rest
-            # The catch-all for new place tests: 130 + 124 + 94
+            # The catch-all for new place tests: 130 + 124 + 94, and the quick leave (gatefold#301)
             tests: >-
-              NavigationPlaceUITests
+              NavigationPlaceUITests QuickLeaveUITests
             skip: >-
               NavigationPlaceUITests/testReadInPortraitRotatedThenLeftKeepsHisFirstWords NavigationPlaceUITests/testWithPageNumbersOnReadInPortraitRotatedThenLeftKeepsHisFirstWords NavigationPlaceUITests/testAJumpFromAPageStillLoadingStartsAtOnce NavigationPlaceUITests/testAContentsJumpKeepsThePlace NavigationPlaceUITests/testScrolledAfterTheLaunchReflowThenLeftKeepsWhereHeScrolled NavigationPlaceUITests/testOpenedFromTheShelfThenLeftTwiceWithoutATurnKeepsThePlace NavigationPlaceUITests/testTheOpeningCoverLetsTheControlsThrough
             pr_tests: none
@@ -666,9 +666,9 @@ jobs:
             timeout: 57 # 30 + 2 x 7.0 + 12
             lane: 13
           - shard: duo-position-rest
-            # The catch-all for new position tests: 66, rotation and posture
+            # The catch-all for new position tests: 66, rotation and posture, and the quick leave (gatefold#301)
             tests: >-
-              PositionUITests
+              PositionUITests QuickLeaveUITests
             skip: >-
               PositionUITests/testTabletopDeckTurnsAndResizes PositionUITests/testFontChangeKeepsThePlace
             pr_tests: none

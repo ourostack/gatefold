@@ -2260,6 +2260,11 @@ final class ReaderModel {
             let now = Date()
             let recordsBefore = placeRecords
             await placeWriteWait()
+            // UI tests: a turn's write never lands, as on a device that ends Gatefold first (gatefold#301).
+            if LaunchOptions.holdTurnWrites, lastTurnMove == keeping {
+                readerLog.notice("place write [r\(self.readerNumber, privacy: .public)]: move \(keeping, privacy: .public), a turn's, held for good (test)")
+                while true { try? await Task.sleep(for: .seconds(3600)) }
+            }
             let exact = await mapper?.position(for: BookLocation(here), at: now)
             // The jump's target written as he left gives way to the jump's own report, written meanwhile:
             // that one is his page, with its words (gatefold#279).
@@ -2350,6 +2355,7 @@ final class ReaderModel {
         readOnAfterJump()
         hasMoved = true
         moves += 1
+        lastTurnMove = moves
         let step = steps
         Task {
             guard let first = page?.currentLocation else { return }
@@ -2372,6 +2378,9 @@ final class ReaderModel {
             }
         }
     }
+
+    /// The move of his latest landed turn.
+    @ObservationIgnored private var lastTurnMove: Int?
 
     /// Takes the first words on screen as the reader's place, unless a reflow is moving the page.
     func captureAnchor() async {

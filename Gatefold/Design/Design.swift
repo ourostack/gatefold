@@ -111,6 +111,10 @@ enum LaunchOptions {
     /// UI tests only: a jump of his to a place (the scrubber) is never sent to the page, as a chapter that
     /// never finishes loading: Readium never reports it, and he leaves on the page before (gatefold#279).
     static var holdJumpSends: Bool { isUITest && defaults.bool(forKey: "GatefoldHoldJumpSends") }
+    /// UI tests only: a turn's place write never lands (it holds after reading his words, before it maps its
+    /// position), as on a device that suspends or ends Gatefold a moment after he leaves, before the write it
+    /// had under way lands (gatefold#301). Other writes (the launch jump's) land as ever.
+    static var holdTurnWrites: Bool { isUITest && defaults.bool(forKey: "GatefoldHoldTurnWrites") }
     /// Debug only: Back's first this many sends are taken at their chapter's start, the chapter still
     /// loading meanwhile, as a web view still loading takes a jump (gatefold#170). Counted in sends, not
     /// looks, so a Back that stops sending stays short. Armed once per launch, by its first Back.
