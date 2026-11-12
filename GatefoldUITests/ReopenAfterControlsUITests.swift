@@ -30,17 +30,31 @@ final class ReopenAfterControlsUITests: XCTestCase {
         SHA256.hash(data: Data(s.utf8)).prefix(6).map { String(format: "%02x", $0) }.joined()
     }
 
-    /// The page's words once they have stopped changing for 2.5 s.
-    private func settle(_ timeout: TimeInterval = 60) -> String {
-        let up = Date().addingTimeInterval(timeout)
-        var last = "", since = Date()
-        while Date() < up {
+    /// Reads `settle` gives the page's words to come: 1200, at least 0.3 s apart (CountingPlaceholder's page-ready
+    /// wait, #94). The app keeps the opening cover up while the chapter loads, so a reopen on a starved host can show
+    /// no words for over a minute: 63 s in #238's round 2 (run 43214477644), still loading after 67 s in #195's
+    /// round 4 (run 43238536988). The old 60 s settle returned an empty page then, hashed e3b0c44298fc (#214).
+    private static let settleReads = 1200
+    /// Reads in a row the words must stay the same: 8, at least 0.3 s apart, so no less than the old 2.5 s.
+    private static let quietReads = 8
+
+    /// The page's words once they have come and then not changed for `quietReads` reads, and the reads it took.
+    /// Judged in reads, never seconds (#94, #214). The hang guard (`HangGuard`) only catches a hang.
+    private func settle(_ what: String) -> (words: String, reads: Int) {
+        let guardEnds = Date().addingTimeInterval(HangGuard.seconds(reads: Self.settleReads))
+        var last = "", same = 0
+        for read in 1...Self.settleReads {
             let now = words
-            if now != last { last = now; since = Date() }
-            if !now.isEmpty, Date().timeIntervalSince(since) > 2.5 { return now }
+            if now == last { same += 1 } else { last = now; same = 0 }
+            if !now.isEmpty, same >= Self.quietReads { return (now, read) }
+            if Date() > guardEnds {
+                XCTFail("hang: \(what) ran \(read) reads without settled words")
+                return (now, read)
+            }
             RunLoop.current.run(until: Date().addingTimeInterval(0.3))
         }
-        return words
+        print("REOPEN \(what): no settled words after \(Self.settleReads) reads (words \(!last.isEmpty))")
+        return (last, Self.settleReads)
     }
 
     private func open() {
@@ -174,19 +188,19 @@ final class ReopenAfterControlsUITests: XCTestCase {
             app.relaunch()
             open()
             takeTheOffer(round: round)
-            let opened = settle()
+            let opened = settle("round \(round) open").words
             guard numbersOn() else { app.quit(); return }
             // The number takes the "Counting pages…" slot: the layout report this guards against.
             _ = el("reader.pageNumber").waitForExistence(timeout: 180)
-            let left = settle()
+            let left = settle("round \(round) leave").words
             print("REOPEN round \(round) leaves \(clock.string(from: Date()))")
             toShelf()
             print("REOPEN round \(round) reopens \(clock.string(from: Date()))")
             open()
-            let back = settle()
+            let (back, backReads) = settle("round \(round) reopen")
             let ok = !left.isEmpty && back == left
             if ok { same += 1 }
-            print("REOPEN round \(round): opened \(Self.hash(opened)) left \(Self.hash(left)) back \(Self.hash(back)) \(ok ? "SAME" : "MISS")")
+            print("REOPEN round \(round): opened \(Self.hash(opened)) left \(Self.hash(left)) back \(Self.hash(back)) after \(backReads) reads, \(clock.string(from: Date())) \(ok ? "SAME" : "MISS")")
             XCTAssertTrue(ok, "round \(round) returned other words (\(Self.hash(left)) then \(Self.hash(back)))")
             app.quit()
         }
