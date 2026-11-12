@@ -22,22 +22,27 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WORKFLOWS = os.path.join(ROOT, ".github", "workflows")
 SHARD_LANES = 18
-# Lanes in all: the 18 shard lanes, 3 each for Release build and Unit tests, 1 each for Duo tour, the cloud package
-# and the two screenshot jobs. Builds for testing aren't laned (see EXEMPT), and one runs per pull request being
-# pushed, about 8, so gatefold's pull requests hold about 36 macOS runners at most, within the 38 the enterprise's 50
-# leave ourostack's pull requests (at least 12 stay for main, merge queues and spoonjoy).
+# Lanes in all, a hard cap on laned jobs: the 18 shard lanes, 3 each for Release build and Unit tests, 1 each for Duo
+# tour, the cloud package and the two screenshot jobs. Builds for testing aren't laned (see EXEMPT): one runs per pull
+# request being pushed, so with about 8 pushed at once gatefold's pull requests hold about 36 macOS runners, a soft
+# figure, within the 38 of the enterprise's 50 that ourostack's pull requests may use (12 stay for main, merge queues
+# and spoonjoy).
 BUDGET = 28
 EXEMPT = {
     # The shards and Unit tests wait for this run's build inside their own jobs, so a laned build would spend their
     # setup budget. One runs per pull request being pushed.
-    ("app.yml", "build"): "shards wait for its artifact",
-    # Main and dispatch only; it never runs on a pull request.
-    ("real-unfold.yml", "real-unfold"): "never runs on a pull request",
-    # Publishing has its own group and runs from main.
-    ("testflight.yml", "publish"): "runs from main, in its own group",
+    ("app.yml", "build"): None,
+    # Main and dispatch only: its `if` keeps it off pull requests, and the check holds it to that.
+    ("real-unfold.yml", "real-unfold"): "github.event_name != 'pull_request'",
+    # Publishing has its own group and runs from main; the check holds testflight.yml to having no pull_request trigger.
+    ("testflight.yml", "publish"): None,
 }
 MACOS = re.compile(r"^\s{4}runs-on:.*\b(macos|xcode-)", re.I | re.M)
-LANE = re.compile(r"gatefold-macos-pr-lane-([a-z0-9-]+?)-(?:\{0\}|0)'")
+MATRIX_RUNS_ON = re.compile(r"^\s{4}runs-on:.*\bmatrix\.", re.M)
+PR_NUMBER = r"endsWith\(format\('\{0\}', github\.event\.pull_request\.number\), '(\d)'\)"
+# One link of the last-digit chain: (endsWith(..., 'd') || endsWith(..., 'd')) && 'k' ||
+LINK = re.compile(r"\(" + PR_NUMBER + r"(?: \|\| " + PR_NUMBER.replace("(\\d)", "\\d") + r")*\) && '(\d)' \|\| ")
+GROUP = re.compile(r"^\$\{\{ github\.event_name == 'pull_request' && (?P<pr>.+) \|\| (?P<off>format\('[^']*', .+\)) \}\}$")
 
 
 def jobs(text):
@@ -64,23 +69,49 @@ def jobs(text):
 
 
 def concurrency(block):
-    """The job's `concurrency:` block (4-space key) as text, or None."""
+    """The job's `concurrency:` block (4-space key) without comment lines, or None."""
     lines = block.splitlines()
     for i, line in enumerate(lines):
         if re.match(r"^    concurrency:", line):
             body = [line]
             for more in lines[i + 1:]:
                 if re.match(r"^      ", more) or not more.strip():
-                    body.append(more)
+                    if not more.strip().startswith("#"):
+                        body.append(more)
                 else:
                     break
             return "\n".join(body)
     return None
 
 
-def lanes_in(group):
-    """How many lanes a group's expression names: 1, or 1 + each `&& 'k'` of a PR-number chain."""
-    return 1 + len(re.findall(r"&& '\d'", group))
+def group_of(conc):
+    """The `group: >-` expression, folded onto one line as YAML folds it."""
+    m = re.search(r"^      group: >-\n((?:        .*\n?)+)", conc, re.M)
+    return " ".join(l.strip() for l in m.group(1).splitlines()) if m else None
+
+
+def lane(pr):
+    """(name, lanes) for a pull-request branch, or (None, why) when it isn't a bounded lane."""
+    m = re.fullmatch(r"'gatefold-macos-pr-lane-([a-z0-9-]+)-0'", pr)
+    if m:
+        return m.group(1), 1
+    m = re.fullmatch(r"format\('gatefold-macos-pr-lane-shard-\{0\}', inputs\.lane\)", pr)
+    if m:
+        return "shard", SHARD_LANES
+    m = re.fullmatch(r"format\('gatefold-macos-pr-lane-([a-z0-9-]+)-\{0\}', (.+)\)", pr)
+    if not m:
+        return None, "the pull-request branch must be a lane name: 'gatefold-macos-pr-lane-<name>-0', or a format of one"
+    rest, picked = m.group(2), {"0"}
+    while True:
+        link = LINK.match(rest)
+        if not link:
+            break
+        picked.add(link.groups()[-1])
+        rest = rest[link.end():]
+    if rest != "'0'" or len(picked) < 2:
+        return None, ("a lane's {0} must be the last-digit chain of endsWith(...pull_request.number...) && 'k', ending "
+                      "|| '0'; anything else (the number itself, a matrix value, a run id) is a lane per pull request")
+    return m.group(1), len(picked)
 
 
 def check(files):
@@ -88,11 +119,16 @@ def check(files):
     errors, names, total = [], {}, 0
     for fname in sorted(files):
         text = files[fname]
+        if fname == "testflight.yml" and re.search(r"^  pull_request:", text, re.M):
+            errors.append("testflight.yml runs on pull requests, so its exempt publish job needs a lane")
         for job, block in jobs(text):
-            if not MACOS.search(block):
+            if not (MACOS.search(block) or (MATRIX_RUNS_ON.search(block) and re.search(r"\b(macos|xcode)-", block))):
                 continue
             where = f"{fname}: {job}"
             if (fname, job) in EXEMPT:
+                need = EXEMPT[(fname, job)]
+                if need and need not in block:
+                    errors.append(f"{where} is exempt only while its `if` holds `{need}`; give it a lane")
                 continue
             conc = concurrency(block)
             if conc is None:
@@ -102,22 +138,25 @@ def check(files):
                 errors.append(f"{where}: a lane must never cancel-in-progress")
             if not re.search(r"^\s+queue:\s*max\s*$", conc, re.M):
                 errors.append(f"{where}: a lane needs `queue: max`, or a third waiting job cancels the second")
-            if "github.event_name == 'pull_request'" not in conc or "github.run_id" not in conc:
-                errors.append(f"{where}: lanes are for pull requests only; push and dispatch need a group from github.run_id")
-            m = LANE.search(conc)
-            if not m:
-                errors.append(f"{where}: its group names no gatefold-macos-pr-lane-<name>")
+            g = GROUP.match(group_of(conc) or "")
+            if not g:
+                errors.append(f"{where}: the group must read ${{{{ github.event_name == 'pull_request' && <lane> || "
+                              "format(<own group>) }}, so only pull requests share a lane")
                 continue
-            lane = m.group(1)
-            if lane in names:
-                errors.append(f"{where}: lane {lane} is also {names[lane]}'s")
-            names[lane] = where
-            if lane == "shard":
-                if "inputs.lane" not in conc:
-                    errors.append(f"{where}: the shard lane comes from inputs.lane")
-                total += SHARD_LANES
-            else:
-                total += lanes_in(conc)
+            off = g.group("off")
+            per_leg = "strategy:" in block or job == "run" and fname == "ui-tests.yml"
+            if "github.run_id, github.run_attempt" not in off or (per_leg and not re.search(
+                    r"github\.run_attempt, (strategy\.job-index|inputs\.shard)\)$", off)):
+                errors.append(f"{where}: push and dispatch need a group of their own: format(..., github.run_id, "
+                              "github.run_attempt" + (", strategy.job-index or inputs.shard" if per_leg else "") + ")")
+            name, lanes = lane(g.group("pr"))
+            if name is None:
+                errors.append(f"{where}: {lanes}")
+                continue
+            if name in names:
+                errors.append(f"{where}: lane {name} is also {names[name]}'s")
+            names[name] = where
+            total += lanes
     errors += check_shards(files.get("app.yml", ""), files.get("ui-tests.yml", ""))
     if total > BUDGET:
         errors.append(f"the lanes add up to {total}, over the budget of {BUDGET} (see BUDGET in scripts/ci-lanes.py)")
@@ -154,7 +193,7 @@ GOOD_JOB = """jobs:
     concurrency:
       group: >-
         ${{ github.event_name == 'pull_request'
-        && format('gatefold-macos-pr-lane-unit-{0}', (endsWith(x, '1')) && '1' || '0')
+        && format('gatefold-macos-pr-lane-unit-{0}', (endsWith(format('{0}', github.event.pull_request.number), '1') || endsWith(format('{0}', github.event.pull_request.number), '4')) && '1' || '0')
         || format('app-unit-{0}-{1}', github.run_id, github.run_attempt) }}
       queue: max
     steps: []
@@ -200,7 +239,7 @@ def selftest():
                     "cancel-in-progress"),
         "no queue": ({**good, "app.yml": GOOD_JOB.replace("queue: max", "queue: single") + GOOD_CALLER}, "queue: max"),
         "laned off PRs": ({**good, "app.yml": GOOD_JOB.replace("github.run_id", "github.sha") + GOOD_CALLER},
-                          "pull requests only"),
+                          "group of their own"),
         "shared name": ({**good, "app.yml": GOOD_JOB + GOOD_JOB.replace("jobs:\n  unit:", "  release:") + GOOD_CALLER},
                         "also"),
         "caller drops lane": ({**good, "app.yml": GOOD_JOB + GOOD_CALLER.replace("      lane: ${{ matrix.lane }}\n", "")},
@@ -208,6 +247,13 @@ def selftest():
         "shard has no lane": ({**good, "app.yml": GOOD_JOB + GOOD_CALLER.replace("            lane: 3\n", "")}, "needs `lane:`"),
         "lane out of range": ({**good, "app.yml": GOOD_JOB + GOOD_CALLER.replace("lane: 3", "lane: 19")}, "needs `lane:`"),
         "optional input": ({**good, "ui-tests.yml": GOOD_UI.replace("required: true", "required: false")}, "must be required"),
+        "unbounded lane": ({**good, "app.yml": GOOD_JOB.replace("(endsWith(format('{0}', github.event.pull_request.number), '1') || endsWith(format('{0}', github.event.pull_request.number), '4')) && '1' || '0'", "github.event.pull_request.number") + GOOD_CALLER}, "last-digit chain"),
+        "swapped": ({**good, "app.yml": GOOD_JOB.replace("github.event_name == 'pull_request'", "github.event_name != 'pull_request'") + GOOD_CALLER}, "the group must read"),
+        "comment only": ({**good, "app.yml": GOOD_JOB.replace("      queue: max", "      # queue: max") + GOOD_CALLER}, "queue: max"),
+        "real-unfold on PRs": ({**good, "real-unfold.yml": "jobs:\n  real-unfold:\n    if: always()\n    runs-on: xcode-27\n"}, "exempt only while"),
+        "testflight on PRs": ({**good, "testflight.yml": "on:\n  pull_request:\njobs:\n  publish:\n    runs-on: xcode-27\n"}, "testflight.yml runs on pull requests"),
+        "matrix os": ({**good, "app.yml": GOOD_JOB + "  m:\n    runs-on: ${{ matrix.os }}\n    strategy:\n      matrix:\n        os: [macos-26]\n" + GOOD_CALLER}, "no lane"),
+        "leg group": ({**good, "app.yml": GOOD_JOB.replace("    runs-on: xcode-27\n", "    runs-on: xcode-27\n    strategy:\n      matrix: {}\n") + GOOD_CALLER}, "group of their own"),
         "exempt build": ({**good, "app.yml": GOOD_JOB + "  build:\n    runs-on: xcode-27\n" + GOOD_CALLER}, None),
         "linux": ({**good, "app.yml": GOOD_JOB + "  core:\n    runs-on: ubuntu-latest\n" + GOOD_CALLER}, None),
     }
@@ -217,8 +263,12 @@ def selftest():
         ok = (not errs) if want is None else any(want in e for e in errs)
         print(("ok   " if ok else "FAIL ") + name + ("" if ok else f": {errs}"))
         failed += not ok
-    over = check({"app.yml": GOOD_JOB.replace("&& '1' ||", "&& '1' || " + "(x) && '2' || " * BUDGET) + GOOD_CALLER,
-                  "ui-tests.yml": GOOD_UI})
+    many = "".join(
+        f"  r{i}:\n    runs-on: xcode-27\n    concurrency:\n      group: >-\n"
+        f"        ${{{{ github.event_name == 'pull_request'\n        && 'gatefold-macos-pr-lane-r{i}-0'\n"
+        f"        || format('r-{{0}}-{{1}}', github.run_id, github.run_attempt) }}}}\n      queue: max\n"
+        for i in range(BUDGET))
+    over = check({"app.yml": GOOD_JOB + many + GOOD_CALLER, "ui-tests.yml": GOOD_UI})
     ok = any("over the budget" in e for e in over)
     print(("ok   " if ok else "FAIL ") + "over budget")
     failed += not ok

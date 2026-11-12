@@ -42,11 +42,13 @@ concurrency:
 #   - UI test shards: 18 lanes, `lane` in each matrix entry, balanced by timeout; ui-tests.yml waits in it.
 #   - Release build and Unit tests: 3 lanes each, by the pull request number's last digit.
 #   - Duo tour, the cloud package, and the screenshots' build and shots: 1 lane each.
-# That is 28 lanes, plus one Build for testing per pull request being pushed (not laned: the shards and Unit tests
-# wait for its artifact inside their own jobs), about 36 runners, within the 38 that leave 12 for main and spoonjoy.
+# That is 28 lanes, a hard cap, plus one Build for testing per pull request being pushed (not laned: the shards and
+# Unit tests wait for its artifact inside their own jobs), so about 36 runners with 8 pushed at once, within the 38 of
+# the enterprise's 50 that ourostack's pull requests may use (12 stay for main, merge queues and spoonjoy).
 # Main and dispatch runs are never laned: each job's group there is its own (run id, attempt, shard).
 # A newer push still cancels its pull request's older run, including its jobs waiting in a lane. A lane job's
-# timeout counts from when it starts, so waiting costs it nothing. scripts/ci-lanes.py checks all of this.
+# timeout counts from when it starts, so waiting in a lane doesn't spend it; a shard holding a lane while it waits
+# for its own build does hold up the jobs queued behind it. scripts/ci-lanes.py checks all of this.
 
 # The shards and the unit job read this run's jobs and artifacts to wait for the build (.github/actions/await-build).
 permissions:
