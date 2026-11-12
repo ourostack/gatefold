@@ -478,15 +478,18 @@ import Testing
             f.model.close()
         }
 
-        await f.model.go(to: entry)
-        for _ in 0..<200 where !left.done { await Task.yield() }
+        // Not awaited: with no read answered, the jump itself never gets to its end until the page answers.
+        let jump = Task { await f.model.go(to: entry) }
+        for _ in 0..<2000 where !left.done && beats.count < 2 + 200 { await Task.yield() }
 
         let kept = try #require(saved(f).flatMap { try? Locator(jsonString: $0) }, "nothing kept while the page answered no reads")
         #expect(saved(f) != before, "the place from before the jump stands while the page answers no reads")
         #expect(abs((kept.locations.totalProgression ?? -1) - entry.progression) < 0.001, "the place kept is not the chapter he chose")
         f.page.holdsAnchors = false
         f.page.releaseAnchor()
+        f.model.close()
         await left.leave?.value
+        await jump.value
     }
 
     /// A contents anchor the file doesn't have: Readium's landing stands at once, without waiting out
