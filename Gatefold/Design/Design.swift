@@ -144,6 +144,14 @@ enum LaunchOptions {
         nil
         #endif
     }
+    /// UI tests: a Contents jump never comes back, a chapter load that never ends (gatefold#173).
+    static var hangLinkJumps: Bool {
+        #if DEBUG
+        defaults.bool(forKey: "GatefoldHangLinkJumps")
+        #else
+        false
+        #endif
+    }
     /// Tests only: the first page counts as still loading, however long he takes, until Catch up is taken, so a
     /// tap over the opening cover is judged while the page loads (gatefold#277; a hold in looks is spent by
     /// every wait that reads it, and ran out before a slow runner's tap).

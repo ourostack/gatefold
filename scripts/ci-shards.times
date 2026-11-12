@@ -34,6 +34,7 @@ iPad Pro 13-inch|PageFurnitureUITests/testOnTheIPadSpreadTwoTogglesThenAReopenKe
 iPad Pro 13-inch|PageFurnitureUITests/testTurningNumbersOnKeepsTheWordsAndIsKept	228	# p95 of 111, slowest 247
 iPad Pro 13-inch|PageNumberUITests/testOnASpreadEveryTurnMovesOnTwoPages	419	# p95 of 112, slowest 527
 iPad Pro 13-inch|PlaceUndoUITests/testAChaptersFirstPageTurnsBackByTapAndBySwipe	228	# p95 of 126, slowest 342
+iPad Pro 13-inch|PlaceUndoUITests/testAContentsJumpThatNeverLoadsLetsTheVeilGo	228	# p95 of 11 (#195's runs), slowest 228
 iPad Pro 13-inch|PlaceUndoUITests/testAJumpIsOneTapToUndoWithTheControlsHidden	261	# p95 of 148, slowest 313
 iPad Pro 13-inch|PlaceUndoUITests/testATapAboveYourPageClosesItAndKeepsThePage	164	# p95 of 127, slowest 236
 iPad Pro 13-inch|PlaceUndoUITests/testATapAtTheLeftEdgeTurnsBackPromptly	151	# p95 of 163, slowest 291
