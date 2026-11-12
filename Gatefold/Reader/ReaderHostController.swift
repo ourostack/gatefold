@@ -582,6 +582,35 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         }
     }
 
+    /// The span of `named`'s chapter the screen shows, read from its web view's own scroll position: native,
+    /// so it answers while the page's scripts wait on a stalled restore (gatefold#276). Nil unless the web
+    /// view most on screen holds that very chapter, paginated left to right.
+    private func spanOnScreen(of named: Locator) -> ClosedRange<Double>? {
+        guard let host = navigator.view, navigator.settings.readingProgression == .ltr,
+              !navigator.settings.verticalText else { return nil }
+        var best: (web: WKWebView, area: CGFloat)?
+        func walk(_ v: UIView) {
+            if let web = v as? WKWebView {
+                let seen = web.convert(web.bounds, to: host).intersection(host.bounds)
+                let area = seen.isNull ? 0 : seen.width * seen.height
+                if !web.isHidden, web.alpha > 0.01, area > (best?.area ?? 0) { best = (web, area) }
+                return
+            }
+            v.subviews.forEach(walk)
+        }
+        walk(host)
+        guard let web = best?.web, let file = web.url?.lastPathComponent, !file.isEmpty,
+              (named.href.string.components(separatedBy: "#").first ?? "").removingPercentEncoding?
+                .split(separator: "/").last.map(String.init) == file else { return nil }
+        let scroll = web.scrollView
+        let total = scroll.contentSize.width, view = scroll.bounds.width
+        let offset = scroll.contentOffset.x + scroll.adjustedContentInset.left
+        guard total > 0, view > 0, total >= view else { return nil }
+        let first = max(0, min(1, offset / total))
+        let last = max(first, min(1, (offset + view) / total))
+        return last > first ? Double(first)...Double(last) : nil
+    }
+
     private static func firstWebView(in view: UIView) -> WKWebView? {
         if let web = view as? WKWebView { return web }
         for sub in view.subviews { if let web = firstWebView(in: sub) { return web } }
@@ -886,7 +915,8 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     private func noteShownUnsettled() {
         guard let model = weakModel, let named = navigator.currentLocation else { return }
         let here = LaunchOptions.shownPageAtHisPlace ? (model.keptPlace.map { $0.copy(text: { $0 = Locator.Text() }) } ?? named) : named
-        let note = model.reflowShownUnsettled(here)
+        // Read from the screen, never Readium (whose reports wait on the stalled page), unless the test hook names the place.
+        let note = model.reflowShownUnsettled(here, onScreen: LaunchOptions.shownPageAtHisPlace ? nil : spanOnScreen(of: named))
         guard note != nil, !LaunchOptions.shownPageWithoutWords else { return }
         // The watchdog starts the restore again right after this: the model takes the words only while
         // this very note stands (a settle, a new reflow or a newer note drops it).

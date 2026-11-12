@@ -1730,7 +1730,7 @@ final class ReaderModel {
         shownLeaveWrite = (placeRecords, moves, json)
         shownLeaveSteps.append("written")
         if LaunchOptions.isUITest { savedWordsProbe = here.text.highlight.map(ReaderJS.normalize) ?? "" }
-        readerLog.notice("place write [r\(self.readerNumber, privacy: .public)]: the page left unsettled written on leaving, at once, at \(here.locations.totalProgression ?? -1, privacy: .public), \(here.text.highlight == nil ? "Readium's location" : "with his first words", privacy: .public)")
+        readerLog.notice("place write [r\(self.readerNumber, privacy: .public)]: the page left unsettled written on leaving, at once, at \(here.locations.totalProgression ?? -1, privacy: .public), \(here.text.highlight == nil ? "no words" : "with his first words", privacy: .public)")
     }
     /// The exact position for that same write, when the chapter's mapping comes (it reads the chapter, which a
     /// stalled page can hold: gatefold#240): written only over that very write (no newer place, no newer
@@ -1738,7 +1738,7 @@ final class ReaderModel {
     private func mapShownPagePosition(_ here: Locator) async {
         guard let written = shownLeaveWrite else { return }
         guard here.text.highlight != nil else {
-            readerLog.notice("place write [r\(self.readerNumber, privacy: .public)]: no words for the page left unsettled; Readium's location kept")
+            readerLog.notice("place write [r\(self.readerNumber, privacy: .public)]: no words for the page left unsettled; its place kept without them")
             return
         }
         let now = Date()
@@ -1810,15 +1810,45 @@ final class ReaderModel {
     /// Returns the note's number; its words come back with it (`wordsFor`), and count only while that
     /// note is still the one standing.
     @discardableResult
-    func reflowShownUnsettled(_ here: Locator, wordsFor note: Int? = nil) -> Int? {
+    func reflowShownUnsettled(_ here: Locator, onScreen: ClosedRange<Double>? = nil, wordsFor note: Int? = nil) -> Int? {
         guard keeper.reflowing != nil, !isClosed, !isWarming else { return nil }
         if let note { guard let shown = shownUnsettled, shown.move == moves, note == shownNotes else { return nil } }
         else { shownNotes += 1 }
+        var here = here
+        if note == nil, let onScreen, here.text.highlight == nil { here = pageOnScreen(here, onScreen) }
+        // The words come paired with Readium's location, the very name a note from the screen distrusts:
+        // only the words are taken, on the note's own place (gatefold#276).
+        if note != nil, let shown = shownUnsettled { here = shown.locator.copy(text: { $0 = here.text }) }
         shownUnsettled = (here, moves)
         readerLog.notice("reflow: the page shown unsettled is at \(here.locations.totalProgression ?? -1, privacy: .public)")
         return shownNotes
     }
     @ObservationIgnored private var shownNotes = 0
+
+    /// The page shown unsettled as the screen has it (`onScreen`: the chapter's span in view), not as
+    /// Readium names it. Under a stalled restore Readium's location can be stale (the chapter's start, with
+    /// the page further on: PR #285's run 43147454242), and even when right it is the page's first column,
+    /// a boundary the reopen can round onto the page before (CI 43075159905). So the place is the middle of
+    /// the page on screen, gatefold#276. When that page starts at his kept place and nothing has moved
+    /// since, it is his kept page: its own place, so his words go with it (`withKeptWords`, gatefold#133).
+    private func pageOnScreen(_ named: Locator, _ onScreen: ClosedRange<Double>) -> Locator {
+        let width = onScreen.upperBound - onScreen.lowerBound
+        if !hasMoved || recordedMoves == moves, let kept = keptPlace, kept.text.highlight != nil,
+           kept.href == named.href, let at = kept.locations.progression, abs(at - onScreen.lowerBound) <= width * 0.05 {
+            return named.copy(locations: { $0.progression = at; $0.totalProgression = kept.locations.totalProgression ?? $0.totalProgression })
+        }
+        let middle = onScreen.lowerBound + width / 2
+        var total = named.locations.totalProgression
+        let href = named.href.string
+        if let i = readingOrderHrefs.firstIndex(of: href) ?? readingOrderHrefs.firstIndex(where: { href.hasPrefix($0) }),
+           i < resourceStarts.count {
+            let start = resourceStarts[i]
+            let end = i + 1 < resourceStarts.count ? resourceStarts[i + 1] : 1
+            total = start + middle * (end - start)
+        }
+        readerLog.notice("reflow: the page shown unsettled is on screen at \(onScreen.lowerBound, privacy: .public)..\(onScreen.upperBound, privacy: .public) of its chapter (Readium named \(named.locations.progression ?? -1, privacy: .public)); kept at its middle")
+        return named.copy(locations: { $0.progression = middle; $0.totalProgression = total })
+    }
 
     func reflowDidBegin() {
         shownUnsettled = nil
