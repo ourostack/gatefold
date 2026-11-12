@@ -92,7 +92,8 @@ enum LaunchOptions {
     static var columnsProbe: Bool { isUITest && defaults.bool(forKey: "GatefoldColumnsProbe") }
     static var resetState: Bool { defaults.bool(forKey: "GatefoldReset") }
     static var skipWelcome: Bool { defaults.bool(forKey: "GatefoldSkipWelcome") }
-    /// Measure a cold open: no book is opened ahead of the tap.
+    /// Measure a cold open: no book is opened ahead of the tap and WebKit isn't started early. Also the
+    /// shelf's screenshot, whose CI simulator stopped answering under the hidden pages' WebKit (gatefold#150).
     static var noWarm: Bool { defaults.bool(forKey: "GatefoldNoWarm") }
     /// Films only: the spread's pages stay unpainted for this many seconds as the unfold swings, as on
     /// a busy device, to show the old page holding until they paint.
