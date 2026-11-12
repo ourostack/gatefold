@@ -582,6 +582,35 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         }
     }
 
+    /// The span of `named`'s chapter the screen shows, read from its web view's own scroll position: native,
+    /// so it answers while the page's scripts wait on a stalled restore (gatefold#276). Nil unless the web
+    /// view most on screen holds that very chapter, paginated left to right.
+    private func spanOnScreen(of named: Locator) -> ClosedRange<Double>? {
+        guard let host = navigator.view, navigator.settings.readingProgression == .ltr,
+              !navigator.settings.verticalText else { return nil }
+        var best: (web: WKWebView, area: CGFloat)?
+        func walk(_ v: UIView) {
+            if let web = v as? WKWebView {
+                let seen = web.convert(web.bounds, to: host).intersection(host.bounds)
+                let area = seen.isNull ? 0 : seen.width * seen.height
+                if !web.isHidden, web.alpha > 0.01, area > (best?.area ?? 0) { best = (web, area) }
+                return
+            }
+            v.subviews.forEach(walk)
+        }
+        walk(host)
+        guard let web = best?.web, let file = web.url?.lastPathComponent, !file.isEmpty,
+              (named.href.string.components(separatedBy: "#").first ?? "").removingPercentEncoding?
+                .split(separator: "/").last.map(String.init) == file else { return nil }
+        let scroll = web.scrollView
+        let total = scroll.contentSize.width, view = scroll.bounds.width
+        let offset = scroll.contentOffset.x + scroll.adjustedContentInset.left
+        guard total > 0, view > 0, total >= view else { return nil }
+        let first = max(0, min(1, offset / total))
+        let last = max(first, min(1, (offset + view) / total))
+        return last > first ? Double(first)...Double(last) : nil
+    }
+
     private static func firstWebView(in view: UIView) -> WKWebView? {
         if let web = view as? WKWebView { return web }
         for sub in view.subviews { if let web = firstWebView(in: sub) { return web } }
@@ -886,7 +915,8 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     private func noteShownUnsettled() {
         guard let model = weakModel, let named = navigator.currentLocation else { return }
         let here = LaunchOptions.shownPageAtHisPlace ? (model.keptPlace.map { $0.copy(text: { $0 = Locator.Text() }) } ?? named) : named
-        let note = model.reflowShownUnsettled(here)
+        // Read from the screen, never Readium (whose reports wait on the stalled page), unless the test hook names the place.
+        let note = model.reflowShownUnsettled(here, onScreen: LaunchOptions.shownPageAtHisPlace ? nil : spanOnScreen(of: named))
         guard note != nil, !LaunchOptions.shownPageWithoutWords else { return }
         // The watchdog starts the restore again right after this: the model takes the words only while
         // this very note stands (a settle, a new reflow or a newer note drops it).
@@ -1065,9 +1095,11 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         guard let text = anchor.text?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else { return nil }
         let surface = WebSpread(host: self, anchor: anchor, text: text)
         guard await SpreadSettler.keepOnLeft(surface, current: current, purpose: purpose) == true, current() else { return nil }
-        let visible = await visibleRange()
+        // Judged from the page as the web view has it, once it shows text: read straight after the moves, the
+        // start Readium reports can still be the layout before (gatefold#58: 1.0 on a page that was at 0.8696).
+        let (visible, reads) = await LaidOutPage.read({ await self.liveVisibleRange() }, beat: { await surface.beat() }, current: current)
         // The settler also ends here when its passes run out with the words still off the left page.
-        readerLog.notice("spread: words placed on the left page; \(surface.moves, privacy: .public) moves (last read side \(surface.lastSide.map { String($0.rawValue) } ?? "nil", privacy: .public))")
+        readerLog.notice("spread: words placed on the left page; \(surface.moves, privacy: .public) moves (last read side \(surface.lastSide.map { String($0.rawValue) } ?? "nil", privacy: .public)); page read \(reads, privacy: .public) times, words \(visible?.text != nil, privacy: .public)")
         return visible
     }
 
@@ -1482,6 +1514,24 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             let end = try await navigator.answer(ReaderJS.pageEnd) as? Double
             return VisibleRange(href: location.href.string, start: start, end: max(start, min(1, end ?? start + 0.0001)), text: text)
         }
+    }
+
+    /// What's on screen now, with its start and end from the web view's own columns rather than Readium's last
+    /// report, which lags a layout (gatefold#58); as `visibleRange` when the columns can't be read in its chapter.
+    func liveVisibleRange() async -> VisibleRange? {
+        guard let shown = await visibleRange() else { return nil }
+        let chapter = shown.href.split(separator: "#", maxSplits: 1).first.map(String.init) ?? shown.href
+        let live: (Double, Double)? = await Self.onSpread {
+            guard let json = try await self.navigator.answer(ReaderJS.geometry) as? String,
+                  let data = json.data(using: .utf8) else { return nil }
+            struct Columns: Decodable { var w: Double; var l: Double; var v: Double; var doc: String? }
+            guard let found = try? JSONDecoder().decode(Columns.self, from: data), found.w > found.v + 1 else { return nil }
+            if let doc = found.doc, !ScreenPageGeometry.document(doc, isChapter: chapter) { return nil }
+            let left = abs(found.l)
+            return (left / found.w, min(1, (left + found.v) / found.w))
+        }
+        guard let (start, end) = live else { return shown }
+        return VisibleRange(href: shown.href, start: start, end: max(start, end), text: shown.text)
     }
 
     /// Where `quote` is in the resource on screen, as a progression; nil when it isn't there.

@@ -139,6 +139,9 @@ final class ReaderModel {
     /// A jump made while the book warmed behind the shelf (a test's launch jump reaches every book that
     /// opens) wrote nothing then; at his tap it is his, so the page he sees becomes the place, and a
     /// fresh open shows that page rather than making the jump afresh.
+    /// A test's launch jump not yet made or still on its way: from init until load() has ended it. The cover's
+    /// forced reveal waits for it (`forceReady`), as for the open's settle.
+    @ObservationIgnored private var launchJumpOwed = false
     /// A test's launch jump is still on its way to its page.
     @ObservationIgnored private var launchJumpInFlight = false { didSet { if !launchJumpInFlight { launchJumpDone() } } }
     @ObservationIgnored private var launchJumpWaiters: [CheckedContinuation<Void, Never>] = []
@@ -314,6 +317,7 @@ final class ReaderModel {
         // another book opened in the same launch) opens on its own place. Jumping every open re-made
         // the jump on a return and called the page it reached his (CI's page-numbers check).
         self.launchGoTo = initial == nil && (LaunchOptions.openBook == nil || LaunchOptions.openBook == book.id) ? (goTo ?? LaunchOptions.goTo) : nil
+        self.launchJumpOwed = launchGoTo != nil
         readerLog.notice("place read [r\(self.readerNumber, privacy: .public)]: \(book.id, privacy: .public) opening on \(initial.map(Self.placeTag) ?? "none", privacy: .public)")
         // UI tests: the place read carries his words or not (a reopen of a bare progression lands on a boundary).
         if LaunchOptions.isUITest { self.savedWordsProbe = initial?.text.highlight.map(ReaderJS.normalize) ?? "" }
@@ -727,6 +731,7 @@ final class ReaderModel {
                 if !placeOwed { owedJumpTarget = nil }
             }
         }
+        launchJumpOwed = false
         // A book about to land on the InkPad's place takes its first place there, not on the cover.
         if !awaitingLanding {
             try? await Task.sleep(for: .milliseconds(300))
@@ -796,6 +801,9 @@ final class ReaderModel {
     /// The picture is his page, so waiting costs nothing he can see; the settle ends long before on a
     /// device (29 s on CI's starved Duo).
     static let pictureSettleLooks = 900
+    /// Looks (one every 50 ms) the cover's forced reveal waits for a test's launch jump still on its way: 900,
+    /// about 45 s. The jump ends itself in reads (`JumpLanding`); this only bounds one whose page never answers.
+    static let launchJumpLooks = 900
 
     /// The cover gives way to the page. A reopen's picture of the page stays over it a moment longer,
     /// while the running head and footer come up beneath, then goes at once: the two are the same
@@ -903,6 +911,24 @@ final class ReaderModel {
                 }
                 await host?.waitWhileLoading()
             } while openSettleGoing && looks < Self.revealLooks && !isClosed
+            // A test's launch jump shows its page once, after the jump, like the open's settle above: forced
+            // mid-jump, the page showed where Readium first put it and moved to the jump's place 12 s later,
+            // under a test reading its words (gatefold#262: iPad on its side, shown at 0.3003, landed 0.3099).
+            looks = 0
+            if launchJumpOwed {
+                while launchJumpOwed, looks < Self.launchJumpLooks, !isClosed {
+                    looks += 1
+                    try? await Task.sleep(for: .milliseconds(50))
+                }
+                // The jump can land with its chapter still loading or a reflow still placing it: shown then, the
+                // page moves again. The same bounded waits as `markReady`.
+                looks = 0
+                while keeper.reflowing != nil, looks < Self.revealLooks, !isClosed {
+                    looks += 1
+                    try? await Task.sleep(for: .milliseconds(50))
+                }
+                await host?.waitWhileLoading()
+            }
             guard !pageReady, !isClosed else { return }
             readerLog.notice("first page forced ready after \(Date().timeIntervalSince(self.openedAt), privacy: .public) s")
             showPage()
@@ -1936,7 +1962,7 @@ final class ReaderModel {
         shownLeaveWrite = (placeRecords, moves, json)
         shownLeaveSteps.append("written")
         if LaunchOptions.isUITest { savedWordsProbe = here.text.highlight.map(ReaderJS.normalize) ?? "" }
-        readerLog.notice("place write [r\(self.readerNumber, privacy: .public)]: the page left unsettled written on leaving, at once, at \(here.locations.totalProgression ?? -1, privacy: .public), \(here.text.highlight == nil ? "Readium's location" : "with his first words", privacy: .public)")
+        readerLog.notice("place write [r\(self.readerNumber, privacy: .public)]: the page left unsettled written on leaving, at once, at \(here.locations.totalProgression ?? -1, privacy: .public), \(here.text.highlight == nil ? "no words" : "with his first words", privacy: .public)")
     }
     /// The exact position for that same write, when the chapter's mapping comes (it reads the chapter, which a
     /// stalled page can hold: gatefold#240): written only over that very write (no newer place, no newer
@@ -1944,7 +1970,7 @@ final class ReaderModel {
     private func mapShownPagePosition(_ here: Locator) async {
         guard let written = shownLeaveWrite else { return }
         guard here.text.highlight != nil else {
-            readerLog.notice("place write [r\(self.readerNumber, privacy: .public)]: no words for the page left unsettled; Readium's location kept")
+            readerLog.notice("place write [r\(self.readerNumber, privacy: .public)]: no words for the page left unsettled; its place kept without them")
             return
         }
         let now = Date()
@@ -2016,15 +2042,45 @@ final class ReaderModel {
     /// Returns the note's number; its words come back with it (`wordsFor`), and count only while that
     /// note is still the one standing.
     @discardableResult
-    func reflowShownUnsettled(_ here: Locator, wordsFor note: Int? = nil) -> Int? {
+    func reflowShownUnsettled(_ here: Locator, onScreen: ClosedRange<Double>? = nil, wordsFor note: Int? = nil) -> Int? {
         guard keeper.reflowing != nil, !isClosed, !isWarming else { return nil }
         if let note { guard let shown = shownUnsettled, shown.move == moves, note == shownNotes else { return nil } }
         else { shownNotes += 1 }
+        var here = here
+        if note == nil, let onScreen, here.text.highlight == nil { here = pageOnScreen(here, onScreen) }
+        // The words come paired with Readium's location, the very name a note from the screen distrusts:
+        // only the words are taken, on the note's own place (gatefold#276).
+        if note != nil, let shown = shownUnsettled { here = shown.locator.copy(text: { $0 = here.text }) }
         shownUnsettled = (here, moves)
         readerLog.notice("reflow: the page shown unsettled is at \(here.locations.totalProgression ?? -1, privacy: .public)")
         return shownNotes
     }
     @ObservationIgnored private var shownNotes = 0
+
+    /// The page shown unsettled as the screen has it (`onScreen`: the chapter's span in view), not as
+    /// Readium names it. Under a stalled restore Readium's location can be stale (the chapter's start, with
+    /// the page further on: PR #285's run 43147454242), and even when right it is the page's first column,
+    /// a boundary the reopen can round onto the page before (CI 43075159905). So the place is the middle of
+    /// the page on screen, gatefold#276. When that page starts at his kept place and nothing has moved
+    /// since, it is his kept page: its own place, so his words go with it (`withKeptWords`, gatefold#133).
+    private func pageOnScreen(_ named: Locator, _ onScreen: ClosedRange<Double>) -> Locator {
+        let width = onScreen.upperBound - onScreen.lowerBound
+        if !hasMoved || recordedMoves == moves, let kept = keptPlace, kept.text.highlight != nil,
+           kept.href == named.href, let at = kept.locations.progression, abs(at - onScreen.lowerBound) <= width * 0.05 {
+            return named.copy(locations: { $0.progression = at; $0.totalProgression = kept.locations.totalProgression ?? $0.totalProgression })
+        }
+        let middle = onScreen.lowerBound + width / 2
+        var total = named.locations.totalProgression
+        let href = named.href.string
+        if let i = readingOrderHrefs.firstIndex(of: href) ?? readingOrderHrefs.firstIndex(where: { href.hasPrefix($0) }),
+           i < resourceStarts.count {
+            let start = resourceStarts[i]
+            let end = i + 1 < resourceStarts.count ? resourceStarts[i + 1] : 1
+            total = start + middle * (end - start)
+        }
+        readerLog.notice("reflow: the page shown unsettled is on screen at \(onScreen.lowerBound, privacy: .public)..\(onScreen.upperBound, privacy: .public) of its chapter (Readium named \(named.locations.progression ?? -1, privacy: .public)); kept at its middle")
+        return named.copy(locations: { $0.progression = middle; $0.totalProgression = total })
+    }
 
     func reflowDidBegin() {
         shownUnsettled = nil
@@ -2095,7 +2151,7 @@ final class ReaderModel {
             anchorCheck = (visible.contains(anchor) ? "anchor-visible " : "anchor-lost ") + "\(reflowCount)"
             anchorDetail = "anchor \(anchor.href)@\(anchor.progression) [\(anchor.text?.prefix(40) ?? "-")] visible \(visible.href) \(visible.start)..\(visible.end) [\(visible.text?.prefix(60) ?? "nil")]"
             // The restore's verdict, numbers only (no book text), so a real unfold can be judged from the log.
-            readerLog.notice("reflow check: \(self.anchorCheck, privacy: .public) columns \(self.layout.columns == .two ? 2 : 1, privacy: .public) anchor \(anchor.progression, privacy: .public) visible \(visible.start, privacy: .public)..\(visible.end, privacy: .public) same file \(visible.href == anchor.href, privacy: .public)")
+            readerLog.notice("reflow check: \(self.anchorCheck, privacy: .public) columns \(self.layout.columns == .two ? 2 : 1, privacy: .public) anchor \(anchor.progression, privacy: .public) visible \(visible.start, privacy: .public)..\(visible.end, privacy: .public) same file \(visible.href == anchor.href, privacy: .public) words read \(visible.text != nil, privacy: .public)")
         } else {
             anchorCheck = "no-anchor \(reflowCount)"
         }
