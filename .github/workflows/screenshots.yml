@@ -155,7 +155,7 @@ jobs:
         && 'gatefold-macos-pr-lane-screenshots-shots-0'
         || format('screenshots-shots-{0}-{1}-{2}', github.run_id, github.run_attempt, strategy.job-index) }}
       queue: max
-    timeout-minutes: 145 # the capture step (130) plus download, unpack and boot
+    timeout-minutes: 175 # the capture step (135), the boot wait (30), checkout, download and unpack
     strategy:
       fail-fast: false
       # One device at a time per run: macOS runners are the scarce thing, and a release can wait.
@@ -206,8 +206,8 @@ jobs:
       - name: Capture every scene twice
         # Worst case: 3 scenes x 2 tries x 2 passes at about 6.6 min a try (waits of 90 + 90 s, the host's worst
         # 185 s, capture.py WATCH_WORST, and launch): 79 min. Plus REBOOTS = 2 reboots (capture.py REBOOT_STEPS,
-        # 17 min at most) each with its replacement try: 126. Healthy runs take 10-20 min.
-        timeout-minutes: 130
+        # staging and quiet: 20 min at most) each with its replacement try: 132. Healthy runs take 10-20 min.
+        timeout-minutes: 135
         env:
           CAPTURE_FORCE_HANG: ${{ inputs.force_hang }}
         run: |

@@ -57,6 +57,16 @@ WATCH_WORST = SHOOT_LIMIT + 2 * SIMCTL_LIMIT + ASKS * SIMCTL_LIMIT + LIST_LIMIT
 # answering (ci-simulator.py's ERASE_STEPS, job 129031300623). First boots on these runners took 86-555 s
 # (gatefold#150, run 42768198374); a reboot is no first boot, so 600 s for its bootstatus is past the slowest seen.
 REBOOT_STEPS = [(("shutdown",), 120), (("boot",), 300), (("bootstatus", "-b"), 600)]
+# After those (1020 s), the staging (3 x 15 s) and ci-simulator.py's quiet (QUIET_LIMIT, 120 s): about 20 min a reboot.
+
+
+def requiet(udid):
+    """The first-boot jobs ci-simulator.py removed (gatefold#209) come back with a reboot; remove them again."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("ci_simulator", ROOT / "scripts" / "ci-simulator.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    mod.quiet(udid)
 # Elements whose text names the e-reader ("In step with your InkPad", the catch-up offer and its tab).
 NAMES_THE_DEVICE = {"library.syncHealth", "banner", "banner.jump", "banner.tab"}
 # Books in the public domain everywhere; the shelf launch argument may name only these.
@@ -134,7 +144,7 @@ class Device:
             return False
 
 
-def recover(udid, spec, run=subprocess.run, log=print):
+def recover(udid, spec, run=subprocess.run, log=print, quiet=requiet):
     """Reboot the same UDID and stage it again. None when it answers again, else why not."""
     for args, limit in REBOOT_STEPS:
         cmd = ["xcrun", "simctl", args[0], udid, *args[1:]]
@@ -159,7 +169,8 @@ def recover(udid, spec, run=subprocess.run, log=print):
         return f"the rebooted device did not answer staging in {exc.timeout:.0f} s"
     except subprocess.CalledProcessError as exc:
         return f"staging the rebooted device failed (exit {exc.returncode})"
-    log(f"recover: {udid} rebooted and staged", flush=True)
+    quiet(udid)
+    log(f"recover: {udid} rebooted, staged and quieted", flush=True)
     return None
 
 
@@ -218,7 +229,8 @@ def shoot_into(tmp, dev, display, out, spec, hashes, handoff, nap=time.sleep):
 def watch(udid, device, d, spec, dev=None):
     d = pathlib.Path(d)
     display = spec["devices"][device].get("display")
-    dev = dev or Device(udid, force=int(os.environ.get("CAPTURE_FORCE_HANG") or 0))
+    force = os.environ.get("CAPTURE_FORCE_HANG") or "0"
+    dev = dev or Device(udid, force=int(force) if force.isdigit() else 0)
     print(f"watching {d} for {device} scenes" + (f", the first {dev.force} screenshot calls forced to hang"
                                                  if dev.force else ""), flush=True)
     while not (d / "finished").exists():
@@ -333,6 +345,8 @@ class FakeSimctl:
         said = self.steps.get(cmd[2], (0, ""))
         if said == "hang":
             raise subprocess.TimeoutExpired(cmd, timeout)
+        if check and said[0]:
+            raise subprocess.CalledProcessError(said[0], cmd, said[1], "")
         return subprocess.CompletedProcess(cmd, said[0], said[1], "")
 
 
@@ -388,13 +402,16 @@ def selftest_recovery():
         assert not (d / "midnight.1r.stuck").exists()
     # The reboot: shutdown, boot and bootstatus of the same UDID, then the staging again.
     sim = FakeSimctl()
-    assert recover("U", spec, run=sim, log=quiet) is None
+    assert recover("U", spec, quiet=quiet, run=sim, log=quiet) is None
     assert sim.calls == ["shutdown", "boot", "bootstatus", "ui", "ui", "status_bar"], sim.calls
-    assert recover("U", spec, run=FakeSimctl(steps={"shutdown": (149, "current state: Shutdown")}), log=quiet) is None
-    assert "neither a reboot nor a fresh" in recover("U", spec, run=FakeSimctl(steps={"shutdown": "hang"}), log=quiet)
-    assert "hung past 600" in recover("U", spec, run=FakeSimctl(steps={"bootstatus": "hang"}), log=quiet)
-    assert "exited 1" in recover("U", spec, run=FakeSimctl(steps={"bootstatus": (1, "Failed")}), log=quiet)
-    assert "staging" in recover("U", spec, run=FakeSimctl(steps={"status_bar": "hang"}), log=quiet)
+    assert recover("U", spec, quiet=quiet, run=FakeSimctl(steps={"shutdown": (149, "current state: Shutdown")}), log=quiet) is None
+    assert "neither a reboot nor a fresh" in recover("U", spec, quiet=quiet, run=FakeSimctl(steps={"shutdown": "hang"}), log=quiet)
+    assert "hung past 600" in recover("U", spec, quiet=quiet, run=FakeSimctl(steps={"bootstatus": "hang"}), log=quiet)
+    assert "exited 1" in recover("U", spec, quiet=quiet, run=FakeSimctl(steps={"bootstatus": (1, "Failed")}), log=quiet)
+    assert "staging" in recover("U", spec, quiet=quiet, run=FakeSimctl(steps={"status_bar": "hang"}), log=quiet)
+    assert "exit 2" in recover("U", spec, quiet=quiet, run=FakeSimctl(steps={"ui": (2, "")}), log=quiet)
+    quieted = []
+    assert recover("U", spec, quiet=quieted.append, run=FakeSimctl(), log=quiet) is None and quieted == ["U"]
     assert WATCH_WORST + 30 <= 240, "ListingShotsUITests waits 240 s for the host"
 
 
@@ -477,7 +494,7 @@ def main(argv):
     if cmd == "recover":
         why = recover(arg(argv, "--udid"), spec)
         if why:
-            print(f"::error title=Simulator recovery failed::{why}")
+            print(f"::warning title=Simulator recovery failed::{why}")  # the scene's own tries say if it failed
         return 1 if why else 0
     if cmd == "device":
         print(device_name(arg(argv, "--device"), spec))
