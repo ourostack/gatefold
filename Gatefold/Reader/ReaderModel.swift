@@ -1594,7 +1594,8 @@ final class ReaderModel {
 
     /// What a reflow still owes as he leaves: an unreached jump's target, or the page he is on. Read
     /// before the page goes, so a reflow that never settles (a slow device, a load stuck as in gatefold#94)
-    /// can't drop the move he made under it (gatefold#96).
+    /// can't drop the move he made under it (gatefold#96). Not a peek: a contents jump's target owed here is
+    /// written at once, before it returns (gatefold#259).
     func owedPlaceOnLeaving() -> Locator? {
         guard !isClosed, !isWarming else { return nil }
         // A jump of his still on its way (its chapter loading, Readium's page not yet reported) is owed its
@@ -1665,26 +1666,19 @@ final class ReaderModel {
         let movesAtWrite = shown ? (shownLeaveWrite?.move ?? moves) : moves
         // A contents jump left on its way (gatefold#259) that has landed since: its landing is the place,
         // and the target is not written over it.
-        let contentsMove = contentsLeftMove == moves ? moves : nil
-        if shown { await mapShownPagePosition(here) } else if let contentsMove, contentsLandedMove == contentsMove {
-            readerLog.notice("place: the contents jump left on its way landed before its target was written; its landing stands")
+        // A contents jump left on its way (gatefold#259): its target was written at once as he left
+        // (`writeContentsTargetAtOnce`), and its landing writes over it. No write here waits on the page:
+        // one held by the loading chapter could finish after the landing and stand over it. The close
+        // counts its own move, so the jump's is the one before it.
+        let contentsLeft = contentsLeftMove.map { $0 == moves || (isClosed && $0 == moves - 1) } == true
+        if shown { await mapShownPagePosition(here) } else if contentsLeft {
+            readerLog.notice("place: the contents jump left on its way had its target written at once; its landing writes over it")
+            await afterLeaveWrite?()
         } else {
             if jumpOwed { leaveWriteMove = moves; reportWroteInLeave = false }
-            // The chapter he chose is his move, whatever a reflow before it left the page marked as: a
-            // layout-only page dropped this write without a word (CI run 43218442143 reopened at the start).
-            // Layout reports stay out until the landing all the same: while the jump is the newest move,
-            // only a leave gets past `locationDidChange`'s `fragmentJumpMove` guard.
-            if contentsMove != nil { layoutOnly = false }
             await locationDidChange(here, hisMove: true, placeOnly: true, leaving: true)
             if jumpOwed { leaveWriteMove = nil }
             await afterLeaveWrite?()
-            // It landed while the target was written: whichever write finished last, the landed page is written again.
-            if let contentsMove, contentsLandedMove == contentsMove, moves == contentsMove, !isClosed, !touchedSinceLocation,
-               let landed = page?.currentLocation {
-                readerLog.notice("place: the contents jump left on its way landed while its target was written; its landing written again")
-                layoutOnly = false
-                await locationDidChange(landed, hisMove: true)
-            }
         }
         // The restore settled during that wait: its write-back may have gone first, so this one follows it.
         if shown, !isClosed, keeper.reflowing == nil, moves == movesAtWrite, !touchedSinceLocation, let words = anchorLocator {
@@ -1767,7 +1761,8 @@ final class ReaderModel {
         readerLog.notice("place write [r\(self.readerNumber, privacy: .public)]: the page left unsettled written on leaving, at once, at \(here.locations.totalProgression ?? -1, privacy: .public), \(here.text.highlight == nil ? "Readium's location" : "with his first words", privacy: .public)")
     }
     /// A contents jump's target, as he leaves it on its way (gatefold#259): kept as of now, with no read of
-    /// the page, which is still on the place before the jump.
+    /// the page, which is still on the place before the jump. Unlike `writeShownPageAtOnce`, `lastReported`
+    /// is left alone: the page shown is still the one from before the jump, not this target.
     private func writeContentsTargetAtOnce(_ here: Locator) {
         guard let json = try? here.jsonString() else {
             readerLog.notice("place write [r\(self.readerNumber, privacy: .public)]: the contents jump's target could not be encoded; not written at once")
@@ -2617,11 +2612,9 @@ final class ReaderModel {
         guard moves == move, !isClosed, let here = page?.currentLocation else { return }
         layoutOnly = false
         // Left on its way (the app gone inactive), its target was written as he left: the landing is his
-        // move all the same, never "already kept" by that write, and a leave write still under way when it
-        // lands writes this page again once it is done (`keepOwedPlace`).
+        // move all the same, never "already kept" by that write, and writes over it.
         let leftOnItsWay = contentsLeftMove == move
         if leftOnItsWay {
-            contentsLandedMove = move
             if owedJumpTarget?.1 == move { owedJumpTarget = nil }
             // A landed page, checked on screen, still claims its write, as a report's would (#82): another
             // report of the same move while this one reads his words (Readium's boundary a beat after) is not
@@ -2637,7 +2630,6 @@ final class ReaderModel {
             if landed, claimedMove == move { claimedMove = nil }
             // One leave, one landing: the gate is spent.
             contentsLeftMove = nil
-            contentsLandedMove = nil
         }
     }
     /// A contents jump inside its file still on its way: while it is the newest move, its reports are not
@@ -2655,9 +2647,8 @@ final class ReaderModel {
         let inputsAtStart: Int
     }
     @ObservationIgnored private var contentsJumpOnItsWay: ContentsJumpOnItsWay?
-    /// The contents jump whose target was written as he left, and the one of those that then landed.
+    /// The contents jump whose target was written as he left.
     @ObservationIgnored private var contentsLeftMove: Int?
-    @ObservationIgnored private var contentsLandedMove: Int?
     /// Tests only: runs once the leave's write has returned, so a landing can be made to come inside it.
     @ObservationIgnored var afterLeaveWrite: (@MainActor () async -> Void)?
     /// Tests only: runs as a landing left on its way starts its write, so another report can come during it.
