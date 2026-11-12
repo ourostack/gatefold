@@ -351,9 +351,9 @@ final class NavigationPlaceUITests: XCTestCase {
 
     private func contentsTap(_ title: String) {
         app.buttons["reader.contents"].tap()
-        // Exactly this chapter: the book's entries end in a full stop ("Chapter XL."), and without it "Chapter XL"
-        // is also the start of XLI to XLIX. A plain predicate, as the file's other Contents taps use.
-        let row = app.buttons.matching(NSPredicate(format: "label CONTAINS[c] %@", title + ".")).firstMatch
+        // Exactly this chapter: Contents shows the title tidied ("Chapter XL", its full stop dropped by
+        // `Headings.tidy`), alone or followed by its page number, and "Chapter XL" also starts XLI to XLIX.
+        let row = app.buttons.matching(NSPredicate(format: "label ==[c] %@ OR label BEGINSWITH[c] %@ OR label BEGINSWITH[c] %@", title, title + ",", title + " ")).firstMatch
         XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label CONTAINS[c] %@", "Chapter I")).firstMatch.waitForExistence(timeout: 10),
                       "the contents opened")
         // Chapter XL is further down the list than XXX, which 20 slow swipes reach.
