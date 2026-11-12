@@ -347,6 +347,9 @@ import Testing
         f.model.keeper.reflowWillBegin(.rotation)
         f.model.reflowDidBegin()
         f.model.reflowDidFinish(visible: await f.page.visibleRange())
+        // The restore's own end, as the host reports it: until then every report but a leave is the
+        // reflow's, and the landing's write was dropped with them (CI run 43233772897).
+        f.model.keeper.restoreDidComplete()
         for _ in 0..<20 { await Task.yield() }
         f.page.linkOpens = fileStart
         f.page.fragmentAt = [:]
