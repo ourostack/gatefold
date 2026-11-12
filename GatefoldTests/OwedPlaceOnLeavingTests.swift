@@ -270,6 +270,15 @@ final class UnreportedJumpPage: ReaderPage {
         let saved = try #require(savedPlace(app))
         #expect(saved.text.highlight != nil, "his page's words were lost to the target the leave wrote")
         #expect(saved.locations.progression == target.locations.progression)
+
+        // The layout then names a boundary on the same page, with no move of his since: one move, one place,
+        // so his words stand (the leave handed nothing back after the report wrote).
+        let boundary = target.copy(locations: { $0.progression = max(0, ($0.progression ?? 0) - 0.01) })
+        page.words = nil
+        page.currentLocation = boundary
+        await model.locationDidChange(boundary)
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(savedPlace(app)?.text.highlight == saved.text.highlight, "a later layout report wrote over his words")
         model.close()
     }
 }

@@ -1636,7 +1636,7 @@ final class ReaderModel {
         // The shown page's write took its move when it was written (`keepShownPageNow`), not now.
         let movesAtWrite = shown ? (shownLeaveWrite?.move ?? moves) : moves
         if shown { await mapShownPagePosition(here) } else {
-            if jumpOwed { leaveWriteMove = moves }
+            if jumpOwed { leaveWriteMove = moves; reportWroteInLeave = false }
             await locationDidChange(here, hisMove: true, placeOnly: true, leaving: true)
             if jumpOwed { leaveWriteMove = nil }
         }
@@ -1648,7 +1648,11 @@ final class ReaderModel {
             await locationDidChange(words, hisMove: true, placeOnly: true)
             if moves == movesAtWrite, !touchedSinceLocation { layoutOnly = true }
         }
-        if !isClosed, placeOwed || jumpOwed, recordedMoves == moves { recordedMoves = recordedBefore }
+        // Handed back to the next report, unless the jump's own report already wrote his page meanwhile: a
+        // later report of the same move (the layout settling) would then write over his words.
+        if !isClosed, placeOwed || jumpOwed, recordedMoves == moves, !(jumpOwed && reportWroteInLeave) {
+            recordedMoves = recordedBefore
+        }
     }
 
     /// Leaving on the page a stalled restore left him: written now, in the caller's own turn (the close,
@@ -1915,6 +1919,8 @@ final class ReaderModel {
     @ObservationIgnored private(set) var isJumpingToPlace = false
     /// The move whose jump target a leave is writing (`keepOwedPlace`), while that write waits.
     @ObservationIgnored private var leaveWriteMove: Int?
+    /// The jump's own report wrote while that leave's write waited.
+    @ObservationIgnored private var reportWroteInLeave = false
     /// The latest report of the claimed move that was dropped for the claim.
     @ObservationIgnored private var contestingReport: Locator?
     /// Set when a reflow ends (or an owed place is kept) and cleared by a move of his, or a report his
@@ -2029,8 +2035,9 @@ final class ReaderModel {
         // then the place): the claimant then keeps whichever of the two the page on screen holds.
         if claimedByEarlier { contestingReport = locator }
         // A leave still writing a jump's target (gatefold#279) hasn't kept the move: the jump's own report,
-        // arriving during that write's waits, is his page with its words, and it writes.
-        let leaveWriting = leaveWriteMove == moves && !leaving
+        // arriving during that write's waits, is his page with its words, and it writes. Only a page that
+        // moved: a re-report of the page before the jump (the layout, the app going inactive) is not it.
+        let leaveWriting = leaveWriteMove == moves && !leaving && Self.pageMoved(reportedBefore, locator)
         let alreadyKept = (moves == recordedMoves && !hisMove && !leaveWriting) || claimedByEarlier
         let touchedAtReport = touchedSinceLocation
         let readerMoved = (!layoutOnly && !alreadyKept) || touchedAtReport
@@ -2138,6 +2145,7 @@ final class ReaderModel {
         }
         // Kept as of now, before any further wait.
         recordedMoves = moves
+        if leaveWriting { reportWroteInLeave = true }
         pagesLeft = []
         let keeping = moves
         newestWrittenMove = max(newestWrittenMove, keeping)
