@@ -147,12 +147,10 @@ final class SingleColumnUITests: XCTestCase {
         showControls()
         app.buttons["reader.contents"].tap()
         XCTAssertTrue(contentsRows.firstMatch.waitForExistence(timeout: 10), "the contents opened again")
-        // Another chapter than his, a few rows on from the one the list opened at.
-        let entries = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", "contents.entry."))
-        let row = (0..<min(entries.count, 12)).map { entries.element(boundBy: $0) }.last { $0.isHittable } ?? entries.firstMatch
-        XCTAssertTrue(row.exists && row.isHittable, "the contents list a chapter to jump to")
+        // A named row, brought into view and tapped by its frame (`ContentsRow`, gatefold#98).
+        let row = app.buttons.matching(NSPredicate(format: "label CONTAINS[c] %@", "Chapter XXX")).firstMatch
         let beforeJump = words
-        row.tap()
+        XCTAssertTrue(ContentsRow.tap(row, in: app).ok, "the contents list chapter XXX")
         let jumped = readsUntil(reads: 300) { words != beforeJump && !words.isEmpty }
         XCTAssertTrue(jumped.ok, "the Contents jump moved the page within \(jumped.reads) reads\(jumped.hung ? " (hang guard)" : "")")
         hideControls()
