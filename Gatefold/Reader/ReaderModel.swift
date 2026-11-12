@@ -275,6 +275,8 @@ final class ReaderModel {
         // the jump on a return and called the page it reached his (CI's page-numbers check).
         self.launchGoTo = initial == nil && (LaunchOptions.openBook == nil || LaunchOptions.openBook == book.id) ? (goTo ?? LaunchOptions.goTo) : nil
         readerLog.notice("place read [r\(self.readerNumber, privacy: .public)]: \(book.id, privacy: .public) opening on \(initial.map(Self.placeTag) ?? "none", privacy: .public)")
+        // UI tests: the place read carries his words or not (a reopen of a bare progression lands on a boundary).
+        if LaunchOptions.isUITest { self.savedWordsProbe = initial?.text.highlight.map(ReaderJS.normalize) ?? "" }
         // His saved words are the place from the first frame. A reflow can start before the page has
         // shown any words (an iPad relaunched in landscape lays out in portrait first, then rotates);
         // with nothing held, the spread stayed where Readium's re-layout guessed: two spreads early,
@@ -1596,7 +1598,9 @@ final class ReaderModel {
         // No move owed, but a restore that never settled left him the page as it was: that page is what he
         // saw, so it is what the reopen shows (gatefold#133).
         if !placeOwed {
-            leavingOnShownPage = shownOnLeaving
+            // Named once, here, before the close counts its move: the write, the inactive write and the
+            // reopen picture's tag all carry the same place (`withKeptWords`).
+            leavingOnShownPage = shownOnLeaving.map(withKeptWords)
             return leavingOnShownPage
         }
         // A contents jump still on its way (or closed mid-way) shows its file's first page, a place he never
@@ -1663,6 +1667,23 @@ final class ReaderModel {
         app.library.flushPushes()
     }
     @ObservationIgnored private var shownKeptNow: Locator?
+
+    /// The place the library keeps for this book now.
+    var keptPlace: Locator? { app.library.book(bookID)?.locatorJSON.flatMap { try? Locator(jsonString: $0) } }
+
+    /// `here` with his first words when it has none and the place kept now is that very place with words
+    /// (his turn's write before the stalled restore showed the same page). Readium's bare progression sits
+    /// on a page boundary, and a reopen can land on either side of it (gatefold#133: one page early).
+    /// Only while nothing has moved since that write (no turn, jump or landing not yet kept; or no move at
+    /// all since the open, the kept place being the one opened): a new page never inherits the old page's words.
+    private func withKeptWords(_ here: Locator) -> Locator {
+        guard here.text.highlight == nil, !hasMoved || recordedMoves == moves,
+              let kept = keptPlace,
+              kept.text.highlight != nil, kept.href == here.href,
+              kept.locations.progression == here.locations.progression else { return here }
+        readerLog.notice("place write [r\(self.readerNumber, privacy: .public)]: the page left has no words; the kept place's words go with it (same place)")
+        return here.copy(text: { $0 = kept.text })
+    }
 
     /// The shown page's leave write, at once: the place as noted (with his first words if the page gave
     /// them before he left, `reflowShownUnsettled`), no position mapped, no wait. The words matter: under a

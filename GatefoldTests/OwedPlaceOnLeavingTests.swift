@@ -156,6 +156,88 @@ import Testing
         #expect(after.locations.progression == shownPage.locations.progression, "the mapped position moved the place")
         #expect(after.text.highlight == withWords.text.highlight, "the mapped position's write replaced his noted words")
     }
+
+    /// The page shown under a stalled restore is the page his own turn kept, and the page gave no words
+    /// before he left. Written as Readium's location alone, the leave replaced his words with a bare
+    /// progression on a page boundary, and the reopen came back one page early (gatefold#133, #238's run
+    /// at b7c5fc2: his page's start 616 characters into the reopened page). The same place keeps his words.
+    @Test func leavingOnThePageHisTurnKeptKeepsHisWordsWhenThePageGivesNone() async throws {
+        let sync = StubSync()
+        await sync.setLibrary(.success([ReaderSyncTests.frankenstein]))
+        await sync.setRemote(nil)
+        let app = AppModel(sync: sync, libraryRoot: URL.temporaryDirectory.appending(path: "shown-same-\(UUID().uuidString)"))
+        await app.library.refresh()
+        let publication = try await ReaderSyncTests.publication()
+        let book = try #require(app.library.book(ReaderSyncTests.frankenstein.fastHash))
+        let first = publication.readingOrder[0].url().string
+        let opening = Locator(href: try #require(AnyURL(string: first)), mediaType: .xhtml,
+                              locations: .init(progression: 0, totalProgression: 0))
+        let page = TwoStepJumpPage(at: opening, readsToLand: 1)
+        let model = ReaderModel(book: book, publication: publication, app: app, page: page)
+        page.model = model
+        await model.load()
+        func savedPlace() -> Locator? {
+            app.library.book(ReaderSyncTests.frankenstein.fastHash)?.locatorJSON.flatMap { try? Locator(jsonString: $0) }
+        }
+
+        // He turns: the place kept carries his first words.
+        let read = try #require(await ReaderSyncTests.locate(publication, 0.31))
+        page.currentLocation = read
+        model.userTurnedPage()
+        await model.locationDidChange(read)
+        for _ in 0..<200 where savedPlace()?.text.highlight == nil { await Task.yield() }
+        let his = try #require(savedPlace()?.text.highlight, "his turn was kept with his words")
+        try #require(savedPlace()?.locations.progression == read.locations.progression)
+
+        // He rotates; the restore stalls on that same page, shown as it is, and no words come before he leaves.
+        model.keeper.reflowWillBegin(.rotation)
+        model.reflowDidBegin()
+        try #require(model.reflowShownUnsettled(read.copy(text: { $0 = Locator.Text() })) != nil)
+        model.close()
+        let kept = try #require(savedPlace(), "leaving kept no place")
+        #expect(kept.locations.progression == read.locations.progression)
+        #expect(kept.text.highlight == his, "the leave write dropped his words on the same place")
+        // The mapped position follows on the same place, his words with it.
+        for _ in 0..<200 where model.shownLeaveSteps.count < 2 { try await Task.sleep(for: .milliseconds(25)) }
+        #expect(model.shownLeaveSteps == ["written", "position mapped (cfi)"], "steps \(model.shownLeaveSteps)")
+        #expect(savedPlace()?.text.highlight == his, "the mapped position's write dropped his words")
+    }
+
+    /// Opened on his saved place with words, rotated, stalled on that same page and left with no move:
+    /// nothing moved since the place was kept, so it keeps his words (the gap the #133 ruling left open).
+    @Test func leavingTheOpenedPageUnderAStalledRestoreKeepsItsWords() async throws {
+        let sync = StubSync()
+        await sync.setLibrary(.success([ReaderSyncTests.frankenstein]))
+        await sync.setRemote(nil)
+        let app = AppModel(sync: sync, libraryRoot: URL.temporaryDirectory.appending(path: "shown-opened-\(UUID().uuidString)"))
+        await app.library.refresh()
+        let publication = try await ReaderSyncTests.publication()
+        let id = ReaderSyncTests.frankenstein.fastHash
+        let place = try #require(await ReaderSyncTests.locate(publication, 0.31))
+        // A stand-in for his saved words, never a book's.
+        let saved = place.copy(text: { $0 = Locator.Text(highlight: "stand-in words of his saved page") })
+        app.library.recordPlace(bookID: id, locatorJSON: try #require(try saved.jsonString()),
+                                totalProgression: saved.locations.totalProgression ?? 0,
+                                progression: saved.locations.progression ?? 0, at: Date())
+        let book = try #require(app.library.book(id))
+        let page = TwoStepJumpPage(at: place, readsToLand: 1)
+        let model = ReaderModel(book: book, publication: publication, app: app, page: page)
+        page.model = model
+        await model.load()
+        func savedPlace() -> Locator? {
+            app.library.book(id)?.locatorJSON.flatMap { try? Locator(jsonString: $0) }
+        }
+        let kept = try #require(savedPlace())
+        let words = try #require(kept.text.highlight, "the opened place has words")
+
+        model.keeper.reflowWillBegin(.rotation)
+        model.reflowDidBegin()
+        try #require(model.reflowShownUnsettled(kept.copy(text: { $0 = Locator.Text() })) != nil)
+        model.close()
+        let left = try #require(savedPlace(), "leaving kept no place")
+        #expect(left.locations.progression == kept.locations.progression)
+        #expect(left.text.highlight == words, "leaving the opened page dropped its words")
+    }
 }
 
 /// A wait that holds until it is opened.
