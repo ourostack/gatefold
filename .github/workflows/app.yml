@@ -1,7 +1,8 @@
 name: App
 
-# Probe for gatefold#198 (never merged): where does `simctl boot --disabledJob` land on iOS 27, and does a job named
-# in its own domain (user/foreground) stay off? No app, no tests, no book text.
+# Probe for gatefold#198 (never merged): quiet a new simulator the moment `simctl boot` returns, in one spawn (a shell
+# inside the simulator removes every job in quiet-sim.labels), against today's boot. Samples the runner's 1-min load
+# every 20 s and times a Settings launch every 60 s. No app, no tests, no book text.
 
 on:
   workflow_dispatch:
@@ -10,32 +11,39 @@ permissions:
   contents: read
 
 jobs:
-  where:
-    name: The bootstrap plist with --disabledJob, plain and domain-qualified (${{ matrix.form }})
+  boot:
+    name: ${{ matrix.how }} ${{ matrix.rep }}
     runs-on: xcode-27
-    timeout-minutes: 30
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
-        form: [plain, user-foreground, gui]
+        how: [control, onespawn]
+        rep: [1, 2, 3]
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/select-xcode
       - env:
-          FORM: ${{ matrix.form }}
+          HOW: ${{ matrix.how }}
         run: |
           set -u
           read -r rt dt < <(.github/probe/sim.sh pick)
-          case "$FORM" in plain) p="";; user-foreground) p="user/foreground/";; gui) p="gui/501/";; esac
-          args=(); for j in com.apple.homed com.apple.geod com.apple.weatherd com.apple.triald com.apple.PosterBoard; do args+=("--disabledJob=$p$j"); done
-          u=$(xcrun simctl create probe-ipad "$dt" "$rt")
-          xcrun simctl boot "$u" "${args[@]}"; echo "boot exit $?"
-          d="$HOME/Library/Developer/CoreSimulator/Devices/$u/data"
-          sleep 20
-          f="$d/var/run/launchd_bootstrap.plist"; ls -la "$f"
-          plutil -p "$f" | grep -n -i -E "homed|geod|weatherd|triald|PosterBoard|disab" | head -30
-          plutil -p "$f" | head -60
-          xcrun simctl bootstatus "$u" -b >/dev/null 2>&1; echo "bootstatus $?"
-          for dom in system user/501 user/foreground gui/501; do echo "-- $dom"; xcrun simctl spawn "$u" launchctl print-disabled "$dom" 2>&1 | head -12; done
-          xcrun simctl spawn "$u" launchctl list | grep -E "homed|geod|weatherd|triald|PosterBoard"
-          xcrun simctl spawn "$u" launchctl print user/foreground/com.apple.homed 2>&1 | head -20
+          labels=$(grep -vE '^\s*(#|$)' .github/scripts/quiet-sim.labels | tr '\n' ' ')
+          .github/probe/sim.sh sample "$HOW" 1320 &
+          u=$(xcrun simctl create probe-ipad "$dt" "$rt"); echo "created $u"
+          t=$SECONDS; xcrun simctl boot "$u"; echo "BOOT returned after $((SECONDS-t)) s"
+          quiet() {
+            local s=$SECONDS
+            out=$(xcrun simctl spawn "$u" /bin/sh -c 'n=0; for l in "$@"; do launchctl remove "$l" 2>/dev/null && n=$((n+1)); done; echo $n' sh $labels 2>&1)
+            echo "QUIET $1 at $((SECONDS-t)) s: removed $out in $((SECONDS-s)) s, load $(sysctl -n vm.loadavg | awk '{print $2}')"
+          }
+          if [ "$HOW" = onespawn ]; then quiet early; fi
+          xcrun simctl bootstatus "$u" -b > "$RUNNER_TEMP/bs.txt" 2>&1; echo "BOOTSTATUS $HOW done ($?) after $((SECONDS-t)) s"
+          quiet after-boot
+          n=0; for l in $labels; do xcrun simctl spawn "$u" launchctl list | grep -q " $l$" && n=$((n+1)); done; echo "STILL LOADED $n"
+          for i in $(seq 1 12); do
+            t0=$SECONDS; xcrun simctl launch "$u" com.apple.Preferences >/dev/null 2>&1; r=$?
+            echo "LAUNCH $i at $((SECONDS-t)) s: $((SECONDS-t0)) s exit $r load $(sysctl -n vm.loadavg | awk '{print $2}')"
+            xcrun simctl terminate "$u" com.apple.Preferences >/dev/null 2>&1; sleep 60
+          done
+          wait
