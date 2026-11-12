@@ -352,10 +352,11 @@ final class NavigationPlaceUITests: XCTestCase {
     private func contentsTap(_ title: String) {
         app.buttons["reader.contents"].tap()
         // Exactly this chapter: "Chapter XL" is also the start of XLI to XLIX.
-        let row = app.buttons.matching(NSPredicate(format: "label MATCHES[c] %@", "^\\Q\(title)\\E(?![IVXLC]).*")).firstMatch
+        let row = app.buttons.matching(NSPredicate(format: "label MATCHES[c] %@", "(?s).*\\b\\Q\(title)\\E(?![IVXLC]).*")).firstMatch
         XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label CONTAINS[c] %@", "Chapter I")).firstMatch.waitForExistence(timeout: 10),
                       "the contents opened")
-        for _ in 0..<20 where !(row.exists && row.isHittable) { app.swipeUp(velocity: .slow) }
+        // Chapter XL is further down the list than XXX, which 20 slow swipes reach.
+        for _ in 0..<40 where !(row.exists && row.isHittable) { app.swipeUp(velocity: .slow) }
         XCTAssertTrue(row.exists && row.isHittable, "the contents list \(title)")
         row.tap()
     }
