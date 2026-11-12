@@ -259,9 +259,9 @@ final class RotationMidTransitionUITests: XCTestCase {
         print("COLDTURN looks=\(looks.count) nonWhole=\(nonWhole.count) blankHalf=\(nonWhole.filter { $0.ink.0 <= 0.01 || $0.ink.1 <= 0.01 }.count) band=\(nonWhole.filter(\.band).count) standingLooks=\(standingLooks) afterSettled=\(afterSettled) leafStoodFrames=\(stood) [\(looks.map(\.text).joined(separator: ", "))]")
         // A leaf that pauses at the top of its rise for a moment is a beat of the unfold; one that stands there
         // waiting on a reloaded chapter is the stuck curl. Hosted runners lay the spread out 2 to 4 times slower
-        // than a Mac, so the bar is a second of the simulator's frames: build 25's main stood 226 frames and 7 looks
-        // on a hosted runner (probe 43288332572), the fix 22 and 1 (43288337838).
-        XCTAssertLessThanOrEqual(stood, 60, "the leaf stood risen over the old page for \(stood) frames, waiting on its spread")
+        // than a Mac, so the bar leaves the fix's slowest hosted run room: build 25's main stood 226 display frames
+        // and 7 looks on a hosted runner (probe 43288332572), the fix 22 and 34 frames and 1 look (43288337838).
+        XCTAssertLessThanOrEqual(stood, 90, "the leaf stood risen over the old page for \(stood) frames, waiting on its spread")
         XCTAssertLessThanOrEqual(standingLooks, 2, "\(standingLooks) looks showed a blank page or a standing leaf while the leaf stood")
         XCTAssertEqual(afterSettled, 0, "\(afterSettled) looks showed a blank page or a leaf after the reflow settled")
         XCTAssertGreaterThanOrEqual(quiet, 8, "the spread didn't settle whole in \(looks.count) looks")

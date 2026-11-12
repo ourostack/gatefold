@@ -301,6 +301,7 @@ final class ReaderModel {
         let opening = Self.epubPreferences(prefs, theme: prefs.resolvedTheme(systemIsDark: false), columns: .one, viewWidth: layout.pageFrame.width > 0 ? layout.pageFrame.width : 402, language: Self.hyphenationLanguage(publication),
                                            fixedLayout: publication.metadata.layout == .fixed)
         marginsLaidFor = Self.marginBand(columns: .one, viewWidth: layout.pageFrame.width > 0 ? layout.pageFrame.width : 402)
+        appliedPageMargins = opening.pageMargins
         do {
             hostController = try ReaderHostController(
                 model: self,
@@ -472,7 +473,7 @@ final class ReaderModel {
         let epub = Self.epubPreferences(prefs, theme: theme, columns: layout.columns, viewWidth: layout.pageFrame.width, tabletop: layout.posture == .tabletop)
         return ScreenPageLayout(width: layout.pageFrame.width, height: layout.pageFrame.height,
                                 columnsPerScreen: layout.columns == .two ? 2 : 1, fontScale: prefs.fontScale,
-                                lineHeight: epub.lineHeight ?? 0, margins: epub.pageMargins ?? 1,
+                                lineHeight: epub.lineHeight ?? 0, margins: appliedPageMargins ?? epub.pageMargins ?? 1,
                                 font: prefs.font.rawValue, justify: prefs.justify)
     }
 
@@ -1839,6 +1840,10 @@ final class ReaderModel {
 
     /// The steps the page's margins were last laid out at (`applyPreferences`, or the opening).
     @ObservationIgnored private var marginsLaidFor: MarginBand?
+    /// The margin multiplier the page was last given. Within a step it can differ from the one the width would
+    /// call for, and the counters lay pages out with the page's own (`ReaderHostController.countPages`), so the
+    /// counts are keyed on it (`screenLayout`).
+    private var appliedPageMargins: Double?
     struct MarginBand: Equatable {
         let widePage: Bool
         let gutter: Double
@@ -3111,6 +3116,7 @@ final class ReaderModel {
         if let host {
             host.apply(epub, columns: layout.columns == .two ? 2 : 1, reflow: reflow)
             marginsLaidFor = Self.marginBand(columns: layout.columns, viewWidth: layout.pageFrame.width)
+            appliedPageMargins = epub.pageMargins
         }
         host?.disablePanningIfNeeded()
     }
