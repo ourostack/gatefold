@@ -1065,9 +1065,11 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         guard let text = anchor.text?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else { return nil }
         let surface = WebSpread(host: self, anchor: anchor, text: text)
         guard await SpreadSettler.keepOnLeft(surface, current: current, purpose: purpose) == true, current() else { return nil }
-        let visible = await visibleRange()
+        // Judged once the page shows text: read straight after the moves, the web view can still be laying the
+        // spread out, and a read with no words takes Readium's lagging start for the page (gatefold#58).
+        let (visible, reads) = await LaidOutPage.read({ await self.visibleRange() }, beat: { await surface.beat() }, current: current)
         // The settler also ends here when its passes run out with the words still off the left page.
-        readerLog.notice("spread: words placed on the left page; \(surface.moves, privacy: .public) moves (last read side \(surface.lastSide.map { String($0.rawValue) } ?? "nil", privacy: .public))")
+        readerLog.notice("spread: words placed on the left page; \(surface.moves, privacy: .public) moves (last read side \(surface.lastSide.map { String($0.rawValue) } ?? "nil", privacy: .public)); page read \(reads, privacy: .public) times, words \(visible?.text != nil, privacy: .public)")
         return visible
     }
 
