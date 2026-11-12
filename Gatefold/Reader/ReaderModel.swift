@@ -1799,6 +1799,7 @@ final class ReaderModel {
         recordedMoves = moves
         pagesLeft = []
         newestWrittenMove = max(newestWrittenMove, moves)
+        placeWrittenFor = max(placeWrittenFor, moves)
         placeRecords += 1
         if LaunchOptions.isUITest { savedPlaceProbe = Self.probeTag(here) }
         app.library.recordPlace(bookID: bookID, locatorJSON: json, totalProgression: here.locations.totalProgression ?? 0,
