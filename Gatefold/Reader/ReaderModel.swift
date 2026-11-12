@@ -2596,15 +2596,18 @@ final class ReaderModel {
         if leftOnItsWay {
             contentsLandedMove = move
             if owedJumpTarget?.1 == move { owedJumpTarget = nil }
-            // His move still claims its write, as a report's would (#82): another report of the same move
-            // while this one reads his words (Readium's boundary a beat after) is not written over it.
-            claimedMove = move
-            contestingReport = nil
+            // A landed page, checked on screen, still claims its write, as a report's would (#82): another
+            // report of the same move while this one reads his words (Readium's boundary a beat after) is not
+            // written over it. A jump that ended unlanded leaves its page to the usual contest.
+            if landed {
+                claimedMove = move
+                contestingReport = nil
+            }
             beforeLandingWrite?()
         }
         await locationDidChange(here, hisMove: leftOnItsWay)
         if leftOnItsWay {
-            if claimedMove == move { claimedMove = nil }
+            if landed, claimedMove == move { claimedMove = nil }
             // One leave, one landing: the gate is spent.
             contentsLeftMove = nil
             contentsLandedMove = nil
