@@ -39,7 +39,7 @@ ON_SCREEN = ["Gatefold", "Packages/GatefoldCore/Sources", "Packages/GatefoldClou
              "Packages/GatefoldCore/Package.swift", "Packages/GatefoldCloud/Package.swift",
              "Packages/GatefoldCloud/Package.resolved", "project.yml", "GatefoldListingShots", "screenshots",
              "scripts/screenshots", ".github/actions/select-xcode", ".github/workflows/screenshots.yml"]
-# The watcher gives up after SHOOT_LIMIT seconds of shooting; the scene test waits longer (ListingShotsUITests: 240 s).
+# The watcher gives up after SHOOT_LIMIT seconds of shooting; the scene test waits longer (ListingShotsUITests: 280 s).
 STABLE_FRAMES, SHOOT_LIMIT, FRAME_GAP = 3, 80, 0.8
 # One screenshot call. It is a hang guard, not a judgment: answered calls' times are logged per scene and kind
 # ("slowest"), and one that has not answered in 15 s is asked again, so a hung screenshot costs 15 s, never a scene.
@@ -59,8 +59,12 @@ UI_LIMIT = 75
 ASKS = 3
 LIST_LIMIT = 30  # the one device listing a stuck hand-off makes, to tell the device from CoreSimulatorService
 # Worst case for one hand-off: the status bar (50), SHOOT_LIMIT of shooting (80), its last screenshot (15), ASKS
-# unanswered screenshots (3 x 15) and the listing (30): 220 s. The scene test waits 240 s.
+# unanswered screenshots (3 x 15) and the listing (30): 220 s.
 WATCH_WORST = STATUS_BAR_LIMIT + SHOOT_LIMIT + SIMCTL_LIMIT + ASKS * SIMCTL_LIMIT + LIST_LIMIT
+# A stuck hand-off's witness, before its .stuck is written: ps (10), pgrep (5), sample (2 s of stacks, bounded at 8)
+# and a screenshot (15): 38 s. The scene test waits 280 s: both, with 22 s to spare.
+PS_LIMIT, PGREP_LIMIT, SAMPLE_SECONDS, SAMPLE_LIMIT = 10, 5, 2, 8
+WITNESS_WORST = PS_LIMIT + PGREP_LIMIT + SAMPLE_LIMIT + SIMCTL_LIMIT
 # The reboot (recover), each step about 1.5 times its slowest in PR #292's runs (43191648332, 43184304862, 43201036810):
 # shutdown 4-10 s, boot 6-19 s, bootstatus -b 66-153 s. A shutdown that does not answer is a service that is not.
 REBOOT_STEPS = [(("shutdown",), 15), (("boot",), 30), (("bootstatus", "-b"), 230)]
@@ -259,7 +263,7 @@ def witness(dev, d, handoff, log):
     host's, so its SpringBoard, backboardd and the app show by name) and, if the device still answers one, a
     screenshot in unsettled/. Process names and CPU only; each call bounded, and never fails the scene twice."""
     try:
-        top = dev.run(["ps", "-Ao", "pcpu=,pmem=,comm=", "-r"], check=True, capture_output=True, timeout=10).stdout
+        top = dev.run(["ps", "-Ao", "pcpu=,pmem=,comm=", "-r"], check=True, capture_output=True, timeout=PS_LIMIT).stdout
         top = top.decode(errors="replace") if isinstance(top, bytes) else (top or "")
         lines = [l.strip() for l in top.splitlines()[:10]]
         log(f"{handoff}: busiest host processes: " + " | ".join(
@@ -269,14 +273,13 @@ def witness(dev, d, handoff, log):
     keep = d / "unsettled"
     keep.mkdir(exist_ok=True)
     # What the app itself is doing, as stacks: midnight's stuck devices had Gatefold at 48-70% CPU (gatefold#150).
-    # `sample` reads 3 s of the process's threads and takes about that long to write them; 20 s bounds a slow host.
-    # Function names and counts only, never the page's words.
+    # The app on this device only (its path holds the device's UDID). Function names and counts, never the page's words.
     try:
-        pid = dev.run(["pgrep", "-x", "Gatefold"], capture_output=True, timeout=10).stdout
+        pid = dev.run(["pgrep", "-f", f"{dev.udid}/.*/Gatefold.app/Gatefold"], capture_output=True, timeout=PGREP_LIMIT).stdout
         pid = (pid.decode(errors="replace") if isinstance(pid, bytes) else (pid or "")).split()
         if pid:
-            dev.run(["sample", pid[0], "3", "-file", str(keep / f"{handoff}-sample.txt")],
-                    check=True, capture_output=True, timeout=20)
+            dev.run(["sample", pid[0], str(SAMPLE_SECONDS), "-file", str(keep / f"{handoff}-sample.txt")],
+                    check=True, capture_output=True, timeout=SAMPLE_LIMIT)
             log(f"{handoff}: the app's threads when stuck are in unsettled/{handoff}-sample.txt", flush=True)
         else:
             log(f"{handoff}: no Gatefold process to sample", flush=True)
@@ -379,12 +382,20 @@ def pick_name(names, offered):
 class FakeSimctl:
     """Answers like simctl, except the calls listed in `hang` (1-based, counted over screenshot calls) time out."""
 
-    def __init__(self, hang=(), frames=None, listing=True, steps=None):
+    def __init__(self, hang=(), frames=None, listing=True, steps=None, app_pid="", sample="ok"):
         self.hang, self.frames, self.listing, self.steps = set(hang), frames, listing, steps or {}
+        self.app_pid, self.sample = app_pid, sample
         self.shots, self.calls = 0, []
 
     def __call__(self, cmd, check=False, capture_output=False, timeout=None, text=False):
         self.calls.append(cmd[2] if cmd[0] == "xcrun" else cmd[0])
+        if cmd[0] == "pgrep":  # the witness looking for this device's app
+            return subprocess.CompletedProcess(cmd, 0 if self.app_pid else 1, self.app_pid, "")
+        if cmd[0] == "sample":
+            if self.sample == "hang":
+                raise subprocess.TimeoutExpired(cmd, timeout)
+            pathlib.Path(cmd[-1]).write_text("Call graph:\n")
+            return subprocess.CompletedProcess(cmd, 0, "", "")
         if cmd[0] == "sleep":  # CAPTURE_FORCE_HANG's stand-in: never answers within the limit
             raise subprocess.TimeoutExpired(cmd, timeout)
         if cmd[2] == "io":
@@ -454,7 +465,7 @@ def selftest_recovery():
         # The watcher: stuck, then (after the workflow's reboot) the next try is a new hand-off that succeeds.
         d = t / "w"
         d.mkdir()
-        dev = Device("U", run=FakeSimctl(steps={"Gatefold": (0, "4242\n")}), log=quiet, force=ASKS + 1)
+        dev = Device("U", run=FakeSimctl(app_pid="4242\n"), log=quiet, force=ASKS + 1)
         dev.listing_answers = lambda: False
         (d / "midnight.1.ready").write_text("midnight")
         sweep(d, dev, None, spec, log=quiet)
@@ -462,10 +473,20 @@ def selftest_recovery():
         assert "listing did not answer either" in (d / "midnight.1.stuck").read_text()
         assert "ps" in dev.run.calls, dev.run.calls  # the witness asked what was busy
         assert ["pgrep", "sample"] == [c for c in dev.run.calls if c in ("pgrep", "sample")], dev.run.calls  # and sampled the app
+        assert (d / "unsettled" / "midnight.1-sample.txt").exists()
         (d / "midnight.1r.ready").write_text("midnight")
         sweep(d, dev, None, spec, log=quiet)
         assert (d / "midnight.1r.done").exists() and "1 calls asked again" in (d / "midnight.1r.done").read_text()
         assert not (d / "midnight.1r.stuck").exists()
+        # No app process, or a sample that never returns: the hand-off still ends stuck, never hangs the watcher.
+        for sim in (FakeSimctl(), FakeSimctl(app_pid="4242\n", sample="hang")):
+            e = t / f"w-{len(sim.calls)}-{sim.sample}"
+            e.mkdir()
+            dev = Device("U", run=sim, log=quiet, force=ASKS + 1)
+            dev.listing_answers = lambda: False
+            (e / "page.1.ready").write_text("page")
+            sweep(e, dev, None, spec, log=quiet)
+            assert (e / "page.1.stuck").exists() and (e / "page.1.fail").exists(), sorted(os.listdir(e))
     # The reboot: shutdown, boot and bootstatus of the same UDID, then the staging again.
     sim = FakeSimctl()
     assert recover("U", spec, quiet=quiet, run=sim, log=quiet) is None
@@ -478,7 +499,7 @@ def selftest_recovery():
     assert "exit 2" in recover("U", spec, quiet=quiet, run=FakeSimctl(steps={"ui": (2, "")}), log=quiet)
     quieted = []
     assert recover("U", spec, quiet=quieted.append, run=FakeSimctl(), log=quiet) is None and quieted == ["U"]
-    assert WATCH_WORST + 20 <= 240, "ListingShotsUITests waits 240 s for the host"
+    assert WATCH_WORST + WITNESS_WORST + 20 <= 280, "ListingShotsUITests waits 280 s for the host"
 
 
 def selftest():
