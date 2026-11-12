@@ -39,7 +39,7 @@ ON_SCREEN = ["Gatefold", "Packages/GatefoldCore/Sources", "Packages/GatefoldClou
              "Packages/GatefoldCore/Package.swift", "Packages/GatefoldCloud/Package.swift",
              "Packages/GatefoldCloud/Package.resolved", "project.yml", "GatefoldListingShots", "screenshots",
              "scripts/screenshots", ".github/actions/select-xcode", ".github/workflows/screenshots.yml"]
-# The watcher gives up after SHOOT_LIMIT seconds of shooting; the scene test waits longer (ListingShotsUITests: 360 s).
+# The watcher gives up after SHOOT_LIMIT seconds of shooting; the scene test waits longer (ListingShotsUITests: 240 s).
 STABLE_FRAMES, SHOOT_LIMIT, FRAME_GAP = 3, 80, 0.8
 # One screenshot call. It is a hang guard, not a judgment: answered calls' times are logged per scene and kind
 # ("slowest"), and one that has not answered in 15 s is asked again, so a hung screenshot costs 15 s, never a scene.
@@ -48,23 +48,23 @@ SIMCTL_LIMIT = 15
 # `simctl status_bar override` is slow, not dead. PR #292's job 131093420221 and probe run 43184304862 left it
 # unanswered at 15 s in most hand-offs while every screenshot answered, and one answered on its third ask (under 45 s).
 # Asking again only queues another request behind the slow one, and a reboot did not help (4 reboots, each followed
-# by a status bar that again did not answer in 15 s). So one ask, bounded at 120 s as a hang guard; unanswered by then,
-# the device is stuck.
-STATUS_BAR_LIMIT = 120
-UI_LIMIT = 60  # `simctl ui` appearance and text size, when staging; slow on a busy runner like the status bar
+# by a status bar that again did not answer in 15 s). So one ask; unanswered by its bound, the device is stuck.
+# The bounds here are about 1.5 times the slowest answer measured (Screenshots run 43201036810, Shots (iphone)
+# 131135005824): the status bar answered in up to 32.9 s, `simctl ui` (staging a rebooted device) in up to 49.9 s.
+STATUS_BAR_LIMIT = 50
+UI_LIMIT = 75
 # A hand-off may lose ASKS - 1 screenshots to no answer, each asked again; the ASKS-th means the device stopped
 # answering (gatefold#150): the scene fails with D/<handoff>.stuck and the workflow reboots the device for a new try.
 # The frames either side of an unanswered call are not "in a row", so the stable run starts again after one.
 ASKS = 3
 LIST_LIMIT = 30  # the one device listing a stuck hand-off makes, to tell the device from CoreSimulatorService
-# Worst case for one hand-off: the status bar (120), SHOOT_LIMIT of shooting (80), its last screenshot (15), ASKS
-# unanswered screenshots (3 x 15) and the listing (30): 290 s. The scene test waits 360 s.
+# Worst case for one hand-off: the status bar (50), SHOOT_LIMIT of shooting (80), its last screenshot (15), ASKS
+# unanswered screenshots (3 x 15) and the listing (30): 220 s. The scene test waits 240 s.
 WATCH_WORST = STATUS_BAR_LIMIT + SHOOT_LIMIT + SIMCTL_LIMIT + ASKS * SIMCTL_LIMIT + LIST_LIMIT
-# The reboot (recover): an idle device shuts down in seconds, and one that does not in 120 s is a service that is not
-# answering (ci-simulator.py's ERASE_STEPS, job 129031300623). First boots on these runners took 86-555 s
-# (gatefold#150, run 42768198374); a reboot is no first boot, so 600 s for its bootstatus is past the slowest seen.
-REBOOT_STEPS = [(("shutdown",), 120), (("boot",), 300), (("bootstatus", "-b"), 600)]
-# After those (1020 s), the staging (2 x 60 + 120 s) and ci-simulator.py's quiet (QUIET_LIMIT, 120 s): 23 min a reboot.
+# The reboot (recover), each step about 1.5 times its slowest in PR #292's runs (43191648332, 43184304862, 43201036810):
+# shutdown 4-10 s, boot 6-19 s, bootstatus -b 66-153 s. A shutdown that does not answer is a service that is not.
+REBOOT_STEPS = [(("shutdown",), 15), (("boot",), 30), (("bootstatus", "-b"), 230)]
+# After those (275 s), the staging (2 x 75 + 50 s) and ci-simulator.py's quiet (QUIET_LIMIT, 120 s): 10 min a reboot.
 
 
 def requiet(udid):
@@ -433,13 +433,13 @@ def selftest_recovery():
     assert sim.calls == ["shutdown", "boot", "bootstatus", "ui", "ui", "status_bar"], sim.calls
     assert recover("U", spec, quiet=quiet, run=FakeSimctl(steps={"shutdown": (149, "current state: Shutdown")}), log=quiet) is None
     assert "neither a reboot nor a fresh" in recover("U", spec, quiet=quiet, run=FakeSimctl(steps={"shutdown": "hang"}), log=quiet)
-    assert "hung past 600" in recover("U", spec, quiet=quiet, run=FakeSimctl(steps={"bootstatus": "hang"}), log=quiet)
+    assert "hung past 230" in recover("U", spec, quiet=quiet, run=FakeSimctl(steps={"bootstatus": "hang"}), log=quiet)
     assert "exited 1" in recover("U", spec, quiet=quiet, run=FakeSimctl(steps={"bootstatus": (1, "Failed")}), log=quiet)
     assert "staging" in recover("U", spec, quiet=quiet, run=FakeSimctl(steps={"status_bar": "hang"}), log=quiet)
     assert "exit 2" in recover("U", spec, quiet=quiet, run=FakeSimctl(steps={"ui": (2, "")}), log=quiet)
     quieted = []
     assert recover("U", spec, quiet=quieted.append, run=FakeSimctl(), log=quiet) is None and quieted == ["U"]
-    assert WATCH_WORST + 30 <= 360, "ListingShotsUITests waits 360 s for the host"
+    assert WATCH_WORST + 20 <= 240, "ListingShotsUITests waits 240 s for the host"
 
 
 def selftest():

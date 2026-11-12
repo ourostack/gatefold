@@ -52,6 +52,7 @@ final class ListingShotsUITests: XCTestCase {
         let kinds: [String: XCUIElement.ElementType] = ["staticText": .staticText, "other": .other, "button": .button, "any": .any]
         let kind = kinds[ready["type"] ?? ""] ?? .any
         let element = app.descendants(matching: kind).matching(identifier: ready["id"] ?? "").firstMatch
+        let launched = Date()
         guard element.waitForExistence(timeout: 90) else {
             XCTFail("\(id): \(ready["id"] ?? "?") never appeared"); return
         }
@@ -62,8 +63,14 @@ final class ListingShotsUITests: XCTestCase {
         if let start = ready["label_begins"] { predicate = NSPredicate(format: "label BEGINSWITH %@", start) }
         if let predicate {
             let waited = XCTWaiter.wait(for: [expectation(for: predicate, evaluatedWith: element)], timeout: 90)
-            guard waited == .completed else { XCTFail("\(id): \(ready["id"] ?? "?") never read as ready"); return }
+            // Say what it read instead (a status like "settling 1" or "ready 1", never page text), so a red tells a
+            // slow device from a check that settled elsewhere (gatefold#297).
+            guard waited == .completed else {
+                XCTFail("\(id): \(ready["id"] ?? "?") never read as ready; it reads \"\(element.label)\""); return
+            }
         }
+        // The workflow keeps these lines (tests.log), to measure the waits below and the host's (gatefold#150).
+        print(String(format: "ListingShots timing: %@ ready %.1f s after launch", id, Date().timeIntervalSince(launched)))
 
         guard noTrademarkOnScreen(app, id) else { return }
 
@@ -76,18 +83,20 @@ final class ListingShotsUITests: XCTestCase {
             XCTFail("\(id): could not write to the shots folder: \(error)"); return
         }
         // The host shoots until the screen holds still; a scene that never settles fails there, with its reason.
-        // Longer than the host's worst case (capture.py WATCH_WORST, 290 s): a slow status bar, 80 s of frames, a last
+        // Longer than the host's worst case (capture.py WATCH_WORST, 220 s): a slow status bar, 80 s of frames, a last
         // screenshot, and the unanswered screenshots it asks again (gatefold#150), each bounded.
-        let deadline = Date().addingTimeInterval(360)
+        let handed = Date()
+        let deadline = handed.addingTimeInterval(240)
         while Date() < deadline {
             if FileManager.default.fileExists(atPath: done.path) {
+                print(String(format: "ListingShots timing: %@ host answered in %.1f s", id, Date().timeIntervalSince(handed)))
                 _ = noTrademarkOnScreen(app, id)  // and nothing turned up while the host shot
                 return
             }
             if let why = try? String(contentsOf: fail, encoding: .utf8) { XCTFail("\(id): \(why)"); return }
             Thread.sleep(forTimeInterval: 0.5)
         }
-        XCTFail("\(id): the host took no picture within 360 s")
+        XCTFail("\(id): the host took no picture within 240 s")
     }
 
     /// Wherever the app speaks of the reader's device (the sync line and slip, the catch-up offer and its tab, a

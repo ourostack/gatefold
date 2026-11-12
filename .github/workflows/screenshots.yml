@@ -155,7 +155,7 @@ jobs:
         && 'gatefold-macos-pr-lane-screenshots-shots-0'
         || format('screenshots-shots-{0}-{1}-{2}', github.run_id, github.run_attempt, strategy.job-index) }}
       queue: max
-    timeout-minutes: 240 # the capture step (200), the boot wait (30), checkout, download and unpack
+    timeout-minutes: 50 # about 1.5 times the slowest measured, 32 min (job 131135005824); green took 16-22
     strategy:
       fail-fast: false
       # One device at a time per run: macOS runners are the scarce thing, and a release can wait.
@@ -204,10 +204,10 @@ jobs:
             xcrun simctl io "$UDID" enumerate | grep -iE "display|port|class|size|name" | head -40 || true
           fi
       - name: Capture every scene twice
-        # Worst case: the iPad's 5 scenes x 2 tries x 2 passes at about 8.3 min a try (waits of 90 + 90 s, the host's
-        # worst 290 s, capture.py WATCH_WORST, and launch): 167 min. Plus REBOOTS = 1 reboot (capture.py REBOOT_STEPS,
-        # staging and quiet: 23 min at most) with its replacement try: 198. Healthy runs take about 2 min a scene a pass.
-        timeout-minutes: 200
+        # About 1.5 times the slowest measured: 26 min, in Screenshots run 43201036810's Shots (iphone) (job
+        # 131135005824: a stall, a reboot and its replacement try). Green runs took 10.8-16.4 min. A run past this
+        # is a hang to fix at its cause, not a limit to raise.
+        timeout-minutes: 40
         env:
           CAPTURE_FORCE_HANG: ${{ inputs.force_hang }}
         run: |
@@ -241,7 +241,7 @@ jobs:
                     -resultBundlePath "$RUNNER_TEMP/results/$pass-$scene-$try.xcresult" > "$log" 2>&1
                 code=$?
                 # Only these lines reach the (public) artifact: the full log and the result bundle can carry page text.
-                grep -E "Test Case .*(passed|failed)|ListingShotsUITests.swift:[0-9]+: error" "$log" \
+                grep -E "Test Case .*(passed|failed)|ListingShotsUITests.swift:[0-9]+: error|ListingShots timing:" "$log" \
                   | sed "s/^/$pass $scene #$try: /" | tee -a "$RUNNER_TEMP/logs/tests.log" || true
                 [ "$code" = 0 ] && [ -f "$dir/$scene.$try.done" ] && break
                 if [ -f "$dir/$scene.$try.stuck" ]; then
