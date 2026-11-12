@@ -342,21 +342,24 @@ jobs:
               RotationRepro/testRotateThenLeaveWithoutTurning
               RotationRepro/testRotateThenLeaveWhileTheRestoreWaitsOnItsPage
               RotationRepro/testRotateThenLeaveWhileTheRestoreWaitsOnItsPageWithoutItsWords
+              RotationRepro/testRotateThenLeaveWhileTheRestoreWaitsOnHisKeptPlaceWithoutItsWords
               RotationRepro/testRotateThenLeaveWithoutItsWordsAndReopenOnTheChapterStart
             pr_tests: none
             cold: true
             timeout: 58 # 30 + 2 x 7.8 + 12
             lane: 9
           - shard: ipad-rotate-restore
-            # Main only: #133's leave-while-the-restore-waits pair, out of ipad-rotate-stalled, which they
+            # Main only: #133's leave-while-the-restore-waits tests, out of ipad-rotate-stalled, which they
             # overran (stopped 19 min 58 s in on #256 and 21 min 58 s in on #195). Without sleeps (#266): 463 + 327,
-            # the slowest of 3 passes each in probe 43110085155 (they were 586 + 504)
+            # the slowest of 3 passes each in probe 43110085155 (they were 586 + 504), and 317 s, with sleeps,
+            # for the leave noted at his kept place in probe 43107820601
             tests: >-
               RotationRepro/testRotateThenLeaveWhileTheRestoreWaitsOnItsPage
               RotationRepro/testRotateThenLeaveWhileTheRestoreWaitsOnItsPageWithoutItsWords
+              RotationRepro/testRotateThenLeaveWhileTheRestoreWaitsOnHisKeptPlaceWithoutItsWords
             pr_tests: none
             cold: true
-            timeout: 69 # 30 + 2 x 13.2 + 12
+            timeout: 79 # 30 + 2 x 18.5 + 12
             lane: 7
           - shard: ipad-rotate-chapter-start
             # Main only, like ipad-rotate-stalled (gatefold#250)

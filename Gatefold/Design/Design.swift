@@ -98,6 +98,10 @@ enum LaunchOptions {
     /// Tests only, with `slowRestorePage`: the page shown unsettled is noted as Readium names it and never by
     /// its words, as on a device whose page scripts wait on the stalled install too (gatefold#133).
     static var shownPageWithoutWords: Bool { isUITest && defaults.bool(forKey: "GatefoldShownPageWithoutWords") }
+    /// Tests only, with `shownPageWithoutWords`: the page shown unsettled is noted at the place his last write
+    /// kept, as when Readium reports no new location while the restore stalls (CI 43075159905, gatefold#133);
+    /// otherwise the runner's layout decides whether it is that place or the boundary before it.
+    static var shownPageAtHisPlace: Bool { shownPageWithoutWords && defaults.bool(forKey: "GatefoldShownPageAtHisPlace") }
     /// Tests only: a book opened on a place with no words opens on its chapter's start, as a reopen whose
     /// stalled restore settled there did on CI (gatefold#250); the saved place itself is unchanged.
     static var reopenOnChapterStart: Bool { isUITest && defaults.bool(forKey: "GatefoldReopenOnChapterStart") }
