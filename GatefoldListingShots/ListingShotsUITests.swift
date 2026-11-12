@@ -71,6 +71,7 @@ final class ListingShotsUITests: XCTestCase {
         }
         // The workflow keeps these lines (tests.log), to measure the waits below and the host's (gatefold#150).
         print(String(format: "ListingShots timing: %@ ready %.1f s after launch", id, Date().timeIntervalSince(launched)))
+        fflush(stdout)  // written now, so a runner that dies still leaves it in the log
 
         guard noTrademarkOnScreen(app, id) else { return }
 
@@ -90,6 +91,7 @@ final class ListingShotsUITests: XCTestCase {
         while Date() < deadline {
             if FileManager.default.fileExists(atPath: done.path) {
                 print(String(format: "ListingShots timing: %@ host answered in %.1f s", id, Date().timeIntervalSince(handed)))
+                fflush(stdout)
                 _ = noTrademarkOnScreen(app, id)  // and nothing turned up while the host shot
                 return
             }

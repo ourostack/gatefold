@@ -155,7 +155,9 @@ jobs:
         && 'gatefold-macos-pr-lane-screenshots-shots-0'
         || format('screenshots-shots-{0}-{1}-{2}', github.run_id, github.run_attempt, strategy.job-index) }}
       queue: max
-    timeout-minutes: 50 # about 1.5 times the slowest measured, 32 min (job 131135005824); green took 16-22
+    # About 1.5 times the slowest measured, 32 min (job 131135005824); green took 16-22. It binds before the boot
+    # wait (30) and the capture step (40) add up: a job that needs both in full is a stall to fix, not to wait out.
+    timeout-minutes: 50
     strategy:
       fail-fast: false
       # One device at a time per run: macOS runners are the scarce thing, and a release can wait.
