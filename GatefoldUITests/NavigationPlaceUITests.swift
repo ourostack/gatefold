@@ -305,23 +305,16 @@ final class NavigationPlaceUITests: XCTestCase {
         _ = openFresh(["-GatefoldHoldChapterLoad", "400"])
         let before = (app.descendants(matching: .any)["reader.savedPlace"].value as? String) ?? ""
         showChrome()
-        contentsTap("Chapter XXX")
+        contentsTap("Chapter XL")
         XCTAssertTrue(app.descendants(matching: .any)["reader.loadingHeld"].waitForExistence(timeout: 10), "the chapter's load is held open")
         // He leaves while it is still on its way.
-        XCUIDevice.shared.press(.home)
-        if !app.wait(for: .runningBackground, timeout: 3) {
-            XCUIApplication(bundleIdentifier: "com.apple.springboard").activate()
-        }
-        sleep(3)
-        app.quit()
-        app.launchArguments = common
-        app.relaunch()
+        leaveAndRelaunch()
         XCTAssertFalse(waitForWords().isEmpty, "the reopen shows words")
         XCTAssertTrue(keptWhatIsShown(), "the reopen shows the place it kept")
         let reopened = tag(app.descendants(matching: .any)["reader.savedPlace"])
         // The same jump, to its end: where the chapter he chose is.
         showChrome()
-        contentsTap("Chapter XXX")
+        contentsTap("Chapter XL")
         sleep(1)
         XCTAssertTrue(app.descendants(matching: .any)["reader.veil"].waitForNonExistence(timeout: 60), "the jump landed")
         XCTAssertTrue(keptWhatIsShown(), "the jump kept the page shown")
@@ -330,12 +323,15 @@ final class NavigationPlaceUITests: XCTestCase {
         XCTAssertNotNil(reopened, "the reopen kept a place")
         XCTAssertNotEqual(reopened.map { "\($0.0)@\(String(format: "%.5f", $0.1))" }, before, "the reopen is not the place from before the jump")
         XCTAssertEqual(reopened?.0, chapter?.0, "the reopen is in the chapter's file")
+        XCTAssertGreaterThan(chapter?.1 ?? 0, 0.1, "the chapter starts partway through its file, so its file's first page is another place")
+        XCTAssertGreaterThan(reopened?.1 ?? 0, 0.01, "the reopen is its file's first page")
         XCTAssertLessThan(abs((reopened?.1 ?? -9) - (chapter?.1 ?? 9)), 0.1, "the reopen is at the chapter he chose, not its file's first page")
     }
 
     private func contentsTap(_ title: String) {
         app.buttons["reader.contents"].tap()
-        let row = app.buttons.matching(NSPredicate(format: "label CONTAINS[c] %@", title)).firstMatch
+        // Exactly this chapter: "Chapter XL" is also the start of XLI to XLIX.
+        let row = app.buttons.matching(NSPredicate(format: "label MATCHES[c] %@", "^\\Q\(title)\\E(?![IVXLC]).*")).firstMatch
         XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label CONTAINS[c] %@", "Chapter I")).firstMatch.waitForExistence(timeout: 10),
                       "the contents opened")
         for _ in 0..<20 where !(row.exists && row.isHittable) { app.swipeUp(velocity: .slow) }

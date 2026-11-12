@@ -323,8 +323,9 @@ import Testing
     /// He leaves while a contents jump is still on its way (its chapter loading): the place kept is the
     /// chapter he chose, at the entry's placed total progression, never the place before the jump and
     /// never its file's first page (gatefold#259). Gone inactive, the jump goes on, and where it lands is
-    /// the place once it does. Judged in beats: he leaves on the second, the chapter's place comes later.
-    @Test(arguments: ["close", "inactive"]) func aContentsJumpLeftOnItsWayKeepsTheChapterHeChose(_ how: String) async throws {
+    /// the place once it does, also when it lands while the target is still being written ("inactive,
+    /// landing at once"). Judged in beats: he leaves on the second, the chapter's place comes later.
+    @Test(arguments: ["close", "inactive", "inactive, landing at once"]) func aContentsJumpLeftOnItsWayKeepsTheChapterHeChose(_ how: String) async throws {
         final class Beats { var count = 0; var act: (@MainActor (Int) -> Void)? }
         let beats = Beats()
         let f = try await S.make(remote: { _, _ in nil }, startAt: 0.05, jumpBeat: { @MainActor in
@@ -350,10 +351,12 @@ import Testing
             if beat == 2 {
                 if how == "close" { f.model.close() } else if let owed = f.model.owedPlaceOnLeaving() {
                     f.model.keepShownPageNow(owed)
-                    kept.leave = Task { await f.model.keepOwedPlace(owed); kept.onLeaving = saved(f) }
+                    kept.leave = Task { await f.model.keepOwedPlace(owed) }
                 }
             }
-            if beat == 30 {
+            // The first place written after he left is the leave's own: the chapter's place comes later.
+            if kept.onLeaving == nil, saved(f) != before { kept.onLeaving = saved(f) }
+            if beat == (how == "inactive, landing at once" ? 3 : 30) {
                 f.page.loadingChapter = false
                 f.page.fragmentAt[fragment] = 0.6
             }
@@ -363,6 +366,14 @@ import Testing
         await kept.leave?.value
         for _ in 0..<200 where saved(f) == before { await Task.yield() }
 
+        if how == "inactive, landing at once" {
+            for _ in 0..<200 where (saved(f).flatMap { try? Locator(jsonString: $0) }?.locations.progression ?? 0) < 0.5 { await Task.yield() }
+            for _ in 0..<50 { await Task.yield() }
+            let landed = try #require(saved(f).flatMap { try? Locator(jsonString: $0) }, "no place kept")
+            #expect((landed.locations.progression ?? 0) > 0.5, "the target written as he left stood over the page the jump landed on")
+            f.model.close()
+            return
+        }
         let leftAt = try #require((how == "close" ? saved(f) : kept.onLeaving).flatMap { try? Locator(jsonString: $0) }, "leaving kept no place")
         #expect((how == "close" ? saved(f) : kept.onLeaving) != before, "leaving kept the place from before the jump (\(how))")
         #expect(ContentsIndex.sameResource(leftAt.href.string, fileStart.href.string), "the place kept on leaving is in another file (\(how))")

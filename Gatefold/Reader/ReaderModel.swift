@@ -12,6 +12,8 @@ struct TOCEntry: Identifiable, Hashable {
     let level: Int
     let link: ReadiumShared.Link
     let progression: Double
+    /// Its progression was read from the file, at its fragment (`placeFragments`), not the file's start.
+    var placedInFile = false
 }
 
 /// Everything the reader screen shows, and the reader's actions.
@@ -599,7 +601,7 @@ final class ReaderModel {
         let kept = ContentsCleaner.clean(raw, bookTitle: fullTitle)
         toc = kept.enumerated().map { i, k in
             let e = entries[k.index]
-            return TOCEntry(id: i, title: k.title, level: e.level, link: e.link, progression: e.progression)
+            return TOCEntry(id: i, title: k.title, level: e.level, link: e.link, progression: e.progression, placedInFile: e.placedInFile)
         }
         if toc.isEmpty { toc = entries }
         readerLog.notice("open: cleaned after \(Date().timeIntervalSince(self.openedAt), privacy: .public) s")
@@ -887,7 +889,7 @@ final class ReaderModel {
             }
             guard !isClosed, let data = files[href], let fraction = FragmentPlace.fraction(of: fragment, in: data) else { continue }
             let progression = FragmentPlace.progression(fileStart: start, fileEnd: end, fraction: fraction)
-            placed[i] = TOCEntry(id: entry.id, title: entry.title, level: entry.level, link: entry.link, progression: progression)
+            placed[i] = TOCEntry(id: entry.id, title: entry.title, level: entry.level, link: entry.link, progression: progression, placedInFile: true)
         }
         guard !isClosed, placed != toc else { return }
         toc = placed
@@ -1611,6 +1613,7 @@ final class ReaderModel {
             owedJumpTarget = (target, moves)
             placeOwed = true
             leavingOnShownPage = nil
+            contentsLeftMove = moves
             return target
         }
         // No move owed, but a restore that never settled left him the page as it was: that page is what he
@@ -1656,10 +1659,22 @@ final class ReaderModel {
         // the one he sees again, and it is written back over this one. Noted before the write's own wait.
         // The shown page's write took its move when it was written (`keepShownPageNow`), not now.
         let movesAtWrite = shown ? (shownLeaveWrite?.move ?? moves) : moves
-        if shown { await mapShownPagePosition(here) } else {
+        // A contents jump left on its way (gatefold#259) that has landed since: its landing is the place,
+        // and the target is not written over it.
+        let contentsMove = contentsLeftMove == moves ? moves : nil
+        if shown { await mapShownPagePosition(here) } else if let contentsMove, contentsLandedMove == contentsMove {
+            readerLog.notice("place: the contents jump left on its way landed before its target was written; its landing stands")
+        } else {
             if jumpOwed { leaveWriteMove = moves; reportWroteInLeave = false }
             await locationDidChange(here, hisMove: true, placeOnly: true, leaving: true)
             if jumpOwed { leaveWriteMove = nil }
+            // It landed while the target was written: whichever write finished last, the landed page is written again.
+            if let contentsMove, contentsLandedMove == contentsMove, moves == contentsMove, !isClosed, !touchedSinceLocation,
+               let landed = page?.currentLocation {
+                readerLog.notice("place: the contents jump left on its way landed while its target was written; its landing written again")
+                layoutOnly = false
+                await locationDidChange(landed, hisMove: true)
+            }
         }
         // The restore settled during that wait: its write-back may have gone first, so this one follows it.
         if shown, !isClosed, keeper.reflowing == nil, moves == movesAtWrite, !touchedSinceLocation, let words = anchorLocator {
@@ -2477,7 +2492,7 @@ final class ReaderModel {
         // Scrolled, Readium's own fragment scroll finds the chapter: only columns lose it.
         if pageTurn != .scroll, let fragment = entry.link.url().fragment?.removingPercentEncoding, !fragment.isEmpty {
             let move = moves, step = takeStep()
-            await veiled(step: step) { await self.land(on: entry.link, inside: fragment, placed: entry.progression, move: move, jump: step) }
+            await veiled(step: step) { await self.land(on: entry.link, inside: fragment, placed: entry.placedInFile ? entry.progression : nil, move: move, jump: step) }
         } else {
             await veiled { await self.page?.go(to: entry.link) }
         }
@@ -2494,7 +2509,7 @@ final class ReaderModel {
     /// the layout is done, and the page is sent to it (`JumpLanding`). All of it runs under the jump's veil,
     /// which lifts on the landed page: he sees one move, to the chapter he chose. Readium's reports on the
     /// way are not places; the place is written once, where the jump ends.
-    private func land(on link: ReadiumShared.Link, inside fragment: String, placed: Double, move: Int, jump: Int) async {
+    private func land(on link: ReadiumShared.Link, inside fragment: String, placed: Double?, move: Int, jump: Int) async {
         fragmentJumpMove = move
         let href = link.url().removingFragment().string
         // His page from the moment he takes it: a turn (a new move), or, with no veil over the page (one
@@ -2568,7 +2583,15 @@ final class ReaderModel {
         // keeps its own place.
         guard moves == move, !isClosed, let here = page?.currentLocation else { return }
         layoutOnly = false
-        await locationDidChange(here)
+        // Left on its way (the app gone inactive), its target was written as he left: the landing is his
+        // move all the same, never "already kept" by that write, and a leave write still under way when it
+        // lands writes this page again once it is done (`keepOwedPlace`).
+        let leftOnItsWay = contentsLeftMove == move
+        if leftOnItsWay {
+            contentsLandedMove = move
+            if owedJumpTarget?.1 == move { owedJumpTarget = nil }
+        }
+        await locationDidChange(here, hisMove: leftOnItsWay)
     }
     /// A contents jump inside its file still on its way: while it is the newest move, its reports are not
     /// places (`land(on:inside:move:)`).
@@ -2580,23 +2603,27 @@ final class ReaderModel {
         let move: Int
         let link: ReadiumShared.Link
         let href: String
-        let placed: Double
+        let placed: Double?
         var inFile: Double?
         let inputsAtStart: Int
     }
     @ObservationIgnored private var contentsJumpOnItsWay: ContentsJumpOnItsWay?
+    /// The contents jump whose target was written as he left, and the one of those that then landed.
+    @ObservationIgnored private var contentsLeftMove: Int?
+    @ObservationIgnored private var contentsLandedMove: Int?
 
     /// The place a contents jump on its way is going to, as a place with no words: the chapter's own place
-    /// in its file if it is known, otherwise the entry's placed total progression. None for an entry that
-    /// was never placed inside its file (its place would be the file's first page, which he never chose).
+    /// in its file if it is known, otherwise the entry's placed total progression. None for an entry not
+    /// yet placed inside its file (its place would be the file's first page, which he never chose;
+    /// gatefold#259's follow-up owes that one to the next open).
     static func contentsJumpPlace(_ jump: ContentsJumpOnItsWay, fileStart start: Double, fileEnd end: Double) -> Locator? {
         guard end > start else { return nil }
         let inFile: Double
         if let known = jump.inFile {
             inFile = known
         } else {
-            guard jump.placed > start + 1e-9, jump.placed < end else { return nil }
-            inFile = (jump.placed - start) / (end - start)
+            guard let placed = jump.placed, placed >= start, placed < end else { return nil }
+            inFile = (placed - start) / (end - start)
         }
         let progression = min(1, max(0, inFile))
         return Locator(href: jump.link.url().removingFragment(), mediaType: jump.link.mediaType ?? .xhtml,
