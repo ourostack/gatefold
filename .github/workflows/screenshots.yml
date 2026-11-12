@@ -15,6 +15,11 @@ on:
     types: [completed]
     branches: [main]
   workflow_dispatch:
+    inputs:
+      force_hang:
+        description: "Probe only: the first N screenshot calls of each watcher hang, to prove the recovery path (gatefold#150)"
+        required: false
+        default: ""
   pull_request:
     paths:
       - "GatefoldListingShots/**"
@@ -149,7 +154,7 @@ jobs:
         && 'gatefold-macos-pr-lane-screenshots-shots-0'
         || format('screenshots-shots-{0}-{1}-{2}', github.run_id, github.run_attempt, strategy.job-index) }}
       queue: max
-    timeout-minutes: 95 # the capture step (80) plus download, unpack and boot
+    timeout-minutes: 145 # the capture step (130) plus download, unpack and boot
     strategy:
       fail-fast: false
       # One device at a time per run: macOS runners are the scarce thing, and a release can wait.
@@ -192,20 +197,26 @@ jobs:
       - name: Light appearance, default text size, staged status bar
         run: |
           set -eu
-          xcrun simctl ui "$UDID" appearance light
-          xcrun simctl ui "$UDID" content_size large
-          python3 -I scripts/screenshots/capture.py status-bar --udid "$UDID"
+          python3 -I scripts/screenshots/capture.py stage --udid "$UDID"
           if [ "$DEVICE" = duo ]; then
             echo "The Duo's displays (for the spec's display setting):"
             xcrun simctl io "$UDID" enumerate | grep -iE "display|port|class|size|name" | head -40 || true
           fi
       - name: Capture every scene twice
-        # Worst case: 3 scenes x 2 tries x 2 passes at about 5.5 min a try (waits of 90 + 90 + 120 s, and launch).
-        timeout-minutes: 80
+        # Worst case: 3 scenes x 2 tries x 2 passes at about 6.6 min a try (waits of 90 + 90 s, the host's worst
+        # 185 s, capture.py WATCH_WORST, and launch): 79 min. Plus REBOOTS = 2 reboots (capture.py REBOOT_STEPS,
+        # 17 min at most) each with its replacement try: 126. Healthy runs take 10-20 min.
+        timeout-minutes: 130
+        env:
+          CAPTURE_FORCE_HANG: ${{ inputs.force_hang }}
         run: |
           # The step's default shell is bash -e; a failed try must reach the retry, not end the step.
           set +e -uo pipefail
           status=0
+          # A try whose watcher found the simulator stopped answering (<scene>.<try>.stuck, gatefold#150) gets the
+          # device rebooted and one replacement try, at most REBOOTS times a job. Every scene is still shot twice.
+          REBOOTS=2
+          reboots=0
           scenes="$(python3 -I scripts/screenshots/capture.py scenes --device "$DEVICE")"
           mkdir -p "$RUNNER_TEMP/logs"
           for pass in a b; do
@@ -216,7 +227,9 @@ jobs:
             # One test run per scene, and one more try for a scene whose run failed (an XCUITest query can time
             # out on a busy runner): a timeout costs that scene a try, not the scenes after it.
             for scene in $scenes; do
-              for try in 1 2; do
+              set -- 1 2
+              while [ $# -gt 0 ]; do
+                try=$1; shift
                 log="$RUNNER_TEMP/xcodebuild-$pass-$scene-$try.log"
                 TEST_RUNNER_GATEFOLD_SHOTS_DIR="$dir" TEST_RUNNER_GATEFOLD_SHOTS_DEVICE="$DEVICE" \
                 TEST_RUNNER_GATEFOLD_SHOTS_SCENE="$scene" TEST_RUNNER_GATEFOLD_SHOTS_TRY="$try" \
@@ -229,7 +242,18 @@ jobs:
                 grep -E "Test Case .*(passed|failed)|ListingShotsUITests.swift:[0-9]+: error" "$log" \
                   | sed "s/^/$pass $scene #$try: /" | tee -a "$RUNNER_TEMP/logs/tests.log" || true
                 [ "$code" = 0 ] && [ -f "$dir/$scene.$try.done" ] && break
-                if [ "$try" = 2 ]; then echo "::error::Pass $pass: $scene failed twice"; status=1; break; fi
+                if [ -f "$dir/$scene.$try.stuck" ]; then
+                  if [ "$reboots" -lt "$REBOOTS" ]; then
+                    reboots=$((reboots + 1))
+                    echo "::warning title=Simulator recovery::Pass $pass: $scene try $try: $(cat "$dir/$scene.$try.stuck"). Rebooting $UDID ($reboots of $REBOOTS)."
+                    if python3 -I scripts/screenshots/capture.py recover --udid "$UDID" 2>&1 | tee -a "$RUNNER_TEMP/logs/recover.log"; then
+                      set -- "${try}r" "$@"  # a replacement for the try the stuck device took, on the rebooted device
+                    fi
+                  else
+                    echo "::warning title=Simulator recovery::Pass $pass: $scene try $try: the simulator stopped answering again, after $REBOOTS reboots."
+                  fi
+                fi
+                if [ $# = 0 ]; then echo "::error::Pass $pass: $scene failed twice"; status=1; break; fi
                 # The failed try's picture goes aside; its hand-off files are named by try, so none can pass the next.
                 [ -e "$dir/$scene.png" ] && mkdir -p "$dir/tries" && mv "$dir/$scene.png" "$dir/tries/$scene-$try.png"
               done

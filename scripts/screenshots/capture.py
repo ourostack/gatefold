@@ -4,7 +4,11 @@
     python3 -I scripts/screenshots/capture.py watch --udid U --device ipad --dir D [--spec S]
         Until D/finished exists: for each D/<scene>.ready, stage the status bar, shoot until three frames in a row
         are the same, keep that frame as D/<scene>.png and write D/<scene>.done (or D/<scene>.fail with the reason).
-    python3 -I scripts/screenshots/capture.py status-bar --udid U [--spec S]
+    python3 -I scripts/screenshots/capture.py stage --udid U [--spec S]
+        Light appearance, default text size, staged status bar.
+    python3 -I scripts/screenshots/capture.py recover --udid U [--spec S]
+        Reboot a simulator that stopped answering (shut down, boot and bootstatus the same UDID, each bounded), then
+        stage it again. The watcher asks for this by writing D/<scene>.<try>.stuck (gatefold#150).
     python3 -I scripts/screenshots/capture.py device --device iphone [--spec S]    # the simulator name to boot
     python3 -I scripts/screenshots/capture.py check --device ipad --dir D [--spec S]
         Every scene of that device has a shot of the device's screen size.
@@ -35,9 +39,24 @@ ON_SCREEN = ["Gatefold", "Packages/GatefoldCore/Sources", "Packages/GatefoldClou
              "Packages/GatefoldCore/Package.swift", "Packages/GatefoldCloud/Package.swift",
              "Packages/GatefoldCloud/Package.resolved", "project.yml", "GatefoldListingShots", "screenshots",
              "scripts/screenshots", ".github/actions/select-xcode", ".github/workflows/screenshots.yml"]
-# The watcher gives up after SHOOT_LIMIT seconds; the scene test waits longer (ListingShotsUITests: 120 s, past 80 s plus two 15 s simctl calls).
+# The watcher gives up after SHOOT_LIMIT seconds of shooting; the scene test waits longer (ListingShotsUITests: 240 s).
 STABLE_FRAMES, SHOOT_LIMIT, FRAME_GAP = 3, 80, 0.8
-SIMCTL_LIMIT = 15  # one screenshot or status-bar call; a hung simctl fails the scene instead of the step
+# One screenshot or status-bar call. It is a hang guard, not a judgment: an answered call's time is logged per scene
+# ("slowest call"), and one that has not answered in 15 s is asked again, so the bound costs a hung call 15 s, never a
+# scene, and a slow call that answers within it costs nothing.
+SIMCTL_LIMIT = 15
+# A hand-off may lose ASKS - 1 calls to no answer, each asked again; the ASKS-th means the device stopped answering
+# (gatefold#150): the scene fails with D/<handoff>.stuck and the workflow reboots the device for a new try. The frames
+# either side of an unanswered call are not "in a row", so the stable run starts again after one.
+ASKS = 3
+LIST_LIMIT = 30  # the one device listing a stuck hand-off makes, to tell the device from CoreSimulatorService
+# Worst case for one hand-off: SHOOT_LIMIT of shooting, plus its last status-bar and screenshot calls (2 x 15), plus
+# ASKS unanswered calls (3 x 15), plus the listing (30): 185 s. The scene test waits 240 s.
+WATCH_WORST = SHOOT_LIMIT + 2 * SIMCTL_LIMIT + ASKS * SIMCTL_LIMIT + LIST_LIMIT
+# The reboot (recover): an idle device shuts down in seconds, and one that does not in 120 s is a service that is not
+# answering (ci-simulator.py's ERASE_STEPS, job 129031300623). First boots on these runners took 86-555 s
+# (gatefold#150, run 42768198374); a reboot is no first boot, so 600 s for its bootstatus is past the slowest seen.
+REBOOT_STEPS = [(("shutdown",), 120), (("boot",), 300), (("bootstatus", "-b"), 600)]
 # Elements whose text names the e-reader ("In step with your InkPad", the catch-up offer and its tab).
 NAMES_THE_DEVICE = {"library.syncHealth", "banner", "banner.jump", "banner.tab"}
 # Books in the public domain everywhere; the shelf launch argument may name only these.
@@ -53,10 +72,95 @@ def scenes_for(spec, device):
     return [s for s in spec["scenes"] if device in s["devices"]]
 
 
-def status_bar(udid, spec):
+def status_bar_cmd(udid, spec):
     sb = spec["status_bar"]
-    subprocess.run(["xcrun", "simctl", "status_bar", udid, "override", "--time", sb["time"], *sb["args"]],
-                   check=True, capture_output=True, timeout=SIMCTL_LIMIT)
+    return ["xcrun", "simctl", "status_bar", udid, "override", "--time", sb["time"], *sb["args"]]
+
+
+def status_bar(udid, spec):
+    subprocess.run(status_bar_cmd(udid, spec), check=True, capture_output=True, timeout=SIMCTL_LIMIT)
+
+
+def stage(udid, spec, run=subprocess.run):
+    """Light appearance, default text size and the staged status bar: what every shot is taken under."""
+    for cmd in (["xcrun", "simctl", "ui", udid, "appearance", "light"],
+                ["xcrun", "simctl", "ui", udid, "content_size", "large"], status_bar_cmd(udid, spec)):
+        run(cmd, check=True, capture_output=True, timeout=SIMCTL_LIMIT)
+
+
+class Stuck(Exception):
+    """The device stopped answering: ASKS calls in one hand-off went unanswered."""
+
+
+class Device:
+    """The simulator the watcher shoots, through bounded simctl calls that are asked again when they don't answer.
+
+    CAPTURE_FORCE_HANG=N (the workflow's dispatch input force_hang) runs the first N screenshot calls of this watcher
+    as a command that never answers in time, so a probe run can prove the recovery path on a healthy runner."""
+
+    def __init__(self, udid, run=subprocess.run, log=print, force=0):
+        self.udid, self.run, self.log, self.force = udid, run, log, force
+        self.begin()
+
+    def begin(self):
+        self.unanswered, self.lost, self.slowest = 0, 0.0, 0.0
+
+    def call(self, cmd, what, handoff):
+        while True:
+            asked = cmd
+            if self.force > 0 and what == "io screenshot":
+                self.force -= 1
+                asked = ["sleep", str(SIMCTL_LIMIT * 4)]
+            t = time.monotonic()
+            try:
+                out = self.run(asked, check=True, capture_output=True, timeout=SIMCTL_LIMIT)
+                self.slowest = max(self.slowest, time.monotonic() - t)
+                return out
+            except subprocess.TimeoutExpired:
+                self.lost += time.monotonic() - t
+                self.unanswered += 1
+                if self.unanswered >= ASKS:
+                    raise Stuck(f"simctl {what} did not answer in {SIMCTL_LIMIT} s, "
+                                f"{self.unanswered} calls unanswered in this hand-off")
+                self.log(f"{handoff}: simctl {what} did not answer in {SIMCTL_LIMIT} s "
+                         f"({self.unanswered} of {ASKS}); asking again", flush=True)
+
+    def listing_answers(self):
+        """Whether CoreSimulatorService answers a device listing: if not, the hang is the service's, not the device's."""
+        try:
+            self.run(["xcrun", "simctl", "list", "devices", "-j"], check=True, capture_output=True, timeout=LIST_LIMIT)
+            return True
+        except (OSError, subprocess.SubprocessError):
+            return False
+
+
+def recover(udid, spec, run=subprocess.run, log=print):
+    """Reboot the same UDID and stage it again. None when it answers again, else why not."""
+    for args, limit in REBOOT_STEPS:
+        cmd = ["xcrun", "simctl", args[0], udid, *args[1:]]
+        t = time.monotonic()
+        try:
+            out = run(cmd, capture_output=True, text=True, timeout=limit)
+        except subprocess.TimeoutExpired:
+            if args[0] == "shutdown":
+                # The device can't be reached through the service; a fresh device would be booted by the same one.
+                return (f"simctl shutdown hung past {limit} s: CoreSimulatorService is not answering, so neither a "
+                        f"reboot nor a fresh simulator can help")
+            return f"simctl {' '.join(args)} hung past {limit} s"
+        said = ((out.stdout or "") + (out.stderr or "")).strip()
+        log(f"recover: simctl {' '.join(args)} {udid}: exit {out.returncode} in {time.monotonic() - t:.0f} s", flush=True)
+        if args[0] == "shutdown" and out.returncode != 0 and "current state: Shutdown" in said:
+            continue
+        if out.returncode != 0 or (args[0] == "bootstatus" and "Failed" in said):
+            return f"simctl {args[0]} exited {out.returncode}"
+    try:
+        stage(udid, spec, run)
+    except subprocess.TimeoutExpired as exc:
+        return f"the rebooted device did not answer staging in {exc.timeout:.0f} s"
+    except subprocess.CalledProcessError as exc:
+        return f"staging the rebooted device failed (exit {exc.returncode})"
+    log(f"recover: {udid} rebooted and staged", flush=True)
+    return None
 
 
 def png_size(path):
@@ -72,30 +176,36 @@ def settled(hashes, n=STABLE_FRAMES):
     return len(hashes) >= n and len(set(hashes[-n:])) == 1
 
 
-def shoot(udid, display, out, spec, handoff=None):
-    """Shoots until the screen holds still. Returns (ok, why)."""
+def shoot(dev, display, out, spec, handoff=None):
+    """Shoots until the screen holds still. Returns (ok, why); raises Stuck when the device stopped answering."""
     hashes = []
     with tempfile.TemporaryDirectory(prefix="shot-") as t:
-        return shoot_into(pathlib.Path(t), udid, display, out, spec, hashes, handoff or out.stem)
+        return shoot_into(pathlib.Path(t), dev, display, out, spec, hashes, handoff or out.stem)
 
 
-def shoot_into(tmp, udid, display, out, spec, hashes, handoff):
+def shoot_into(tmp, dev, display, out, spec, hashes, handoff, nap=time.sleep):
+    dev.begin()
     started = time.monotonic()
     i = 0
-    while time.monotonic() - started < SHOOT_LIMIT:
+    # SHOOT_LIMIT counts the time spent shooting; a call that never answered is bounded by count (ASKS), not by it.
+    while time.monotonic() - started - dev.lost < SHOOT_LIMIT:
+        before = dev.unanswered
         if i % 5 == 0:
-            status_bar(udid, spec)  # again: after a launch the iPad's bar works out its weekday anew
+            dev.call(status_bar_cmd(dev.udid, spec), "status_bar", handoff)  # again: after a launch the iPad's bar works out its weekday anew
         frame = tmp / f"{i}.png"
-        cmd = ["xcrun", "simctl", "io", udid, "screenshot", "--type=png"]
+        cmd = ["xcrun", "simctl", "io", dev.udid, "screenshot", "--type=png"]
         if display:
             cmd.append(f"--display={display}")
-        subprocess.run(cmd + [str(frame)], check=True, capture_output=True, timeout=SIMCTL_LIMIT)
+        dev.call(cmd + [str(frame)], "io screenshot", handoff)
+        if dev.unanswered != before:
+            hashes.clear()  # what the screen did while a call hung is unknown, so the run of equal frames starts again
         hashes.append(hashlib.sha256(frame.read_bytes()).hexdigest())
         if settled(hashes):
             frame.replace(out)
-            return True, f"settled after {i + 1} frames"
+            lost = f", {dev.unanswered} calls asked again" if dev.unanswered else ""
+            return True, f"settled after {i + 1} frames (slowest call {dev.slowest:.1f} s{lost})"
         i += 1
-        time.sleep(FRAME_GAP)
+        nap(FRAME_GAP)
     # Keep the last two frames in unsettled/, out of the shots' own glob, so the artifact shows what kept moving.
     keep = out.parent / "unsettled"
     keep.mkdir(exist_ok=True)
@@ -105,32 +215,42 @@ def shoot_into(tmp, udid, display, out, spec, hashes, handoff):
     return False, f"the screen never held still for {STABLE_FRAMES} frames in {SHOOT_LIMIT} s"
 
 
-def watch(udid, device, d, spec):
+def watch(udid, device, d, spec, dev=None):
     d = pathlib.Path(d)
     display = spec["devices"][device].get("display")
-    print(f"watching {d} for {device} scenes", flush=True)
+    dev = dev or Device(udid, force=int(os.environ.get("CAPTURE_FORCE_HANG") or 0))
+    print(f"watching {d} for {device} scenes" + (f", the first {dev.force} screenshot calls forced to hang"
+                                                 if dev.force else ""), flush=True)
     while not (d / "finished").exists():
-        # <scene>.<try>.ready: each try has its own hand-off files, so a late answer to one never passes the next.
-        for ready in sorted(d.glob("*.ready")):
-            handoff = ready.stem
-            scene = handoff.split(".", 1)[0]
-            if (d / f"{handoff}.done").exists() or (d / f"{handoff}.fail").exists():
-                continue
-            try:
-                ok, why = shoot(udid, display, d / f"{scene}.png", spec, handoff)
-            except subprocess.TimeoutExpired as exc:
-                ok, why = False, f"simctl did not answer in {exc.timeout:.0f} s"
-            except subprocess.CalledProcessError as exc:
-                ok, why = False, f"simctl failed: {exc.stderr.decode(errors='replace').strip()[:200]}"
-            except Exception as exc:  # never leave the scene waiting: say why
-                ok, why = False, f"the watcher failed: {type(exc).__name__}: {exc}"[:300]
-            if ok:
-                print(f"{handoff}: {why}, sha256 {sha(d / f'{scene}.png')[:16]}", flush=True)
-                (d / f"{handoff}.done").write_text(why)
-            else:
-                print(f"{handoff}: {why}", flush=True)
-                (d / f"{handoff}.fail").write_text(why)
+        sweep(d, dev, display, spec)
         time.sleep(0.3)
+
+
+def sweep(d, dev, display, spec, log=print):
+    """Shoot every scene that is ready and not yet answered."""
+    # <scene>.<try>.ready: each try has its own hand-off files, so a late answer to one never passes the next.
+    for ready in sorted(d.glob("*.ready")):
+        handoff = ready.stem
+        scene = handoff.split(".", 1)[0]
+        if (d / f"{handoff}.done").exists() or (d / f"{handoff}.fail").exists():
+            continue
+        try:
+            ok, why = shoot(dev, display, d / f"{scene}.png", spec, handoff)
+        except Stuck as exc:
+            where = ("the device listing answered, so the device is stuck, not the service"
+                     if dev.listing_answers() else "the device listing did not answer either")
+            ok, why = False, f"the simulator stopped answering: {exc}; {where}"
+            (d / f"{handoff}.stuck").write_text(why)  # before .fail: the workflow reads it once the try ends
+        except subprocess.CalledProcessError as exc:
+            ok, why = False, f"simctl failed: {exc.stderr.decode(errors='replace').strip()[:200]}"
+        except Exception as exc:  # never leave the scene waiting: say why
+            ok, why = False, f"the watcher failed: {type(exc).__name__}: {exc}"[:300]
+        if ok:
+            log(f"{handoff}: {why}, sha256 {sha(d / f'{scene}.png')[:16]}", flush=True)
+            (d / f"{handoff}.done").write_text(why)
+        else:
+            log(f"{handoff}: {why}", flush=True)
+            (d / f"{handoff}.fail").write_text(why)
 
 
 def sha(path):
@@ -191,8 +311,96 @@ def pick_name(names, offered):
     raise SystemExit(f"capture: this Mac offers none of {names} (it offers {sorted(offered)})")
 
 
+class FakeSimctl:
+    """Answers like simctl, except the calls listed in `hang` (1-based, counted over screenshot calls) time out."""
+
+    def __init__(self, hang=(), frames=None, listing=True, steps=None):
+        self.hang, self.frames, self.listing, self.steps = set(hang), frames, listing, steps or {}
+        self.shots, self.calls = 0, []
+
+    def __call__(self, cmd, check=False, capture_output=False, timeout=None, text=False):
+        self.calls.append(cmd[2] if cmd[0] == "xcrun" else cmd[0])
+        if cmd[0] == "sleep":  # CAPTURE_FORCE_HANG's stand-in: never answers within the limit
+            raise subprocess.TimeoutExpired(cmd, timeout)
+        if cmd[2] == "io":
+            self.shots += 1
+            if self.shots in self.hang:
+                raise subprocess.TimeoutExpired(cmd, timeout)
+            frame = self.frames[self.shots - 1] if self.frames else b"still"
+            pathlib.Path(cmd[-1]).write_bytes(frame)
+        if cmd[2] == "list" and not self.listing:
+            raise subprocess.TimeoutExpired(cmd, timeout)
+        said = self.steps.get(cmd[2], (0, ""))
+        if said == "hang":
+            raise subprocess.TimeoutExpired(cmd, timeout)
+        return subprocess.CompletedProcess(cmd, said[0], said[1], "")
+
+
+def selftest_recovery():
+    spec = {"status_bar": {"time": "2026-01-01T17:41:00Z", "args": []}}
+    quiet = lambda *a, **k: None
+    with tempfile.TemporaryDirectory() as t:
+        t = pathlib.Path(t)
+        # One unanswered screenshot: asked again, and the scene still needs three equal frames after it.
+        sim = FakeSimctl(hang=[2])
+        dev = Device("U", run=sim, log=quiet)
+        ok, why = shoot_into(t, dev, None, t / "s.png", spec, [], "s.1", nap=lambda s: None)
+        assert ok and dev.unanswered == 1 and sim.shots == 5, (ok, why, sim.shots)
+        assert "1 calls asked again" in why, why
+        # The run of equal frames starts again after a hang: a, a, <hang>, a, b, b, b settles on the last b only.
+        sim = FakeSimctl(hang=[3], frames=[b"a", b"a", b"", b"a", b"b", b"b", b"b"])
+        dev = Device("U", run=sim, log=quiet)
+        ok, why = shoot_into(t, dev, None, t / "s.png", spec, [], "s.1", nap=lambda s: None)
+        assert ok and sim.shots == 7 and (t / "s.png").read_bytes() == b"b", (why, sim.shots)
+        # A device that stops answering: ASKS unanswered calls end the hand-off with Stuck, bounded by count.
+        sim = FakeSimctl(hang=range(1, 100))
+        dev = Device("U", run=sim, log=quiet)
+        try:
+            shoot_into(t, dev, None, t / "s.png", spec, [], "s.1", nap=lambda s: None)
+            raise AssertionError("a device that never answers must be stuck")
+        except Stuck as exc:
+            assert sim.shots == ASKS and f"{ASKS} calls unanswered" in str(exc), (sim.shots, exc)
+        # Unanswered calls count over the hand-off, not only in a row.
+        sim = FakeSimctl(hang=[1, 3, 5], frames=[b"", b"a", b"", b"a", b"", b"a", b"a", b"a"])
+        dev = Device("U", run=sim, log=quiet)
+        try:
+            shoot_into(t, dev, None, t / "s.png", spec, [], "s.1", nap=lambda s: None)
+            raise AssertionError("three unanswered calls in one hand-off are stuck")
+        except Stuck:
+            assert sim.shots == 5
+        # The forced hang (the probe's CAPTURE_FORCE_HANG) runs through the same path: N forced, then real calls.
+        sim = FakeSimctl()
+        dev = Device("U", run=sim, log=quiet, force=2)
+        ok, why = shoot_into(t, dev, None, t / "s.png", spec, [], "s.1", nap=lambda s: None)
+        assert ok and dev.unanswered == 2 and dev.force == 0 and sim.calls.count("sleep") == 2, why
+        # The watcher: stuck, then (after the workflow's reboot) the next try is a new hand-off that succeeds.
+        d = t / "w"
+        d.mkdir()
+        dev = Device("U", run=FakeSimctl(), log=quiet, force=ASKS + 1)
+        dev.listing_answers = lambda: False
+        (d / "midnight.1.ready").write_text("midnight")
+        sweep(d, dev, None, spec, log=quiet)
+        assert (d / "midnight.1.stuck").exists() and (d / "midnight.1.fail").exists(), sorted(os.listdir(d))
+        assert "listing did not answer either" in (d / "midnight.1.stuck").read_text()
+        (d / "midnight.1r.ready").write_text("midnight")
+        sweep(d, dev, None, spec, log=quiet)
+        assert (d / "midnight.1r.done").exists() and "1 calls asked again" in (d / "midnight.1r.done").read_text()
+        assert not (d / "midnight.1r.stuck").exists()
+    # The reboot: shutdown, boot and bootstatus of the same UDID, then the staging again.
+    sim = FakeSimctl()
+    assert recover("U", spec, run=sim, log=quiet) is None
+    assert sim.calls == ["shutdown", "boot", "bootstatus", "ui", "ui", "status_bar"], sim.calls
+    assert recover("U", spec, run=FakeSimctl(steps={"shutdown": (149, "current state: Shutdown")}), log=quiet) is None
+    assert "neither a reboot nor a fresh" in recover("U", spec, run=FakeSimctl(steps={"shutdown": "hang"}), log=quiet)
+    assert "hung past 600" in recover("U", spec, run=FakeSimctl(steps={"bootstatus": "hang"}), log=quiet)
+    assert "exited 1" in recover("U", spec, run=FakeSimctl(steps={"bootstatus": (1, "Failed")}), log=quiet)
+    assert "staging" in recover("U", spec, run=FakeSimctl(steps={"status_bar": "hang"}), log=quiet)
+    assert WATCH_WORST + 30 <= 240, "ListingShotsUITests waits 240 s for the host"
+
+
 def selftest():
     assert not settled(["a", "b", "a"]) and settled(["x", "a", "a", "a"]) and not settled(["a", "a"])
+    selftest_recovery()
     with tempfile.TemporaryDirectory() as t:
         a, b = pathlib.Path(t, "a"), pathlib.Path(t, "b")
         a.mkdir(); b.mkdir()
@@ -263,6 +471,14 @@ def main(argv):
     if cmd == "status-bar":
         status_bar(arg(argv, "--udid"), spec)
         return 0
+    if cmd == "stage":
+        stage(arg(argv, "--udid"), spec)
+        return 0
+    if cmd == "recover":
+        why = recover(arg(argv, "--udid"), spec)
+        if why:
+            print(f"::error title=Simulator recovery failed::{why}")
+        return 1 if why else 0
     if cmd == "device":
         print(device_name(arg(argv, "--device"), spec))
         return 0
