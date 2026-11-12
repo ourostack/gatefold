@@ -76,7 +76,7 @@ import Testing
         #expect(try #require(store.lastSynced) >= before)
         #expect(!store.cloudIsEmpty)
         let frankenstein = try #require(store.books.first { $0.title == "Frankenstein" })
-        #expect(frankenstein.otherDevice == "InkPad")
+        #expect(frankenstein.otherDevice == "e-reader")
         #expect(try #require(frankenstein.otherSince) < before, "the InkPad's own date, not the fetch time")
     }
 

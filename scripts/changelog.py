@@ -21,8 +21,15 @@ import tempfile
 
 DIR = "changelog.d"
 SKIP_LABEL = "no-changelog"
-LIMIT = 4000  # App Store Connect's What to Test
+LIMIT = 4000  # App Store Connect's What to Test, counted here in UTF-8 bytes: never fewer than its characters,
+# so the notes fit however the publish script's `wc -m` counts.
+
+
+def size(text):
+    return len(text.encode("utf-8"))
 TITLE_MAX, TRY_MAX, BODY_MAX = 70, 240, 700
+# For the App Store's What's New later (Guideline 2.3.12: features first, specific). TestFlight keeps merge order.
+KINDS = ("feature", "fix", "polish")
 SLUG = re.compile(r"^[a-z0-9][a-z0-9-]{2,79}\.md$")
 # What builds into the app a tester holds. Tests, CI, scripts, docs and the website are not in it.
 APP = re.compile(r"^(Gatefold/|Packages/[^/]+/(Sources/|Package\.(swift|resolved)$)|project\.yml$|distribution/)")
@@ -68,8 +75,8 @@ def parse(text, name="fragment"):
             continue
         key, sep, value = ln.partition(":")
         key = key.strip().lower()
-        if not sep or key not in ("title", "try"):
-            errors.append(f"{name}: unknown front-matter line {ln.strip()!r} (only title: and try:)")
+        if not sep or key not in ("title", "try", "kind"):
+            errors.append(f"{name}: unknown front-matter line {ln.strip()!r} (only title:, kind: and try:)")
             continue
         fields[key] = value.strip().strip('"')
     body = "\n".join(lines[end + 1:]).strip()
@@ -80,6 +87,8 @@ def parse(text, name="fragment"):
         errors.append(f"{name}: needs a title: line")
     elif len(title) > TITLE_MAX:
         errors.append(f"{name}: the title is {len(title)} characters; keep it to {TITLE_MAX}")
+    if fields.get("kind", "fix") not in KINDS:
+        errors.append(f"{name}: kind: is {fields['kind']!r}; use one of {', '.join(KINDS)} (lowercase)")
     if len(fields.get("try", "")) > TRY_MAX:
         errors.append(f"{name}: try: is {len(fields['try'])} characters; keep it to {TRY_MAX}")
     if not body:
@@ -191,7 +200,7 @@ def render(tales, head, subjects=()):
     for full_count in range(len(tales), -1, -1):
         blocks = [tale(i, t, i < full_count) for i, t in enumerate(tales)]
         text = "\n\n".join([opener, *blocks, closer])
-        if len(text) <= LIMIT:
+        if size(text) <= LIMIT:
             return text
     return fit("\n\n".join([opener, *(tale(i, t, False) for i, t in enumerate(tales))]))
 
@@ -200,9 +209,9 @@ REST = "\n\n(The rest is in changelog.d on GitHub.)"
 
 
 def fit(text):
-    if len(text) <= LIMIT:
+    if size(text) <= LIMIT:
         return text
-    cut = text[:LIMIT - len(REST)]
+    cut = text.encode("utf-8")[:LIMIT - size(REST)].decode("utf-8", errors="ignore")
     cut = cut.rsplit("\n", 1)[0] if "\n" in cut else cut
     return cut + REST
 
@@ -251,7 +260,9 @@ def selftest():
             run("commit", "-q", "-m", msg)
             return run("rev-parse", "HEAD").strip()
 
-        frag = lambda t, b, tr="": f"---\ntitle: {t}\n" + (f"try: {tr}\n" if tr else "") + f"---\n{b}\n"
+        frag = lambda t, b, tr="": f"---\ntitle: {t}\nkind: fix\n" + (f"try: {tr}\n" if tr else "") + f"---\n{b}\n"
+        assert parse("---\ntitle: T\nkind: heist\n---\nx")[1], "an unknown kind is refused"
+        assert not parse("---\ntitle: T\n---\nx")[1], "kind: is optional"
         c0 = commit({"README.md": "x", f"{DIR}/README.md": "guide"}, "start")
         c1 = commit({"Gatefold/A.swift": "1", f"{DIR}/the-first-crossing.md": frag("The First Crossing", "It held.", "Open a book.")}, "one")
         c2 = commit({"Gatefold/B.swift": "2"}, "two, no tale")
@@ -288,6 +299,8 @@ def selftest():
 
         many = [{"title": f"Tale {i}", "body": "w" * 690, "try": "t" * 200} for i in range(12)]
         text = render(many, "a" * 40)
+        curly = [{"title": f"Tale {i}", "body": "\u2014\u2019" * 340} for i in range(12)]
+        assert size(render(curly, "b" * 40)) <= LIMIT and size(fit("\u2014" * 3000)) <= LIMIT
         assert len(text) <= LIMIT and "XII. Tale 11" in text and "I. Tale 0\n" + "w" * 690 in text, len(text)
         errs = lint(d)
         assert any("Bad_Name" in e for e in errs) and any("too-long" in e for e in errs), errs
@@ -318,7 +331,7 @@ def main(argv):
         text = assemble(arg(argv, "--head", "HEAD"), arg(argv, "--since"))
         out = arg(argv, "--out")
         if out:
-            pathlib.Path(out).write_text(text)
+            pathlib.Path(out).write_text(text, encoding="utf-8")
         else:
             print(text)
         return 0

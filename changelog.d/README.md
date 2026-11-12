@@ -15,6 +15,7 @@ When a tester would notice nothing at all (a rename, a refactor with no visible 
 ```
 ---
 title: The Veil That Would Not Lift
+kind: fix
 try: Open a long chapter, tap Back before it loads, and count to two.
 ---
 For eleven builds, a reader who tapped Back while a chapter was still loading was left
@@ -23,6 +24,8 @@ The veil now knows its limit: two seconds, then it lets go, and the page comes h
 ```
 
 - `title:` (required, at most 70 characters): the name of the tale.
+- `kind:` (optional, default `fix`): `feature`, `fix` or `polish`. The App Store's What's New will list features
+  first (Guideline 2.3.12); TestFlight keeps merge order.
 - `try:` (optional, at most 240): one line telling a tester where to go to see it. It is printed as "Try it: ...".
 - The tale (required, at most 700 characters): plain text, because What to Test shows no Markdown. No links, headings
   or HTML. Paragraphs are fine.

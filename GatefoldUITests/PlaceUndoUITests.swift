@@ -165,6 +165,7 @@ final class PlaceUndoUITests: XCTestCase {
         XCTAssertNotEqual(opening(jump.words), opening(first), "the jump moved the page")
         XCTAssertTrue(jump.ok, "the jump's veil lifts")
         let jumped = jump.words
+        XCTAssertTrue(keptAtChapterXL(), "the jump didn't keep the chapter he chose")
         // A jump made from the controls leaves them up, perhaps still fading in: once they are, a tap in
         // the middle puts them down.
         let contents = app.buttons["reader.contents"]
@@ -353,6 +354,7 @@ final class PlaceUndoUITests: XCTestCase {
         contentsJump(to: "Chapter XL")
         _ = waitForWords(changingFrom: first, timeout: 30)
         XCTAssertTrue(el("reader.veil").waitForNonExistence(timeout: 60), "the veil lifts")
+        XCTAssertTrue(keptAtChapterXL(), "the jump didn't keep the chapter he chose")
         if app.buttons["reader.contents"].exists { el("reader.page").coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap() }
         XCTAssertTrue(app.buttons["reader.contents"].waitForNonExistence(timeout: 5), "the controls are hidden")
         let start = settledWords()
@@ -393,6 +395,9 @@ final class PlaceUndoUITests: XCTestCase {
         XCTAssertTrue(contents.exists, "the tap under the veil was swallowed (the controls it would have put down are up)")
         let chosen = settledWords()
         XCTAssertNotEqual(opening(chosen), opening(first))
+        // Judged against the entry he chose: Chapter XL starts 0.80 into its file, and a landing on the
+        // file's first page (an earlier chapter) was kept as his place (gatefold#166, #254).
+        XCTAssertTrue(keptAtChapterXL(), "the tapped jump didn't keep the chapter he chose")
         // The same jump again, untouched, from his first page: the page it lands on is where he chose.
         app.buttons["reader.back"].tap()
         let back = landed(from: chosen, reads: 1200)
@@ -404,6 +409,22 @@ final class PlaceUndoUITests: XCTestCase {
         let untouched = landed(from: back.words, reads: 1200)
         print("UNDO untouched jump: veil up after \(again.reads) reads, landed after \(untouched.reads) reads")
         XCTAssertTrue(untouched.ok, "the untouched jump's veil lifts")
-        XCTAssertEqual(opening(settledWords()), opening(chosen), "a tap during the jump moved the page off where he chose")
+        // The untouched jump is judged first on its own: on #254 it, not the tapped one, stopped on its
+        // file's first page.
+        XCTAssertTrue(keptAtChapterXL(), "the untouched jump didn't keep the chapter he chose")
+        XCTAssertEqual(opening(settledWords()), opening(chosen), "the tapped and the untouched jump to the same chapter landed on different pages")
+    }
+
+    /// The place a move of his last kept is Chapter XL's page, in reads: in file h-9, whose anchor for it
+    /// is 0.80 of the way into the file's text (the file's start is an earlier chapter), on the page holding
+    /// it, which starts within a page before. The app's probe gives a file name and a number, never words.
+    private func keptAtChapterXL(reads: Int = 40) -> Bool {
+        let probe = el("reader.savedPlace")
+        for _ in 0..<reads {
+            let parts = ((probe.value as? String) ?? "").split(separator: "@")
+            if parts.count == 2, parts[0].contains("-h-9."), let p = Double(parts[1]), abs(p - 0.79) < 0.08 { return true }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        }
+        return false
     }
 }

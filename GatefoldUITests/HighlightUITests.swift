@@ -86,7 +86,7 @@ final class HighlightUITests: XCTestCase {
         if !row.waitForExistence(timeout: 60) { shot("highlights-01-list-missing") }
         XCTAssertTrue(row.exists, "the InkPad's highlights are listed")
         XCTAssertEqual(app.buttons.matching(identifier: "highlights.row").count, 2)
-        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label BEGINSWITH 'Highlighted on your InkPad'")).firstMatch.exists)
+        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label BEGINSWITH 'Highlighted on your e-reader'")).firstMatch.exists)
         shot("highlights-01-list")
 
         // Jump to the first: Chapter I opens with both drawn.
@@ -103,7 +103,7 @@ final class HighlightUITests: XCTestCase {
         let card = element("highlight.note")
         XCTAssertTrue(card.waitForExistence(timeout: 10), "the note's card")
         XCTAssertTrue(card.label.hasPrefix("And so it begins."))
-        XCTAssertTrue(element("highlight.provenance").label.hasPrefix("Noted on your InkPad · "))
+        XCTAssertTrue(element("highlight.provenance").label.hasPrefix("Noted on your e-reader · "))
         shot("highlights-03-note-card")
         app.swipeDown(velocity: .fast)
         XCTAssertTrue(card.waitForNonExistence(timeout: 10))
