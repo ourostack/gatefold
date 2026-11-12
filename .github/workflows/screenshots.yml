@@ -1,0 +1,296 @@
+name: Screenshots
+
+# The App Store screenshots, rendered on release only: after TestFlight publishes a build (a testflight/build-N tag at
+# that commit), and only when something a shot can show changed since the last render (`capture.py fingerprint`:
+# the app, its packages' code, the project, the scenes, the spec, the composer). A pull request that edits the
+# screenshot pipeline itself renders too, to prove it; no other pull request runs this. Not a required check.
+#
+# Each device job captures every scene twice (GatefoldListingShots drives the app; scripts/screenshots/capture.py
+# shoots once the screen holds still) and fails unless both passes give the same bytes, then composes the frames and
+# captions (scripts/screenshots/compose.swift) twice and checks those match too. The result is the artifact
+# listing-screenshots-<fingerprint>. Logs carry scene ids and hashes, never book text.
+on:
+  workflow_run:
+    workflows: [TestFlight]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "GatefoldListingShots/**"
+      - "screenshots/**"
+      - "scripts/screenshots/**"
+      - ".github/workflows/screenshots.yml"
+      - "Gatefold/Sync/FakeSyncService.swift"
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: screenshots-${{ github.event_name == 'pull_request' && github.ref || 'main' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  plan:
+    name: Is there anything new to show?
+    if: >-
+      github.event_name != 'workflow_run' ||
+      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event != 'pull_request')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      render: ${{ steps.decide.outputs.render }}
+      sha: ${{ steps.decide.outputs.sha || steps.sha.outputs.sha }}
+      fingerprint: ${{ steps.decide.outputs.fingerprint }}
+    steps:
+      - id: sha
+        env:
+          RUN_SHA: ${{ github.event.workflow_run.head_sha }}
+          PR_SHA: ${{ github.event.pull_request.head.sha }}
+        run: echo "sha=${RUN_SHA:-${PR_SHA:-$GITHUB_SHA}}" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.sha.outputs.sha }}
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+      - name: The capture helper passes its selftest
+        run: python3 -I scripts/screenshots/capture.py --selftest
+      - id: decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ steps.sha.outputs.sha }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          fp="$(python3 -I scripts/screenshots/capture.py fingerprint)"
+          echo "fingerprint=$fp" >> "$GITHUB_OUTPUT"
+          say() { echo "::notice::$1"; echo "$1" >> "$GITHUB_STEP_SUMMARY"; }
+          if [[ "$EVENT" == workflow_run ]]; then
+            # A TestFlight run's own head is main's tip when it started, not the commit it published. Render the
+            # newest published build's commit (its testflight/build-N tag); a run that published nothing changes nothing.
+            tag="$(git tag --list 'testflight/build-*' | sort -t- -k2 -n | tail -1)"
+            if [[ -z "$tag" ]]; then
+              say "No build has been released to TestFlight yet: no screenshots."; echo "render=false" >> "$GITHUB_OUTPUT"; exit 0
+            fi
+            SHA="$(git rev-list -n 1 "$tag")"
+            echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+            git checkout --quiet "$SHA"
+            if [[ ! -f scripts/screenshots/capture.py ]]; then
+              say "$tag (${SHA:0:7}) predates the screenshots pipeline: no screenshots."; echo "render=false" >> "$GITHUB_OUTPUT"; exit 0
+            fi
+            # The checks that guard what goes on screen, on the commit that renders.
+            python3 -I scripts/screenshots/capture.py --selftest
+            fp="$(python3 -I scripts/screenshots/capture.py fingerprint)"
+            echo "fingerprint=$fp" >> "$GITHUB_OUTPUT"
+            have="$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=listing-screenshots-$fp" --jq '[.artifacts[] | select(.expired | not)] | length')"
+            if [[ "$have" != 0 ]]; then
+              say "Nothing a screenshot shows changed since the last render (listing-screenshots-${fp:0:12})."
+              echo "render=false" >> "$GITHUB_OUTPUT"; exit 0
+            fi
+          fi
+          say "Rendering the listing screenshots for ${SHA:0:7} (fingerprint ${fp:0:12})."
+          echo "render=true" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build the app and its scenes
+    needs: plan
+    if: needs.plan.outputs.render == 'true'
+    runs-on: xcode-27
+    # PR lane (gatefold#286): see "macOS lanes" at the top of app.yml. Never cancel-in-progress.
+    concurrency:
+      group: >-
+        ${{ github.event_name == 'pull_request'
+        && 'gatefold-macos-pr-lane-screenshots-build-0'
+        || format('screenshots-build-{0}-{1}', github.run_id, github.run_attempt) }}
+      queue: max
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.plan.outputs.sha }}
+          persist-credentials: false
+      - uses: ./.github/actions/select-xcode
+      - name: Install the Metal toolchain (the page curl is a Metal shader)
+        run: xcodebuild -downloadComponent MetalToolchain
+      - name: Generate the Xcode project from project.yml
+        run: |
+          brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
+          xcodegen generate
+      - name: Build for testing (GatefoldListingShots)
+        timeout-minutes: 30
+        run: |
+          set -o pipefail
+          xcodebuild build-for-testing -project Gatefold.xcodeproj -scheme GatefoldListingShots \
+            -destination 'generic/platform=iOS Simulator' ARCHS="$(uname -m)" \
+            -derivedDataPath "$RUNNER_TEMP/dd" 2>&1 | tee "$RUNNER_TEMP/build.log" | tail -40
+          tar -czf "$RUNNER_TEMP/products.tgz" -C "$RUNNER_TEMP/dd/Build" Products
+      - uses: actions/upload-artifact@v4
+        with:
+          name: listing-build-${{ github.run_id }}
+          path: ${{ runner.temp }}/products.tgz
+          retention-days: 1
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: listing-build-log-${{ github.run_id }}
+          path: ${{ runner.temp }}/build.log
+
+  shots:
+    name: Shots (${{ matrix.device }})
+    needs: [plan, build]
+    runs-on: xcode-27
+    # PR lane (gatefold#286): see "macOS lanes" at the top of app.yml. Never cancel-in-progress.
+    concurrency:
+      group: >-
+        ${{ github.event_name == 'pull_request'
+        && 'gatefold-macos-pr-lane-screenshots-shots-0'
+        || format('screenshots-shots-{0}-{1}-{2}', github.run_id, github.run_attempt, strategy.job-index) }}
+      queue: max
+    timeout-minutes: 95 # the capture step (80) plus download, unpack and boot
+    strategy:
+      fail-fast: false
+      # One device at a time per run: macOS runners are the scarce thing, and a release can wait.
+      max-parallel: 1
+      matrix:
+        device: [ipad, iphone, duo]
+    env:
+      DEVICE: ${{ matrix.device }}
+      TZ: America/Los_Angeles # the staged 17:41Z reads 9:41
+      FP: ${{ needs.plan.outputs.fingerprint }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.plan.outputs.sha }}
+          persist-credentials: false
+      - uses: ./.github/actions/select-xcode
+      - name: Start the simulator booting
+        run: |
+          set -euo pipefail
+          name="$(python3 -I scripts/screenshots/capture.py device --device "$DEVICE")"
+          echo "SIM_NAME=$name" >> "$GITHUB_ENV"
+          python3 -I scripts/ci-simulator.py start "listing-$DEVICE" "$name"
+      - uses: actions/download-artifact@v4
+        with:
+          name: listing-build-${{ github.run_id }}
+          path: ${{ runner.temp }}
+      - name: Unpack the app and its scenes
+        run: |
+          set -eu
+          mkdir -p "$RUNNER_TEMP/dd/Build"
+          tar -xzf "$RUNNER_TEMP/products.tgz" -C "$RUNNER_TEMP/dd/Build"
+          set -- "$RUNNER_TEMP"/dd/Build/Products/GatefoldListingShots*.xctestrun
+          [ -f "$1" ] || { echo "::error::No GatefoldListingShots xctestrun in the build"; exit 1; }
+          echo "XCTESTRUN=$1" >> "$GITHUB_ENV"
+      - name: The simulator finished booting
+        timeout-minutes: 30
+        env:
+          CI_SIMULATOR_BUDGET: "1740"
+        run: python3 -I scripts/ci-simulator.py wait "listing-$DEVICE" "$SIM_NAME" 1500
+      - name: Light appearance, default text size, staged status bar
+        run: |
+          set -eu
+          xcrun simctl ui "$UDID" appearance light
+          xcrun simctl ui "$UDID" content_size large
+          python3 -I scripts/screenshots/capture.py status-bar --udid "$UDID"
+          if [ "$DEVICE" = duo ]; then
+            echo "The Duo's displays (for the spec's display setting):"
+            xcrun simctl io "$UDID" enumerate | grep -iE "display|port|class|size|name" | head -40 || true
+          fi
+      - name: Capture every scene twice
+        # Worst case: 3 scenes x 2 tries x 2 passes at about 5.5 min a try (waits of 90 + 90 + 120 s, and launch).
+        timeout-minutes: 80
+        run: |
+          # The step's default shell is bash -e; a failed try must reach the retry, not end the step.
+          set +e -uo pipefail
+          status=0
+          scenes="$(python3 -I scripts/screenshots/capture.py scenes --device "$DEVICE")"
+          mkdir -p "$RUNNER_TEMP/logs"
+          for pass in a b; do
+            dir="$RUNNER_TEMP/shots/$pass"
+            mkdir -p "$dir" "$RUNNER_TEMP/results"
+            python3 -I scripts/screenshots/capture.py watch --udid "$UDID" --device "$DEVICE" --dir "$dir" > "$RUNNER_TEMP/logs/watch-$pass.log" 2>&1 &
+            watcher=$!
+            # One test run per scene, and one more try for a scene whose run failed (an XCUITest query can time
+            # out on a busy runner): a timeout costs that scene a try, not the scenes after it.
+            for scene in $scenes; do
+              for try in 1 2; do
+                log="$RUNNER_TEMP/xcodebuild-$pass-$scene-$try.log"
+                TEST_RUNNER_GATEFOLD_SHOTS_DIR="$dir" TEST_RUNNER_GATEFOLD_SHOTS_DEVICE="$DEVICE" \
+                TEST_RUNNER_GATEFOLD_SHOTS_SCENE="$scene" TEST_RUNNER_GATEFOLD_SHOTS_TRY="$try" \
+                TEST_RUNNER_GATEFOLD_SHOTS_SPEC="$GITHUB_WORKSPACE/screenshots/spec.json" \
+                  xcodebuild test-without-building -xctestrun "$XCTESTRUN" -destination "id=$UDID" \
+                    -only-testing:GatefoldListingShots/ListingShotsUITests/testListingScenes \
+                    -resultBundlePath "$RUNNER_TEMP/results/$pass-$scene-$try.xcresult" > "$log" 2>&1
+                code=$?
+                # Only these lines reach the (public) artifact: the full log and the result bundle can carry page text.
+                grep -E "Test Case .*(passed|failed)|ListingShotsUITests.swift:[0-9]+: error" "$log" \
+                  | sed "s/^/$pass $scene #$try: /" | tee -a "$RUNNER_TEMP/logs/tests.log" || true
+                [ "$code" = 0 ] && [ -f "$dir/$scene.$try.done" ] && break
+                if [ "$try" = 2 ]; then echo "::error::Pass $pass: $scene failed twice"; status=1; break; fi
+                # The failed try's picture goes aside; its hand-off files are named by try, so none can pass the next.
+                [ -e "$dir/$scene.png" ] && mkdir -p "$dir/tries" && mv "$dir/$scene.png" "$dir/tries/$scene-$try.png"
+              done
+            done
+            kill -0 "$watcher" 2>/dev/null || { echo "::error::Pass $pass: the capture watcher had stopped"; status=1; }
+            touch "$dir/finished"; wait "$watcher" || true
+            # A pass with a missing scene can't be matched by the next one: stop, and leave the runner sooner.
+            [ "$status" = 0 ] || { echo "== pass $pass"; cat "$RUNNER_TEMP/logs/watch-$pass.log"; break; }
+            echo "== pass $pass"; cat "$RUNNER_TEMP/logs/watch-$pass.log"
+            python3 -I scripts/screenshots/capture.py check --device "$DEVICE" --dir "$dir" || status=1
+          done
+          exit $status
+      - name: Same commit, same pixels (the two passes match)
+        run: python3 -I scripts/screenshots/capture.py compare "$RUNNER_TEMP/shots/a" "$RUNNER_TEMP/shots/b"
+      - name: Compose the frames and captions, twice, and check they match
+        run: |
+          set -euo pipefail
+          for n in 1 2; do
+            swift scripts/screenshots/compose.swift screenshots/spec.json "$DEVICE" "$RUNNER_TEMP/shots/a" "$RUNNER_TEMP/composed-$n"
+          done
+          python3 -I scripts/screenshots/capture.py compare "$RUNNER_TEMP/composed-1" "$RUNNER_TEMP/composed-2"
+          folder="$(python3 -I -c 'import json,sys; print(json.load(open("screenshots/spec.json"))["devices"][sys.argv[1]]["folder"])' "$DEVICE")"
+          mkdir -p "$RUNNER_TEMP/out/$folder/raw"
+          cp "$RUNNER_TEMP"/composed-1/*.png "$RUNNER_TEMP/out/$folder/"
+          cp "$RUNNER_TEMP"/shots/a/*.png "$RUNNER_TEMP/out/$folder/raw/"
+          ( cd "$RUNNER_TEMP/out" && shasum -a 256 "$folder"/*.png "$folder"/raw/*.png ) | tee "$RUNNER_TEMP/out/$folder/SHA256SUMS"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: listing-shots-${{ matrix.device }}-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/out
+            ${{ runner.temp }}/shots
+            ${{ runner.temp }}/logs
+          retention-days: 7
+          if-no-files-found: warn
+
+  collect:
+    name: The listing set
+    needs: [plan, shots]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: listing-shots-*-${{ github.run_id }}
+          path: ${{ runner.temp }}/in
+      - name: Gather
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/set"
+          for d in "$RUNNER_TEMP"/in/listing-shots-*/out; do cp -R "$d"/. "$RUNNER_TEMP/set/"; done
+          echo "commit ${{ needs.plan.outputs.sha }}" > "$RUNNER_TEMP/set/SOURCE"
+          {
+            echo "### Listing screenshots"
+            echo '```'
+            cat "$RUNNER_TEMP"/set/*/SHA256SUMS
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: listing-screenshots-${{ github.event_name == 'pull_request' && 'pr-' || '' }}${{ needs.plan.outputs.fingerprint }}
+          path: ${{ runner.temp }}/set
+          retention-days: 90
