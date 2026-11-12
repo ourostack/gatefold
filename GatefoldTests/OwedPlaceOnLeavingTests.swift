@@ -240,10 +240,146 @@ import Testing
     }
 }
 
+/// A page whose jump goes out and is never reported: the chapter it went to is still loading (Readium's
+/// spinner up, its location still the page before) when he leaves.
+@MainActor
+final class UnreportedJumpPage: ReaderPage {
+    var currentLocation: Locator?
+    private(set) var sent: [Locator] = []
+    /// The words of the page once its chapter has loaded (none while it loads).
+    var words: String?
+    init(at location: Locator) { currentLocation = location }
+    @discardableResult func go(to locator: Locator) async -> Bool { sent.append(locator); return true }
+    func go(to link: ReadiumShared.Link) async {}
+    func visibleRange() async -> VisibleRange? {
+        guard let words, let here = currentLocation else { return nil }
+        let start = here.locations.progression ?? 0
+        return VisibleRange(href: here.href.string, start: start, end: min(1, start + 0.03), text: words)
+    }
+    func progression(of quote: String) async -> Double? { words == nil ? nil : currentLocation?.locations.progression }
+    func currentAnchor() async -> (ReadingAnchor, Locator)? {
+        guard let words, let here = currentLocation else { return nil }
+        // As the host does: the place it reads carries the words it found.
+        return (ReadingAnchor(href: here.href.string, progression: here.locations.progression ?? 0, text: words),
+                here.copy(text: { $0 = Locator.Text(highlight: words) }))
+    }
+}
+
+/// gatefold#279: a scrubber jump from the opening page whose chapter is still loading when he leaves,
+/// no turn. Readium never reported the jump's page, so nothing was written, and the reopen had no place
+/// at all ("opening on none"). The place he chose is kept: the jump's target, never the page before it.
+@MainActor @Suite(.serialized) struct LeavingAScrubberJumpOnItsWayTests {
+    private func open(_ name: String) async throws -> (AppModel, ReaderModel, UnreportedJumpPage) {
+        let sync = StubSync()
+        await sync.setLibrary(.success([ReaderSyncTests.frankenstein]))
+        await sync.setRemote(nil)
+        let app = AppModel(sync: sync, libraryRoot: URL.temporaryDirectory.appending(path: "\(name)-\(UUID().uuidString)"))
+        await app.library.refresh()
+        let publication = try await ReaderSyncTests.publication()
+        let book = try #require(app.library.book(ReaderSyncTests.frankenstein.fastHash))
+        let first = publication.readingOrder[0].url().string
+        let opening = Locator(href: try #require(AnyURL(string: first)), mediaType: .xhtml,
+                              locations: .init(progression: 0, totalProgression: 0))
+        let page = UnreportedJumpPage(at: opening)
+        let model = ReaderModel(book: book, publication: publication, app: app, page: page)
+        await model.load()
+        return (app, model, page)
+    }
+
+    private func savedPlace(_ app: AppModel) -> Locator? {
+        app.library.book(ReaderSyncTests.frankenstein.fastHash)?.locatorJSON.flatMap { try? Locator(jsonString: $0) }
+    }
+
+    @Test func closingOnAScrubberJumpStillLoadingKeepsItsTarget() async throws {
+        let (app, model, page) = try await open("scrub-leave-close")
+        await model.go(toProgression: 0.43, rememberBack: true)
+        let target = try #require(page.sent.last, "the jump went out")
+        model.close()
+        for _ in 0..<200 where savedPlace(app) == nil { try await Task.sleep(for: .milliseconds(25)) }
+        let saved = try #require(savedPlace(app), "leaving kept no place")
+        #expect(saved.href.string == target.href.string)
+        #expect(saved.locations.progression == target.locations.progression,
+                "kept at \(saved.locations.progression ?? -1) in its file, not the jump's target (\(target.locations.progression ?? -1))")
+    }
+
+    @Test func goingInactiveOnAScrubberJumpStillLoadingKeepsItsTarget() async throws {
+        let (app, model, page) = try await open("scrub-leave-inactive")
+        await model.go(toProgression: 0.43, rememberBack: true)
+        let target = try #require(page.sent.last, "the jump went out")
+        // As the app does when it goes inactive (GatefoldApp's scene phase).
+        let owed = try #require(model.owedPlaceOnLeaving(), "leaving owed no place")
+        model.keepShownPageNow(owed)
+        await model.keepOwedPlace(owed)
+        for _ in 0..<200 where savedPlace(app) == nil { try await Task.sleep(for: .milliseconds(25)) }
+        let saved = try #require(savedPlace(app), "leaving kept no place")
+        #expect(saved.href.string == target.href.string)
+        #expect(saved.locations.progression == target.locations.progression)
+
+        // He comes back, the chapter loads, and Readium reports the jump's page: that report still writes
+        // his page and its words over the target the leave kept (the debt left open for it).
+        page.words = "stand-in-words-of-the-jumped-page"
+        page.currentLocation = target
+        await model.locationDidChange(target)
+        for _ in 0..<200 where savedPlace(app)?.text.highlight == nil { try await Task.sleep(for: .milliseconds(25)) }
+        #expect(savedPlace(app)?.text.highlight != nil, "the jump's own report wrote no words after the inactive leave")
+        #expect(!model.placeOwed, "the jump's report left the leave's debt standing")
+        model.close()
+    }
+
+    /// The same inactive leave, with the jump's own report arriving while the leave still writes its
+    /// target (held in its wait): the report is his page and its words, never dropped as already kept,
+    /// and the target written after it never replaces them.
+    @Test func theJumpsOwnReportDuringTheInactiveLeavesWriteKeepsHisWords() async throws {
+        let (app, model, page) = try await open("scrub-leave-race")
+        // Readium names the opening page before the jump, as it does once the book opens.
+        let opening = try #require(page.currentLocation)
+        await model.locationDidChange(opening)
+        await model.go(toProgression: 0.43, rememberBack: true)
+        let target = try #require(page.sent.last, "the jump went out")
+        let gate = LeaveGate()
+        model.placeWriteWait = { await gate.wait() }
+        let owed = try #require(model.owedPlaceOnLeaving(), "leaving owed no place")
+        model.keepShownPageNow(owed)
+        let leave = Task { await model.keepOwedPlace(owed) }
+        for _ in 0..<200 where await gate.waiters < 1 { await Task.yield() }
+        #expect(await gate.waiters == 1, "the leave's write reached its wait")
+
+        // A re-report of the page before the jump (the layout as the app goes inactive) is not the jump's.
+        let stray = Task { await model.locationDidChange(opening) }
+        await stray.value
+        #expect(await gate.waiters == 1, "a re-report of the page before the jump was written as his move")
+
+        // The chapter loads and Readium reports the jump's page while the leave's write waits.
+        page.words = "stand-in-words-of-the-jumped-page"
+        page.currentLocation = target
+        let report = Task { await model.locationDidChange(target) }
+        for _ in 0..<400 where await gate.waiters < 2 { await Task.yield() }
+        #expect(await gate.waiters == 2, "the jump's report was dropped as already kept")
+        await gate.open()
+        await leave.value
+        await report.value
+        for _ in 0..<200 where savedPlace(app)?.text.highlight == nil { try await Task.sleep(for: .milliseconds(25)) }
+        let saved = try #require(savedPlace(app))
+        #expect(saved.text.highlight != nil, "his page's words were lost to the target the leave wrote")
+        #expect(saved.locations.progression == target.locations.progression)
+
+        // The layout then names a boundary on the same page, with no move of his since: one move, one place,
+        // so his words stand (the leave handed nothing back after the report wrote).
+        let boundary = target.copy(locations: { $0.progression = max(0, ($0.progression ?? 0) - 0.01) })
+        page.words = nil
+        page.currentLocation = boundary
+        await model.locationDidChange(boundary)
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(savedPlace(app)?.text.highlight == saved.text.highlight, "a later layout report wrote over his words")
+        model.close()
+    }
+}
+
 /// A wait that holds until it is opened.
 actor LeaveGate {
     private var isOpen = false
     private var waiting: [CheckedContinuation<Void, Never>] = []
+    var waiters: Int { waiting.count }
     func wait() async {
         if isOpen { return }
         await withCheckedContinuation { waiting.append($0) }
