@@ -54,10 +54,11 @@ final class NavigationPlaceUITests: XCTestCase {
         XCTAssertTrue(app.buttons["reader.contents"].waitForExistence(timeout: 5))
     }
 
-    /// Leaves without a turn and comes back: the reopen shows `words`.
+    /// Leaves without a turn and comes back: the reopen shows the page he left, and that page is not `words`.
+    /// The page left and the reopen are each read once their words hold still (`PageReads.settle`), in reads,
+    /// never a sleep (gatefold#309).
     private func leaveAndReturn(expecting words: String, _ how: String) {
-        sleep(2)
-        let settled = visibleText
+        let settled = PageReads.settle(app, "the \(how)'s page").words
         XCUIDevice.shared.press(.home)
         if !app.wait(for: .runningBackground, timeout: 3) {
             XCUIApplication(bundleIdentifier: "com.apple.springboard").activate()
@@ -66,9 +67,8 @@ final class NavigationPlaceUITests: XCTestCase {
         app.quit()
         app.launchArguments = common
         app.relaunch()
-        _ = waitForWords()
-        sleep(4)
-        XCTAssertEqual(opening(visibleText), opening(settled), "after a \(how) and no turn, the reopen is on the page he jumped to")
+        let back = PageReads.settle(app, "the reopen after a \(how)").words
+        XCTAssertEqual(opening(back), opening(settled), "after a \(how) and no turn, the reopen is on the page he jumped to")
         XCTAssertNotEqual(opening(settled), opening(words), "the \(how) moved the page")
     }
 
@@ -281,16 +281,26 @@ final class NavigationPlaceUITests: XCTestCase {
         // A deliberate drag along the bar: a tap on it never jumps (PlaceUndoUITests).
         let from = scrubber.coordinate(withNormalizedOffset: CGVector(dx: 0.1, dy: 0.5))
         from.press(forDuration: 0.1, thenDragTo: scrubber.coordinate(withNormalizedOffset: CGVector(dx: 0.62, dy: 0.5)))
-        _ = waitForWords(changingFrom: first, timeout: 20)
+        // The jump's landing, in reads, never seconds: on CI's iPad its chapter can load for over 25 s, and the old
+        // 20 s wait and 2 s sleep read the page before the jump as the page it settled on (gatefold#309, run
+        // 43277705735: still on its way 25 s after the drag, at a load average of 528).
+        let moved = PageReads.until(reads: PageReads.veilReads) {
+            let now = PageReads.words(app)
+            return !now.isEmpty && opening(now) != opening(first)
+        }
+        print("REPRO jump scrubber: moved \(moved.ok) after \(moved.reads) reads\(moved.hung ? " (hang guard)" : "")")
+        XCTAssertTrue(moved.ok, "the scrubber jump never moved the page in \(moved.reads) reads\(moved.hung ? " (hang guard)" : "")")
         leaveAndReturn(expecting: first, "scrubber jump")
     }
 
     /// The same jump left while its chapter still loads (`-GatefoldHoldJumpSends`: the jump never reaches
     /// the page, so Readium never reports it, as on a slow runner's iPad): nothing was written, and the
     /// reopen came back at the book's start (gatefold#279). The reopen is on the jump's page, never the
-    /// opening one.
+    /// opening one. The leave's ordinary write is held for good (`-GatefoldHoldLeaveWrites`), as the
+    /// loading chapter held its read of the page until iOS ended Gatefold (gatefold#309): only what
+    /// leaving writes at once counts.
     func testAScrubberJumpLeftWhileItsChapterLoadsKeepsItsTarget() {
-        let first = openFresh(["-GatefoldHoldJumpSends", "YES"])
+        let first = openFresh(["-GatefoldHoldJumpSends", "YES", "-GatefoldHoldLeaveWrites", "YES"])
         showChrome()
         let scrubber = app.descendants(matching: .any)["reader.scrubber"]
         XCTAssertTrue(scrubber.waitForExistence(timeout: 5))
@@ -307,10 +317,9 @@ final class NavigationPlaceUITests: XCTestCase {
         app.quit()
         app.launchArguments = common
         app.relaunch()
-        let back = waitForWords()
-        sleep(4)
+        let back = PageReads.settle(app, "the reopen after a scrubber jump left on its way").words
         XCTAssertFalse(back.isEmpty, "the reopen shows words")
-        XCTAssertNotEqual(opening(visibleText), opening(first), "after a scrubber jump left while its chapter loaded, the reopen is on the jump's page, not the opening one")
+        XCTAssertNotEqual(opening(back), opening(first), "after a scrubber jump left while its chapter loaded, the reopen is on the jump's page, not the opening one")
     }
 
     private func turn(forward: Bool) {
