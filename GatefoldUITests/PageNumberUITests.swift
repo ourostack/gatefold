@@ -60,7 +60,8 @@ final class PageNumberUITests: XCTestCase {
         for read in 1...Self.reopenReads {
             let now = numbers
             if now == shown { same += 1 } else { shown = now; same = 0 }
-            if readyAt == nil, (ready.value as? String) == "1" { readyAt = read }
+            // The quiet reads count only from the ready report: the numbers under the cover can be an earlier guess.
+            if readyAt == nil, (ready.value as? String) == "1" { readyAt = read; same = 0 }
             if readyAt != nil, !shown.isEmpty, same >= Self.quietReads {
                 print("REOPEN round 1: numbers ready at read \(readyAt ?? -1), numbers settled at read \(read)")
                 return shown
