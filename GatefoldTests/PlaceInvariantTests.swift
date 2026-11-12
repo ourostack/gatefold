@@ -413,7 +413,9 @@ import Testing
             #expect((landed.locations.progression ?? 0) > 0.5, "the jump that went on after he left didn't keep where it landed")
             #expect((final.locations.progression ?? 0) > 0.5, "a boundary report during the landing's write was kept over it")
             let heldBefore = try #require(kept.heldBefore, "the landing never started its write")
-            #expect(f.model.reportsHeldByAClaim == heldBefore + 1, "the boundary report during the landing's write wasn't held by its claim (\(f.model.reportsHeldByAClaim - heldBefore) held)")
+            // At least the boundary report: the stub page's own report of the landing (sent from its go) may
+            // arrive inside the write too, and is held the same way.
+            #expect(f.model.reportsHeldByAClaim >= heldBefore + 1, "the boundary report during the landing's write wasn't held by its claim (\(f.model.reportsHeldByAClaim - heldBefore) held)")
             f.model.close()
         }
     }
