@@ -7,6 +7,8 @@ import ReadiumShared
 protocol ReaderPage: AnyObject {
     /// Where the navigator is (the page boundary Readium reports).
     var currentLocation: Locator? { get }
+    /// A page turn is animating: he chose it, though it hasn't landed yet.
+    var isTurning: Bool { get }
     @discardableResult func go(to locator: Locator) async -> Bool
     /// The chapter on its way is still loading (Readium's spinner up, or a web view still loading): a jump
     /// there is waited for, not given up on.
@@ -48,6 +50,7 @@ extension ReaderPage {
     func keepWordsOnLeft(_ anchor: ReadingAnchor, stillWanted: @escaping @MainActor () -> Bool) async {}
     func settleLanding(_ anchor: ReadingAnchor, stillWanted: @escaping @MainActor () -> Bool) async {}
     var isLoadingChapter: Bool { false }
+    var isTurning: Bool { false }
     func prepareStandby(at locator: Locator) {}
     func dropStandby() {}
     func promoteStandby(for locator: Locator) async -> Bool { false }
