@@ -1919,7 +1919,7 @@ final class ReaderModel {
             anchorCheck = (visible.contains(anchor) ? "anchor-visible " : "anchor-lost ") + "\(reflowCount)"
             anchorDetail = "anchor \(anchor.href)@\(anchor.progression) [\(anchor.text?.prefix(40) ?? "-")] visible \(visible.href) \(visible.start)..\(visible.end) [\(visible.text?.prefix(60) ?? "nil")]"
             // The restore's verdict, numbers only (no book text), so a real unfold can be judged from the log.
-            readerLog.notice("reflow check: \(self.anchorCheck, privacy: .public) columns \(self.layout.columns == .two ? 2 : 1, privacy: .public) anchor \(anchor.progression, privacy: .public) visible \(visible.start, privacy: .public)..\(visible.end, privacy: .public) same file \(visible.href == anchor.href, privacy: .public)")
+            readerLog.notice("reflow check: \(self.anchorCheck, privacy: .public) columns \(self.layout.columns == .two ? 2 : 1, privacy: .public) anchor \(anchor.progression, privacy: .public) visible \(visible.start, privacy: .public)..\(visible.end, privacy: .public) same file \(visible.href == anchor.href, privacy: .public) words read \(visible.text != nil, privacy: .public)")
         } else {
             anchorCheck = "no-anchor \(reflowCount)"
         }
