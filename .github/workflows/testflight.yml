@@ -29,7 +29,7 @@ permissions:
 jobs:
   # Is this commit green, and still newer than the last build published? Cheap, on Linux.
   gate:
-    name: Main is green here
+    name: Is this commit green? (verdict in summary)
     if: >-
       github.ref == 'refs/heads/main' && (github.event_name == 'workflow_dispatch' ||
       (github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main'))
@@ -76,6 +76,8 @@ jobs:
         run: |
           set -euo pipefail
           say() { echo "::notice::$1"; echo "$1" >> "$GITHUB_STEP_SUMMARY"; }
+          # The job passes whatever the verdict; this line says which it was, so a green job is never read as green main.
+          echo "Verdict for ${SHA:0:7}: ${STATE:-unknown}" >> "$GITHUB_STEP_SUMMARY"
           case "$STATE" in
             green) ;;
             pending) say "${SHA:0:7} is not green yet (a required check is still running); its last check to finish asks again."
