@@ -1,7 +1,7 @@
 name: App
 
-# Probe for gatefold#198 (never merged): quiet a new simulator the moment `simctl boot` returns, in one spawn (a shell
-# inside the simulator removes every job in quiet-sim.labels), against today's boot. Samples the runner's 1-min load
+# Probe for gatefold#198 (never merged): quiet a new simulator the moment `simctl boot` returns, with every job in
+# quiet-sim.labels removed by parallel spawns, against today's boot. Samples the runner's 1-min load
 # every 20 s and times a Settings launch every 60 s. No app, no tests, no book text.
 
 on:
@@ -18,7 +18,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        how: [control, onespawn]
+        how: [control, parallel]
         rep: [1, 2, 3]
     steps:
       - uses: actions/checkout@v4
@@ -34,10 +34,12 @@ jobs:
           t=$SECONDS; xcrun simctl boot "$u"; echo "BOOT returned after $((SECONDS-t)) s"
           quiet() {
             local s=$SECONDS
-            out=$(xcrun simctl spawn "$u" /bin/sh -c 'n=0; for l in "$@"; do launchctl remove "$l" 2>/dev/null && n=$((n+1)); done; echo $n' sh $labels 2>&1)
-            echo "QUIET $1 at $((SECONDS-t)) s: removed $out in $((SECONDS-s)) s, load $(sysctl -n vm.loadavg | awk '{print $2}')"
+            local d="$RUNNER_TEMP/q-$1"; mkdir -p "$d"
+            for l in $labels; do ( xcrun simctl spawn "$u" launchctl remove "$l" >/dev/null 2>&1; echo $? > "$d/$l" ) & done
+            wait_for=$(( SECONDS + 120 )); while [ "$(ls "$d" | wc -l)" -lt "$(echo $labels | wc -w)" ] && [ $SECONDS -lt $wait_for ]; do sleep 1; done
+            echo "QUIET $1 at $((SECONDS-t)) s: removed $(grep -lx 0 "$d"/* 2>/dev/null | wc -l) of $(echo $labels | wc -w) in $((SECONDS-s)) s, load $(sysctl -n vm.loadavg | awk '{print $2}')"
           }
-          if [ "$HOW" = onespawn ]; then quiet early; fi
+          if [ "$HOW" = parallel ]; then quiet early; fi
           xcrun simctl bootstatus "$u" -b > "$RUNNER_TEMP/bs.txt" 2>&1; echo "BOOTSTATUS $HOW done ($?) after $((SECONDS-t)) s"
           quiet after-boot
           n=0; for l in $labels; do xcrun simctl spawn "$u" launchctl list | grep -q " $l$" && n=$((n+1)); done; echo "STILL LOADED $n"
