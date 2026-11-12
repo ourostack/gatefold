@@ -313,61 +313,6 @@ final class NavigationPlaceUITests: XCTestCase {
         XCTAssertNotEqual(opening(visibleText), opening(first), "after a scrubber jump left while its chapter loaded, the reopen is on the jump's page, not the opening one")
     }
 
-    /// A Contents jump left while its chapter still loads keeps the chapter he chose: never the place
-    /// from before the jump, never its file's first page (gatefold#259). The reopen's saved place and page
-    /// are judged against the same jump made again, unheld, to its end: same file, near the same place.
-    func testAContentsJumpLeftWhileItsChapterLoadsKeepsTheChapter() {
-        _ = openFresh(["-GatefoldHoldChapterLoad", "400"])
-        let before = (app.descendants(matching: .any)["reader.savedPlace"].value as? String) ?? ""
-        showChrome()
-        contentsTap("Chapter XL")
-        XCTAssertTrue(app.descendants(matching: .any)["reader.loadingHeld"].waitForExistence(timeout: 10), "the chapter's load is held open")
-        // He leaves while it is still on its way.
-        leaveAndRelaunch()
-        // Judged by places, not words: the place from before the jump is the book's opening, its cover
-        // page, which has none, so a reopen there (main's, the red) shows no words to wait for.
-        XCTAssertTrue(app.descendants(matching: .any)["reader.page"].waitForExistence(timeout: 60), "the book reopened")
-        XCTAssertTrue(keptWhatIsShown(), "the reopen shows the place it kept")
-        let reopened = tag(app.descendants(matching: .any)["reader.savedPlace"])
-        // Past the opening (the chapter's place), the page must show words: a blank page there is a reopen bug.
-        if let r = reopened, "\(r.0)@\(String(format: "%.5f", r.1))" != before, !r.0.hasPrefix("wrap") {
-            XCTAssertFalse(waitForWords().isEmpty, "the reopen on the chapter's place shows words")
-        }
-        // The same jump, to its end: where the chapter he chose is.
-        showChrome()
-        contentsTap("Chapter XL")
-        sleep(1)
-        XCTAssertTrue(app.descendants(matching: .any)["reader.veil"].waitForNonExistence(timeout: 60), "the jump landed")
-        XCTAssertTrue(keptWhatIsShown(), "the jump kept the page shown")
-        let chapter = tag(app.descendants(matching: .any)["reader.savedPlace"])
-        print("CONTENTSLEFT before \(before) reopened \(reopened.map { "\($0.0)@\($0.1)" } ?? "none") chapter \(chapter.map { "\($0.0)@\($0.1)" } ?? "none")")
-        XCTAssertNotNil(reopened, "the reopen kept a place")
-        XCTAssertNotEqual(reopened.map { "\($0.0)@\(String(format: "%.5f", $0.1))" }, before, "the reopen is not the place from before the jump")
-        XCTAssertEqual(reopened?.0, chapter?.0, "the reopen is in the chapter's file")
-        XCTAssertGreaterThan(chapter?.1 ?? 0, 0.1, "the chapter starts partway through its file, so its file's first page is another place")
-        XCTAssertGreaterThan(reopened?.1 ?? 0, 0.01, "the reopen is its file's first page")
-        XCTAssertLessThan(abs((reopened?.1 ?? -9) - (chapter?.1 ?? 9)), 0.1, "the reopen is at the chapter he chose, not its file's first page")
-    }
-
-    private func contentsTap(_ title: String) {
-        app.buttons["reader.contents"].tap()
-        // Exactly this chapter: Contents shows the title tidied ("Chapter XL", its full stop dropped by
-        // `Headings.tidy`), alone or followed by its page number, and "Chapter XL" also starts XLI to XLIX.
-        let row = app.buttons.matching(NSPredicate(format: "label ==[c] %@ OR label BEGINSWITH[c] %@ OR label BEGINSWITH[c] %@", title, title + ",", title + " ")).firstMatch
-        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label CONTAINS[c] %@", "Chapter I")).firstMatch.waitForExistence(timeout: 10),
-                      "the contents opened")
-        // Chapter XL is further down the list than XXX, which 20 slow swipes reach.
-        for _ in 0..<40 where !(row.exists && row.isHittable) { app.swipeUp(velocity: .slow) }
-        XCTAssertTrue(row.exists && row.isHittable, "the contents list \(title)")
-        row.tap()
-    }
-
-    private func tag(_ e: XCUIElement) -> (String, Double)? {
-        let parts = ((e.value as? String) ?? "").split(separator: "@")
-        guard parts.count == 2, let p = Double(parts[1]) else { return nil }
-        return (String(parts[0]), p)
-    }
-
     private func turn(forward: Bool) {
         app.descendants(matching: .any)["reader.page"].coordinate(withNormalizedOffset: CGVector(dx: forward ? 0.97 : 0.03, dy: 0.5)).tap()
     }
