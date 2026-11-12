@@ -66,6 +66,8 @@ jobs:
       fired: ${{ steps.diff.outputs.fired }}
       edited-ipad: ${{ steps.diff.outputs.edited-ipad }}
       edited-duo: ${{ steps.diff.outputs.edited-duo }}
+      smoke-ipad: ${{ steps.diff.outputs.smoke-ipad }}
+      smoke-duo: ${{ steps.diff.outputs.smoke-duo }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -77,7 +79,7 @@ jobs:
           HEAD: ${{ github.event.pull_request.head.sha }}
         run: |
           set -eu
-          if [ "$EVENT" != pull_request ]; then printf 'app=true\nfull=true\nfired=\nedited-ipad=\nedited-duo=\n' >> "$GITHUB_OUTPUT"; exit 0; fi
+          if [ "$EVENT" != pull_request ]; then printf 'app=true\nfull=true\nfired=\nedited-ipad=\nedited-duo=\nsmoke-ipad=0\nsmoke-duo=0\n' >> "$GITHUB_OUTPUT"; exit 0; fi
           git diff --name-only "$BASE...$HEAD" > changed.txt
           cat changed.txt
           # The CI that runs the UI tests: the full lists.
@@ -115,8 +117,16 @@ jobs:
               if [ "$on_duo" != 0 ]; then duo="$duo $c"; fi
             done
           done
+          # The smoke shard that runs them gets their slowest passes too, by the shards' formula (gatefold#260); a class
+          # the times file doesn't know counts its tests at 10 min each.
+          # shellcheck disable=SC2086 # word splitting splits the class lists
+          smoke_ipad=$(python3 -I scripts/ci-shards.py smoke "iPad Pro 13-inch" $ipad) || smoke_ipad=180
+          # shellcheck disable=SC2086
+          smoke_duo=$(python3 -I scripts/ci-shards.py smoke "iPhone Duo" $duo) || smoke_duo=180
+          echo "::notice::Smoke shard limits with the edited classes: iPad $smoke_ipad min, Duo $smoke_duo min"
           # shellcheck disable=SC2086 # word splitting trims the lists
-          { echo "full=$full"; set -- $ipad; echo "edited-ipad=$*"; set -- $duo; echo "edited-duo=$*"; } >> "$GITHUB_OUTPUT"
+          { echo "full=$full"; set -- $ipad; echo "edited-ipad=$*"; set -- $duo; echo "edited-duo=$*"
+            echo "smoke-ipad=$smoke_ipad"; echo "smoke-duo=$smoke_duo"; } >> "$GITHUB_OUTPUT"
           if grep -qv '\.md$' changed.txt; then echo "app=true" >> "$GITHUB_OUTPUT"; else
             echo "::notice::Only Markdown changed: the app checks report success without running."
             echo "app=false" >> "$GITHUB_OUTPUT"
@@ -603,7 +613,7 @@ jobs:
               ReviewerChecksUITests/testTheLastPagesNumberIsTheCount ReviewerChecksUITests/testPageNumbersAreOnOrOffInEveryBook
             pr_tests: none
             cold: false
-            timeout: 92 # 30 + 2 x 18.9 + 5 + 12
+            timeout: 85 # 30 + 2 x 18.9 + 5 + 12
             lane: 2
     uses: ./.github/workflows/ui-tests.yml
     with:
@@ -618,8 +628,9 @@ jobs:
       extra: ${{ needs.changes.outputs.edited-ipad }}
       full: ${{ needs.changes.outputs.full }}
       cold: ${{ matrix.cold }}
-      # A smoke shard that also runs the classes this pull request edits gets 108 min (30 + 66 + 12), whatever their length.
-      timeout: ${{ matrix.pr_when == 'smoke' && needs.changes.outputs.edited-ipad != '' && 108 || matrix.timeout }}
+      # A smoke shard that also runs the classes this pull request edits gets their slowest passes too (`changes`,
+      # scripts/ci-shards.py smoke; gatefold#260).
+      timeout: ${{ matrix.pr_when == 'smoke' && needs.changes.outputs.edited-ipad != '' && fromJSON(needs.changes.outputs.smoke-ipad) || matrix.timeout }}
       lane: ${{ matrix.lane }}
 
   duo:
@@ -706,7 +717,7 @@ jobs:
             skip: ""
             pr_tests: none
             cold: false
-            timeout: 85 # 30 + 2 x 15.0 + 5 + 12
+            timeout: 77 # 30 + 2 x 15.0 + 5 + 12
             lane: 4
           - shard: duo-reviewer-rest
             # Main only, the catch-all for new reviewer checks: 964 + 204 (the default spread skips on the Duo)
@@ -731,8 +742,9 @@ jobs:
       extra: ${{ needs.changes.outputs.edited-duo }}
       full: ${{ needs.changes.outputs.full }}
       cold: ${{ matrix.cold }}
-      # A smoke shard that also runs the classes this pull request edits gets 108 min (30 + 66 + 12), whatever their length.
-      timeout: ${{ matrix.pr_when == 'smoke' && needs.changes.outputs.edited-duo != '' && 108 || matrix.timeout }}
+      # A smoke shard that also runs the classes this pull request edits gets their slowest passes too (`changes`,
+      # scripts/ci-shards.py smoke; gatefold#260).
+      timeout: ${{ matrix.pr_when == 'smoke' && needs.changes.outputs.edited-duo != '' && fromJSON(needs.changes.outputs.smoke-duo) || matrix.timeout }}
       lane: ${{ matrix.lane }}
 
   ipad-place-gate:

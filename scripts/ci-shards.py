@@ -2,6 +2,7 @@
 
     python3 -I scripts/ci-shards.py check [--list] [--expect FILE]
     python3 -I scripts/ci-shards.py write
+    python3 -I scripts/ci-shards.py smoke DEVICE [CLASS ...]
     python3 -I scripts/ci-shards.py --selftest
 
 Each shard job in app.yml (one that calls ui-tests.yml) lists `tests`, `skip` and `pr_tests` per matrix entry, under
@@ -20,6 +21,8 @@ main and full-list pull requests) this fails when
 word of each line; blank lines and lines starting with # ignored). CI checks against scripts/ci-shards.expect, so a
 test leaves CI only by a visible edit there: after adding or removing a test, `write` rewrites the file from the shards
 (keeping its comment header), and the diff shows what changed.
+`smoke` prints the job limit for DEVICE's smoke shard when a pull request also runs the UI test classes it edits there:
+the same formula over the smoke PR list and those classes (the changes job passes it on; gatefold#260).
 Reads only; no dependencies beyond python3. It runs in the job `CI scripts, offline`, which `GatefoldCore tests` (a
 required check) stands for (gatefold#241).
 """
@@ -231,42 +234,80 @@ def tenths_up(seconds):
     return -(-seconds // 6) / 10
 
 
+def minutes_for(seconds, boot):
+    """(job limit, its formula) for tests whose slowest passes add up to `seconds`."""
+    slowest = tenths_up(seconds)
+    return boot + -(-int(round(2 * slowest * 10)) // 10) + LAUNCH + RESERVE, f"{boot} + 2 x {slowest:.1f} + {LAUNCH} + {RESERVE}"
+
+
 def limit_problems(lists, boot, times):
     """Each shard's `timeout` against `boot + 2 x <slowest> + LAUNCH + 12`, its comment showing the sum, with <slowest> the
-    sum of its tests' slowest passes in the times file for the tier that runs longer (gatefold#198, gatefold#260)."""
+    sum of its tests' slowest passes in the times file for the tier that runs longer (gatefold#198, gatefold#260). A
+    limit may sit a minute over its need, no more: a hang should fail as soon as a green run can't still be running."""
     if boot is None:
         return ["ui-tests.yml gives the time-left action no `boot`, so no shard's tests' budget can be checked"]
     out, missing, used = [], set(), set()
     for job, device, s, tiers in lists:
         where = f"{job} shard {s.get('shard', '?')}"
-        sums = {}
+        sums, unknown = {}, set()
         for tier, chosen in tiers.items():
             keys = {f"{device}|{t}" for t in chosen}
             used |= keys
-            missing |= keys - set(times)
+            unknown |= keys - set(times)
             sums[tier] = sum(times.get(k, 0) for k in keys)
+        missing |= unknown
+        if unknown:
+            continue  # its sum isn't known yet; the missing lines below say what to add, then rerun for this shard
         tier = max(sums, key=lambda k: (sums[k], k == "main"))
-        slowest = tenths_up(sums[tier])
-        want = f"{boot} + 2 x {slowest:.1f} + {LAUNCH} + {RESERVE}"
-        need = boot + -(-int(round(2 * slowest * 10)) // 10) + LAUNCH + RESERVE
+        need, want = minutes_for(sums[tier], boot)
         note = s.get("#timeout", "")
-        if re.sub(r"\s+", " ", note.strip()) != want:
-            # A limit kept above the need stays; only one under it is raised.
-            limit = max(need, int(s["timeout"])) if s.get("timeout", "").isdigit() else need
-            out.append(f"{where}: its timeout should read `{limit} # {want}`: "
-                       f"{boot} for setup, twice its {tier} list's slowest passes ({sums[tier]} s in {TIMES_NAME}), "
-                       f"{LAUNCH} for the test run's start and its stop's grace, {RESERVE} for the logs; it reads "
-                       f"{s.get('timeout', '?')} # {note or '(no formula)'}")
-            continue
-        if not s.get("timeout", "").isdigit() or int(s["timeout"]) < need:
-            out.append(f"{where}: timeout {s.get('timeout')} should be at least {need} ({want}, rounded up), or its "
-                       "tests get less than twice their slowest passes")
+        timeout = int(s["timeout"]) if s.get("timeout", "").isdigit() else None
+        if re.sub(r"\s+", " ", note.strip()) != want or timeout is None or not need <= timeout <= need + 1:
+            out.append(f"{where}: its timeout should read `{need} # {want}`: {boot} for setup, twice its {tier} list's "
+                       f"slowest passes ({sums[tier]} s in {TIMES_NAME}), {LAUNCH} for the test run's start and its stop's "
+                       f"grace, {RESERVE} for the logs; it reads {s.get('timeout', '?')} # {note or '(no formula)'}")
     for k in sorted(missing):
         out.append(f"{k} has no slowest pass in {TIMES_NAME}, so its shard's limit can't be checked: add a line "
-                   f"`{k}<TAB><seconds>`, its slowest passing time in CI (an estimate until CI has run it)")
+                   f"`{k}<TAB><seconds>`, its slowest passing time in CI (an estimate until CI has run it), then rerun "
+                   "this check for its shard's timeout line")
     for k in sorted(set(times) - used):
         out.append(f"{k} is in {TIMES_NAME}, but no shard runs it: remove its line")
     return out
+
+
+# A test the times file doesn't have on this device (a new class, or one main runs only on the other device): the
+# other device's time, else this.
+UNKNOWN_SECONDS = 600
+
+
+def smoke_limit(text, tests, times, boot, device, classes):
+    """The job limit for `device`'s smoke shard when it also runs `classes` (a pull request that edits them)."""
+    lists = []
+    plan(text, tests, lists)
+    chosen = set()
+    for _, d, s, tiers in lists:
+        if d == device and s.get("pr_when") == "smoke":
+            chosen |= tiers["pr"]
+    for c in classes:
+        chosen |= {f"{c}/{t}" for t in tests.get(c, [])}
+
+    def seconds(t):
+        if f"{device}|{t}" in times:
+            return times[f"{device}|{t}"]
+        return max((v for k, v in times.items() if k.split("|", 1)[1] == t), default=UNKNOWN_SECONDS)
+    return minutes_for(sum(seconds(t) for t in chosen), boot)
+
+
+def smoke(args):
+    """`smoke DEVICE [CLASS ...]`: print the smoke shard's job limit in minutes, then its formula."""
+    with open(WORKFLOW, encoding="utf-8") as f:
+        text = f.read()
+    with open(SHARD, encoding="utf-8") as f:
+        boot = boot_of(f.read())
+    need, want = smoke_limit(text, read_tests(SOURCES), read_times(TIMES)[0], boot, args[0], args[1:])
+    print(need)
+    print(f"{need} # {want}", file=sys.stderr)
+    return 0
 
 
 def check(args):
@@ -484,7 +525,7 @@ jobs:
             cold: false
           - shard: s2
             tests: BUITests
-            timeout: {need(10.0)} # 30 + 2 x 5.0 + {LAUNCH} + 12
+            timeout: {need(5.0)} # 30 + 2 x 5.0 + {LAUNCH} + 12
             cold: false"""), tests, lists)[0]
         assert problems == [], problems
         return limit_problems(lists, 30, known)
@@ -497,7 +538,7 @@ jobs:
     assert need(5.8) == 54 + LAUNCH and limits(ok) == [], limits(ok)
     assert limits(f"{need(5.8) + 1} # 30 + 2 x 5.8 + {LAUNCH} + 12") == []  # a minute over, as some shards kept
     short = limits(f"{need(5.8) - 1} # 30 + 2 x 5.8 + {LAUNCH} + 12")
-    assert any(f"at least {need(5.8)}" in p for p in short), short
+    assert any(f"should read `{need(5.8)} #" in p for p in short), short
     # A sum that isn't the times file's, an old formula, or none: each names the line to write.
     for wrong in (f"{need(5.8)} # 30 + 2 x 4.8 + {LAUNCH} + 12", "54 # 30 + 2 x 5.8 + 12", "54"):
         got = limits(wrong)
@@ -515,6 +556,38 @@ jobs:
     assert any("AUITests/testGone is in scripts/ci-shards.times, but no shard runs it" in p for p in stale), stale
     assert read_times_text("iPad|A/t\t60\tnote\n# c\n\nbad line\n") == ({"iPad|A/t": 60}, ["line 4 should read "
                                                                                      "`device|Class/test<TAB>seconds`: bad line"])
+    over = limits(f"{need(5.8) + 2} # 30 + 2 x 5.8 + {LAUNCH} + 12")  # more than a minute over: a hang waits longer
+    assert any(f"should read `{need(5.8)} #" in p for p in over), over
+    # Rounding up to a tenth: 120 + 229 s is 5.817 min, so 5.9.
+    assert limits(f"{need(5.9)} # 30 + 2 x 5.9 + {LAUNCH} + 12", known=dict(times, **{ipad + "AUITests/testTwo": 229})) == []
+    # A skipped test is out of its shard's sum: the sums are over plan()'s lists, its `tests` less its `skip`.
+    lists = []
+    plan(wf("""          - shard: s1
+            tests: AUITests
+            skip: AUITests/testTwo
+          - shard: s2
+            tests: AUITests/testTwo BUITests"""), tests, lists)
+    assert lists[0][3]["main"] == {"AUITests/testOne"}, lists
+    # A tie between the lists names the main list.
+    tie = "            tests: AUITests/testOne\n            pr_tests: AUITests/testOne\n            pr_when: g\n"
+    got = limits("1 # x", tie)
+    assert any("twice its main list's slowest passes (120 s" in p for p in got), got
+    # A shard with a test the times file lacks isn't sized until it has the line, so the fix takes one round.
+    assert not any("s1: its timeout" in p for p in unknown), unknown
+    assert any("listed twice" in p for p in read_times_text("d|A/t\t1\nd|A/t\t2\n")[1])
+    # The smoke shard with edited classes: its PR list plus every test of each class, a time from the other device
+    # when this one has none, else UNKNOWN_SECONDS.
+    smokewf = wf(f"""          - shard: s1
+            tests: AUITests/testOne
+            pr_tests: BUITests/testThree
+            pr_when: smoke
+            timeout: 1
+            cold: false""")
+    duo = dict(times, **{"iPhone Duo|AUITests/testTwo": 60})
+    assert smoke_limit(smokewf, tests, times, 30, "iPad Pro 13-inch", [])[0] == need(5.0)
+    assert smoke_limit(smokewf, tests, times, 30, "iPad Pro 13-inch", ["AUITests"])[0] == need(10.8)  # 300+120+228
+    unseen = dict(tests, CUITests=["testNew"])
+    assert smoke_limit(smokewf, unseen, duo, 30, "iPad Pro 13-inch", ["CUITests"])[0] == need(15.0)  # 300 + 600
     assert limit_problems([], None, {}) != []
     print("ci-shards selftest: ok")
     return 0
@@ -528,5 +601,7 @@ if __name__ == "__main__":
         sys.exit(check(args[1:]))
     if args[:1] == ["write"]:
         sys.exit(write())
+    if args[:1] == ["smoke"] and len(args) >= 2:
+        sys.exit(smoke(args[1:]))
     print(__doc__, file=sys.stderr)
     sys.exit(2)
