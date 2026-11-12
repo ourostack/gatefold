@@ -36,6 +36,21 @@ concurrency:
   group: app-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+# macOS lanes (gatefold#286). The Ouro Labs enterprise has 50 macOS slots, shared by every org in it (spoonjoy too).
+# On 2026-11-12 gatefold's pull requests held 48 of them with 270 more queued, and spoonjoy got 2. So on a pull request
+# every macOS job but Build for testing waits in a shared lane, a job-level `concurrency` group with `queue: max`: a
+# lane runs one job at a time across every open pull request, first come first served, and never cancels one.
+#   - UI test shards: 18 lanes, `lane` in each matrix entry, balanced by timeout; ui-tests.yml waits in it.
+#   - Release build and Unit tests: 3 lanes each, by the pull request number's last digit.
+#   - Duo tour, the cloud package, and the screenshots' build and shots: 1 lane each.
+# That is 28 lanes, a hard cap, plus one Build for testing per pull request being pushed (not laned: the shards and
+# Unit tests wait for its artifact inside their own jobs), so about 36 runners with 8 pushed at once, within the 38 of
+# the enterprise's 50 that ourostack's pull requests may use (12 stay for main, merge queues and spoonjoy).
+# Main and dispatch runs are never laned: each job's group there is its own (run id, attempt, shard).
+# A newer push still cancels its pull request's older run, including its jobs waiting in a lane. A lane job's
+# timeout counts from when it starts, so waiting in a lane doesn't spend it; a shard holding a lane while it waits
+# for its own build does hold up the jobs queued behind it. scripts/ci-lanes.py checks all of this.
+
 # The shards and the unit job read this run's jobs and artifacts to wait for the build (.github/actions/await-build).
 permissions:
   contents: read
@@ -203,6 +218,10 @@ jobs:
         run: |
           python3 -I scripts/ci-shards.py --selftest
           python3 -I scripts/ci-shards.py check --expect scripts/ci-shards.expect
+      - name: Every pull-request macOS job waits in a lane, within the budget (gatefold#286)
+        run: |
+          python3 -I scripts/ci-lanes.py --selftest
+          python3 -I scripts/ci-lanes.py check
 
   # UI tests run in shards, each on its own runner (.github/workflows/ui-tests.yml). A shard starts with the run, or
   # when its matrix has a free slot: it boots its new simulator (alongside `build`, when it starts with the run), then
@@ -236,6 +255,7 @@ jobs:
             pr_tests: none
             cold: false
             timeout: 36 # 12 + 2 x 5.8 + 12
+            lane: 16
           - shard: ipad-place-numbers
             # 303
             tests: >-
@@ -244,6 +264,7 @@ jobs:
             pr_tests: none
             cold: false
             timeout: 36 # 12 + 2 x 5.5 + 12
+            lane: 15
           - shard: ipad-place-loading
             # 264 + 68
             tests: >-
@@ -252,6 +273,7 @@ jobs:
             pr_tests: none
             cold: false
             timeout: 38 # 12 + 2 x 7.0 + 12
+            lane: 18
           - shard: ipad-place-jumps
             # 180 + 165
             tests: >-
@@ -260,6 +282,7 @@ jobs:
             pr_tests: none
             cold: false
             timeout: 39 # 12 + 2 x 7.5 + 12
+            lane: 14
           - shard: ipad-place-shelf
             # 155 + 155
             tests: >-
@@ -268,6 +291,7 @@ jobs:
             pr_tests: none
             cold: false
             timeout: 39 # 12 + 2 x 7.4 + 12
+            lane: 16
           - shard: ipad-place-counting
             # The catch-all for new placeholder tests: 85 + 40
             tests: >-
@@ -277,6 +301,7 @@ jobs:
             pr_tests: none
             cold: false
             timeout: 30 # 12 + 2 x 2.8 + 12
+            lane: 16
           - shard: ipad-place-rest
             # The catch-all for new place tests: 130 + 124 + 94
             tests: >-
@@ -286,6 +311,7 @@ jobs:
             pr_tests: none
             cold: false
             timeout: 39 # 12 + 2 x 7.2 + 12
+            lane: 15
           - shard: ipad-rotate-contents
             # Rotation, on this job's new iPad: 204
             tests: >-
@@ -294,6 +320,7 @@ jobs:
             pr_tests: none
             cold: true
             timeout: 36 # 12 + 2 x 5.7 + 12
+            lane: 11
           - shard: ipad-rotate-midturn
             # Rotation: 182 + 160, then on main the rotate-then-leave repro, 545, after the mid-turn tests as #167 runs
             # it. On today's main the repro passes with #176's fix taken out in every order tried (#193), so never give
@@ -310,6 +337,7 @@ jobs:
             pr_when: place-jumps
             cold: true
             timeout: 61 # 12 + 2 x 18.1 + 12
+            lane: 6
           - shard: ipad-rotate-stalled
             # Main only: 470 (#266's probe 43110085155, the slowest of 3 passes)
             tests: >-
@@ -322,6 +350,7 @@ jobs:
             pr_tests: none
             cold: true
             timeout: 40 # 12 + 2 x 7.8 + 12
+            lane: 9
           - shard: ipad-rotate-restore
             # Main only: #133's leave-while-the-restore-waits pair, out of ipad-rotate-stalled, which they
             # overran (stopped 19 min 58 s in on #256 and 21 min 58 s in on #195). Without sleeps (#266): 463 + 327,
@@ -332,6 +361,7 @@ jobs:
             pr_tests: none
             cold: true
             timeout: 51 # 12 + 2 x 13.2 + 12
+            lane: 7
           - shard: ipad-rotate-chapter-start
             # Main only, like ipad-rotate-stalled (gatefold#250)
             tests: >-
@@ -340,6 +370,7 @@ jobs:
             pr_tests: none
             cold: true
             timeout: 36 # 12 + 2 x 5.8 + 12
+            lane: 17
     uses: ./.github/workflows/ui-tests.yml
     with:
       device: "iPad Pro 13-inch"
@@ -354,6 +385,7 @@ jobs:
       full: ${{ needs.changes.outputs.full }}
       cold: ${{ matrix.cold }}
       timeout: ${{ matrix.timeout }}
+      lane: ${{ matrix.lane }}
 
   ipad-undo:
     name: iPad undo shard (${{ matrix.shard }})
@@ -372,6 +404,7 @@ jobs:
             pr_tests: none
             cold: false
             timeout: 38 # 12 + 2 x 6.8 + 12
+            lane: 13
           - shard: ipad-undo-chapter
             # 173 + 127
             tests: >-
@@ -380,6 +413,7 @@ jobs:
             pr_tests: none
             cold: false
             timeout: 37 # 12 + 2 x 6.5 + 12
+            lane: 14
           - shard: ipad-undo-edge
             # 128 + 110
             tests: >-
@@ -393,6 +427,7 @@ jobs:
             pr_when: place-undo
             cold: false
             timeout: 34 # 12 + 2 x 4.8 + 12
+            lane: 3
           - shard: ipad-undo-rest
             # The catch-all for new undo tests: 94, and the spread's left edge
             tests: >-
@@ -402,6 +437,7 @@ jobs:
             pr_tests: none
             cold: false
             timeout: 33 # 12 + 2 x 4.4 + 12
+            lane: 15
     uses: ./.github/workflows/ui-tests.yml
     with:
       device: "iPad Pro 13-inch"
@@ -416,6 +452,7 @@ jobs:
       full: ${{ needs.changes.outputs.full }}
       cold: ${{ matrix.cold }}
       timeout: ${{ matrix.timeout }}
+      lane: ${{ matrix.lane }}
 
   ipad-taps:
     name: iPad taps shard (${{ matrix.shard }})
@@ -439,6 +476,7 @@ jobs:
             pr_when: taps
             cold: false
             timeout: 41 # 12 + 2 x 8.2 + 12
+            lane: 10
           - shard: ipad-taps-rest
             # The catch-all for new Fine-Tune tests: 183
             tests: >-
@@ -448,6 +486,7 @@ jobs:
             pr_tests: none
             cold: false
             timeout: 33 # 12 + 2 x 4.3 + 12
+            lane: 2
           - shard: ipad-taps-furniture
             # 130 + 129 + 86
             tests: >-
@@ -456,6 +495,7 @@ jobs:
             pr_tests: none
             cold: false
             timeout: 38 # 12 + 2 x 6.5 + 12
+            lane: 18
           - shard: ipad-taps-portrait
             # Main only, every tap, one switch each (#200): 168 + 135
             tests: >-
@@ -464,6 +504,7 @@ jobs:
             pr_tests: none
             cold: false
             timeout: 35 # 12 + 2 x 5.1 + 12
+            lane: 6
           - shard: ipad-taps-portrait-more
             # Main only, every tap (#200): 120 + 129 + 149
             tests: >-
@@ -472,6 +513,7 @@ jobs:
             pr_tests: none
             cold: false
             timeout: 38 # 12 + 2 x 6.6 + 12
+            lane: 12
           - shard: ipad-taps-landscape
             # Main only, every tap (#200): 295
             tests: >-
@@ -480,6 +522,7 @@ jobs:
             pr_tests: none
             cold: false
             timeout: 34 # 12 + 2 x 4.9 + 12
+            lane: 4
           - shard: ipad-taps-landscape-more
             # Main only, every tap (#200): 165 + 146
             tests: >-
@@ -488,6 +531,7 @@ jobs:
             pr_tests: none
             cold: false
             timeout: 35 # 12 + 2 x 5.2 + 12
+            lane: 8
     uses: ./.github/workflows/ui-tests.yml
     with:
       device: "iPad Pro 13-inch"
@@ -502,6 +546,7 @@ jobs:
       full: ${{ needs.changes.outputs.full }}
       cold: ${{ matrix.cold }}
       timeout: ${{ matrix.timeout }}
+      lane: ${{ matrix.lane }}
 
   ipad-reviewer:
     name: iPad reviewer shard (${{ matrix.shard }})
@@ -524,6 +569,7 @@ jobs:
             pr_when: smoke
             cold: false
             timeout: 39 # 12 + 2 x 7.3 + 12
+            lane: 17
           - shard: ipad-reviewer-controls
             # Main only: 1481
             tests: >-
@@ -532,6 +578,7 @@ jobs:
             pr_tests: none
             cold: false
             timeout: 90 # 12 + 2 x 32.8 + 12
+            lane: 1
           - shard: ipad-reviewer-numbers
             # Main only: 926
             tests: >-
@@ -540,6 +587,7 @@ jobs:
             pr_tests: none
             cold: false
             timeout: 66 # 12 + 2 x 20.6 + 12
+            lane: 5
           - shard: ipad-reviewer-spread
             # Main only: 358 + 99
             tests: >-
@@ -548,6 +596,7 @@ jobs:
             pr_tests: none
             cold: false
             timeout: 48 # 12 + 2 x 12.0 + 12
+            lane: 8
           - shard: ipad-reviewer-rest
             # Main only, the catch-all for new reviewer checks: 842 + 88
             tests: >-
@@ -557,6 +606,7 @@ jobs:
             pr_tests: none
             cold: false
             timeout: 74 # 12 + 2 x 24.8 + 12
+            lane: 2
     uses: ./.github/workflows/ui-tests.yml
     with:
       device: "iPad Pro 13-inch"
@@ -572,6 +622,7 @@ jobs:
       cold: ${{ matrix.cold }}
       # A smoke shard that also runs the classes this pull request edits gets 90 min, whatever their length.
       timeout: ${{ matrix.pr_when == 'smoke' && needs.changes.outputs.edited-ipad != '' && 90 || matrix.timeout }}
+      lane: ${{ matrix.lane }}
 
   duo:
     name: Duo shard (${{ matrix.shard }})
@@ -590,6 +641,7 @@ jobs:
             pr_tests: none
             cold: false
             timeout: 40 # 12 + 2 x 7.7 + 12
+            lane: 11
           - shard: duo-taps-quick
             # 176 + 64
             tests: >-
@@ -598,6 +650,7 @@ jobs:
             pr_tests: none
             cold: false
             timeout: 35 # 12 + 2 x 5.3 + 12
+            lane: 9
           - shard: duo-taps-rest
             # The catch-all for new Fine-Tune tests: 133, and the landscape every-tap test, which skips on the Duo
             tests: >-
@@ -607,6 +660,7 @@ jobs:
             pr_tests: none
             cold: false
             timeout: 34 # 12 + 2 x 4.5 + 12
+            lane: 7
           - shard: duo-position
             # 151 + 137
             tests: >-
@@ -615,6 +669,7 @@ jobs:
             pr_tests: none
             cold: false
             timeout: 39 # 12 + 2 x 7.0 + 12
+            lane: 13
           - shard: duo-position-rest
             # The catch-all for new position tests: 66, rotation and posture
             tests: >-
@@ -624,6 +679,7 @@ jobs:
             pr_tests: none
             cold: false
             timeout: 35 # 12 + 2 x 5.5 + 12
+            lane: 10
           - shard: duo-pagenumber
             # A page a turn, and a reopen keeps the numbers: 295
             tests: >-
@@ -636,6 +692,7 @@ jobs:
             pr_when: smoke
             cold: false
             timeout: 39 # 12 + 2 x 7.3 + 12
+            lane: 12
           - shard: duo-turnback
             # The folded Duo's turn checks (#61): within 12 reads and 24 looks, a TURNWAIT line each: 120 + 99
             tests: >-
@@ -644,6 +701,7 @@ jobs:
             pr_tests: none
             cold: false
             timeout: 34 # 12 + 2 x 4.9 + 12
+            lane: 5
           - shard: duo-reviewer-reopen
             # Main only: 791
             tests: >-
@@ -652,6 +710,7 @@ jobs:
             pr_tests: none
             cold: false
             timeout: 67 # 12 + 2 x 21.4 + 12
+            lane: 4
           - shard: duo-reviewer-rest
             # Main only, the catch-all for new reviewer checks: 964 + 204 (the default spread skips on the Duo)
             tests: >-
@@ -661,6 +720,7 @@ jobs:
             pr_tests: none
             cold: false
             timeout: 71 # 12 + 2 x 23.2 + 12
+            lane: 3
     uses: ./.github/workflows/ui-tests.yml
     with:
       device: "iPhone Duo"
@@ -676,6 +736,7 @@ jobs:
       cold: ${{ matrix.cold }}
       # A smoke shard that also runs the classes this pull request edits gets 90 min, whatever their length.
       timeout: ${{ matrix.pr_when == 'smoke' && needs.changes.outputs.edited-duo != '' && 90 || matrix.timeout }}
+      lane: ${{ matrix.lane }}
 
   ipad-place-gate:
     # The required check for the iPad's place: green when every shard passed, or when only Markdown changed (gatefold#42).
@@ -773,6 +834,13 @@ jobs:
     needs: changes
     if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
     runs-on: xcode-27
+    # PR lane (gatefold#286): see "macOS lanes" at the top of app.yml. Never cancel-in-progress.
+    concurrency:
+      group: >-
+        ${{ github.event_name == 'pull_request'
+        && format('gatefold-macos-pr-lane-release-{0}', (endsWith(format('{0}', github.event.pull_request.number), '1') || endsWith(format('{0}', github.event.pull_request.number), '4') || endsWith(format('{0}', github.event.pull_request.number), '7')) && '1' || (endsWith(format('{0}', github.event.pull_request.number), '2') || endsWith(format('{0}', github.event.pull_request.number), '5') || endsWith(format('{0}', github.event.pull_request.number), '8')) && '2' || '0')
+        || format('app-release-{0}-{1}', github.run_id, github.run_attempt) }}
+      queue: max
     # Up to 27 min measured in the old `app` job (Metal 5.1, xcodegen 4.4, Release build 16.6, and the setup;
     # runs 42570370853 to 42675099629): / 0.7 keeps 30% headroom.
     timeout-minutes: 39
@@ -822,6 +890,13 @@ jobs:
     needs: changes
     if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
     runs-on: xcode-27
+    # PR lane (gatefold#286): see "macOS lanes" at the top of app.yml. Never cancel-in-progress.
+    concurrency:
+      group: >-
+        ${{ github.event_name == 'pull_request'
+        && format('gatefold-macos-pr-lane-unit-{0}', (endsWith(format('{0}', github.event.pull_request.number), '1') || endsWith(format('{0}', github.event.pull_request.number), '4') || endsWith(format('{0}', github.event.pull_request.number), '7')) && '1' || (endsWith(format('{0}', github.event.pull_request.number), '2') || endsWith(format('{0}', github.event.pull_request.number), '5') || endsWith(format('{0}', github.event.pull_request.number), '8')) && '2' || '0')
+        || format('app-unit-{0}-{1}', github.run_id, github.run_attempt) }}
+      queue: max
     # The shards' formula: 12 min of setup (the boot and the wait for the build), twice the slowest green unit step
     # (7.8 min, run 42746464846; median 4.8 on main), and 12 for the logs after the tests (gatefold#141).
     timeout-minutes: 40
