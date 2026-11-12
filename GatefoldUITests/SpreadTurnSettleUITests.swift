@@ -31,8 +31,12 @@ final class SpreadTurnSettleUITests: XCTestCase {
         let turns: [(String, CGFloat)] = [("forward", 0.95), ("forward", 0.95), ("forward", 0.95), ("back", 0.05), ("back", 0.05)]
         for (i, (way, x)) in turns.enumerated() {
             page.coordinate(withNormalizedOffset: CGVector(dx: x, dy: 0.5)).tap()
-            XCTAssertTrue(XCTWaiter.wait(for: [expectation(for: NSPredicate(format: "label BEGINSWITH 'settle \(i + 1) '"), evaluatedWith: settle)], timeout: 30) == .completed,
-                          "turn \(i + 1) (\(way)) was watched: \(settle.label)")
+            // Judged in reads, never in seconds (#77). On CI's iPad one read of the label took up to 20 s, so the
+            // 30 s waiter it replaces got one read, started before the report, and failed with the report already
+            // on the label ("settle 1 frames 10 worst 0 pt").
+            let watched = readsUntil(reads: Self.settleReads) { settle.exists && settle.label.hasPrefix("settle \(i + 1) ") }
+            print("SETTLE turn \(i + 1) (\(way)) watched=\(watched.ok) after \(watched.reads) reads")
+            XCTAssertTrue(watched.ok, "turn \(i + 1) (\(way)) was watched within \(Self.settleReads) reads: \(settle.label)")
             let words = settle.label.split(separator: " ")
             let frames = Int(words[3]) ?? 0, worst = Int(words[5]) ?? 999
             let shot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
@@ -43,6 +47,28 @@ final class SpreadTurnSettleUITests: XCTestCase {
             XCTAssertLessThanOrEqual(worst, 2, "turn \(i + 1) (\(way)): the outer page never strays from its rest (\(settle.label))")
             sleep(1)
         }
+    }
+
+    /// The reads a turn's settle report may take. Each read waits at least 0.1 s, so a fast runner gets at least the
+    /// 30 s the old waiter gave; a slow one gets as many reads, however long each takes.
+    private static let settleReads = 300
+
+    /// As PlaceUndoUITests: the hang guard (`HangGuard`, sized from `reads`, ended before the step) ends only a hang,
+    /// and after one hang every later wait answers at once, not done, so the test ends with its own failure.
+    private var hung = false
+    private func readsUntil(reads: Int, _ done: () -> Bool) -> (ok: Bool, reads: Int) {
+        if hung { return (false, 0) }
+        let guardEnds = Date().addingTimeInterval(HangGuard.seconds(reads: reads))
+        for read in 1...reads {
+            if done() { return (true, read) }
+            if Date() > guardEnds {
+                hung = true
+                XCTFail("hang: a wait ran \(read) of its \(reads) reads past its hang guard")
+                return (false, read)
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        }
+        return (false, reads)
     }
 
     /// The default spread as a new reader first sees it (no size, margin or theme chosen): kept as a
