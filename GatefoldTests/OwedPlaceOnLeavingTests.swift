@@ -241,12 +241,44 @@ final class UnreportedJumpPage: ReaderPage {
         #expect(!model.placeOwed, "the jump's report left the leave's debt standing")
         model.close()
     }
+
+    /// The same inactive leave, with the jump's own report arriving while the leave still writes its
+    /// target (held in its wait): the report is his page and its words, never dropped as already kept,
+    /// and the target written after it never replaces them.
+    @Test func theJumpsOwnReportDuringTheInactiveLeavesWriteKeepsHisWords() async throws {
+        let (app, model, page) = try await open("scrub-leave-race")
+        await model.go(toProgression: 0.43, rememberBack: true)
+        let target = try #require(page.sent.last, "the jump went out")
+        let gate = LeaveGate()
+        model.placeWriteWait = { await gate.wait() }
+        let owed = try #require(model.owedPlaceOnLeaving(), "leaving owed no place")
+        model.keepShownPageNow(owed)
+        let leave = Task { await model.keepOwedPlace(owed) }
+        for _ in 0..<200 where await gate.waiters < 1 { await Task.yield() }
+        #expect(await gate.waiters == 1, "the leave's write reached its wait")
+
+        // The chapter loads and Readium reports the jump's page while the leave's write waits.
+        page.words = "stand-in-words-of-the-jumped-page"
+        page.currentLocation = target
+        let report = Task { await model.locationDidChange(target) }
+        for _ in 0..<400 where await gate.waiters < 2 { await Task.yield() }
+        #expect(await gate.waiters == 2, "the jump's report was dropped as already kept")
+        await gate.open()
+        await leave.value
+        await report.value
+        for _ in 0..<200 where savedPlace(app)?.text.highlight == nil { try await Task.sleep(for: .milliseconds(25)) }
+        let saved = try #require(savedPlace(app))
+        #expect(saved.text.highlight != nil, "his page's words were lost to the target the leave wrote")
+        #expect(saved.locations.progression == target.locations.progression)
+        model.close()
+    }
 }
 
 /// A wait that holds until it is opened.
 actor LeaveGate {
     private var isOpen = false
     private var waiting: [CheckedContinuation<Void, Never>] = []
+    var waiters: Int { waiting.count }
     func wait() async {
         if isOpen { return }
         await withCheckedContinuation { waiting.append($0) }

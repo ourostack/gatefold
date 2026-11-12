@@ -1636,7 +1636,9 @@ final class ReaderModel {
         // The shown page's write took its move when it was written (`keepShownPageNow`), not now.
         let movesAtWrite = shown ? (shownLeaveWrite?.move ?? moves) : moves
         if shown { await mapShownPagePosition(here) } else {
+            if jumpOwed { leaveWriteMove = moves }
             await locationDidChange(here, hisMove: true, placeOnly: true, leaving: true)
+            if jumpOwed { leaveWriteMove = nil }
         }
         // The restore settled during that wait: its write-back may have gone first, so this one follows it.
         if shown, !isClosed, keeper.reflowing == nil, moves == movesAtWrite, !touchedSinceLocation, let words = anchorLocator {
@@ -1911,6 +1913,8 @@ final class ReaderModel {
     @ObservationIgnored private var jumpOnItsWay: (Locator, Int)?
     /// A jump of his to a place is being sent to the page (a UI test's `-GatefoldHoldJumpSends` holds it).
     @ObservationIgnored private(set) var isJumpingToPlace = false
+    /// The move whose jump target a leave is writing (`keepOwedPlace`), while that write waits.
+    @ObservationIgnored private var leaveWriteMove: Int?
     /// The latest report of the claimed move that was dropped for the claim.
     @ObservationIgnored private var contestingReport: Locator?
     /// Set when a reflow ends (or an owed place is kept) and cleared by a move of his, or a report his
@@ -2024,7 +2028,10 @@ final class ReaderModel {
         // A report dropped for a claim may be the real place (a two-step jump names its file's start,
         // then the place): the claimant then keeps whichever of the two the page on screen holds.
         if claimedByEarlier { contestingReport = locator }
-        let alreadyKept = (moves == recordedMoves && !hisMove) || claimedByEarlier
+        // A leave still writing a jump's target (gatefold#279) hasn't kept the move: the jump's own report,
+        // arriving during that write's waits, is his page with its words, and it writes.
+        let leaveWriting = leaveWriteMove == moves && !leaving
+        let alreadyKept = (moves == recordedMoves && !hisMove && !leaveWriting) || claimedByEarlier
         let touchedAtReport = touchedSinceLocation
         let readerMoved = (!layoutOnly && !alreadyKept) || touchedAtReport
         // The move this report was judged for. Its reads below can outlast a jump (a report of the book's
@@ -2123,7 +2130,7 @@ final class ReaderModel {
         // Asked again here, after the waits above: a second report that arrived while this one captured
         // its words found the move not yet kept, and both wrote (build 20's loop saved two places for one
         // jump, 0.3 s apart, from one reader).
-        let keptMeanwhile = moves == recordedMoves && !hisMove && !touchedAtReport
+        let keptMeanwhile = moves == recordedMoves && !hisMove && !touchedAtReport && !leaveWriting
         guard hasMoved, readerMoved, !keptMeanwhile, !fromLayout, !isWarming else {
             // No write: the move is the next report's to keep, from now, not after the wait below.
             if let claim, claimedMove == claim { claimedMove = nil }
@@ -2159,8 +2166,15 @@ final class ReaderModel {
         }
         if let json = try? here.jsonString() {
             let now = Date()
+            let recordsBefore = placeRecords
             await placeWriteWait()
             let exact = await mapper?.position(for: BookLocation(here), at: now)
+            // The jump's target written as he left gives way to the jump's own report, written meanwhile:
+            // that one is his page, with its words (gatefold#279).
+            if leaving, leaveWriteMove == keeping, placeRecords != recordsBefore {
+                readerLog.notice("place write [r\(self.readerNumber, privacy: .public)]: the jump's own report was written while its target was; target not written")
+                return refreshBookmarkState(await page?.visibleRange())
+            }
             // A newer move kept during those waits owns the place: this write, resumed after it, would land
             // over it (#46 at c4c3b6a: the Contents jump's write landed after Back's and kept the jump's page).
             guard newestWrittenMove == keeping else {
