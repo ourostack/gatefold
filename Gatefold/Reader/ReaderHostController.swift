@@ -825,6 +825,15 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             self.settleReflowSoon()
         }
     }
+    func endReflowForSwap() {
+        settledGeneration = reflowGeneration
+        reflowRetries = 0
+        // A restore still placing his words was measuring the retired page: it stops at its next look
+        // (he tapped, so its move is stale), and the landing's own settle mustn't wait on it.
+        placingGeneration = -1
+        showPageAsItIs()
+    }
+
     /// A restore he overtook (he turned or jumped while it ran, the 12 s watchdog's retry on a page it had
     /// shown him among them): it ends where his move left the page, never bringing the old place back, and
     /// his page becomes the anchor again.
@@ -1467,6 +1476,14 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         }
     }
 
+    func progression(ofFragment id: String) async -> Double? {
+        return await Self.onSpread {
+            let navigator = self.navigator // the one on screen now, on each try
+            _ = try await navigator.answer(ReaderJS.install)
+            return try await navigator.answer(ReaderJS.progressionOfId(id)) as? Double
+        }
+    }
+
     /// The first words on the page the reader is on.
     func currentAnchor() async -> (ReadingAnchor, Locator)? {
         await Self.onSpread { try await self.readAnchor() }
@@ -1980,6 +1997,8 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     }
     /// The jump whose veil is up, or whose old page is being pictured for one.
     private var veilJump: Int?
+    /// A jump's veil is over the page: his taps don't reach it.
+    var veilIsUp: Bool { veil != nil || jumpStarting }
 
     /// Lifts the veil of a jump that never came back (a Back freed by its count): the reader gets the
     /// page and his taps back, and the next jump puts up a veil of its own. The hung jump, if it ever
