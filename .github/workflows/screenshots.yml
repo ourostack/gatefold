@@ -135,7 +135,7 @@ jobs:
     name: Shots (${{ matrix.device }})
     needs: [plan, build]
     runs-on: xcode-27
-    timeout-minutes: 125 # the capture step (110) plus download, unpack and boot
+    timeout-minutes: 135 # the capture step (120) plus download, unpack and boot
     strategy:
       fail-fast: false
       # One device at a time per run: macOS runners are the scarce thing, and a release can wait.
@@ -186,9 +186,9 @@ jobs:
             xcrun simctl io "$UDID" enumerate | grep -iE "display|port|class|size|name" | head -40 || true
           fi
       - name: Capture every scene twice
-        # A pass is about 2 min a scene; a failed pass stops the step. Worst case for a pass that fails late:
-        # 6 scenes on the iPad, a retry each, at about 5.5 min a try (waits of 90 + 90 + 120 s, and launch).
-        timeout-minutes: 110
+        # About 2 min a scene in a pass. Worst case: the iPad's 5 scenes, each needing its retry, in both passes, at
+        # about 5.5 min a try (waits of 90 + 90 + 120 s, and launch): 110 min, with headroom.
+        timeout-minutes: 120
         run: |
           # The step's default shell is bash -e; a failed try must reach the retry, not end the step.
           set +e -uo pipefail

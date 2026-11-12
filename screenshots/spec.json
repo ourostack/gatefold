@@ -129,13 +129,15 @@
         "-GatefoldOpenBook",
         "gutenberg-pride-and-prejudice",
         "-GatefoldGoTo",
-        "0.02",
+        "0.22",
         "-GatefoldTheme",
         "daylight",
         "-GatefoldRemoteAheadAfter",
-        "12",
+        "30",
         "-GatefoldRemoteAheadTo",
-        "0.4"
+        "0.5",
+        "-GatefoldOfferFoldSeconds",
+        "600"
       ],
       "ready": {
         "id": "banner.jump",
@@ -160,7 +162,7 @@
       ],
       "ready": {
         "id": "library.syncHealth",
-        "label_contains": "In step",
+        "label_contains": "In step with your e-reader · just now",
         "type": "any"
       },
       "bg": "paper",

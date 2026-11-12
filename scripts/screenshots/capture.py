@@ -228,8 +228,11 @@ def selftest():
     # A scene opens its book past the fake Cloud's place for it, so no "read on without you" offer can turn up
     # mid-capture (it did, once, over the spread: two passes, two pictures).
     for s in spec["scenes"]:
-        if "-GatefoldOpenBook" not in s["args"] or "-GatefoldRemoteAheadAfter" in s["args"]:
-            continue  # the catch-up scene wants the offer
+        if "-GatefoldRemoteAheadAfter" in s["args"]:
+            # The catch-up offer stays open while the host shoots (it folds into its tab after 10 s by default).
+            assert "-GatefoldOfferFoldSeconds" in s["args"], f"{s['id']}: hold the offer open with -GatefoldOfferFoldSeconds"
+        if "-GatefoldOpenBook" not in s["args"]:
+            continue
         book = s["args"][s["args"].index("-GatefoldOpenBook") + 1].split("gutenberg-", 1)[1]
         at = float(s["args"][s["args"].index("-GatefoldGoTo") + 1])
         m = re.search(rf'resource: "{re.escape(book)}".*?remoteProgression: (nil|[0-9.]+)', seeds)

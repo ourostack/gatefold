@@ -92,7 +92,8 @@ final class ListingShotsUITests: XCTestCase {
     /// Wherever the app speaks of the reader's device (the sync line and slip, the catch-up offer and its tab, a
     /// highlight's source), it says "your e-reader" (gatefold#253); a listing never shows a trademark. One query for all.
     private func noTrademarkOnScreen(_ app: XCUIApplication, _ id: String) -> Bool {
-        let names = ["library.syncHealth", "slip", "banner", "banner.tab", "highlight.provenance"]
+        let names = ["library.syncHealth", "library.syncTrouble", "slip", "banner", "banner.tab",
+                     "highlight.provenance"]
         let marks = NSPredicate(format: "identifier IN %@ AND (label CONTAINS[c] 'inkpad' OR label CONTAINS[c] 'pocketbook')", names)
         let shown = app.descendants(matching: .any).matching(marks).firstMatch
         guard shown.exists else { return true }
