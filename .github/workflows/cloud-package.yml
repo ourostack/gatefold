@@ -23,6 +23,13 @@ jobs:
   test:
     # Newest hosted image with an Xcode that has the iOS 27 SDK. Live tests stay off (no GATEFOLD_LIVE).
     runs-on: xcode-27
+    # PR lane (gatefold#286): see "macOS lanes" at the top of app.yml. Never cancel-in-progress.
+    concurrency:
+      group: >-
+        ${{ github.event_name == 'pull_request'
+        && 'gatefold-macos-pr-lane-cloud-package-0'
+        || format('cloud-package-{0}-{1}', github.run_id, github.run_attempt) }}
+      queue: max
     timeout-minutes: 40
     defaults:
       run:
