@@ -119,6 +119,60 @@
       "subline": "Turn your iPad sideways for a two-page spread."
     },
     {
+      "id": "catch-up",
+      "devices": [
+        "ipad",
+        "iphone",
+        "duo"
+      ],
+      "args": [
+        "-GatefoldOpenBook",
+        "gutenberg-pride-and-prejudice",
+        "-GatefoldGoTo",
+        "0.22",
+        "-GatefoldTheme",
+        "daylight",
+        "-GatefoldRemoteAheadAfter",
+        "30",
+        "-GatefoldRemoteAheadTo",
+        "0.5",
+        "-GatefoldOfferFoldSeconds",
+        "600"
+      ],
+      "ready": {
+        "id": "banner.jump",
+        "type": "button"
+      },
+      "bg": "paper",
+      "headline": [
+        "Your e-reader",
+        "ran ahead?"
+      ],
+      "subline": "One tap catches you up to the page you reached on it."
+    },
+    {
+      "id": "shelf",
+      "devices": [
+        "ipad",
+        "iphone"
+      ],
+      "args": [
+        "-GatefoldTheme",
+        "daylight"
+      ],
+      "ready": {
+        "id": "library.syncHealth",
+        "label_contains": "In step with your e-reader · just now",
+        "type": "any"
+      },
+      "bg": "paper",
+      "headline": [
+        "Every book you own,",
+        "one tidy shelf"
+      ],
+      "subline": "Your cloud library, covers and all, with your place kept in each."
+    },
+    {
       "id": "page",
       "devices": [
         "iphone",
@@ -202,61 +256,6 @@
       ]
     }
   ],
-  "parked": {
-    "why": "The app names the reader's e-reader (\"In step with your InkPad\", \"Your InkPad read on without you\") wherever it shows sync, and a listing shows no third-party trademark (Guideline 2.3.7). These come back once the app's own copy names the device without it (gatefold#253).",
-    "scenes": [
-      {
-        "id": "catch-up",
-        "devices": [
-          "ipad",
-          "iphone",
-          "duo"
-        ],
-        "args": [
-          "-GatefoldOpenBook",
-          "gutenberg-pride-and-prejudice",
-          "-GatefoldGoTo",
-          "0.02",
-          "-GatefoldTheme",
-          "daylight",
-          "-GatefoldRemoteAheadAfter",
-          "8",
-          "-GatefoldRemoteAheadTo",
-          "0.1"
-        ],
-        "ready": {
-          "id": "banner.jump"
-        },
-        "bg": "paper",
-        "headline": [
-          "Your e-reader",
-          "ran ahead?"
-        ],
-        "subline": "One tap catches you up to the page you reached on it."
-      },
-      {
-        "id": "shelf",
-        "devices": [
-          "ipad",
-          "iphone"
-        ],
-        "args": [
-          "-GatefoldTheme",
-          "daylight"
-        ],
-        "ready": {
-          "id": "library.syncHealth",
-          "label_contains": "In step"
-        },
-        "bg": "paper",
-        "headline": [
-          "Every book you own,",
-          "one tidy shelf"
-        ],
-        "subline": "Your cloud library, covers and all, with your place kept in each."
-      }
-    ]
-  },
   "surfaces_plan": {
     "source": "Ari, 2026-11-11 17:30Z: \"use this thinking for ALL apps and ALL surfaces\". Planned for the PRs after the first screenshots PR; nothing here is rendered yet.",
     "app_store_connect": {

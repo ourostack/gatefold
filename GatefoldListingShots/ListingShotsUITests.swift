@@ -49,7 +49,7 @@ final class ListingShotsUITests: XCTestCase {
         let ready = scene["ready"] as? [String: String] ?? [:]
         // A query by element type and identifier, never the whole tree: the reader's web views make a whole-tree
         // snapshot slow enough to time out on a busy runner (gatefold#28).
-        let kinds: [String: XCUIElement.ElementType] = ["staticText": .staticText, "other": .other, "button": .button]
+        let kinds: [String: XCUIElement.ElementType] = ["staticText": .staticText, "other": .other, "button": .button, "any": .any]
         let kind = kinds[ready["type"] ?? ""] ?? .any
         let element = app.descendants(matching: kind).matching(identifier: ready["id"] ?? "").firstMatch
         guard element.waitForExistence(timeout: 90) else {
@@ -65,7 +65,7 @@ final class ListingShotsUITests: XCTestCase {
             guard waited == .completed else { XCTFail("\(id): \(ready["id"] ?? "?") never read as ready"); return }
         }
 
-        guard nothingNamesTheEReader(app, id) else { return }
+        guard noTrademarkOnScreen(app, id) else { return }
 
         let folder = URL(fileURLWithPath: dir)
         let handoff = "\(id).\(attempt)"
@@ -80,7 +80,7 @@ final class ListingShotsUITests: XCTestCase {
         let deadline = Date().addingTimeInterval(120)
         while Date() < deadline {
             if FileManager.default.fileExists(atPath: done.path) {
-                _ = nothingNamesTheEReader(app, id)  // and nothing turned up while the host shot
+                _ = noTrademarkOnScreen(app, id)  // and nothing turned up while the host shot
                 return
             }
             if let why = try? String(contentsOf: fail, encoding: .utf8) { XCTFail("\(id): \(why)"); return }
@@ -89,13 +89,15 @@ final class ListingShotsUITests: XCTestCase {
         XCTFail("\(id): the host took no picture within 120 s")
     }
 
-    /// The sync slip, the catch-up offer, its tab and a highlight's source all name the reader's e-reader ("InkPad"),
-    /// which a listing never shows. One query for all four, not one each.
-    private func nothingNamesTheEReader(_ app: XCUIApplication, _ id: String) -> Bool {
-        let names = ["slip", "banner", "banner.tab", "highlight.provenance"]
-        let shown = app.descendants(matching: .any).matching(NSPredicate(format: "identifier IN %@", names)).firstMatch
+    /// Wherever the app speaks of the reader's device (the sync line and slip, the catch-up offer and its tab, a
+    /// highlight's source), it says "your e-reader" (gatefold#253); a listing never shows a trademark. One query for all.
+    private func noTrademarkOnScreen(_ app: XCUIApplication, _ id: String) -> Bool {
+        let names = ["library.syncHealth", "library.syncTrouble", "slip", "banner", "banner.tab",
+                     "highlight.provenance"]
+        let marks = NSPredicate(format: "identifier IN %@ AND (label CONTAINS[c] 'inkpad' OR label CONTAINS[c] 'pocketbook')", names)
+        let shown = app.descendants(matching: .any).matching(marks).firstMatch
         guard shown.exists else { return true }
-        XCTFail("\(id): \(shown.identifier) is on screen, and it names the e-reader")
+        XCTFail("\(id): \(shown.identifier) names a trademark on screen")
         return false
     }
 }
