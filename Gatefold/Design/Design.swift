@@ -99,12 +99,19 @@ enum LaunchOptions {
     /// Tests only, with `slowRestorePage`: the page shown unsettled is noted as Readium names it and never by
     /// its words, as on a device whose page scripts wait on the stalled install too (gatefold#133).
     static var shownPageWithoutWords: Bool { isUITest && defaults.bool(forKey: "GatefoldShownPageWithoutWords") }
+    /// Tests only, with `shownPageWithoutWords`: the page shown unsettled is noted at the place his last write
+    /// kept, as when Readium reports no new location while the restore stalls (CI 43075159905, gatefold#133);
+    /// otherwise the runner's layout decides whether it is that place or the boundary before it.
+    static var shownPageAtHisPlace: Bool { shownPageWithoutWords && defaults.bool(forKey: "GatefoldShownPageAtHisPlace") }
     /// Tests only: a book opened on a place with no words opens on its chapter's start, as a reopen whose
     /// stalled restore settled there did on CI (gatefold#250); the saved place itself is unchanged.
     static var reopenOnChapterStart: Bool { isUITest && defaults.bool(forKey: "GatefoldReopenOnChapterStart") }
     /// Debug only: a jump's chapter counts as still loading (Readium's spinner up) for this many looks,
     /// so a test can hold the load open as a slow device does and watch the veil (#38).
     static var holdChapterLoadLooks: Int? { defaults.object(forKey: "GatefoldHoldChapterLoad") == nil ? nil : defaults.integer(forKey: "GatefoldHoldChapterLoad") }
+    /// UI tests only: a jump of his to a place (the scrubber) is never sent to the page, as a chapter that
+    /// never finishes loading: Readium never reports it, and he leaves on the page before (gatefold#279).
+    static var holdJumpSends: Bool { isUITest && defaults.bool(forKey: "GatefoldHoldJumpSends") }
     /// Debug only: Back's first this many sends are taken at their chapter's start, the chapter still
     /// loading meanwhile, as a web view still loading takes a jump (gatefold#170). Counted in sends, not
     /// looks, so a Back that stops sending stays short. Armed once per launch, by its first Back.
