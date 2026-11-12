@@ -250,7 +250,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         stopCounting()
         dropStandby()
         if let view = viewIfLoaded, view.window != nil, let page = navigator.viewIfLoaded,
-           let picture = page.snapshotView(afterScreenUpdates: false) {
+           let picture = closeSnapshot(of: page) {
             picture.frame = page.frame
             picture.autoresizingMask = [.flexibleWidth, .flexibleHeight]
             // A picture, not the page: VoiceOver has nothing to find on it while it leaves.
@@ -259,6 +259,14 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             closePicture = picture
         }
         Self.retire(navigator)
+    }
+
+    /// The page as it is on screen. A page not yet drawn even once has no picture to take from what is on screen,
+    /// so it is drawn for the picture (#275).
+    private func closeSnapshot(of page: UIView) -> UIView? {
+        if let picture = page.snapshotView(afterScreenUpdates: false) { return picture }
+        readerLog.notice("close: the page wasn't drawn yet; pictured after a screen update")
+        return page.snapshotView(afterScreenUpdates: true)
     }
 
     func dropStandby() {
@@ -824,6 +832,15 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             self.settleReflowSoon()
         }
     }
+    func endReflowForSwap() {
+        settledGeneration = reflowGeneration
+        reflowRetries = 0
+        // A restore still placing his words was measuring the retired page: it stops at its next look
+        // (he tapped, so its move is stale), and the landing's own settle mustn't wait on it.
+        placingGeneration = -1
+        showPageAsItIs()
+    }
+
     /// A restore he overtook (he turned or jumped while it ran, the 12 s watchdog's retry on a page it had
     /// shown him among them): it ends where his move left the page, never bringing the old place back, and
     /// his page becomes the anchor again.
@@ -945,7 +962,13 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         let visible = await laidOutRange(within: .seconds(3))
         guard current() else { return }
         var after = visible
-        let action = visible.map { model.keeper.reflowDidSettle(visible: $0) } ?? RestoreAction.none
+        var action = visible.map { model.keeper.reflowDidSettle(visible: $0) } ?? RestoreAction.none
+        // No words held: the open's saved place, if the page settled elsewhere (gatefold#250).
+        var reapplied: Locator?
+        if case .none = action, let visible, let (anchor, locator) = model.openPlaceToReapply(visible: visible) {
+            action = .jump(anchor)
+            reapplied = locator
+        }
         let held = model.keeper.anchor
         // A restore run again on a page with nothing over it (the 12 s watchdog showed the page): its jump
         // and its moves are held behind a picture of the page and shown as one change (gatefold#108).
@@ -956,7 +979,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             if holdSettlePicture() { restorePicture = settlePicture } else { noteVisibleMove("restore jump") }
         }
         if case let .jump(anchor) = action,
-           let locator = model.locator(for: anchor) {
+           let locator = reapplied ?? model.locator(for: anchor) {
             // A jump made while the book is still settling can land short of the place; try again.
             let jumpBudget = ContinuousClock.now + .seconds(4)
             for _ in 0..<3 {
@@ -966,6 +989,8 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
                 after = await laidOutRange(within: max(.zero, jumpBudget - ContinuousClock.now))
                 guard current() else { return }
                 if after?.contains(anchor) == true || ContinuousClock.now >= jumpBudget { break }
+                // The open's place is put back only while he hasn't touched the page or turned (gatefold#250).
+                if reapplied != nil, model.touchedSinceLocation || isTurning { break }
             }
         }
         // A spread keeps the reader's sentence on its left page, the page he was on.
@@ -1463,6 +1488,14 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             let navigator = self.navigator // the one on screen now, on each try
             _ = try await navigator.answer(ReaderJS.install)
             return try await navigator.answer(ReaderJS.progressionOf(quote)) as? Double
+        }
+    }
+
+    func progression(ofFragment id: String) async -> Double? {
+        return await Self.onSpread {
+            let navigator = self.navigator // the one on screen now, on each try
+            _ = try await navigator.answer(ReaderJS.install)
+            return try await navigator.answer(ReaderJS.progressionOfId(id)) as? Double
         }
     }
 
@@ -1979,6 +2012,8 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     }
     /// The jump whose veil is up, or whose old page is being pictured for one.
     private var veilJump: Int?
+    /// A jump's veil is over the page: his taps don't reach it.
+    var veilIsUp: Bool { veil != nil || jumpStarting }
 
     /// Lifts the veil of a jump that never came back (a Back freed by its count): the reader gets the
     /// page and his taps back, and the next jump puts up a veil of its own. The hung jump, if it ever
