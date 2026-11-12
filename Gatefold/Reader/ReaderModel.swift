@@ -1816,6 +1816,9 @@ final class ReaderModel {
         else { shownNotes += 1 }
         var here = here
         if note == nil, let onScreen, here.text.highlight == nil { here = pageOnScreen(here, onScreen) }
+        // The words come paired with Readium's location, the very name a note from the screen distrusts:
+        // only the words are taken, on the note's own place (gatefold#276).
+        if note != nil, let shown = shownUnsettled { here = shown.locator.copy(text: { $0 = here.text }) }
         shownUnsettled = (here, moves)
         readerLog.notice("reflow: the page shown unsettled is at \(here.locations.totalProgression ?? -1, privacy: .public)")
         return shownNotes

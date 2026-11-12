@@ -586,7 +586,8 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     /// so it answers while the page's scripts wait on a stalled restore (gatefold#276). Nil unless the web
     /// view most on screen holds that very chapter, paginated left to right.
     private func spanOnScreen(of named: Locator) -> ClosedRange<Double>? {
-        guard let host = navigator.view, publication.metadata.readingProgression != .rtl else { return nil }
+        guard let host = navigator.view, navigator.settings.readingProgression == .ltr,
+              !navigator.settings.verticalText else { return nil }
         var best: (web: WKWebView, area: CGFloat)?
         func walk(_ v: UIView) {
             if let web = v as? WKWebView {
@@ -599,12 +600,14 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         }
         walk(host)
         guard let web = best?.web, let file = web.url?.lastPathComponent, !file.isEmpty,
-              (named.href.string.components(separatedBy: "#").first ?? "").hasSuffix(file) else { return nil }
+              (named.href.string.components(separatedBy: "#").first ?? "").removingPercentEncoding?
+                .split(separator: "/").last.map(String.init) == file else { return nil }
         let scroll = web.scrollView
         let total = scroll.contentSize.width, view = scroll.bounds.width
+        let offset = scroll.contentOffset.x + scroll.adjustedContentInset.left
         guard total > 0, view > 0, total >= view else { return nil }
-        let first = max(0, min(1, scroll.contentOffset.x / total))
-        let last = max(first, min(1, (scroll.contentOffset.x + view) / total))
+        let first = max(0, min(1, offset / total))
+        let last = max(first, min(1, (offset + view) / total))
         return last > first ? Double(first)...Double(last) : nil
     }
 

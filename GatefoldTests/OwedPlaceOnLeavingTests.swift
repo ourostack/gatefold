@@ -277,13 +277,17 @@ import Testing
         let p = try #require(read.locations.progression)
         let screen = max(0, p - 0.06)...max(0, p - 0.02)
         let stale = read.copy(locations: { $0.progression = 0 }, text: { $0 = Locator.Text() })
-        try #require(model.reflowShownUnsettled(stale, onScreen: screen) != nil)
+        let note = try #require(model.reflowShownUnsettled(stale, onScreen: screen))
+        // The page's words come paired with Readium's stale name: only the words are taken.
+        let named = stale.copy(text: { $0 = Locator.Text(highlight: "stand-in words of the page on screen") })
+        try #require(model.reflowShownUnsettled(named, wordsFor: note) != nil, "the words noted for the page shown")
         model.close()
         let left = try #require(saved(), "leaving kept no place")
         let at = try #require(left.locations.progression)
         #expect(left.href.string == read.href.string)
         #expect(at > screen.lowerBound && at < screen.upperBound,
                 "kept at in-file \(at), not on the page on screen (\(screen.lowerBound)..\(screen.upperBound))")
+        #expect(left.text.highlight == named.text.highlight, "the page's words weren't kept with it")
         let total = try #require(left.locations.totalProgression)
         #expect(total > 0 && total < (read.locations.totalProgression ?? 0),
                 "its total progression \(total) isn't the page on screen's, before his page")
