@@ -125,8 +125,10 @@ final class RotationRepro: XCTestCase {
     }
 
     /// The same, with each reopen landing on the chapter's start (`-GatefoldReopenOnChapterStart`), as a
-    /// reopen whose stalled restore settled there did on CI (gatefold#250, round 3 of run 43047479324): the
-    /// saved place has no words, so only the open's own place can bring him back to his page.
+    /// reopen whose stalled restore settled there did on CI (gatefold#250, round 3 of run 43047479324): where
+    /// the saved place has no words, only the open's own place can bring him back to his page. On a layout
+    /// where the stalled page is his kept place, the leave keeps his words instead (gatefold#133), and this
+    /// test shares WithoutItsWords' red under gatefold#276.
     func testRotateThenLeaveWithoutItsWordsAndReopenOnTheChapterStart() throws {
         try rotateThenLeave(extra: ["-GatefoldSlowRestorePage", "YES", "-GatefoldShownPageWithoutWords", "YES"],
                             reopenExtra: ["-GatefoldReopenOnChapterStart", "YES"])
