@@ -140,8 +140,9 @@
         "600"
       ],
       "ready": {
-        "id": "banner.jump",
-        "type": "button"
+        "id": "reader.aheadCount",
+        "type": "staticText",
+        "label": "counted"
       },
       "bg": "paper",
       "headline": [
