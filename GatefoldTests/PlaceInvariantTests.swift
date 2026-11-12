@@ -1041,9 +1041,9 @@ import Testing
         let second = Task { await f.model.go(toProgression: 0.5, rememberBack: true) }
         await Self.settle { f.model.jumpsPastTheVeil == 2 }
         try #require(f.model.jumpsPastTheVeil == 2, "the jumps weren't both past the veil's limit")
-        // The next write (the first jump's late report) is held before it maps its position. The page
-        // can't be measured, so that write keeps its own report (0.7) rather than taking the second
-        // jump's as the page on screen: only the write order can stop it.
+        // The next write (the first jump's late report) is held before it maps its position. It keeps its
+        // own report (0.7): nothing contests it yet, and the page can't be measured, so it never takes the
+        // second jump's page as the one on screen. Only the write order can stop it.
         f.page.pageUnmeasured = true
         final class Gate { var armed = true; var calls = 0; var held: CheckedContinuation<Void, Never>? }
         let gate = Gate()
@@ -1056,9 +1056,14 @@ import Testing
         }
         f.page.loadingChapter = false
         f.page.holdsJumps = false
-        f.page.releaseJumps()
+        // Only the first jump's load comes in, so the write held is its late report's: the second is still
+        // out. Released together, either can resume first (the newest first is the next test's order).
+        try #require(f.page.heldJumps == 2, "both jumps weren't still out (\(f.page.heldJumps) held)")
+        f.page.releaseOldestJump()
         for _ in 0..<10_000 where gate.held == nil { await Task.yield() }
         try #require(gate.held != nil, "the late report's write was never on its way")
+        try #require(gate.calls == 1 && f.page.heldJumps == 1, "the held write isn't the late report's (\(gate.calls) writes, \(f.page.heldJumps) jumps out)")
+        f.page.releaseJumps()
         // Bounded, never awaited: if the held write were the newest jump's own, waiting on it would hang.
         await Self.settle { abs((Self.kept(f) ?? -1) - 0.5) < 0.03 }
         let keptBeforeRelease = Self.kept(f) ?? -1
@@ -1083,6 +1088,98 @@ import Testing
         await Self.settle { abs((Self.kept(f) ?? -1) - 0.5) >= 0.03 }
         #expect(abs((f.page.currentLocation?.locations.totalProgression ?? -1) - 0.5) < 0.03, "the second jump's page didn't stand")
         #expect(abs((Self.kept(f) ?? -1) - 0.5) < 0.03, "the slow late write kept \(Self.kept(f) ?? -1) over the second jump")
+    }
+
+    /// The same two jumps, the newest one's load back first: its report's write is slow, and the overtaken
+    /// jump lands meanwhile, before the newest is back. The newest jump, back onto that late page, sends its
+    /// own again and that is kept (at bc8243d the late page stood and was kept as his place). `late` 0.5003:
+    /// the overtaken jump lands on the newest one's page, which is his as it is, and nothing is sent again.
+    @Test(arguments: [0.7, 0.5003]) func aLateLandingWhileTheNewestJumpsWriteIsSlowGoesBackToTheNewestPage(late: Double) async throws {
+        let f = try await S.make(remote: { _, _ in nil }, startAt: 0.05, jumpBeat: { await Task.yield() })
+        await f.model.load()
+        await f.model.locationDidChange(try #require(f.page.currentLocation))
+        f.page.reportsBeforeReturn = true
+        f.page.holdsJumps = true
+        f.page.loadingChapter = true
+        let first = Task { await f.model.go(toProgression: late, rememberBack: true) }
+        await Self.settle { f.model.jumpsPastTheVeil == 1 }
+        let second = Task { await f.model.go(toProgression: 0.5, rememberBack: true) }
+        await Self.settle { f.model.jumpsPastTheVeil == 2 }
+        try #require(f.model.jumpsPastTheVeil == 2, "the jumps weren't both past the veil's limit")
+        final class Gate { var armed = true; var calls = 0; var held: CheckedContinuation<Void, Never>? }
+        let gate = Gate()
+        defer { gate.held?.resume(); f.model.close() }
+        f.model.placeWriteWait = {
+            gate.calls += 1
+            guard gate.armed else { return }
+            gate.armed = false
+            await withCheckedContinuation { gate.held = $0 }
+        }
+        f.page.loadingChapter = false
+        f.page.holdsJumps = false
+        try #require(f.page.heldJumps == 2, "both jumps weren't still out (\(f.page.heldJumps) held)")
+        // The newest jump's load comes in alone: its report's write is the one held.
+        f.page.releaseNewestJump()
+        for _ in 0..<10_000 where gate.held == nil { await Task.yield() }
+        try #require(gate.held != nil && gate.calls == 1 && f.page.heldJumps == 1, "the newest jump's report's write was never held (\(gate.calls) writes, \(f.page.heldJumps) jumps out)")
+        // The overtaken jump lands while that write is held, the newest jump not yet back: it is done before
+        // the newest one returns, and its late page is on screen.
+        f.page.releaseJumps()
+        await first.value
+        try #require(gate.held != nil && gate.calls == 1, "the newest jump's write wasn't still held when the overtaken one was done (\(gate.calls) writes)")
+        try #require(abs((f.page.currentLocation?.locations.totalProgression ?? -1) - late) < 0.001, "the overtaken jump's late page isn't on screen")
+        let putBackBefore = f.model.jumpsPutBack
+        gate.held?.resume()
+        gate.held = nil
+        await second.value
+        #expect(f.model.jumpsPutBack == putBackBefore + (late > 0.6 ? 1 : 0), "the newest jump's own page was sent again \(f.model.jumpsPutBack - putBackBefore) times")
+        #expect(abs((f.page.currentLocation?.locations.totalProgression ?? -1) - 0.5) < 0.03, "the overtaken jump's late page stood over the newest jump's")
+        #expect(abs((Self.kept(f) ?? -1) - 0.5) < 0.03, "the place kept isn't the newest jump's: \(Self.kept(f) ?? -1)")
+    }
+
+    /// Three jumps past the veil's limit, the oldest one's late report written slowly while the newest is
+    /// still out, and the middle one back before the newest: the newest jump's page stands and is kept,
+    /// never the oldest's late report (gatefold#195 review).
+    @Test func threeJumpsPastTheVeilKeepTheNewestOverAnOldLateReport() async throws {
+        let f = try await S.make(remote: { _, _ in nil }, startAt: 0.05, jumpBeat: { await Task.yield() })
+        await f.model.load()
+        await f.model.locationDidChange(try #require(f.page.currentLocation))
+        f.page.reportsBeforeReturn = true
+        f.page.holdsJumps = true
+        f.page.loadingChapter = true
+        let a = Task { await f.model.go(toProgression: 0.7, rememberBack: true) }
+        await Self.settle { f.model.jumpsPastTheVeil == 1 }
+        let b = Task { await f.model.go(toProgression: 0.3, rememberBack: true) }
+        await Self.settle { f.model.jumpsPastTheVeil == 2 }
+        let c = Task { await f.model.go(toProgression: 0.5, rememberBack: true) }
+        await Self.settle { f.model.jumpsPastTheVeil == 3 }
+        try #require(f.model.jumpsPastTheVeil == 3 && f.page.heldJumps == 3, "the jumps weren't all past the veil's limit")
+        final class Gate { var armed = true; var calls = 0; var held: CheckedContinuation<Void, Never>? }
+        let gate = Gate()
+        defer { gate.held?.resume(); f.model.close() }
+        f.model.placeWriteWait = {
+            gate.calls += 1
+            guard gate.armed else { return }
+            gate.armed = false
+            await withCheckedContinuation { gate.held = $0 }
+        }
+        f.page.loadingChapter = false
+        f.page.holdsJumps = false
+        // The oldest jump's load comes in: its late report's write is held.
+        f.page.releaseOldestJump()
+        for _ in 0..<10_000 where gate.held == nil { await Task.yield() }
+        try #require(gate.held != nil && gate.calls == 1 && f.page.heldJumps == 2, "the oldest jump's late write wasn't held (\(gate.calls) writes)")
+        // The middle one comes back while the newest is still out.
+        f.page.releaseOldestJump()
+        await b.value
+        try #require(f.page.heldJumps == 1, "the newest jump wasn't still out")
+        f.page.releaseJumps()
+        await c.value
+        gate.held?.resume()
+        gate.held = nil
+        await a.value
+        #expect(abs((f.page.currentLocation?.locations.totalProgression ?? -1) - 0.5) < 0.03, "the newest jump's page didn't stand")
+        #expect(abs((Self.kept(f) ?? -1) - 0.5) < 0.03, "the place kept isn't the newest jump's: \(Self.kept(f) ?? -1)")
     }
 
     /// A bookmark's jump ended quietly by a move of his offers no way back, as any other jump

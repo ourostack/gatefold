@@ -33,6 +33,12 @@ final class ScriptedPage: ReaderPage {
     var reportsBeforeReturn = false
     private var held: [CheckedContinuation<Void, Never>] = []
     func releaseJumps() { let h = held; held = []; h.forEach { $0.resume() } }
+    /// How many jumps (and link jumps) are held now.
+    var heldJumps: Int { held.count }
+    /// Lets only the oldest, or the newest, held jump come back. Two continuations resumed back to back
+    /// have no promised order on the main actor: a test that needs one jump back first releases it alone.
+    func releaseOldestJump() { if !held.isEmpty { held.removeFirst().resume() } }
+    func releaseNewestJump() { if !held.isEmpty { held.removeLast().resume() } }
 
     /// Jumps a loading web view takes at its file's first page, dropping the place inside it (Readium on
     /// CI's iPad: Back to a page mid-chapter opened the chapter's start, 8c5f294).

@@ -1360,6 +1360,16 @@ final class ReaderModel {
                     if let here, !self.lateLandings.contains(where: { Self.samePage($0, here) }) { self.lateLandings.append(here) }
                 }
             }
+            // The newest jump, back onto a page an overtaken jump landed on while it was out (Readium reports
+            // a jump's page before it returns, so the late one can land after the newest one's report): that
+            // page may be the late one's, not its own. Judged below, by the page on screen.
+            if watch.letGo, self.hisSteps == his, self.moves == movesAtStart, self.steps == jump, !self.isClosed,
+               self.resentTargetForMove != movesAtStart,
+               let here, self.lateLandings.contains(where: { Self.samePage($0, here) }),
+               let (target, move, _) = self.jumpOnItsWay, move == movesAtStart {
+                watch.backOnLateLanding = target
+                return
+            }
             self.landed(jump, at: here)
             // The newest jump, back after its veil let go, with no move of his since: its page is his
             // place, whatever a late report of an overtaken jump kept meanwhile (Readium can report a
@@ -1388,6 +1398,23 @@ final class ReaderModel {
         }
         watch.back = true
         if strayJump?.jump == jump { strayJump = nil }
+        if let target = watch.backOnLateLanding {
+            let range = await page?.pageRange()
+            guard hisSteps == his, moves == movesAtStart, steps == jump, !isClosed else { return jump }
+            let shown = range?.contains(ReadingAnchor(href: target.href.string, progression: target.locations.progression ?? 0, text: nil)) == true
+            if shown, let here = page?.currentLocation {
+                // Its target is on the page shown: the late jump landed on its page too. It is his.
+                landed(jump, at: here)
+                readerLog.notice("veil: jump \(jump, privacy: .public) back past its veil; its page is his place")
+                await locationDidChange(here, hisMove: true)
+            } else if host?.isTurning != true {
+                // Once per move: a re-sent target that outlives its own veil lands as any jump does.
+                resentTargetForMove = movesAtStart
+                readerLog.notice("veil: jump \(jump, privacy: .public) came back onto an overtaken jump's late page; its own target is sent again")
+                await putBack(to: target)
+            }
+            return jump
+        }
         // Past its veil, a move of his meanwhile (a turn, a swipe, another jump) ended it quietly: the
         // late jump moved the page, so it goes back where his newest move left it, and that is kept. A
         // landing of ours that only took long is where the page belongs.
@@ -1395,13 +1422,19 @@ final class ReaderModel {
         overtakenJumps.insert(jump)
         if newestHasLanded, host?.isTurning != true, !isClosed, let newest = lastLanded {
             readerLog.notice("veil: jump \(jump, privacy: .public) came back after a move of his; page put back")
-            jumpsPutBack += 1
-            let restore = await veiled { _ = await self.page?.go(to: newest) }
-            overtakenJumps.remove(restore)
-            if steps == restore, !isClosed, let here = page?.currentLocation { await locationDidChange(here, hisMove: true) }
+            await putBack(to: newest)
         }
         return jump
     }
+    /// Sends the page to `place` under its own veil and keeps where it lands as his.
+    private func putBack(to place: Locator) async {
+        jumpsPutBack += 1
+        let restore = await veiled { _ = await self.page?.go(to: place) }
+        overtakenJumps.remove(restore)
+        if steps == restore, !isClosed, let here = page?.currentLocation { await locationDidChange(here, hisMove: true) }
+    }
+    /// The move whose newest jump has had its target sent again (`backOnLateLanding`), once.
+    @ObservationIgnored private var resentTargetForMove: Int?
     /// Pages overtaken jumps landed on since his place was last kept: Readium's report of one, with no
     /// touch or turn of his, while Readium already names another page (the newer move's) and that move
     /// isn't kept, is the overtaken jump's late report, not his move (a second jump made while the first
@@ -1420,7 +1453,13 @@ final class ReaderModel {
         return abs(pa - pb) < 0.000_1
     }
     /// A veiled jump's watch: whether it is back, and whether its veil let go first.
-    @MainActor private final class VeilWatch { var back = false; var letGo = false }
+    @MainActor private final class VeilWatch {
+        var back = false
+        var letGo = false
+        /// The newest jump came back onto a page an overtaken jump landed on meanwhile: its own target,
+        /// sent again once the jump is out of its veil.
+        var backOnLateLanding: Locator?
+    }
     /// The outer veil's jump, for the work inside it (a landing's own percent step runs there): only the
     /// outer veil is watched, and a landing inside it is that veil's. Task-local, so a jump started
     /// alongside one still out is not taken as inside it. An unstructured `Task {}` started inside a veil
