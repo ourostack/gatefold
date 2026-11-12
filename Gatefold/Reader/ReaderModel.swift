@@ -2547,7 +2547,11 @@ final class ReaderModel {
         // Where he is going, should he leave before it lands (gatefold#259): the Contents entry's place,
         // then the chapter's own once the file has named it.
         contentsJumpOnItsWay = ContentsJumpOnItsWay(move: move, link: link, href: href, placed: placed, inFile: nil, inputsAtStart: inputsAtStart)
-        defer { if contentsJumpOnItsWay?.move == move { contentsJumpOnItsWay = nil } }
+        // Every exit spends the leave's gate, also one with no page to write (gatefold#259 review).
+        defer {
+            if contentsJumpOnItsWay?.move == move { contentsJumpOnItsWay = nil }
+            if contentsLeftMove == move { contentsLeftMove = nil }
+        }
         await page?.go(to: link)
         let heTookOver = { [weak self] in self.map { $0.unveiledInputs != inputsAtStart } ?? false }
         let wanted = { [weak self] in self.map { $0.moves == move && !$0.isClosed && !heTookOver() } ?? false }

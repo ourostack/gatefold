@@ -179,8 +179,15 @@ final class ScriptedPage: ReaderPage {
     var holdNextAnchor = false
     private var heldAnchor: CheckedContinuation<Void, Never>?
     /// A read is parked in `holdNextAnchor`.
-    var isHoldingAnchor: Bool { heldAnchor != nil }
-    func releaseAnchor() { heldAnchor?.resume(); heldAnchor = nil }
+    /// Every read waits until `releaseAnchor()`, while set: a web view that answers nothing.
+    var holdsAnchors = false
+    private var heldAnchors: [CheckedContinuation<Void, Never>] = []
+    var isHoldingAnchor: Bool { heldAnchor != nil || !heldAnchors.isEmpty }
+    func releaseAnchor() {
+        heldAnchor?.resume(); heldAnchor = nil
+        let held = heldAnchors; heldAnchors = []
+        held.forEach { $0.resume() }
+    }
 
     func currentAnchor() async -> (ReadingAnchor, Locator)? {
         anchorReads += 1
@@ -189,6 +196,8 @@ final class ScriptedPage: ReaderPage {
         if holdNextAnchor {
             holdNextAnchor = false
             await withCheckedContinuation { heldAnchor = $0 }
+        } else if holdsAnchors {
+            await withCheckedContinuation { heldAnchors.append($0) }
         }
         if anchorDelay > .zero {
             let before = anchorQueue, delay = anchorDelay

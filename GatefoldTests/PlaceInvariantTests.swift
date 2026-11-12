@@ -362,7 +362,7 @@ import Testing
                 for _ in 0..<50 { await Task.yield() }
             }
         }
-        final class Kept { var onLeaving: String?; var leave: Task<Void, Never>?; var heldBefore: Int?; var leaveDone = false }
+        final class Kept { var onLeaving: String?; var leave: Task<Void, Never>?; var heldBefore: Int?; var leaveDone = false; var readsAtArm: Int?; var heldTheLeaves = false }
         let kept = Kept()
         if how == "inactive" {
             // Readium's boundary a beat after the landing (#82), reported while the landing reads his words:
@@ -380,12 +380,14 @@ import Testing
                 if how == "close" { f.model.close() } else if let owed = f.model.owedPlaceOnLeaving() {
                     f.model.keepShownPageNow(owed)
                     // The page answers the leave's read only after the landing.
-                    if how.hasPrefix("inactive, landing before") { f.page.holdNextAnchor = true }
+                    if how.hasPrefix("inactive, landing before") { kept.readsAtArm = f.page.anchorReads; f.page.holdNextAnchor = true }
                     kept.leave = Task { await f.model.keepOwedPlace(owed); kept.leaveDone = true }
                 }
             }
             // A leave that read nothing of the page leaves no read to hold: the landing's own go free.
             if beat >= 3, kept.leaveDone, f.page.holdNextAnchor { f.page.holdNextAnchor = false }
+            // The read held, if any, is the leave's own: asked before the jump reads the page again.
+            if beat == 3, let at = kept.readsAtArm, f.page.isHoldingAnchor, f.page.anchorReads == at + 1 { kept.heldTheLeaves = true }
             // The first place written after he left is the leave's own: the chapter's place comes later.
             if kept.onLeaving == nil, saved(f) != before { kept.onLeaving = saved(f) }
             if beat == 30, how != "inactive, landing at once" {
@@ -399,6 +401,7 @@ import Testing
             for _ in 0..<400 where (saved(f).flatMap { try? Locator(jsonString: $0) }?.locations.progression ?? 0) < 0.5 { await Task.yield() }
             let landed = try #require(saved(f).flatMap { try? Locator(jsonString: $0) }, "no place kept")
             #expect((landed.locations.progression ?? 0) > 0.5, "the jump that went on after he left didn't keep where it landed")
+            #expect(kept.heldTheLeaves || (kept.leaveDone && !f.page.isHoldingAnchor), "a read other than the leave's was held")
             // Now the page answers the leave's read, if it asked one.
             f.page.releaseAnchor()
             await kept.leave?.value
@@ -466,8 +469,8 @@ import Testing
         let left = Left()
         beats.act = { beat in
             guard beat == 2 else { return }
-            // From now the web view answers no read of the page.
-            f.page.holdNextAnchor = true
+            // From now the web view answers no read of the page, however many are asked.
+            f.page.holdsAnchors = true
             guard let owed = f.model.owedPlaceOnLeaving() else { return }
             f.model.keepShownPageNow(owed)
             left.leave = Task { await f.model.keepOwedPlace(owed); left.done = true }
@@ -476,12 +479,12 @@ import Testing
         }
 
         await f.model.go(to: entry)
-        for _ in 0..<200 where !f.page.isHoldingAnchor && !left.done { await Task.yield() }
+        for _ in 0..<200 where !left.done { await Task.yield() }
 
         let kept = try #require(saved(f).flatMap { try? Locator(jsonString: $0) }, "nothing kept while the page answered no reads")
         #expect(saved(f) != before, "the place from before the jump stands while the page answers no reads")
         #expect(abs((kept.locations.totalProgression ?? -1) - entry.progression) < 0.001, "the place kept is not the chapter he chose")
-        #expect(f.page.isHoldingAnchor || left.done, "the leave's read of the page was never asked")
+        f.page.holdsAnchors = false
         f.page.releaseAnchor()
         await left.leave?.value
     }
