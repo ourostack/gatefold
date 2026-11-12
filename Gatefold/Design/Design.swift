@@ -98,6 +98,9 @@ enum LaunchOptions {
     /// Tests only, with `slowRestorePage`: the page shown unsettled is noted as Readium names it and never by
     /// its words, as on a device whose page scripts wait on the stalled install too (gatefold#133).
     static var shownPageWithoutWords: Bool { isUITest && defaults.bool(forKey: "GatefoldShownPageWithoutWords") }
+    /// Tests only: a book opened on a place with no words opens on its chapter's start, as a reopen whose
+    /// stalled restore settled there did on CI (gatefold#250); the saved place itself is unchanged.
+    static var reopenOnChapterStart: Bool { isUITest && defaults.bool(forKey: "GatefoldReopenOnChapterStart") }
     /// Debug only: a jump's chapter counts as still loading (Readium's spinner up) for this many looks,
     /// so a test can hold the load open as a slow device does and watch the veil (#38).
     static var holdChapterLoadLooks: Int? { defaults.object(forKey: "GatefoldHoldChapterLoad") == nil ? nil : defaults.integer(forKey: "GatefoldHoldChapterLoad") }
@@ -133,6 +136,16 @@ enum LaunchOptions {
     static var hangLinkJumps: Bool {
         #if DEBUG
         defaults.bool(forKey: "GatefoldHangLinkJumps")
+        #else
+        false
+        #endif
+    }
+    /// Tests only: the first page counts as still loading, however long he takes, until Catch up is taken, so a
+    /// tap over the opening cover is judged while the page loads (gatefold#277; a hold in looks is spent by
+    /// every wait that reads it, and ran out before a slow runner's tap).
+    static var holdOpeningLoadUntilCatchUp: Bool {
+        #if DEBUG
+        isUITest && defaults.bool(forKey: "GatefoldHoldOpeningLoadUntilCatchUp")
         #else
         false
         #endif

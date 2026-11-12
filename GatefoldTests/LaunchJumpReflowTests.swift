@@ -11,6 +11,7 @@ import Testing
 @MainActor
 final class TwoStepJumpPage: ReaderPage {
     var currentLocation: Locator?
+    var isTurning = false
     weak var model: ReaderModel?
     /// Reads of the page on screen before the jump shows its place.
     let readsToLand: Int

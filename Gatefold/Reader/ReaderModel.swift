@@ -322,6 +322,10 @@ final class ReaderModel {
         if let anchor = Self.openingAnchor(from: initial) {
             keeper = AnchorKeeper(anchor: anchor)
             anchorLocator = initial
+        } else if let initial {
+            // A place with no words holds no anchor: a restore whose page stalled on the chapter's start
+            // left him there (gatefold#250). Kept to put him back once, while the open's restore is pending.
+            openedOnBarePlace = initial
         }
         let prefs = app.preferences.effective(for: book.id)
         if let page {
@@ -332,7 +336,8 @@ final class ReaderModel {
             hostController = try ReaderHostController(
                 model: self,
                 publication: publication,
-                initialLocation: initial,
+                initialLocation: LaunchOptions.reopenOnChapterStart && Self.openingAnchor(from: initial) == nil
+                    ? initial?.copy(locations: { $0 = Locator.Locations(progression: 0) }) : initial,
                 preferences: Self.epubPreferences(prefs, theme: prefs.resolvedTheme(systemIsDark: false), columns: .one, viewWidth: layout.pageFrame.width > 0 ? layout.pageFrame.width : 402, language: Self.hyphenationLanguage(publication))
             )
         } catch {
@@ -804,6 +809,8 @@ final class ReaderModel {
     @ObservationIgnored private var countsWhenPictureLifts = false
 
     private func showPage() {
+        // Shown with no restore under way: nothing pending to put the open's bare place back.
+        if keeper.reflowing == nil { openedOnBarePlace = nil }
         withAnimation(.easeOut(duration: 0.3)) { pageReady = true } completion: { [weak self] in self?.coverLifted = true }
         foldOnceSeen()
         if reopenPicture == nil { pageShownAt = Date() }
@@ -1229,6 +1236,7 @@ final class ReaderModel {
         offersHisPlace = false
         let tapped = ContinuousClock.now
         readerLog.notice("catch-up: tapped (exact place \(locator != nil, privacy: .public))")
+        if LaunchOptions.holdOpeningLoadUntilCatchUp { host?.releaseHoldForCatchUp() }
         suggestionLocator = nil
         suggestionRemote = nil
         suggestionCloud = nil
@@ -1978,6 +1986,8 @@ final class ReaderModel {
     }
 
     func reflowDidFinish(visible: VisibleRange?) {
+        // A restore landed: the open's bare place is never put back after it.
+        openedOnBarePlace = nil
         shownUnsettled = nil
         shownNotes += 1
         // He came back to a restore that then settled: the page it settled on is his again, not the one
@@ -2071,6 +2081,27 @@ final class ReaderModel {
     @ObservationIgnored private var layoutOnly = false
     /// The owed place is being recorded: its words were just taken.
     @ObservationIgnored private var recordingOwed = false
+
+    /// The saved place this reader opened on when it had no words (`init`): until the open's restore has
+    /// landed or he has moved, a restore that finds the page elsewhere puts him back on it, once.
+    @ObservationIgnored private var openedOnBarePlace: Locator?
+
+    /// The open's bare place, if a restore should put it back now (gatefold#250): only while no anchor
+    /// is held, the restore may still move the page, he hasn't moved since the open, and only once per
+    /// open. Nil once he has turned, jumped, tapped a link or Contents, or a restore has landed.
+    func openPlaceToReapply(visible: VisibleRange) -> (ReadingAnchor, Locator)? {
+        guard let bare = openedOnBarePlace else { return nil }
+        guard keeper.anchor == nil, hisMoves == 0, !touchedSinceLocation, page?.isTurning != true,
+              keeper.restoreMayMove(move: hisMoves), !isClosed else {
+            openedOnBarePlace = nil
+            return nil
+        }
+        openedOnBarePlace = nil
+        let anchor = ReadingAnchor(href: bare.href.string, progression: bare.locations.progression ?? 0, text: nil)
+        guard !visible.contains(anchor) else { return nil }
+        readerLog.notice("reflow: the open's place (no words) is off screen at \(visible.start, privacy: .public)..\(visible.end, privacy: .public); put back once at \(anchor.progression, privacy: .public)")
+        return (anchor, bare)
+    }
 
     /// The saved place as an anchor, when it carries the words that opened his page.
     static func openingAnchor(from locator: Locator?) -> ReadingAnchor? {
@@ -2399,7 +2430,7 @@ final class ReaderModel {
     private static func pageMoved(_ before: Locator?, _ now: Locator) -> Bool {
         before.map { $0.href != now.href || $0.locations.progression != now.locations.progression } ?? true
     }
-    private var touchedSinceLocation: Bool { touchesSinceLocation > 0 }
+    var touchedSinceLocation: Bool { touchesSinceLocation > 0 }
     /// `moves` at the last location report: a report with none since is no turn or jump of his.
     @ObservationIgnored private var movesAtLastReport = 0
     /// This report came from the layout (see `locationDidChange`).

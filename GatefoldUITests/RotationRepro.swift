@@ -115,7 +115,15 @@ final class RotationRepro: XCTestCase {
         try rotateThenLeave(extra: ["-GatefoldSlowRestorePage", "YES", "-GatefoldShownPageWithoutWords", "YES"])
     }
 
-    private func rotateThenLeave(extra: [String] = []) throws {
+    /// The same, with each reopen landing on the chapter's start (`-GatefoldReopenOnChapterStart`), as a
+    /// reopen whose stalled restore settled there did on CI (gatefold#250, round 3 of run 43047479324): the
+    /// saved place has no words, so only the open's own place can bring him back to his page.
+    func testRotateThenLeaveWithoutItsWordsAndReopenOnTheChapterStart() throws {
+        try rotateThenLeave(extra: ["-GatefoldSlowRestorePage", "YES", "-GatefoldShownPageWithoutWords", "YES"],
+                            reopenExtra: ["-GatefoldReopenOnChapterStart", "YES"])
+    }
+
+    private func rotateThenLeave(extra: [String] = [], reopenExtra: [String] = []) throws {
         try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .pad, "a spread on rotation is an iPad path")
         // 1. Portrait, fresh install, open, wait for the count.
         XCUIDevice.shared.orientation = .portrait
@@ -194,7 +202,7 @@ final class RotationRepro: XCTestCase {
             XCUIDevice.shared.press(.home)
             sleep(3)
             app.quit()
-            app.launchArguments = base
+            app.launchArguments = base + reopenExtra
             app.relaunch()
             XCUIDevice.shared.orientation = .landscapeLeft
             sleep(2)
