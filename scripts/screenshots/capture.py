@@ -254,6 +254,28 @@ def watch(udid, device, d, spec, dev=None):
         time.sleep(0.3)
 
 
+def witness(dev, d, handoff, log):
+    """What a stuck device was doing (gatefold#150): the host's busiest processes (a simulator's processes are the
+    host's, so its SpringBoard, backboardd and the app show by name) and, if the device still answers one, a
+    screenshot in unsettled/. Process names and CPU only; each call bounded, and never fails the scene twice."""
+    try:
+        top = dev.run(["ps", "-Ao", "pcpu=,pmem=,comm=", "-r"], check=True, capture_output=True, timeout=10).stdout
+        top = top.decode(errors="replace") if isinstance(top, bytes) else (top or "")
+        lines = [l.strip() for l in top.splitlines()[:10]]
+        log(f"{handoff}: busiest host processes: " + " | ".join(
+            " ".join(l.split()[:2] + [l.split()[-1].rsplit("/", 1)[-1]]) for l in lines if l), flush=True)
+    except Exception as exc:  # a witness never turns a stuck answer into a crash
+        log(f"{handoff}: no process listing ({type(exc).__name__})", flush=True)
+    keep = d / "unsettled"
+    keep.mkdir(exist_ok=True)
+    try:
+        dev.run(["xcrun", "simctl", "io", dev.udid, "screenshot", "--type=png", str(keep / f"{handoff}-stuck.png")],
+                check=True, capture_output=True, timeout=SIMCTL_LIMIT)
+        log(f"{handoff}: the screen when stuck is in unsettled/{handoff}-stuck.png", flush=True)
+    except Exception:
+        log(f"{handoff}: no screenshot of the stuck screen either", flush=True)
+
+
 def sweep(d, dev, display, spec, log=print):
     """Shoot every scene that is ready and not yet answered."""
     # <scene>.<try>.ready: each try has its own hand-off files, so a late answer to one never passes the next.
@@ -268,6 +290,7 @@ def sweep(d, dev, display, spec, log=print):
             where = ("the device listing answered, so the device is stuck, not the service"
                      if dev.listing_answers() else "the device listing did not answer either")
             ok, why = False, f"the simulator stopped answering: {exc}; {where}"
+            witness(dev, d, handoff, log)
             (d / f"{handoff}.stuck").write_text(why)  # before .fail: the workflow reads it once the try ends
         except subprocess.CalledProcessError as exc:
             ok, why = False, f"simctl failed: {exc.stderr.decode(errors='replace').strip()[:200]}"
@@ -423,6 +446,7 @@ def selftest_recovery():
         sweep(d, dev, None, spec, log=quiet)
         assert (d / "midnight.1.stuck").exists() and (d / "midnight.1.fail").exists(), sorted(os.listdir(d))
         assert "listing did not answer either" in (d / "midnight.1.stuck").read_text()
+        assert "ps" in dev.run.calls, dev.run.calls  # the witness asked what was busy
         (d / "midnight.1r.ready").write_text("midnight")
         sweep(d, dev, None, spec, log=quiet)
         assert (d / "midnight.1r.done").exists() and "1 calls asked again" in (d / "midnight.1r.done").read_text()
