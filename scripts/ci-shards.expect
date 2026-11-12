@@ -53,6 +53,7 @@ main|iPad Pro 13-inch|RotationMidTransitionUITests/testTurningDuringAPageTurn
 main|iPad Pro 13-inch|RotationRepro/testRotateThenLeaveWhileTheRestoreWaitsOnHisKeptPlaceWithoutItsWords
 main|iPad Pro 13-inch|RotationRepro/testRotateThenLeaveWhileTheRestoreWaitsOnItsPage
 main|iPad Pro 13-inch|RotationRepro/testRotateThenLeaveWhileTheRestoreWaitsOnItsPageWithoutItsWords
+main|iPad Pro 13-inch|RotationRepro/testRotateThenLeaveWithoutItsWordsAndReopenOnTheChapterStart
 main|iPad Pro 13-inch|RotationRepro/testRotateThenLeaveWithoutTurning
 main|iPad Pro 13-inch|RotationRepro/testRotateThenLeaveWithoutTurningAfterStalledReflows
 main|iPad Pro 13-inch|SpreadTurnSettleUITests/testSpreadTurnsLandWithoutSliding

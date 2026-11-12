@@ -102,6 +102,9 @@ enum LaunchOptions {
     /// kept, as when Readium reports no new location while the restore stalls (CI 43075159905, gatefold#133);
     /// otherwise the runner's layout decides whether it is that place or the boundary before it.
     static var shownPageAtHisPlace: Bool { shownPageWithoutWords && defaults.bool(forKey: "GatefoldShownPageAtHisPlace") }
+    /// Tests only: a book opened on a place with no words opens on its chapter's start, as a reopen whose
+    /// stalled restore settled there did on CI (gatefold#250); the saved place itself is unchanged.
+    static var reopenOnChapterStart: Bool { isUITest && defaults.bool(forKey: "GatefoldReopenOnChapterStart") }
     /// Debug only: a jump's chapter counts as still loading (Readium's spinner up) for this many looks,
     /// so a test can hold the load open as a slow device does and watch the veil (#38).
     static var holdChapterLoadLooks: Int? { defaults.object(forKey: "GatefoldHoldChapterLoad") == nil ? nil : defaults.integer(forKey: "GatefoldHoldChapterLoad") }
