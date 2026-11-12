@@ -231,8 +231,10 @@ jobs:
   # one running only its tier is uncapped. GitHub may start a matrix's shards in any order. On main each shard holds about
   # 5 min of tests by its median pass on main (eight runs, 42605267361 to 42905906538). On a pull request a shard runs
   # its `pr_tests` only when its `pr_when` group is in `changes`' `fired`; every other shard reports from a no-op job.
-  # Each `timeout` is 12 min of setup (the boot and the wait for the build), plus twice the sum of its tests' slowest
-  # passes in those runs, plus 12 for the logs after the tests (gatefold#141). Twice, because on these overloaded runners
+  # Each `timeout` is 30 min of setup (the simulator wait step's own limit; gatefold#198), plus twice the sum of its
+  # tests' slowest passes in those runs (the tests' budget), plus 12 for the logs after the tests (gatefold#141). The
+  # test step gets that whole budget whenever setup ends within 30 min of the job's start (.github/actions/time-left);
+  # the 9 to 14 min boots in gatefold#198 leave room to spare, and a green run takes no longer. Twice, because on these overloaded runners
   # a test that passes can run 2-3x its usual time; a shard that still hits its limit is a red to fix at its cause, not
   # a limit to raise. The rotation shards (`cold`) run on the job's new iPad, before anything warms it.
   # scripts/ci-shards.py (in `CI scripts, offline`, which `GatefoldCore tests` stands for) fails when a listed test does
@@ -254,7 +256,7 @@ jobs:
             skip: ""
             pr_tests: none
             cold: false
-            timeout: 36 # 12 + 2 x 5.8 + 12
+            timeout: 54 # 30 + 2 x 5.8 + 12
             lane: 16
           - shard: ipad-place-numbers
             # 303
@@ -263,7 +265,7 @@ jobs:
             skip: ""
             pr_tests: none
             cold: false
-            timeout: 36 # 12 + 2 x 5.5 + 12
+            timeout: 54 # 30 + 2 x 5.5 + 12
             lane: 15
           - shard: ipad-place-loading
             # 264 + 68
@@ -272,7 +274,7 @@ jobs:
             skip: ""
             pr_tests: none
             cold: false
-            timeout: 38 # 12 + 2 x 7.0 + 12
+            timeout: 56 # 30 + 2 x 7.0 + 12
             lane: 18
           - shard: ipad-place-jumps
             # 180 + 165
@@ -281,7 +283,7 @@ jobs:
             skip: ""
             pr_tests: none
             cold: false
-            timeout: 39 # 12 + 2 x 7.5 + 12
+            timeout: 57 # 30 + 2 x 7.5 + 12
             lane: 14
           - shard: ipad-place-shelf
             # 155 + 155
@@ -290,7 +292,7 @@ jobs:
             skip: ""
             pr_tests: none
             cold: false
-            timeout: 39 # 12 + 2 x 7.4 + 12
+            timeout: 57 # 30 + 2 x 7.4 + 12
             lane: 16
           - shard: ipad-place-counting
             # The catch-all for new placeholder tests: 85 + 40
@@ -300,7 +302,7 @@ jobs:
               CountingPlaceholderUITests/testAFreshOpenOnItsSideNeverLeavesTheNumbersSlotBlank
             pr_tests: none
             cold: false
-            timeout: 30 # 12 + 2 x 2.8 + 12
+            timeout: 48 # 30 + 2 x 2.8 + 12
             lane: 16
           - shard: ipad-place-rest
             # The catch-all for new place tests: 130 + 124 + 94
@@ -310,7 +312,7 @@ jobs:
               NavigationPlaceUITests/testReadInPortraitRotatedThenLeftKeepsHisFirstWords NavigationPlaceUITests/testWithPageNumbersOnReadInPortraitRotatedThenLeftKeepsHisFirstWords NavigationPlaceUITests/testAJumpFromAPageStillLoadingStartsAtOnce NavigationPlaceUITests/testAContentsJumpKeepsThePlace NavigationPlaceUITests/testScrolledAfterTheLaunchReflowThenLeftKeepsWhereHeScrolled NavigationPlaceUITests/testOpenedFromTheShelfThenLeftTwiceWithoutATurnKeepsThePlace NavigationPlaceUITests/testTheOpeningCoverLetsTheControlsThrough
             pr_tests: none
             cold: false
-            timeout: 39 # 12 + 2 x 7.2 + 12
+            timeout: 57 # 30 + 2 x 7.2 + 12
             lane: 15
           - shard: ipad-rotate-contents
             # Rotation, on this job's new iPad: 204
@@ -319,7 +321,7 @@ jobs:
             skip: ""
             pr_tests: none
             cold: true
-            timeout: 36 # 12 + 2 x 5.7 + 12
+            timeout: 54 # 30 + 2 x 5.7 + 12
             lane: 11
           - shard: ipad-rotate-midturn
             # Rotation: 182 + 160, then on main the rotate-then-leave repro, 545, after the mid-turn tests as #167 runs
@@ -336,7 +338,7 @@ jobs:
             # On a pull request: Place kept through a jump and a rotation (#130), on place changes (359 s).
             pr_when: place-jumps
             cold: true
-            timeout: 61 # 12 + 2 x 18.1 + 12
+            timeout: 79 # 30 + 2 x 18.1 + 12
             lane: 6
           - shard: ipad-rotate-stalled
             # Main only: 470 (#266's probe 43110085155, the slowest of 3 passes)
@@ -346,21 +348,24 @@ jobs:
               RotationRepro/testRotateThenLeaveWithoutTurning
               RotationRepro/testRotateThenLeaveWhileTheRestoreWaitsOnItsPage
               RotationRepro/testRotateThenLeaveWhileTheRestoreWaitsOnItsPageWithoutItsWords
+              RotationRepro/testRotateThenLeaveWhileTheRestoreWaitsOnHisKeptPlaceWithoutItsWords
               RotationRepro/testRotateThenLeaveWithoutItsWordsAndReopenOnTheChapterStart
             pr_tests: none
             cold: true
-            timeout: 40 # 12 + 2 x 7.8 + 12
+            timeout: 58 # 30 + 2 x 7.8 + 12
             lane: 9
           - shard: ipad-rotate-restore
-            # Main only: #133's leave-while-the-restore-waits pair, out of ipad-rotate-stalled, which they
+            # Main only: #133's leave-while-the-restore-waits tests, out of ipad-rotate-stalled, which they
             # overran (stopped 19 min 58 s in on #256 and 21 min 58 s in on #195). Without sleeps (#266): 463 + 327,
-            # the slowest of 3 passes each in probe 43110085155 (they were 586 + 504)
+            # the slowest of 3 passes each in probe 43110085155 (they were 586 + 504), and 317 s, with sleeps,
+            # for the leave noted at his kept place in probe 43107820601
             tests: >-
               RotationRepro/testRotateThenLeaveWhileTheRestoreWaitsOnItsPage
               RotationRepro/testRotateThenLeaveWhileTheRestoreWaitsOnItsPageWithoutItsWords
+              RotationRepro/testRotateThenLeaveWhileTheRestoreWaitsOnHisKeptPlaceWithoutItsWords
             pr_tests: none
             cold: true
-            timeout: 51 # 12 + 2 x 13.2 + 12
+            timeout: 79 # 30 + 2 x 18.5 + 12
             lane: 7
           - shard: ipad-rotate-chapter-start
             # Main only, like ipad-rotate-stalled (gatefold#250)
@@ -369,7 +374,7 @@ jobs:
             skip: ""
             pr_tests: none
             cold: true
-            timeout: 36 # 12 + 2 x 5.8 + 12
+            timeout: 54 # 30 + 2 x 5.8 + 12
             lane: 17
     uses: ./.github/workflows/ui-tests.yml
     with:
@@ -403,7 +408,7 @@ jobs:
             skip: ""
             pr_tests: none
             cold: false
-            timeout: 38 # 12 + 2 x 6.8 + 12
+            timeout: 56 # 30 + 2 x 6.8 + 12
             lane: 13
           - shard: ipad-undo-chapter
             # 173 + 127
@@ -412,7 +417,7 @@ jobs:
             skip: ""
             pr_tests: none
             cold: false
-            timeout: 37 # 12 + 2 x 6.5 + 12
+            timeout: 55 # 30 + 2 x 6.5 + 12
             lane: 14
           - shard: ipad-undo-edge
             # 128 + 110
@@ -426,7 +431,7 @@ jobs:
             # On a pull request: Place, no accidental jumps and one-tap undo, on place and launch changes (339 s; the undo test is noisy, #196).
             pr_when: place-undo
             cold: false
-            timeout: 34 # 12 + 2 x 4.8 + 12
+            timeout: 52 # 30 + 2 x 4.8 + 12
             lane: 3
           - shard: ipad-undo-rest
             # The catch-all for new undo tests: 94, and the spread's left edge
@@ -436,7 +441,7 @@ jobs:
               PlaceUndoUITests/testATapWhileAJumpIsUnderWayLandsWhereHeChose PlaceUndoUITests/testATapAboveYourPageClosesItAndKeepsThePage PlaceUndoUITests/testAChaptersFirstPageTurnsBackByTapAndBySwipe PlaceUndoUITests/testAJumpIsOneTapToUndoWithTheControlsHidden PlaceUndoUITests/testATapAtTheLeftEdgeTurnsBackPromptly PlaceUndoUITests/testATapAtTheLeftEdgeTurnsBackPromptlyWithinAChapter
             pr_tests: none
             cold: false
-            timeout: 33 # 12 + 2 x 4.4 + 12
+            timeout: 51 # 30 + 2 x 4.4 + 12
             lane: 15
     uses: ./.github/workflows/ui-tests.yml
     with:
@@ -475,7 +480,7 @@ jobs:
             # On a pull request: Page and taps: quick touches (#175), a row name, spread turns, on chrome, curl and settings changes (334 s).
             pr_when: taps
             cold: false
-            timeout: 41 # 12 + 2 x 8.2 + 12
+            timeout: 59 # 30 + 2 x 8.2 + 12
             lane: 10
           - shard: ipad-taps-rest
             # The catch-all for new Fine-Tune tests: 183
@@ -485,7 +490,7 @@ jobs:
               FineTuneTapUITests/testAQuickTouchChangesEverySwitchOnce FineTuneTapUITests/testATapOnTheRowsNameChangesItsSwitch FineTuneTapUITests/testEveryTapFlipsJustifyPortrait FineTuneTapUITests/testEveryTapFlipsPageNumbersPortrait FineTuneTapUITests/testEveryTapFlipsPositionLabelPortrait FineTuneTapUITests/testEveryTapFlipsPagesLeftPortrait FineTuneTapUITests/testEveryTapFlipsJustifyLandscape FineTuneTapUITests/testEveryTapFlipsPageNumbersLandscape FineTuneTapUITests/testEveryTapFlipsPositionLabelLandscape FineTuneTapUITests/testEveryTapFlipsPagesLeftLandscape
             pr_tests: none
             cold: false
-            timeout: 33 # 12 + 2 x 4.3 + 12
+            timeout: 51 # 30 + 2 x 4.3 + 12
             lane: 2
           - shard: ipad-taps-furniture
             # 130 + 129 + 86
@@ -494,7 +499,7 @@ jobs:
             skip: ""
             pr_tests: none
             cold: false
-            timeout: 38 # 12 + 2 x 6.5 + 12
+            timeout: 56 # 30 + 2 x 6.5 + 12
             lane: 18
           - shard: ipad-taps-portrait
             # Main only, every tap, one switch each (#200): 168 + 135
@@ -503,7 +508,7 @@ jobs:
             skip: ""
             pr_tests: none
             cold: false
-            timeout: 35 # 12 + 2 x 5.1 + 12
+            timeout: 53 # 30 + 2 x 5.1 + 12
             lane: 6
           - shard: ipad-taps-portrait-more
             # Main only, every tap (#200): 120 + 129 + 149
@@ -512,7 +517,7 @@ jobs:
             skip: ""
             pr_tests: none
             cold: false
-            timeout: 38 # 12 + 2 x 6.6 + 12
+            timeout: 56 # 30 + 2 x 6.6 + 12
             lane: 12
           - shard: ipad-taps-landscape
             # Main only, every tap (#200): 295
@@ -521,7 +526,7 @@ jobs:
             skip: ""
             pr_tests: none
             cold: false
-            timeout: 34 # 12 + 2 x 4.9 + 12
+            timeout: 52 # 30 + 2 x 4.9 + 12
             lane: 4
           - shard: ipad-taps-landscape-more
             # Main only, every tap (#200): 165 + 146
@@ -530,7 +535,7 @@ jobs:
             skip: ""
             pr_tests: none
             cold: false
-            timeout: 35 # 12 + 2 x 5.2 + 12
+            timeout: 53 # 30 + 2 x 5.2 + 12
             lane: 8
     uses: ./.github/workflows/ui-tests.yml
     with:
@@ -568,7 +573,7 @@ jobs:
             # On a pull request: iPad smoke, on every app change: open, leave and reopen on his page; a tap turns back (285 s).
             pr_when: smoke
             cold: false
-            timeout: 39 # 12 + 2 x 7.3 + 12
+            timeout: 57 # 30 + 2 x 7.3 + 12
             lane: 17
           - shard: ipad-reviewer-controls
             # Main only: 1481
@@ -577,7 +582,7 @@ jobs:
             skip: ""
             pr_tests: none
             cold: false
-            timeout: 90 # 12 + 2 x 32.8 + 12
+            timeout: 108 # 30 + 2 x 32.8 + 12
             lane: 1
           - shard: ipad-reviewer-numbers
             # Main only: 926
@@ -586,7 +591,7 @@ jobs:
             skip: ""
             pr_tests: none
             cold: false
-            timeout: 66 # 12 + 2 x 20.6 + 12
+            timeout: 84 # 30 + 2 x 20.6 + 12
             lane: 5
           - shard: ipad-reviewer-spread
             # Main only: 358 + 99
@@ -595,7 +600,7 @@ jobs:
             skip: ""
             pr_tests: none
             cold: false
-            timeout: 48 # 12 + 2 x 12.0 + 12
+            timeout: 66 # 30 + 2 x 12.0 + 12
             lane: 8
           - shard: ipad-reviewer-rest
             # Main only, the catch-all for new reviewer checks: 842 + 88
@@ -605,7 +610,7 @@ jobs:
               ReviewerChecksUITests/testTheLastPagesNumberIsTheCount ReviewerChecksUITests/testPageNumbersAreOnOrOffInEveryBook
             pr_tests: none
             cold: false
-            timeout: 74 # 12 + 2 x 24.8 + 12
+            timeout: 92 # 30 + 2 x 24.8 + 12
             lane: 2
     uses: ./.github/workflows/ui-tests.yml
     with:
@@ -620,8 +625,8 @@ jobs:
       extra: ${{ needs.changes.outputs.edited-ipad }}
       full: ${{ needs.changes.outputs.full }}
       cold: ${{ matrix.cold }}
-      # A smoke shard that also runs the classes this pull request edits gets 90 min, whatever their length.
-      timeout: ${{ matrix.pr_when == 'smoke' && needs.changes.outputs.edited-ipad != '' && 90 || matrix.timeout }}
+      # A smoke shard that also runs the classes this pull request edits gets 108 min (30 + 66 + 12), whatever their length.
+      timeout: ${{ matrix.pr_when == 'smoke' && needs.changes.outputs.edited-ipad != '' && 108 || matrix.timeout }}
       lane: ${{ matrix.lane }}
 
   duo:
@@ -640,7 +645,7 @@ jobs:
             skip: ""
             pr_tests: none
             cold: false
-            timeout: 40 # 12 + 2 x 7.7 + 12
+            timeout: 58 # 30 + 2 x 7.7 + 12
             lane: 11
           - shard: duo-taps-quick
             # 176 + 64
@@ -649,7 +654,7 @@ jobs:
             skip: ""
             pr_tests: none
             cold: false
-            timeout: 35 # 12 + 2 x 5.3 + 12
+            timeout: 53 # 30 + 2 x 5.3 + 12
             lane: 9
           - shard: duo-taps-rest
             # The catch-all for new Fine-Tune tests: 133, and the landscape every-tap test, which skips on the Duo
@@ -659,7 +664,7 @@ jobs:
               FineTuneTapUITests/testEveryTapFlipsJustifyPortrait FineTuneTapUITests/testEveryTapFlipsPageNumbersPortrait FineTuneTapUITests/testEveryTapFlipsPositionLabelPortrait FineTuneTapUITests/testEveryTapFlipsPagesLeftPortrait FineTuneTapUITests/testAQuickTouchChangesEverySwitchOnce FineTuneTapUITests/testATapOnTheRowsNameChangesItsSwitch
             pr_tests: none
             cold: false
-            timeout: 34 # 12 + 2 x 4.5 + 12
+            timeout: 52 # 30 + 2 x 4.5 + 12
             lane: 7
           - shard: duo-position
             # 151 + 137
@@ -668,7 +673,7 @@ jobs:
             skip: ""
             pr_tests: none
             cold: false
-            timeout: 39 # 12 + 2 x 7.0 + 12
+            timeout: 57 # 30 + 2 x 7.0 + 12
             lane: 13
           - shard: duo-position-rest
             # The catch-all for new position tests: 66, rotation and posture
@@ -678,7 +683,7 @@ jobs:
               PositionUITests/testTabletopDeckTurnsAndResizes PositionUITests/testFontChangeKeepsThePlace
             pr_tests: none
             cold: false
-            timeout: 35 # 12 + 2 x 5.5 + 12
+            timeout: 53 # 30 + 2 x 5.5 + 12
             lane: 10
           - shard: duo-pagenumber
             # A page a turn, and a reopen keeps the numbers: 295
@@ -691,7 +696,7 @@ jobs:
             # On a pull request: Duo smoke, on every app change: turns, a reopen keeps the numbers, a tap turns back (358 s).
             pr_when: smoke
             cold: false
-            timeout: 39 # 12 + 2 x 7.3 + 12
+            timeout: 57 # 30 + 2 x 7.3 + 12
             lane: 12
           - shard: duo-turnback
             # The folded Duo's turn checks (#61): within 12 reads and 24 looks, a TURNWAIT line each: 120 + 99
@@ -700,7 +705,7 @@ jobs:
             skip: ""
             pr_tests: none
             cold: false
-            timeout: 34 # 12 + 2 x 4.9 + 12
+            timeout: 52 # 30 + 2 x 4.9 + 12
             lane: 5
           - shard: duo-reviewer-reopen
             # Main only: 791
@@ -709,7 +714,7 @@ jobs:
             skip: ""
             pr_tests: none
             cold: false
-            timeout: 67 # 12 + 2 x 21.4 + 12
+            timeout: 85 # 30 + 2 x 21.4 + 12
             lane: 4
           - shard: duo-reviewer-rest
             # Main only, the catch-all for new reviewer checks: 964 + 204 (the default spread skips on the Duo)
@@ -719,7 +724,7 @@ jobs:
               ReviewerChecksUITests/testEveryReopenReturnsTheSameWords
             pr_tests: none
             cold: false
-            timeout: 71 # 12 + 2 x 23.2 + 12
+            timeout: 89 # 30 + 2 x 23.2 + 12
             lane: 3
     uses: ./.github/workflows/ui-tests.yml
     with:
@@ -734,8 +739,8 @@ jobs:
       extra: ${{ needs.changes.outputs.edited-duo }}
       full: ${{ needs.changes.outputs.full }}
       cold: ${{ matrix.cold }}
-      # A smoke shard that also runs the classes this pull request edits gets 90 min, whatever their length.
-      timeout: ${{ matrix.pr_when == 'smoke' && needs.changes.outputs.edited-duo != '' && 90 || matrix.timeout }}
+      # A smoke shard that also runs the classes this pull request edits gets 108 min (30 + 66 + 12), whatever their length.
+      timeout: ${{ matrix.pr_when == 'smoke' && needs.changes.outputs.edited-duo != '' && 108 || matrix.timeout }}
       lane: ${{ matrix.lane }}
 
   ipad-place-gate:
@@ -897,9 +902,9 @@ jobs:
         && format('gatefold-macos-pr-lane-unit-{0}', (endsWith(format('{0}', github.event.pull_request.number), '1') || endsWith(format('{0}', github.event.pull_request.number), '4') || endsWith(format('{0}', github.event.pull_request.number), '7')) && '1' || (endsWith(format('{0}', github.event.pull_request.number), '2') || endsWith(format('{0}', github.event.pull_request.number), '5') || endsWith(format('{0}', github.event.pull_request.number), '8')) && '2' || '0')
         || format('app-unit-{0}-{1}', github.run_id, github.run_attempt) }}
       queue: max
-    # The shards' formula: 12 min of setup (the boot and the wait for the build), twice the slowest green unit step
-    # (7.8 min, run 42746464846; median 4.8 on main), and 12 for the logs after the tests (gatefold#141).
-    timeout-minutes: 40
+    # The shards' formula: 30 min of setup (the simulator wait step's own limit; gatefold#198), twice the slowest green
+    # unit step (7.8 min, run 42746464846; median 4.8 on main), and 12 for the logs after the tests (gatefold#141).
+    timeout-minutes: 58 # 30 + 2 x 7.8 + 12
     steps:
       - name: Note when the job began, so each test step can stop in time to upload its logs (gatefold#126)
         run: echo "JOB_START=$(date +%s)" >> "$GITHUB_ENV"
@@ -950,7 +955,8 @@ jobs:
       - id: left_unit
         uses: ./.github/actions/time-left
         with:
-          limit: "40" # the job's timeout-minutes
+          limit: "58" # the job's timeout-minutes
+          boot: "30" # the simulator wait step's timeout-minutes
       - name: Unit tests
         timeout-minutes: ${{ fromJSON(steps.left_unit.outputs.minutes) }}
         env:

@@ -62,8 +62,9 @@ on:
         required: true
       timeout:
         description: >-
-          The job's limit in minutes: 12 of setup (the boot and the wait for the build), twice its tests' slowest
-          passing times, and 12 for the logs after the tests (gatefold#141)
+          The job's limit in minutes: 30 of setup (the simulator wait step's own limit; gatefold#198), twice its
+          tests' slowest passing times (the test step's budget, however long the boot took), and 12 for the logs
+          after the tests (gatefold#141)
         type: number
         required: true
 
@@ -164,8 +165,10 @@ jobs:
         uses: ./.github/actions/time-left
         with:
           limit: ${{ inputs.timeout }}
+          boot: "30" # the simulator wait step's timeout-minutes, above
       - name: This shard's tests
-        # Ends 12 min before the job's limit: a job cut off at its limit skips every later step and uploads nothing.
+        # Gets its tests' budget however long the boot took (gatefold#198), and ends at least 12 min before the job's
+        # limit: a job cut off at its limit skips every later step and uploads nothing.
         timeout-minutes: ${{ fromJSON(steps.left.outputs.minutes) }}
         env:
           STEP_UNTIL: ${{ steps.left.outputs.until }}
