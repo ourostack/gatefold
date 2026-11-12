@@ -139,7 +139,8 @@ final class RotationRepro: XCTestCase {
     /// The same, with the shown page noted only as Readium names it: on a device whose page scripts wait
     /// on the stalled install too, its words never come back before he leaves. The reopen must start on the
     /// page he saw, and the place never takes his turn's words for another page. Red on CI while the stalled
-    /// leave notes Readium's location one boundary before his kept place (CI 43075159905).
+    /// leave noted Readium's location, one boundary before his kept place (CI 43075159905); the leave now
+    /// keeps the middle of the page on screen (gatefold#276).
     func testRotateThenLeaveWhileTheRestoreWaitsOnItsPageWithoutItsWords() throws {
         try rotateThenLeave(extra: Self.slowRestore + ["-GatefoldShownPageWithoutWords", "YES"], countBeforeJump: false)
     }
@@ -154,8 +155,8 @@ final class RotationRepro: XCTestCase {
     /// The same, with each reopen landing on the chapter's start (`-GatefoldReopenOnChapterStart`), as a
     /// reopen whose stalled restore settled there did on CI (gatefold#250, round 3 of run 43047479324): where
     /// the saved place has no words, only the open's own place can bring him back to his page. On a layout
-    /// where the stalled page is his kept place, the leave keeps his words instead (gatefold#133), and this
-    /// test shares WithoutItsWords' red under gatefold#276.
+    /// where the stalled page is his kept place, the leave keeps his words instead (gatefold#133). Red while
+    /// the leave noted Readium's stale location, the chapter's start (PR #285's run 43147454242, gatefold#276).
     func testRotateThenLeaveWithoutItsWordsAndReopenOnTheChapterStart() throws {
         try rotateThenLeave(extra: Self.slowRestore + ["-GatefoldShownPageWithoutWords", "YES"],
                             reopenExtra: ["-GatefoldReopenOnChapterStart", "YES"])
