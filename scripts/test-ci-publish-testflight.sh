@@ -2,8 +2,8 @@
 # Offline test of scripts/ci-publish-testflight.sh's upload step (gatefold#337) against a fake kit, xcodebuild,
 # xcodegen, unzip and plutil: no network, no App Store Connect, no secrets.
 #   bash scripts/test-ci-publish-testflight.sh
-# The fake kit answers the upload with FAKE_UPLOAD_EXIT and FAKE_UPLOAD_STDERR, and the processing poll with
-# FAKE_PROCESSING. Step 5's first App Store Connect call prints "FAKE: reached step 5" and fails, so a run that
+# The fake kit answers the upload with FAKE_UPLOAD_EXIT, FAKE_UPLOAD_STDOUT and FAKE_UPLOAD_STDERR, and a build
+# lookup by number with one build in FAKE_PROCESSING (none when it is "none"). Step 5's first App Store Connect call prints "FAKE: reached step 5" and fails, so a run that
 # got past the poll is told apart from one that stopped before it.
 set -uo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -26,14 +26,15 @@ case "$1 $2" in
       *"--path /v1/apps "*) echo '{"ok":true,"result":{"data":[{"id":"fake-app"}]}}' ;;
       *"filter[version]="*)
         echo poll >> "$FAKE/polls"
+        [ "$FAKE_PROCESSING" = none ] && { echo '{"ok":true,"result":{"data":[]}}'; exit 0; }
         echo "{\"ok\":true,\"result\":{\"data\":[{\"id\":\"fake-build\",\"attributes\":{\"processingState\":\"$FAKE_PROCESSING\"}}]}}" ;;
       *"--path /v1/builds "*) echo '{"ok":true,"result":{"data":[]}}' ;;
       *) echo "FAKE: reached step 5" >&2; echo '{"ok":false,"error":"fake"}'; exit 1 ;;
     esac ;;
   "xcode run")
     # The kit's answer carries the argv, key and issuer IDs included, as the real one does.
-    jq -n --arg stderr "$FAKE_UPLOAD_STDERR" --argjson code "$FAKE_UPLOAD_EXIT" --arg argv "$*" \
-      '{ok: ($code == 0), mode: "apply", command: ($argv | split(" ")), exitCode: $code, stdout: "", stderr: $stderr}'
+    jq -n --arg stdout "$FAKE_UPLOAD_STDOUT" --arg stderr "$FAKE_UPLOAD_STDERR" --argjson code "$FAKE_UPLOAD_EXIT" \
+      --arg argv "$*" '{ok: ($code == 0), mode: "apply", command: ($argv | split(" ")), exitCode: $code, stdout: $stdout, stderr: $stderr}'
     exit "$FAKE_UPLOAD_EXIT" ;;
   *) echo "fake kit: unexpected $*" >&2; exit 2 ;;
 esac
@@ -56,13 +57,14 @@ FAKE
 chmod +x "$work/bin/"*
 
 fails=0
-# run <name> <upload exit> <processing state> <altool's stderr>: runs the publish script; its output is in $work/<name>.
+# run <name> <upload exit> <processing state or none> <altool's stderr> [<altool's stdout> [<run attempt>]]: runs the
+# publish script; its output is in $work/<name>.
 run() {
   local name="$1"
   export FAKE="$work/$name.fake"
   mkdir -p "$FAKE"
-  FAKE_UPLOAD_EXIT="$2" FAKE_PROCESSING="$3" FAKE_UPLOAD_STDERR="$4" FAKE_BUILD=28 \
-    PATH="$work/bin:$PATH" GITHUB_OUTPUT="$work/$name.github-output" \
+  FAKE_UPLOAD_EXIT="$2" FAKE_PROCESSING="$3" FAKE_UPLOAD_STDERR="$4" FAKE_UPLOAD_STDOUT="${5:-}" FAKE_BUILD=28 \
+    PATH="$work/bin:$PATH" GITHUB_OUTPUT="$work/$name.github-output" GITHUB_RUN_ATTEMPT="${6:-1}" \
     APPLE_DISTRIBUTION_KIT_BIN=fake-cli.js APPLE_DISTRIBUTION_KIT_CONFIG="$work/asc.json" \
     GATEFOLD_SIGNING_XCCONFIG=fake.xcconfig GATEFOLD_EXPORT_OPTIONS_PLIST=fake.plist \
     GATEFOLD_WHATS_NEW_FILE="$work/whats-new.txt" GATEFOLD_BUILD_NUMBER=28 GATEFOLD_ARTIFACT_DIR="$work/$name.out" \
@@ -122,6 +124,28 @@ run then-failed-exit-1 1 VALID "$then_failed"
 expect then-failed-exit-1 "UPLOAD SUCCEEDED and a UUID, then UPLOAD FAILED, and exit 1: fails with \"upload failed\"" \
   "ci-publish-testflight: upload failed" "is processed"
 polled then-failed-exit-1 && bad "  ...and never polls" then-failed-exit-1
+
+# Run 43318514534 attempt 2's answers, shortened: App Store Connect refuses build 28 as a duplicate.
+duplicate_out='{"product-errors":[{"code":-19232,"message":"The provided entity includes an attribute with a value that has already been used","user-info":{"NSLocalizedFailureReason":"The bundle version must be higher than the previously uploaded version: 28.","iris-code":"ENTITY_ERROR.ATTRIBUTE.INVALID.DUPLICATE","previousBundleVersion":"28"}}]}'
+duplicate_err=$'2026-11-12 23:36:45.726 ERROR: [ContentDelivery.Uploader.7C30C713C0] The provided entity includes an attribute with a value that has already been used (-19232) The bundle version must be higher than the previously uploaded version: 28.\n      code : ENTITY_ERROR.ATTRIBUTE.INVALID.DUPLICATE\n   previousBundleVersion : 28\n2026-11-12 23:36:45.730 ERROR: [altool.7C30C713C0] Failed to upload package.\n'
+
+run duplicate-rerun 1 VALID "$duplicate_err" "$duplicate_out" 2
+expect duplicate-rerun "a rerun refused as a duplicate of build 28, which App Store Connect lists: goes on to the poll" \
+  "Build 28 is processed (fake-build)" "upload failed"
+grep -q "FAKE: reached step 5" "$work/duplicate-rerun" || bad "  ...and reaches step 5" duplicate-rerun
+
+run duplicate-rerun-unlisted 1 none "$duplicate_err" "$duplicate_out" 2
+expect duplicate-rerun-unlisted "a rerun refused as a duplicate, with no build 28 listed: fails with \"upload failed\"" \
+  "ci-publish-testflight: upload failed: App Store Connect already has an upload of build 28 but lists no" "is processed"
+
+run duplicate-first-attempt 1 VALID "$duplicate_err" "$duplicate_out" 1
+expect duplicate-first-attempt "a first attempt refused as a duplicate: fails with \"upload failed\" (another run's build)" \
+  "ci-publish-testflight: upload failed: App Store Connect already lists" "is processed"
+
+run duplicate-of-27 1 VALID "${duplicate_err//28/27}" "${duplicate_out//28/27}" 2
+expect duplicate-of-27 "a rerun refused as a duplicate of another number: fails with \"upload failed\"" \
+  "ci-publish-testflight: upload failed$" "is processed"
+polled duplicate-of-27 && bad "  ...and never asks for the build" duplicate-of-27
 
 run delivered-exit-0 0 VALID "$delivered"
 expect delivered-exit-0 "exit 0: goes on to the poll as before" "Build 28 is processed (fake-build)" "upload failed" "::warning"

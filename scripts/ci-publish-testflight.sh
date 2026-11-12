@@ -80,11 +80,15 @@ ipa_build="$(unzip -p "$ipa" 'Payload/*.app/Info.plist' | plutil -extract CFBund
 [[ "$ipa_build" == "$build" ]] || fail "the IPA is build ${ipa_build:-unknown}, expected $build"
 shasum -a 256 "$ipa" | tee "$out/Gatefold.ipa.sha256"
 
-# 3. Upload. altool can exit non-zero after it has delivered the build: in run 43318514534 App Store Connect
-# answered three 500s, altool still logged "UPLOAD SUCCEEDED" with a delivery UUID, then waited an hour on
-# processing (the kit passes --wait) and exited 1 (gatefold#337). An exit that follows that line and a delivery
-# UUID goes on to step 4, which judges the build by App Store Connect's own processing state. Any other non-zero
-# exit is a failed upload.
+# 3. Upload. A non-zero exit from altool is a failed upload, except in two cases where the build did reach App
+# Store Connect; both go on to step 4, which judges the build by its processing state (gatefold#337).
+#  - Delivered, then non-zero: in run 43318514534 App Store Connect answered three 500s, altool still logged
+#    "UPLOAD SUCCEEDED" with a delivery UUID, waited an hour on processing (the kit passes --wait) and exited 1.
+#  - A rerun of that run: App Store Connect refuses the same build number as a duplicate
+#    (ENTITY_ERROR.ATTRIBUTE.INVALID.DUPLICATE, previousBundleVersion = this build). That counts only when App Store
+#    Connect lists a build with this number and version and this is a rerun (GITHUB_RUN_ATTEMPT > 1), so the build is
+#    this commit's: publishing is serialized, and a rerun publishes the same commit. A first attempt that hits it
+#    is uploading a number another run took, and fails.
 upload_ok=true
 poll_checks=120
 kit xcode run --kind altool-upload --mode apply --package-path "$ipa" --platform ios \
@@ -101,14 +105,28 @@ if [[ "$upload_ok" == false ]]; then
   cat "$out/altool-upload.json"
   upload_log="$(jq -r '[.stdout, .stderr] | map(strings) | join("\n")' "$out/altool-upload.json" 2>/dev/null || true)"
   delivery="$(sed -nE 's/^Delivery UUID: ([0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12})[[:space:]]*$/\1/p' <<< "$upload_log" | tail -1)"
-  if ! grep -q '^UPLOAD SUCCEEDED' <<< "$upload_log" || grep -q 'UPLOAD FAILED' <<< "$upload_log" || [[ -z "$delivery" ]]; then
+  if grep -q '^UPLOAD SUCCEEDED' <<< "$upload_log" && ! grep -q 'UPLOAD FAILED' <<< "$upload_log" && [[ -n "$delivery" ]]; then
+    printf '%s\n' "$delivery" > "$out/delivery-uuid.txt"
+    echo "::warning title=altool exited non-zero after delivering::altool logged UPLOAD SUCCEEDED (delivery $delivery) but exited non-zero; App Store Connect's processing state decides (gatefold#337)."
+    # altool has already waited on processing (up to an hour), so the poll gets 15 minutes, which keeps its own
+    # verdict inside the job's 90-minute limit.
+    poll_checks=30
+  elif grep -q 'ENTITY_ERROR\.ATTRIBUTE\.INVALID\.DUPLICATE' <<< "$upload_log" \
+    && grep -qE "previousBundleVersion\"?[[:space:]]*[:=][[:space:]]*\"?$build\"?([^0-9]|\$)" <<< "$upload_log"; then
+    asc_get --path /v1/builds --query "filter[app]=$app_id" --query "filter[version]=$build" \
+      --query "filter[preReleaseVersion.version]=$version" --query limit=5 > "$out/asc-build-existing.json" \
+      || fail "upload failed: build $build is a duplicate, and App Store Connect could not be asked for it"
+    listed="$(jq -r '.result.data | length' "$out/asc-build-existing.json")"
+    if [[ "$listed" == 0 ]]; then
+      fail "upload failed: App Store Connect already has an upload of build $build but lists no $version ($build); publish with a higher build_number"
+    fi
+    if (( ${GITHUB_RUN_ATTEMPT:-1} < 2 )); then
+      fail "upload failed: App Store Connect already lists $version ($build), uploaded by another run; publish with a higher build_number"
+    fi
+    echo "::warning title=build $build was already uploaded::A previous attempt of this run uploaded $version ($build); App Store Connect's processing state decides (gatefold#337)."
+  else
     fail "upload failed"
   fi
-  printf '%s\n' "$delivery" > "$out/delivery-uuid.txt"
-  echo "::warning title=altool exited non-zero after delivering::altool logged UPLOAD SUCCEEDED (delivery $delivery) but exited non-zero; App Store Connect's processing state decides (gatefold#337)."
-  # altool has already waited on processing (up to an hour), so the poll gets 15 minutes, which keeps its own
-  # verdict inside the job's 90-minute limit.
-  poll_checks=30
 fi
 date -u +%FT%TZ > "$out/uploaded-at.txt"
 
