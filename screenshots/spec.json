@@ -1,0 +1,289 @@
+{
+  "_about": "The App Store screenshots: each scene is an app state (GatefoldListingShots drives it) and a frame around it (scripts/screenshots/compose.swift). Rendered on release only (.github/workflows/screenshots.yml). Public-domain books only. Captions follow Guideline 2.3: true to the app, no trademarks or other apps' names.",
+  "status_bar": {
+    "time": "2024-01-09T17:41:00.000Z",
+    "args": [
+      "--batteryState",
+      "discharging",
+      "--batteryLevel",
+      "100",
+      "--cellularMode",
+      "active",
+      "--cellularBars",
+      "4",
+      "--wifiMode",
+      "active",
+      "--wifiBars",
+      "3",
+      "--dataNetwork",
+      "wifi",
+      "--operatorName",
+      ""
+    ]
+  },
+  "launch": [
+    "-GatefoldUITest",
+    "YES",
+    "-GatefoldFakeCloud",
+    "YES",
+    "-GatefoldReset",
+    "YES",
+    "-GatefoldSkipWelcome",
+    "YES",
+    "-GatefoldSignedIn",
+    "YES",
+    "-GatefoldDownloadAll",
+    "YES",
+    "-GatefoldNoLatency",
+    "YES",
+    "-GatefoldFakeShelf",
+    "moby-dick,pride-and-prejudice,frankenstein,dracula,alice-in-wonderland,sherlock-holmes,emma",
+    "-AppleLanguages",
+    "(en)",
+    "-AppleLocale",
+    "en_US",
+    "-AppleTextDirection",
+    "NO"
+  ],
+  "devices": {
+    "ipad": {
+      "name": "iPad Pro 13-inch",
+      "folder": "ipad-13",
+      "screen": [
+        2064,
+        2752
+      ],
+      "canvas": [
+        2064,
+        2752
+      ],
+      "kind": "ipad"
+    },
+    "iphone": {
+      "name": "iPhone 17 Pro",
+      "fallbacks": [
+        "iPhone 18 Pro",
+        "iPhone 16 Pro"
+      ],
+      "folder": "iphone-6.3",
+      "screen": [
+        1206,
+        2622
+      ],
+      "canvas": [
+        1206,
+        2622
+      ],
+      "kind": "iphone"
+    },
+    "duo": {
+      "name": "iPhone Duo",
+      "folder": "duo-outer",
+      "display": "1",
+      "screen": [
+        1398,
+        2034
+      ],
+      "canvas": [
+        1398,
+        2034
+      ],
+      "kind": "duo-outer"
+    }
+  },
+  "scenes": [
+    {
+      "id": "spread",
+      "devices": [
+        "ipad"
+      ],
+      "orientation": "landscape",
+      "args": [
+        "-GatefoldOpenBook",
+        "gutenberg-moby-dick",
+        "-GatefoldGoTo",
+        "0.47",
+        "-GatefoldTheme",
+        "daylight"
+      ],
+      "ready": {
+        "id": "reader.anchorCheck",
+        "label_begins": "ready ",
+        "type": "staticText"
+      },
+      "bg": "paper",
+      "headline": [
+        "Two pages,",
+        "like a real book"
+      ],
+      "subline": "Turn your iPad sideways for a two-page spread."
+    },
+    {
+      "id": "page",
+      "devices": [
+        "iphone",
+        "duo"
+      ],
+      "args": [
+        "-GatefoldOpenBook",
+        "gutenberg-frankenstein",
+        "-GatefoldGoTo",
+        "0.71",
+        "-GatefoldTheme",
+        "daylight"
+      ],
+      "ready": {
+        "id": "reader.anchorCheck",
+        "label": "ready 0",
+        "type": "staticText"
+      },
+      "bg": "paper",
+      "headline": [
+        "A page that reads",
+        "like a book"
+      ],
+      "subline": "Real pages with margins and book type, on the phone in your pocket."
+    },
+    {
+      "id": "midnight",
+      "devices": [
+        "ipad",
+        "iphone",
+        "duo"
+      ],
+      "args": [
+        "-GatefoldOpenBook",
+        "gutenberg-dracula",
+        "-GatefoldGoTo",
+        "0.62",
+        "-GatefoldTheme",
+        "midnight"
+      ],
+      "ready": {
+        "id": "reader.anchorCheck",
+        "label": "ready 0",
+        "type": "staticText"
+      },
+      "bg": "ink",
+      "headline": [
+        "Read past midnight.",
+        "Dracula does."
+      ],
+      "subline": "Midnight paper keeps the page dark and the words easy on your eyes."
+    },
+    {
+      "id": "papers",
+      "devices": [
+        "ipad",
+        "iphone"
+      ],
+      "args": [
+        "-GatefoldOpenBook",
+        "gutenberg-emma",
+        "-GatefoldGoTo",
+        "0.3",
+        "-GatefoldTheme",
+        "sage",
+        "-GatefoldSheet",
+        "appearance"
+      ],
+      "ready": {
+        "id": "appearance.panel",
+        "type": "other"
+      },
+      "bg": "paper",
+      "headline": [
+        "Your paper,",
+        "your type"
+      ],
+      "subline": "Six papers from Daylight to Midnight, with type, spacing and margins to taste.",
+      "whole": [
+        "ipad"
+      ]
+    }
+  ],
+  "parked": {
+    "why": "The app names the reader's e-reader (\"In step with your InkPad\", \"Your InkPad read on without you\") wherever it shows sync, and a listing shows no third-party trademark (Guideline 2.3.7). These come back once the app's own copy names the device without it (gatefold#253).",
+    "scenes": [
+      {
+        "id": "catch-up",
+        "devices": [
+          "ipad",
+          "iphone",
+          "duo"
+        ],
+        "args": [
+          "-GatefoldOpenBook",
+          "gutenberg-pride-and-prejudice",
+          "-GatefoldGoTo",
+          "0.02",
+          "-GatefoldTheme",
+          "daylight",
+          "-GatefoldRemoteAheadAfter",
+          "8",
+          "-GatefoldRemoteAheadTo",
+          "0.1"
+        ],
+        "ready": {
+          "id": "banner.jump"
+        },
+        "bg": "paper",
+        "headline": [
+          "Your e-reader",
+          "ran ahead?"
+        ],
+        "subline": "One tap catches you up to the page you reached on it."
+      },
+      {
+        "id": "shelf",
+        "devices": [
+          "ipad",
+          "iphone"
+        ],
+        "args": [
+          "-GatefoldTheme",
+          "daylight"
+        ],
+        "ready": {
+          "id": "library.syncHealth",
+          "label_contains": "In step"
+        },
+        "bg": "paper",
+        "headline": [
+          "Every book you own,",
+          "one tidy shelf"
+        ],
+        "subline": "Your cloud library, covers and all, with your place kept in each."
+      }
+    ]
+  },
+  "surfaces_plan": {
+    "source": "Ari, 2026-11-11 17:30Z: \"use this thinking for ALL apps and ALL surfaces\". Planned for the PRs after the first screenshots PR; nothing here is rendered yet.",
+    "app_store_connect": {
+      "custom_product_page_header": [
+        3840,
+        1646
+      ],
+      "search_results_asset": [
+        3840,
+        2560
+      ],
+      "device_classes": "every class App Store Connect takes, the iPhone Duo's included",
+      "proposals": "an in-app event and custom product pages, staged as drafts and never submitted"
+    },
+    "duo_postures": {
+      "every": [
+        "closed: the front screen",
+        "open flat: the spread",
+        "standing (tent)",
+        "half-open"
+      ],
+      "heroes": [
+        "open flat: the spread",
+        "half-open: the book in hand"
+      ],
+      "driver": "spoonjoy-apple's scripts/duo/posture-driver.swift (request/done file handoff; Device Hub's Closed, Partially Open, Open and Rotate Right), not its .github/scripts/duo/devicehub.swift, whose whole-tree walk per press outran its step in spoonjoy-apple run 42939127260. Budget the step for compiling, launching Device Hub and the first tree walk. Propose a shared tool rather than two copies."
+    },
+    "ipad_fills_the_screen": "Every iPad shot fills the 13-inch screen. A screen whose content is crammed at the top is an app layout issue for Gatefold's app owners, never hidden with framing."
+  }
+}
