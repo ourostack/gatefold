@@ -137,14 +137,25 @@ final class RotationRepro: XCTestCase {
     }
 
     /// The same, with the shown page noted only as Readium names it: on a device whose page scripts wait
-    /// on the stalled install too, its words never come back before he leaves.
+    /// on the stalled install too, its words never come back before he leaves. The reopen must start on the
+    /// page he saw, and the place never takes his turn's words for another page. Red on CI while the stalled
+    /// leave notes Readium's location one boundary before his kept place (CI 43075159905).
     func testRotateThenLeaveWhileTheRestoreWaitsOnItsPageWithoutItsWords() throws {
         try rotateThenLeave(extra: Self.slowRestore + ["-GatefoldShownPageWithoutWords", "YES"], countBeforeJump: false)
     }
 
+    /// The same, noted at the place his turn kept, as when Readium reports nothing new under the stall
+    /// (CI 43075159905): the leave keeps his words, and the reopen opens on them (gatefold#133).
+    func testRotateThenLeaveWhileTheRestoreWaitsOnHisKeptPlaceWithoutItsWords() throws {
+        try rotateThenLeave(extra: Self.slowRestore + ["-GatefoldShownPageWithoutWords", "YES",
+                                                       "-GatefoldShownPageAtHisPlace", "YES"], countBeforeJump: false)
+    }
+
     /// The same, with each reopen landing on the chapter's start (`-GatefoldReopenOnChapterStart`), as a
-    /// reopen whose stalled restore settled there did on CI (gatefold#250, round 3 of run 43047479324): the
-    /// saved place has no words, so only the open's own place can bring him back to his page.
+    /// reopen whose stalled restore settled there did on CI (gatefold#250, round 3 of run 43047479324): where
+    /// the saved place has no words, only the open's own place can bring him back to his page. On a layout
+    /// where the stalled page is his kept place, the leave keeps his words instead (gatefold#133), and this
+    /// test shares WithoutItsWords' red under gatefold#276.
     func testRotateThenLeaveWithoutItsWordsAndReopenOnTheChapterStart() throws {
         try rotateThenLeave(extra: Self.slowRestore + ["-GatefoldShownPageWithoutWords", "YES"],
                             reopenExtra: ["-GatefoldReopenOnChapterStart", "YES"])
@@ -220,6 +231,10 @@ final class RotationRepro: XCTestCase {
             counted = waitCounted()
             XCTAssertTrue(counted, "the book was counted before the rotation")
         }
+        // The page his second turn kept, and the words it saved: the place a leave on it keeps (gatefold#133).
+        // Compared only, never printed.
+        let turnedBeforeRotation = settle(quiet: 4, hangGuard: 20)
+        let savedBeforeRotation = (el("reader.savedWords").value as? String) ?? ""
 
         // 4. Turn the iPad. The words change once the spread is shown (settled, or shown as it is by the
         // watchdog), then a long settle: a restore started again can still move it.
@@ -234,17 +249,51 @@ final class RotationRepro: XCTestCase {
 
         // 5. Leave without turning, three times.
         var green = 0
+        // The stalled-leave tests hold the restore past the leave (the slow-restore hook): only they test the
+        // shown page's write and the words it keeps. The others settle, and leave by other paths.
+        let stalledLeave = extra.contains("-GatefoldSlowRestorePage")
+        // Left with no words on the page his turn kept: the place keeps his words (gatefold#133, CI 43075159905).
+        let keepsHisWords = extra.contains("-GatefoldShownPageAtHisPlace")
         for round in 1...3 {
+            // Round 1 is the stalled leave (the slow-restore hook holds the restore past it); a restore that
+            // settled first leaves nothing to test, and a green would be luck. Its value names no book text.
+            if round == 1, stalledLeave {
+                let stalled = ((el("reader.reflow").value as? String) ?? "").hasSuffix("reflowing")
+                note("round 1 leaves under a stalled restore: \(stalled)")
+                XCTAssertTrue(stalled, "the restore was still stalled when he left")
+            }
             leave("round \(round)")
             app.launchArguments = base + reopenExtra
             app.relaunch()
             XCUIDevice.shared.orientation = .landscapeLeft
             let back = settle(quiet: Self.longQuiet, hangGuard: 120, "round \(round)")
-            let startsSame = head(back) == head(his)
-            let middleSame = back.contains(middle(his))
-            let at = back.range(of: head(his)).map { back.distance(from: back.startIndex, to: $0.lowerBound) } ?? -1
-            if startsSame { green += 1 }
-            note("round \(round) \(startsSame ? "GREEN" : "RED") startsSame=\(startsSame) middleSame=\(middleSame) hisStartAt=\(at) reopenedHead=\(hash(head(back)))")
+            // Noted at the place his turn kept (the hook), the leave keeps that place and its words: the reopen
+            // puts them at the top of the left page, as a restore does. Otherwise it is the page he saw.
+            // Portrait and landscape break lines apart: a restore leaves words already within two lines of a
+            // column's top where they are (`pinToTop`), so under the hook his words open the left page within
+            // its first few lines (about 160 characters), not always at its very start.
+            let target = keepsHisWords ? turnedBeforeRotation : his
+            let flat = { (t: String) in t.split(whereSeparator: \.isWhitespace).joined(separator: " ") }
+            let backFlat = flat(back)
+            let at = backFlat.range(of: flat(head(target))).map { backFlat.distance(from: backFlat.startIndex, to: $0.lowerBound) } ?? -1
+            let startsSame = keepsHisWords
+                ? ((0...160).contains(at)
+                   || ReopenMatch.compare(left: turnedBeforeRotation, reopened: back, saved: savedBeforeRotation) != .different)
+                : head(back) == head(his)
+            let middleSame = back.contains(middle(target))
+            // His turn kept his words; leaving on that same page, with or without words from it, keeps them
+            // (gatefold#133: a bare progression reopened one page boundary early). Never printed, only tested.
+            let savedNow = (el("reader.savedWords").value as? String) ?? ""
+            let keptWords = !keepsHisWords || !savedNow.isEmpty
+            // A place that carries his turn's words opens on them: never his words on another page (the leave
+            // keeps them only on the page his turn kept). Searched as saved, so a hyphenated page start can't hide them.
+            let keptAt = backFlat.range(of: flat(head(savedNow)))
+                .map { backFlat.distance(from: backFlat.startIndex, to: $0.lowerBound) } ?? -1
+            let borrowed = !savedNow.isEmpty && savedNow == savedBeforeRotation && !(0...160).contains(keptAt)
+            if startsSame && keptWords && !borrowed { green += 1 }
+            note("round \(round) \(startsSame && keptWords && !borrowed ? "GREEN" : "RED") startsSame=\(startsSame) keptWords=\(keptWords) borrowed=\(borrowed) middleSame=\(middleSame) hisStartAt=\(at) keptAt=\(keptAt) reopenedHead=\(hash(head(back)))")
+            XCTAssertTrue(keptWords, "round \(round): the place reopened carries his words")
+            XCTAssertFalse(borrowed, "round \(round): the place carries his turn's words only on his page")
             XCTAssertTrue(startsSame, "round \(round): reopened on his page")
             assertNoVisibleSettleMove("round \(round)")
         }
