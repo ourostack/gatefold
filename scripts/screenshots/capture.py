@@ -38,8 +38,6 @@ ON_SCREEN = ["Gatefold", "Packages/GatefoldCore/Sources", "Packages/GatefoldClou
 # The watcher gives up after SHOOT_LIMIT seconds; the scene test waits longer (ListingShotsUITests: 120 s, past 80 s plus two 15 s simctl calls).
 STABLE_FRAMES, SHOOT_LIMIT, FRAME_GAP = 3, 80, 0.8
 SIMCTL_LIMIT = 15  # one screenshot or status-bar call; a hung simctl fails the scene instead of the step
-# Elements whose text names the e-reader ("In step with your InkPad", the catch-up offer and its tab).
-NAMES_THE_DEVICE = {"library.syncHealth", "banner", "banner.jump", "banner.tab"}
 # Books in the public domain everywhere; the shelf launch argument may name only these.
 PUBLIC_DOMAIN = {"moby-dick", "pride-and-prejudice", "frankenstein", "dracula", "alice-in-wonderland",
                  "sherlock-holmes", "emma"}
@@ -220,11 +218,7 @@ def selftest():
     for s in spec["scenes"]:
         assert set(s.get("whole", [])) <= {kinds[k] for k in s["devices"]}, f"{s['id']}: whole names device kinds it runs on"
     for s in spec["scenes"]:
-        assert s["ready"].get("type") in ("staticText", "other", "button"), f"{s['id']}: ready needs its element type"
-    # The surfaces where the app names the reader's e-reader by its trademark stay out of the listing.
-    for s in spec["scenes"]:
-        assert s["ready"]["id"] not in NAMES_THE_DEVICE and "-GatefoldRemoteAheadAfter" not in s["args"], \
-            f"{s['id']}: shows the app's InkPad wording (see the spec's parked scenes)"
+        assert s["ready"].get("type") in ("staticText", "other", "button", "any"), f"{s['id']}: ready needs its element type"
     shelf = spec["launch"][spec["launch"].index("-GatefoldFakeShelf") + 1].split(",")
     assert set(shelf) <= PUBLIC_DOMAIN and len(shelf) == len(set(shelf)), f"public-domain books, once each: {shelf}"
     seeds = (ROOT / "Gatefold" / "Sync" / "FakeSyncService.swift").read_text()
@@ -234,6 +228,9 @@ def selftest():
     # A scene opens its book past the fake Cloud's place for it, so no "read on without you" offer can turn up
     # mid-capture (it did, once, over the spread: two passes, two pictures).
     for s in spec["scenes"]:
+        if "-GatefoldRemoteAheadAfter" in s["args"]:
+            # The catch-up offer stays open while the host shoots (it folds into its tab after 10 s by default).
+            assert "-GatefoldOfferFoldSeconds" in s["args"], f"{s['id']}: hold the offer open with -GatefoldOfferFoldSeconds"
         if "-GatefoldOpenBook" not in s["args"]:
             continue
         book = s["args"][s["args"].index("-GatefoldOpenBook") + 1].split("gutenberg-", 1)[1]

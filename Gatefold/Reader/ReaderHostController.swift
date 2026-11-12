@@ -884,7 +884,8 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     /// Readium names it, then by its first words once the page answers (that may be the very script the
     /// restore is waiting on), so a leave before the restore ends keeps it (gatefold#133).
     private func noteShownUnsettled() {
-        guard let model = weakModel, let here = navigator.currentLocation else { return }
+        guard let model = weakModel, let named = navigator.currentLocation else { return }
+        let here = LaunchOptions.shownPageAtHisPlace ? (model.keptPlace.map { $0.copy(text: { $0 = Locator.Text() }) } ?? named) : named
         let note = model.reflowShownUnsettled(here)
         guard note != nil, !LaunchOptions.shownPageWithoutWords else { return }
         // The watchdog starts the restore again right after this: the model takes the words only while
@@ -1880,6 +1881,11 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
 
     @discardableResult
     func go(to locator: Locator) async -> Bool {
+        if LaunchOptions.holdJumpSends, weakModel?.isJumpingToPlace == true {
+            holdLoadForTest(looks: 0)
+            readerLog.notice("test: a jump to a place is held, never sent")
+            return true
+        }
         if LaunchOptions.isUITest, let sends = LaunchOptions.holdBackSends, sends > 0, weakModel?.isGoingBack == true {
             if !heldSendsArmed { heldSendsArmed = true; heldSends = sends; holdLoadForTest(looks: 0) }
             if heldSends > 0 {

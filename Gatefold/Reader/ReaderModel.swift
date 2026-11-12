@@ -315,6 +315,8 @@ final class ReaderModel {
         // the jump on a return and called the page it reached his (CI's page-numbers check).
         self.launchGoTo = initial == nil && (LaunchOptions.openBook == nil || LaunchOptions.openBook == book.id) ? (goTo ?? LaunchOptions.goTo) : nil
         readerLog.notice("place read [r\(self.readerNumber, privacy: .public)]: \(book.id, privacy: .public) opening on \(initial.map(Self.placeTag) ?? "none", privacy: .public)")
+        // UI tests: the place read carries his words or not (a reopen of a bare progression lands on a boundary).
+        if LaunchOptions.isUITest { self.savedWordsProbe = initial?.text.highlight.map(ReaderJS.normalize) ?? "" }
         // His saved words are the place from the first frame. A reflow can start before the page has
         // shown any words (an iPad relaunched in landscape lays out in portrait first, then rotates);
         // with nothing held, the spread stayed where Readium's re-layout guessed: two spreads early,
@@ -1760,10 +1762,22 @@ final class ReaderModel {
     /// can't drop the move he made under it (gatefold#96).
     func owedPlaceOnLeaving() -> Locator? {
         guard !isClosed, !isWarming else { return nil }
+        // A jump of his still on its way (its chapter loading, Readium's page not yet reported) is owed its
+        // target: the page on screen is still the one before it, and with no report nothing was written,
+        // so the reopen had no place at all (gatefold#279). Not a contents jump's (gatefold#254 keeps the
+        // place before), and not once a touch or a report has made the page his.
+        if let (target, move, _) = jumpOnItsWay, move == moves, recordedMoves != moves, !touchedSinceLocation,
+           fragmentJumpMove != moves {
+            readerLog.notice("place: leaving a jump still on its way; its target kept at \(Self.placeTag(target), privacy: .public)")
+            owedJumpTarget = (target, move)
+            placeOwed = true
+        }
         // No move owed, but a restore that never settled left him the page as it was: that page is what he
         // saw, so it is what the reopen shows (gatefold#133).
         if !placeOwed {
-            leavingOnShownPage = shownOnLeaving
+            // Named once, here, before the close counts its move: the write, the inactive write and the
+            // reopen picture's tag all carry the same place (`withKeptWords`).
+            leavingOnShownPage = shownOnLeaving.map(withKeptWords)
             return leavingOnShownPage
         }
         // A contents jump still on its way (or closed mid-way) shows its file's first page, a place he never
@@ -1788,6 +1802,10 @@ final class ReaderModel {
         leavingOnShownPage = nil
         guard placeOwed || shown, !isWarming else { return }
         let recordedBefore = recordedMoves
+        // A jump still on its way (gatefold#279): its own report may arrive during this write's waits and
+        // be judged already kept, clearing the debt; the move stays open to it either way, so his page's
+        // words are still written once Readium reports it.
+        let jumpOwed = jumpOnItsWay.map { $0.1 == moves } == true && owedJumpTarget.map { $0.0.href == here.href && $0.0.locations.progression == here.locations.progression } == true
         if !shown {
             readerLog.notice("place: recorded the move a reflow held, on leaving, at \(here.locations.totalProgression ?? -1, privacy: .public) moves \(self.moves, privacy: .public) recorded \(self.recordedMoves, privacy: .public)")
         }
@@ -1797,7 +1815,9 @@ final class ReaderModel {
         // The shown page's write took its move when it was written (`keepShownPageNow`), not now.
         let movesAtWrite = shown ? (shownLeaveWrite?.move ?? moves) : moves
         if shown { await mapShownPagePosition(here) } else {
+            if jumpOwed { leaveWriteMove = moves; reportWroteInLeave = false }
             await locationDidChange(here, hisMove: true, placeOnly: true, leaving: true)
+            if jumpOwed { leaveWriteMove = nil }
         }
         // The restore settled during that wait: its write-back may have gone first, so this one follows it.
         if shown, !isClosed, keeper.reflowing == nil, moves == movesAtWrite, !touchedSinceLocation, let words = anchorLocator {
@@ -1807,7 +1827,11 @@ final class ReaderModel {
             await locationDidChange(words, hisMove: true, placeOnly: true)
             if moves == movesAtWrite, !touchedSinceLocation { layoutOnly = true }
         }
-        if !isClosed, placeOwed, recordedMoves == moves { recordedMoves = recordedBefore }
+        // Handed back to the next report, unless the jump's own report already wrote his page meanwhile: a
+        // later report of the same move (the layout settling) would then write over his words.
+        if !isClosed, placeOwed || jumpOwed, recordedMoves == moves, !(jumpOwed && reportWroteInLeave) {
+            recordedMoves = recordedBefore
+        }
     }
 
     /// Leaving on the page a stalled restore left him: written now, in the caller's own turn (the close,
@@ -1830,6 +1854,23 @@ final class ReaderModel {
         app.library.flushPushes()
     }
     @ObservationIgnored private var shownKeptNow: Locator?
+
+    /// The place the library keeps for this book now.
+    var keptPlace: Locator? { app.library.book(bookID)?.locatorJSON.flatMap { try? Locator(jsonString: $0) } }
+
+    /// `here` with his first words when it has none and the place kept now is that very place with words
+    /// (his turn's write before the stalled restore showed the same page). Readium's bare progression sits
+    /// on a page boundary, and a reopen can land on either side of it (gatefold#133: one page early).
+    /// Only while nothing has moved since that write (no turn, jump or landing not yet kept; or no move at
+    /// all since the open, the kept place being the one opened): a new page never inherits the old page's words.
+    private func withKeptWords(_ here: Locator) -> Locator {
+        guard here.text.highlight == nil, !hasMoved || recordedMoves == moves,
+              let kept = keptPlace,
+              kept.text.highlight != nil, kept.href == here.href,
+              kept.locations.progression == here.locations.progression else { return here }
+        readerLog.notice("place write [r\(self.readerNumber, privacy: .public)]: the page left has no words; the kept place's words go with it (same place)")
+        return here.copy(text: { $0 = kept.text })
+    }
 
     /// The shown page's leave write, at once: the place as noted (with his first words if the page gave
     /// them before he left, `reflowShownUnsettled`), no position mapped, no wait. The words matter: under a
@@ -2071,6 +2112,17 @@ final class ReaderModel {
     @ObservationIgnored private var claimedMove: Int?
     /// A launch jump that never landed, and its move: owed by a reflow, its target is the place kept.
     @ObservationIgnored private var owedJumpTarget: (Locator, Int)?
+    /// The newest jump of his to a place (the scrubber, a bookmark, a search result) and its move: the place
+    /// a leave keeps while that move has no report yet (gatefold#279).
+    /// `from` is Readium's last report before the jump: the page it leaves, which a leave's write never
+    /// takes for the jump's own report (the leave's own call names the target as the last report).
+    @ObservationIgnored private var jumpOnItsWay: (target: Locator, move: Int, from: Locator?)?
+    /// A jump of his to a place is being sent to the page (a UI test's `-GatefoldHoldJumpSends` holds it).
+    @ObservationIgnored private(set) var isJumpingToPlace = false
+    /// The move whose jump target a leave is writing (`keepOwedPlace`), while that write waits.
+    @ObservationIgnored private var leaveWriteMove: Int?
+    /// The jump's own report wrote while that leave's write waited.
+    @ObservationIgnored private var reportWroteInLeave = false
     /// The latest report of the claimed move that was dropped for the claim.
     @ObservationIgnored private var contestingReport: Locator?
     /// Set when a reflow ends (or an owed place is kept) and cleared by a move of his, or a report his
@@ -2217,7 +2269,11 @@ final class ReaderModel {
         // A report dropped for a claim may be the real place (a two-step jump names its file's start,
         // then the place): the claimant then keeps whichever of the two the page on screen holds.
         if claimedByEarlier { contestingReport = locator }
-        let alreadyKept = (moves == recordedMoves && !hisMove) || claimedByEarlier
+        // A leave still writing a jump's target (gatefold#279) hasn't kept the move: the jump's own report,
+        // arriving during that write's waits, is his page with its words, and it writes. Only a page that
+        // moved: a re-report of the page before the jump (the layout, the app going inactive) is not it.
+        let leaveWriting = leaveWriteMove == moves && !leaving && Self.pageMoved(jumpOnItsWay?.from, locator)
+        let alreadyKept = (moves == recordedMoves && !hisMove && !leaveWriting) || claimedByEarlier
         let touchedAtReport = touchedSinceLocation
         let readerMoved = (!layoutOnly && !alreadyKept) || touchedAtReport
         // The move this report was judged for. Its reads below can outlast a jump (a report of the book's
@@ -2319,7 +2375,7 @@ final class ReaderModel {
         // Asked again here, after the waits above: a second report that arrived while this one captured
         // its words found the move not yet kept, and both wrote (build 20's loop saved two places for one
         // jump, 0.3 s apart, from one reader).
-        let keptMeanwhile = moves == recordedMoves && !hisMove && !touchedAtReport
+        let keptMeanwhile = moves == recordedMoves && !hisMove && !touchedAtReport && !leaveWriting
         guard hasMoved, readerMoved, !keptMeanwhile, !fromLayout, !isWarming else {
             // No write: the move is the next report's to keep, from now, not after the wait below.
             if let claim, claimedMove == claim { claimedMove = nil }
@@ -2328,6 +2384,7 @@ final class ReaderModel {
         // Kept as of now, before any further wait.
         recordedMoves = moves
         lateLandings = []
+        if leaveWriting { reportWroteInLeave = true }
         pagesLeft = []
         let keeping = moves
         newestWrittenMove = max(newestWrittenMove, keeping)
@@ -2361,8 +2418,15 @@ final class ReaderModel {
         keptPage = reported
         if let json = try? here.jsonString() {
             let now = Date()
+            let recordsBefore = placeRecords
             await placeWriteWait()
             let exact = await mapper?.position(for: BookLocation(here), at: now)
+            // The jump's target written as he left gives way to the jump's own report, written meanwhile:
+            // that one is his page, with its words (gatefold#279).
+            if leaving, leaveWriteMove == keeping, placeRecords != recordsBefore {
+                readerLog.notice("place write [r\(self.readerNumber, privacy: .public)]: the jump's own report was written while its target was; target not written")
+                return refreshBookmarkState(await page?.visibleRange())
+            }
             // A newer move kept during those waits owns the place: this write, resumed after it, would land
             // over it (#46 at c4c3b6a: the Contents jump's write landed after Back's and kept the jump's page).
             // So does a newer write for this same move: the newest jump back past its veil keeps its
@@ -2566,7 +2630,11 @@ final class ReaderModel {
         let back = rememberBack ? rememberPlace() : nil
         defer { publishBack(back) }
         if let locator = await publication.locate(progression: progression) {
+            // His own jumps only: a Cloud landing (`his: false`) records its place once it has settled.
+            if his { jumpOnItsWay = (locator, moves, lastReported ?? page?.currentLocation) }
+            isJumpingToPlace = his
             let jump = await veiled(toward: locator.href) { _ = await self.page?.go(to: locator) }
+            isJumpingToPlace = false
             if endedQuietly(jump, back: back) { return true }
             await captureAnchor()
             // Behind the cover nothing hides a chapter still loading, so keep the cover up until the
@@ -2709,6 +2777,7 @@ final class ReaderModel {
         moves += 1
         let back = rememberBack ? rememberPlace() : nil
         defer { publishBack(back) }
+        jumpOnItsWay = (locator, moves, lastReported ?? page?.currentLocation)
         let jump = await veiled(toward: locator.href) { _ = await self.page?.go(to: locator) }
         if endedQuietly(jump, back: back) { return }
         await captureAnchor()
