@@ -146,6 +146,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
 
         wire(navigator)
         model.host = self
+        model.marginsFollowLayout() // a layout measured before the host was here (gatefold#302)
     }
 
     /// Taps, keys and touches on the page in view come here.
@@ -770,15 +771,16 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         return layer
     }
 
-    /// Counts the display frames the risen leaf stands still, for the log and the UI tests' probe, until it
-    /// swings open or is taken away.
+    /// The risen leaf stands still waiting on its spread (gatefold#302). UI tests count the display frames it
+    /// stands, until it swings open or is taken away; nothing ticks outside them.
     private func leafStands(_ view: UIView) {
         readerLog.notice("unfold: the leaf has risen and stands, the spread not laid out yet")
+        guard LaunchOptions.isUITest else { return }
         let watch = LeafWatch { [weak self, weak view] in
             guard let self, let view, self.leaf?.view === view else { return false }
             return true
         } frame: { [weak self] in
-            if LaunchOptions.isUITest { self?.weakModel?.leafStoodFramesProbe += 1 }
+            self?.weakModel?.leafStoodFramesProbe += 1
         } ended: { frames in
             readerLog.notice("unfold: the leaf stood \(frames, privacy: .public) frames before it swung open or went")
         }
