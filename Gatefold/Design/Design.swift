@@ -135,6 +135,16 @@ enum LaunchOptions {
         nil
         #endif
     }
+    /// Tests only: the first page counts as still loading, however long he takes, until Catch up is taken, so a
+    /// tap over the opening cover is judged while the page loads (gatefold#277; a hold in looks is spent by
+    /// every wait that reads it, and ran out before a slow runner's tap).
+    static var holdOpeningLoadUntilCatchUp: Bool {
+        #if DEBUG
+        isUITest && defaults.bool(forKey: "GatefoldHoldOpeningLoadUntilCatchUp")
+        #else
+        false
+        #endif
+    }
     /// Tests only: the first page counts as still loading for this many looks, so the opening cover
     /// stays up as it does on a slow device or a stuck load (#94), and a test can tap through it (#104).
     static var holdOpeningLoadLooks: Int? { defaults.object(forKey: "GatefoldHoldOpeningLoad") == nil ? nil : defaults.integer(forKey: "GatefoldHoldOpeningLoad") }
