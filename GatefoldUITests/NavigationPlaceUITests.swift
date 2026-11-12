@@ -405,9 +405,12 @@ final class NavigationPlaceUITests: XCTestCase {
         let his = opening(visibleText)
         XCTAssertFalse(his.isEmpty)
 
+        let portraitCount = pageCount
         XCUIDevice.shared.orientation = .landscapeLeft
-        // He stays a while on the new spread: long enough for the page count to finish behind it.
-        sleep(45)
+        // He stays on the new spread until its page count has finished behind it, then until its words hold
+        // still: counted in reads, never a fixed wait (gatefold#210, which a 45 s sleep let run out first).
+        XCTAssertTrue(spreadCounted(after: portraitCount), "the spread's page count finished")
+        _ = steadyWords()
         XCTAssertTrue(flat(visibleText).contains(his), "the spread shows his first words")
         let spread = opening(visibleText)
         for round in 1...3 {
@@ -478,6 +481,25 @@ final class NavigationPlaceUITests: XCTestCase {
         let back = steadyWords()
         let words = opening(scrolled).split(separator: " ").prefix(6).joined(separator: " ")
         XCTAssertTrue(flat(back).contains(words), "reopened where he scrolled to")
+    }
+
+    private var pageCount: String { (app.descendants(matching: .any)["reader.pageCount"].value as? String) ?? "" }
+
+    /// After a rotation, true once the new layout's page count is in: the old layout's total goes (the
+    /// value empties, or changes), then a total comes back. Bounded by reads; a whole count of a book on a
+    /// slow iPad runner takes about 50 s (#94's probes), which 1200 reads a quarter second apart cover.
+    private func spreadCounted(after old: String, reads limit: Int = 1200) -> Bool {
+        var emptied = false
+        for read in 0..<limit {
+            let now = pageCount
+            if now.isEmpty { emptied = true }
+            if !now.isEmpty, emptied || now != old {
+                print("ROTATION spread counted after \(read) reads")
+                return true
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        }
+        return false
     }
 
     private var savedWords: String { (app.descendants(matching: .any)["reader.savedWords"].value as? String) ?? "" }
