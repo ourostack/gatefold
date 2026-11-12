@@ -1931,6 +1931,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         // The jump he chose starts now: the old page is pictured as it is, never waited on while it
         // loads (its spinner held the jump back up to 60 s, and the page never moved: gatefold#73).
         let old = await renderedSnapshot(afterChange: false, waitsForLoad: false)
+        let oldLooks = lastSnapshotLooks
         // A picture that came back bare or black (a page still loading, or a test's held load pictured
         // as one) is never held over the jump: the screen stays as it is beneath the veil instead.
         let paper = PageSignature.rgb(weakModel?.theme.uiBackground ?? .white)
@@ -1964,6 +1965,17 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         if LaunchOptions.isUITest {
             cover.isAccessibilityElement = true
             cover.accessibilityIdentifier = "reader.veil"
+            // The looks this jump's old page took to picture before the jump began: what a page still
+            // loading could hold it back by (gatefold#73). Kept after the veil lifts, so a test reads it
+            // in looks, never seconds, however fast the jump.
+            if veiledJumpLooksMarker == nil {
+                let marker = UIView(frame: CGRect(x: 0, y: 0, width: 1, height: 1))
+                marker.isAccessibilityElement = true
+                marker.accessibilityIdentifier = "reader.jumpStartLooks"
+                view.addSubview(marker)
+                veiledJumpLooksMarker = marker
+            }
+            veiledJumpLooksMarker?.accessibilityValue = "\(oldLooks)"
             holdChapterLoadForTest()
         }
         // The running head stays with the page on screen: it changes chapter as the new page is revealed.
@@ -2268,6 +2280,8 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     }
     /// UI tests: up once a jump's old page has been held as loading, so a test knows the hold armed.
     private var oldPageHeldMarker: UIView?
+    /// UI tests: the looks the newest veiled jump's old page took to picture (`reader.jumpStartLooks`).
+    private var veiledJumpLooksMarker: UIView?
 
     private func holdChapterLoadForTest() {
         guard let looks = LaunchOptions.holdChapterLoadLooks, looks > 0 else { return }
