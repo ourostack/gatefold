@@ -53,6 +53,10 @@ final class ReaderModel {
     /// The "read on without you" slip, tucked into a tab at the page's top edge: a turn means stay.
     private(set) var slipFolded = false
     private(set) var aheadTab: String?
+    /// The ahead slip's own words, kept so its number can be redone once the pages are counted (gatefold#314).
+    @ObservationIgnored private var aheadSlipParts: (device: String, approximate: Bool, percent: Int?, updated: Date?, passage: String?, pages: Int?)?
+    /// Whether the ahead slip's number is counted screen pages, not Readium's positions. UI tests read it.
+    private(set) var aheadPagesCounted = false
     /// Bumped each time a slip appears, for its haptic.
     private(set) var slipCount = 0
     /// After any jump that is not a turn, the way back stays on screen with the controls hidden, until
@@ -479,9 +483,16 @@ final class ReaderModel {
 
     /// Pages from one place to another: screen pages once counted, Readium's positions until then.
     func pagesBetween(_ from: Double, _ to: Double) -> Int? {
-        if let a = (from == totalProgression ? screenNumbers?.compactMap({ $0 }).first : nil) ?? screenPage(atTotal: from), let b = screenPage(atTotal: to) { return b - a }
+        if let counted = countedPagesBetween(from, to) { return counted }
         guard chapterMap.positionCount > 1 else { return nil }
         return chapterMap.page(at: to) - chapterMap.page(at: from)
+    }
+
+    /// Pages from one place to another on counted screen pages only: nil until both chapters are counted.
+    func countedPagesBetween(_ from: Double, _ to: Double) -> Int? {
+        guard let a = (from == totalProgression ? screenNumbers?.compactMap({ $0 }).first : nil) ?? screenPage(atTotal: from),
+              let b = screenPage(atTotal: to) else { return nil }
+        return b - a
     }
 
     /// Numbers the screen in view. A new layout (size, spread, type) starts from its own kept counts,
@@ -517,6 +528,8 @@ final class ReaderModel {
         guard screenPages?.layout == key else { return }
         lastGeometry = (href, geometry)
         screenNumbers = screenPages?.screen(href: href, geometry: geometry)
+        // A count kept from before, or the chapter in view just counted, can be the last piece the slip needed.
+        recountAheadSlip()
         if screenNumbers == nil {
             readerLog.debug("pages: no number yet for \(href, privacy: .public): \(self.screenPages?.uncounted.count ?? -1, privacy: .public) uncounted, clean \(geometry.isClean, privacy: .public), this chapter \(self.screenPages?.pages(of: href).map(String.init) ?? "nil", privacy: .public)")
         }
@@ -541,12 +554,14 @@ final class ReaderModel {
                 if kept != columns {
                     readerLog.error("pages: counter disagrees with the page on \(href, privacy: .public): \(columns, privacy: .public) against \(kept, privacy: .public); the page's kept")
                 }
+                self.recountAheadSlip()
                 return
             }
             self.screenPages?.record(href: href, columns: columns)
             if let map = self.screenPages { Self.pageStore.save(map) }
             if let (here, geometry) = self.lastGeometry {
                 self.screenNumbers = self.screenPages?.screen(href: here, geometry: geometry)
+                self.recountAheadSlip()
             } else {
                 // No look at the page has landed yet (a reopen's picture swapping out, a reflow ending as
                 // the count began): take one, or a finished count never shows its number.
@@ -995,7 +1010,6 @@ final class ReaderModel {
         suggestionRemote = aim
         suggestionCloud = remote.totalProgression
         withAnimation(Motion.banner) { suggestion = made }
-        let pages = pagesBetween(totalProgression, target.totalProgression)
         let percent = ReadingPercent.whole(target.totalProgression) - ReadingPercent.whole(totalProgression)
         // A place the Cloud only has as a percent still gets its words: the sentence starting there.
         var passage = target.locator?.text.highlight
@@ -1007,6 +1021,11 @@ final class ReaderModel {
         guard !isClosed else { return }
         // The tap should land at once: load the Cloud place's page now, behind this one.
         if let locator = suggestionLocator { page?.prepareStandby(at: locator) }
+        // Counted after the awaits above, so a count that finished during them is the one shown.
+        let counted = countedPagesBetween(totalProgression, target.totalProgression)
+        let pages = counted ?? pagesBetween(totalProgression, target.totalProgression)
+        aheadPagesCounted = counted != nil
+        aheadSlipParts = (remote.deviceName, percentOnly, percent, remote.updated, passage, pages)
         aheadTab = SyncSlip.tab(device: remote.deviceName, pagesAhead: pages)
         aheadTarget = (target.totalProgression, remote.deviceName)
         slipFolded = false
@@ -1063,6 +1082,21 @@ final class ReaderModel {
         }
         pages.close()
         return Array(found.prefix(limit))
+    }
+
+    /// An ahead slip shown on Readium's positions takes the counted pages once the count reaches the
+    /// other device's place, so the slip and its tab say the same number, whichever finished first:
+    /// the count or the slip (two launches showed 106 and 91 for one place, gatefold#314).
+    private func recountAheadSlip() {
+        guard !aheadPagesCounted, slipKind == .ahead, slip != nil, let parts = aheadSlipParts, let aim = aheadTarget,
+              let pages = countedPagesBetween(totalProgression, aim.progression) else { return }
+        aheadPagesCounted = true
+        readerLog.notice("remote ahead: \(pages, privacy: .public) counted pages, \(parts.pages.map(String.init) ?? "none", privacy: .public) before the count")
+        guard pages != parts.pages else { return }
+        aheadSlipParts?.pages = pages
+        slip = .ahead(device: parts.device, pagesAhead: pages, approximate: parts.approximate, percentAhead: parts.percent,
+                      updated: parts.updated, now: Date(), passage: parts.passage)
+        refreshAheadTab()
     }
 
     /// The folded tab counts down as the reader catches up, and goes once they're there.
@@ -1203,6 +1237,8 @@ final class ReaderModel {
         page?.prepareStandby(at: suggestionLocator ?? locator)
         aheadTab = SyncSlip.ownPlaceTab
         aheadTarget = nil
+        aheadSlipParts = nil
+        aheadPagesCounted = false
         slipFolded = false
         showSlip(.ownPlace(pagesAway: pages, passage: locator.text.highlight), kind: .ahead)
     }
@@ -2935,6 +2971,8 @@ final class ReaderModel {
     private(set) var savedPlaceProbe = ""
     /// UI tests: the same for the page Readium last reported, written or not.
     private(set) var shownPlaceProbe = ""
+    /// UI tests: "counted" once an ahead slip is up showing counted screen pages (gatefold#314).
+    var aheadCountProbe: String { slipKind == .ahead && slip != nil && aheadSlipParts != nil ? (aheadPagesCounted ? "counted" : "estimated") : "" }
     private static func probeTag(_ l: Locator) -> String {
         (l.href.string.split(separator: "/").last.map(String.init) ?? "") + String(format: "@%.5f", l.locations.progression ?? -1)
     }
