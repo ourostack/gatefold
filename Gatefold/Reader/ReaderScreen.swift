@@ -362,6 +362,13 @@ struct ReaderScreen: View {
                 .accessibilityIdentifier("reader.pageCount")
                 .accessibilityValue(model.screenPages?.total.map(String.init) ?? "")
                 .allowsHitTesting(false)
+            // The layout that count is of, so a test waits for the new layout's total after a rotation (#210).
+            Text("page count layout")
+                .font(.system(size: 1))
+                .opacity(0.01)
+                .accessibilityIdentifier("reader.pageCountLayout")
+                .accessibilityValue(model.screenPages?.layout.key ?? "")
+                .allowsHitTesting(false)
             Text("number delay")
                 .font(.system(size: 1))
                 .opacity(0.01)
