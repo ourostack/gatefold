@@ -628,9 +628,9 @@ jobs:
       extra: ${{ needs.changes.outputs.edited-ipad }}
       full: ${{ needs.changes.outputs.full }}
       cold: ${{ matrix.cold }}
-      # A smoke shard that also runs the classes this pull request edits gets their slowest passes too (`changes`,
-      # scripts/ci-shards.py smoke; gatefold#260).
-      timeout: ${{ matrix.pr_when == 'smoke' && needs.changes.outputs.edited-ipad != '' && fromJSON(needs.changes.outputs.smoke-ipad) || matrix.timeout }}
+      # On a pull request that runs the PR lists, a smoke shard that also runs the classes it edits gets their slowest
+      # passes too (`changes`, scripts/ci-shards.py smoke; gatefold#260).
+      timeout: ${{ needs.changes.outputs.full == 'false' && matrix.pr_when == 'smoke' && needs.changes.outputs.edited-ipad != '' && fromJSON(needs.changes.outputs.smoke-ipad) || matrix.timeout }}
       lane: ${{ matrix.lane }}
 
   duo:
@@ -742,9 +742,9 @@ jobs:
       extra: ${{ needs.changes.outputs.edited-duo }}
       full: ${{ needs.changes.outputs.full }}
       cold: ${{ matrix.cold }}
-      # A smoke shard that also runs the classes this pull request edits gets their slowest passes too (`changes`,
-      # scripts/ci-shards.py smoke; gatefold#260).
-      timeout: ${{ matrix.pr_when == 'smoke' && needs.changes.outputs.edited-duo != '' && fromJSON(needs.changes.outputs.smoke-duo) || matrix.timeout }}
+      # On a pull request that runs the PR lists, a smoke shard that also runs the classes it edits gets their slowest
+      # passes too (`changes`, scripts/ci-shards.py smoke; gatefold#260).
+      timeout: ${{ needs.changes.outputs.full == 'false' && matrix.pr_when == 'smoke' && needs.changes.outputs.edited-duo != '' && fromJSON(needs.changes.outputs.smoke-duo) || matrix.timeout }}
       lane: ${{ matrix.lane }}
 
   ipad-place-gate:
