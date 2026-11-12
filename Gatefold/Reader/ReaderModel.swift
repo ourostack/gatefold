@@ -283,6 +283,9 @@ final class ReaderModel {
         readerLog.notice("place read [r\(self.readerNumber, privacy: .public)]: \(book.id, privacy: .public) opening on \(initial.map(Self.placeTag) ?? "none", privacy: .public)")
         // UI tests: the place read carries his words or not (a reopen of a bare progression lands on a boundary).
         if LaunchOptions.isUITest { self.savedWordsProbe = initial?.text.highlight.map(ReaderJS.normalize) ?? "" }
+        // UI tests: a reopen holds the place it read as kept until a move of his writes another; empty, a
+        // reopen that never moved could not be judged against the place it showed.
+        if LaunchOptions.isUITest { self.savedPlaceProbe = initial.map(Self.probeTag) ?? "" }
         // His saved words are the place from the first frame. A reflow can start before the page has
         // shown any words (an iPad relaunched in landscape lays out in portrait first, then rotates);
         // with nothing held, the spread stayed where Readium's re-layout guessed: two spreads early,
@@ -3148,7 +3151,8 @@ final class ReaderModel {
     /// For UI tests: the words of the place his last move saved, so a test can tell a word's tail the
     /// place skipped (`ReaderJS.anchor`) from a page that skipped his place (`ReopenMatch`).
     private(set) var savedWordsProbe = ""
-    /// UI tests: the file and the progression in it of the place last written by a move of his (no words).
+    /// UI tests: the file and the progression in it of the place last written by a move of his (no words), or
+    /// the place the reader opened on until one is.
     private(set) var savedPlaceProbe = ""
     /// UI tests: the same for the page Readium last reported, written or not.
     private(set) var shownPlaceProbe = ""
