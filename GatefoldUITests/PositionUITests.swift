@@ -26,7 +26,7 @@ final class PositionUITests: XCTestCase {
             "-GatefoldUITest", "YES", "-GatefoldFakeCloud", "YES", "-GatefoldReset", "YES", "-GatefoldSkipWelcome", "YES",
             "-GatefoldSignedIn", "YES", "-GatefoldDownloadAll", "YES",
             "-GatefoldOpenBook", "gutenberg-pride-and-prejudice", "-GatefoldGoTo", "0.31",
-            "-GatefoldTheme", "vellum", "-GatefoldForcePosture", posture,
+            "-GatefoldTheme", "vellum", "-GatefoldForcePosture", posture, "-GatefoldPostureSwitches", "YES",
         ] + extra
         app.launch()
         XCTAssertTrue(app.descendants(matching: .any)["reader.page"].waitForExistence(timeout: 30))

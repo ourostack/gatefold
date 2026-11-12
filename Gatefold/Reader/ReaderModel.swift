@@ -2913,8 +2913,18 @@ final class ReaderModel {
         (l.href.string.split(separator: "/").last.map(String.init) ?? "") + String(format: "@%.5f", l.locations.progression ?? -1)
     }
 
+    /// UI tests: the web view's count of the columns on screen, measured with each new look at the page
+    /// (`ReaderJS.columns`), with the layout's own count after it.
+    private(set) var columnsProbe = ""
+
     private func refreshBookmarkState(_ visible: VisibleRange?) {
         if LaunchOptions.isUITest, reopenPicture == nil, let text = visible?.text { visibleTextProbe = String(text.prefix(2400)) }
+        if LaunchOptions.columnsProbe, reopenPicture == nil, visible != nil {
+            Task { [weak self] in
+                guard let self, let measure = await self.page?.columnMeasure() else { return }
+                self.columnsProbe = "\(measure) layout \(self.layout.columns == .two ? 2 : 1)"
+            }
+        }
         guard let location else { return }
         let here = location.href.string
         let p = location.locations.progression ?? 0

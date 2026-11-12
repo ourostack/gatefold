@@ -1514,6 +1514,14 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         }
     }
 
+    func columnMeasure() async -> String? {
+        return await Self.onSpread {
+            let navigator = self.navigator // the one on screen now, on each try
+            _ = try await navigator.answer(ReaderJS.install)
+            return try await navigator.answer(ReaderJS.columns) as? String
+        }
+    }
+
     /// Where `quote` is in the resource on screen, as a progression; nil when it isn't there.
     func progression(of quote: String) async -> Double? {
         return await Self.onSpread {
