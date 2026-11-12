@@ -25,12 +25,12 @@ struct HighlightItem: Identifiable, Hashable {
     var note: String? { annotation.noteText }
     var date: Date? { annotation.mark?.value.created ?? annotation.quotation?.updated ?? annotation.kind.updated }
 
-    /// "Highlighted on your InkPad · 3 days ago".
+    /// "Highlighted on your e-reader · 3 days ago".
     func provenance(now: Date = Date()) -> String {
         let verb = note == nil ? "Highlighted" : "Noted"
         let place = switch origin {
         case .here: "here"
-        case .inkPad: "on your InkPad"
+        case .inkPad: "on your e-reader"
         case .cloud: "in PocketBook Cloud"
         }
         guard let date else { return "\(verb) \(place)" }
@@ -683,7 +683,7 @@ struct HighlightRows: View {
             ContentUnavailableView(
                 "Nothing Highlighted Yet",
                 systemImage: "highlighter",
-                description: Text("Press and hold a line, then tap Highlight. Whatever you mark on your InkPad turns up here too.")
+                description: Text("Press and hold a line, then tap Highlight. Whatever you mark on your e-reader turns up here too.")
             )
             .listRowBackground(Color.clear)
         } else {
