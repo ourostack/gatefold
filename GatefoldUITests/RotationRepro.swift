@@ -142,11 +142,19 @@ final class RotationRepro: XCTestCase {
         try rotateThenLeave(extra: Self.slowRestore + ["-GatefoldShownPageWithoutWords", "YES"], countBeforeJump: false)
     }
 
+    /// The same, with each reopen landing on the chapter's start (`-GatefoldReopenOnChapterStart`), as a
+    /// reopen whose stalled restore settled there did on CI (gatefold#250, round 3 of run 43047479324): the
+    /// saved place has no words, so only the open's own place can bring him back to his page.
+    func testRotateThenLeaveWithoutItsWordsAndReopenOnTheChapterStart() throws {
+        try rotateThenLeave(extra: Self.slowRestore + ["-GatefoldShownPageWithoutWords", "YES"],
+                            reopenExtra: ["-GatefoldReopenOnChapterStart", "YES"])
+    }
+
     private static let slowRestore = ["-GatefoldSlowRestorePage", "YES"]
 
     /// `countBeforeJump`: the book is counted before the Contents jump, as in the first repro; otherwise
     /// just before the rotation. Counted before the rotation either way.
-    private func rotateThenLeave(extra: [String] = [], countBeforeJump: Bool = true) throws {
+    private func rotateThenLeave(extra: [String] = [], reopenExtra: [String] = [], countBeforeJump: Bool = true) throws {
         try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .pad, "a spread on rotation is an iPad path")
         // 1. Portrait, fresh install, open, wait for the count.
         XCUIDevice.shared.orientation = .portrait
@@ -228,7 +236,7 @@ final class RotationRepro: XCTestCase {
         var green = 0
         for round in 1...3 {
             leave("round \(round)")
-            app.launchArguments = base
+            app.launchArguments = base + reopenExtra
             app.relaunch()
             XCUIDevice.shared.orientation = .landscapeLeft
             let back = settle(quiet: Self.longQuiet, hangGuard: 120, "round \(round)")
