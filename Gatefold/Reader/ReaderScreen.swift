@@ -8,6 +8,19 @@ struct ReaderScreen: View {
 
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// Opaque at the top to clear at the foot, drawn once by Core Graphics (which doesn't dither), so a
+    /// pushed page's fade is the same pixels every time.
+    private static let footFade: UIImage = {
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        format.opaque = false
+        format.preferredRange = .standard  // 8-bit everywhere, never a wide or float bitmap
+        return UIGraphicsImageRenderer(size: CGSize(width: 1, height: 256), format: format).image { context in
+            let colors = [UIColor.black.cgColor, UIColor.black.withAlphaComponent(0).cgColor] as CFArray
+            guard let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: colors, locations: [0, 1]) else { return }
+            context.cgContext.drawLinearGradient(gradient, start: CGPoint(x: 0, y: 0.5), end: CGPoint(x: 0, y: 255.5), options: [])
+        }
+    }()
     @State private var hinge: HingeState = .none
     @State private var showAppearance = LaunchOptions.sheet == "appearance" || LaunchOptions.sheet == "customize"
     @State private var showContents = LaunchOptions.sheet == "contents"
@@ -77,12 +90,15 @@ struct ReaderScreen: View {
                     .animation(reduceMotion ? .easeOut(duration: 0.2) : .spring(duration: 0.25), value: lifted)
                     .offset(y: push)
                     .mask {
-                        let h = max(proxy.size.height, 1)
-                        LinearGradient(stops: [.init(color: .black, location: 0),
-                                               .init(color: .black, location: push > 0 ? max(0, (h - 44) / h) : 1),
-                                               .init(color: push > 0 ? .clear : .black, location: 1)],
-                                       startPoint: .top, endPoint: .bottom)
-                            .frame(width: proxy.size.width, height: proxy.size.height)
+                        // A pushed page fades out over its last 44 pt. A bitmap, not a LinearGradient: with the
+                        // gradient, the faded line came out up to 2 levels apart between two launches, as even
+                        // noise, which looks like dithering (gatefold#319).
+                        VStack(spacing: 0) {
+                            Color.black
+                            Image(uiImage: Self.footFade).resizable()
+                                .frame(height: push > 0 ? 44 : 0)
+                        }
+                        .frame(width: proxy.size.width, height: proxy.size.height)
                     }
                     .animation(reduceMotion ? .easeOut(duration: 0.2) : .spring(duration: 0.4, bounce: 0.1), value: push)
 
