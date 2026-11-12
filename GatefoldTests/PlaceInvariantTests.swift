@@ -406,12 +406,16 @@ import Testing
 
         await f.model.go(to: entry)
         if how.hasPrefix("inactive, landing before") {
-            for _ in 0..<400 where abs((saved(f).flatMap { try? Locator(jsonString: $0) }?.locations.progression ?? -1) - 0.6) >= 0.001 { await Task.yield() }
-            let landed = try #require(saved(f).flatMap { try? Locator(jsonString: $0) }, "no place kept")
+            // The landing is the first place written after the target, wherever the page settled on (the stub
+            // lands on the page holding the chapter's 0.6, not on 0.6 itself: CI run 43245326863).
+            for _ in 0..<400 where kept.onLeaving == nil || saved(f) == kept.onLeaving { await Task.yield() }
+            let landedJSON = try #require(saved(f), "no place kept")
+            let landed = try #require(try? Locator(jsonString: landedJSON), "no place kept")
             // The target and the landing must differ, or the target standing over the landing passes unseen.
             let leftAt = try #require(kept.onLeaving.flatMap { try? Locator(jsonString: $0) }, "leaving kept no place")
-            try #require(abs((leftAt.locations.progression ?? -1) - 0.6) > 0.01, "the target is the landed place itself")
-            #expect(abs((landed.locations.progression ?? -1) - 0.6) < 0.001, "the jump that went on after he left didn't keep where it landed")
+            try #require(abs((leftAt.locations.progression ?? -1) - (landed.locations.progression ?? -1)) > 0.01, "the target is the landed place itself")
+            #expect(landed.locations.progression == f.page.currentLocation?.locations.progression && (landed.locations.progression ?? 0) > 0.5,
+                    "the jump that went on after he left didn't keep where it landed")
             #expect(kept.leaveDone || kept.parkedWrite != nil, "the leave neither ended nor reached its write")
             // Now the leave's write, if it was held, goes on.
             kept.gateOpen = true
@@ -420,7 +424,7 @@ import Testing
             await kept.leave?.value
             for _ in 0..<50 { await Task.yield() }
             let final = try #require(saved(f).flatMap { try? Locator(jsonString: $0) }, "no place kept")
-            #expect(abs((final.locations.progression ?? -1) - 0.6) < 0.001, "the leave's write, held past the landing, stood over the page the jump landed on")
+            #expect(saved(f) == landedJSON, "the leave's write, held past the landing, stood over the page the jump landed on (at \(final.locations.progression ?? -1))")
             f.model.close()
             return
         }
