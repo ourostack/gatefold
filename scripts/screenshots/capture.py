@@ -39,25 +39,32 @@ ON_SCREEN = ["Gatefold", "Packages/GatefoldCore/Sources", "Packages/GatefoldClou
              "Packages/GatefoldCore/Package.swift", "Packages/GatefoldCloud/Package.swift",
              "Packages/GatefoldCloud/Package.resolved", "project.yml", "GatefoldListingShots", "screenshots",
              "scripts/screenshots", ".github/actions/select-xcode", ".github/workflows/screenshots.yml"]
-# The watcher gives up after SHOOT_LIMIT seconds of shooting; the scene test waits longer (ListingShotsUITests: 240 s).
+# The watcher gives up after SHOOT_LIMIT seconds of shooting; the scene test waits longer (ListingShotsUITests: 360 s).
 STABLE_FRAMES, SHOOT_LIMIT, FRAME_GAP = 3, 80, 0.8
-# One screenshot or status-bar call. It is a hang guard, not a judgment: an answered call's time is logged per scene
-# ("slowest call"), and one that has not answered in 15 s is asked again, so the bound costs a hung call 15 s, never a
-# scene, and a slow call that answers within it costs nothing.
+# One screenshot call. It is a hang guard, not a judgment: answered calls' times are logged per scene and kind
+# ("slowest"), and one that has not answered in 15 s is asked again, so a hung screenshot costs 15 s, never a scene.
 SIMCTL_LIMIT = 15
-# A hand-off may lose ASKS - 1 calls to no answer, each asked again; the ASKS-th means the device stopped answering
-# (gatefold#150): the scene fails with D/<handoff>.stuck and the workflow reboots the device for a new try. The frames
-# either side of an unanswered call are not "in a row", so the stable run starts again after one.
+# The status bar is staged once a hand-off, before its first frame, and waited for until it answers: on a busy runner
+# `simctl status_bar override` is slow, not dead. PR #292's job 131093420221 and probe run 43184304862 left it
+# unanswered at 15 s in most hand-offs while every screenshot answered, and one answered on its third ask (under 45 s).
+# Asking again only queues another request behind the slow one, and a reboot did not help (4 reboots, each followed
+# by a status bar that again did not answer in 15 s). So one ask, bounded at 120 s as a hang guard; unanswered by then,
+# the device is stuck.
+STATUS_BAR_LIMIT = 120
+UI_LIMIT = 60  # `simctl ui` appearance and text size, when staging; slow on a busy runner like the status bar
+# A hand-off may lose ASKS - 1 screenshots to no answer, each asked again; the ASKS-th means the device stopped
+# answering (gatefold#150): the scene fails with D/<handoff>.stuck and the workflow reboots the device for a new try.
+# The frames either side of an unanswered call are not "in a row", so the stable run starts again after one.
 ASKS = 3
 LIST_LIMIT = 30  # the one device listing a stuck hand-off makes, to tell the device from CoreSimulatorService
-# Worst case for one hand-off: SHOOT_LIMIT of shooting, plus its last status-bar and screenshot calls (2 x 15), plus
-# ASKS unanswered calls (3 x 15), plus the listing (30): 185 s. The scene test waits 240 s.
-WATCH_WORST = SHOOT_LIMIT + 2 * SIMCTL_LIMIT + ASKS * SIMCTL_LIMIT + LIST_LIMIT
+# Worst case for one hand-off: the status bar (120), SHOOT_LIMIT of shooting (80), its last screenshot (15), ASKS
+# unanswered screenshots (3 x 15) and the listing (30): 290 s. The scene test waits 360 s.
+WATCH_WORST = STATUS_BAR_LIMIT + SHOOT_LIMIT + SIMCTL_LIMIT + ASKS * SIMCTL_LIMIT + LIST_LIMIT
 # The reboot (recover): an idle device shuts down in seconds, and one that does not in 120 s is a service that is not
 # answering (ci-simulator.py's ERASE_STEPS, job 129031300623). First boots on these runners took 86-555 s
 # (gatefold#150, run 42768198374); a reboot is no first boot, so 600 s for its bootstatus is past the slowest seen.
 REBOOT_STEPS = [(("shutdown",), 120), (("boot",), 300), (("bootstatus", "-b"), 600)]
-# After those (1020 s), the staging (3 x 15 s) and ci-simulator.py's quiet (QUIET_LIMIT, 120 s): about 20 min a reboot.
+# After those (1020 s), the staging (2 x 60 + 120 s) and ci-simulator.py's quiet (QUIET_LIMIT, 120 s): 23 min a reboot.
 
 
 def requiet(udid):
@@ -86,18 +93,22 @@ def status_bar_cmd(udid, spec):
 
 
 def status_bar(udid, spec):
-    subprocess.run(status_bar_cmd(udid, spec), check=True, capture_output=True, timeout=SIMCTL_LIMIT)
+    subprocess.run(status_bar_cmd(udid, spec), check=True, capture_output=True, timeout=STATUS_BAR_LIMIT)
 
 
-def stage(udid, spec, run=subprocess.run):
+def stage(udid, spec, run=subprocess.run, log=print):
     """Light appearance, default text size and the staged status bar: what every shot is taken under."""
-    for cmd in (["xcrun", "simctl", "ui", udid, "appearance", "light"],
-                ["xcrun", "simctl", "ui", udid, "content_size", "large"], status_bar_cmd(udid, spec)):
-        run(cmd, check=True, capture_output=True, timeout=SIMCTL_LIMIT)
+    for cmd, limit in ((["xcrun", "simctl", "ui", udid, "appearance", "light"], UI_LIMIT),
+                       (["xcrun", "simctl", "ui", udid, "content_size", "large"], UI_LIMIT),
+                       (status_bar_cmd(udid, spec), STATUS_BAR_LIMIT)):
+        t = time.monotonic()
+        run(cmd, check=True, capture_output=True, timeout=limit)
+        log(f"stage: simctl {cmd[2]} {cmd[4] if cmd[2] == 'ui' else 'override'} answered in {time.monotonic() - t:.1f} s",
+            flush=True)
 
 
 class Stuck(Exception):
-    """The device stopped answering: ASKS calls in one hand-off went unanswered."""
+    """The device stopped answering: a status bar unanswered in STATUS_BAR_LIMIT, or ASKS screenshots in a hand-off."""
 
 
 class Device:
@@ -111,9 +122,12 @@ class Device:
         self.begin()
 
     def begin(self):
-        self.unanswered, self.lost, self.slowest = 0, 0.0, 0.0
+        self.unanswered, self.lost, self.slowest = 0, 0.0, {}
 
-    def call(self, cmd, what, handoff):
+    def took(self):
+        return ", ".join(f"slowest {k} {v:.1f} s" for k, v in sorted(self.slowest.items()))
+
+    def call(self, cmd, what, handoff, limit=SIMCTL_LIMIT, again=True):
         while True:
             asked = cmd
             if self.force > 0 and what == "io screenshot":
@@ -121,12 +135,14 @@ class Device:
                 asked = ["sleep", str(SIMCTL_LIMIT * 4)]
             t = time.monotonic()
             try:
-                out = self.run(asked, check=True, capture_output=True, timeout=SIMCTL_LIMIT)
-                self.slowest = max(self.slowest, time.monotonic() - t)
+                out = self.run(asked, check=True, capture_output=True, timeout=limit)
+                self.slowest[what] = max(self.slowest.get(what, 0.0), time.monotonic() - t)
                 return out
             except subprocess.TimeoutExpired:
                 self.lost += time.monotonic() - t
                 self.unanswered += 1
+                if not again:
+                    raise Stuck(f"simctl {what} did not answer in {limit} s")
                 if self.unanswered >= ASKS:
                     raise Stuck(f"simctl {what} did not answer in {SIMCTL_LIMIT} s, "
                                 f"{self.unanswered} calls unanswered in this hand-off")
@@ -162,7 +178,7 @@ def recover(udid, spec, run=subprocess.run, log=print, quiet=requiet):
         if out.returncode != 0 or (args[0] == "bootstatus" and "Failed" in said):
             return f"simctl {args[0]} exited {out.returncode}"
     try:
-        stage(udid, spec, run)
+        stage(udid, spec, run, log)
     except subprocess.TimeoutExpired as exc:
         return f"the rebooted device did not answer staging in {exc.timeout:.0f} s"
     except subprocess.CalledProcessError as exc:
@@ -194,13 +210,15 @@ def shoot(dev, display, out, spec, handoff=None):
 
 def shoot_into(tmp, dev, display, out, spec, hashes, handoff, nap=time.sleep):
     dev.begin()
+    # Again for each hand-off: after a launch the iPad's bar works out its weekday anew. Before the first frame, and
+    # outside SHOOT_LIMIT, so a slow answer costs no frame time.
+    dev.call(status_bar_cmd(dev.udid, spec), "status_bar", handoff, limit=STATUS_BAR_LIMIT, again=False)
+    dev.lost = 0.0
     started = time.monotonic()
     i = 0
     # SHOOT_LIMIT counts the time spent shooting; a call that never answered is bounded by count (ASKS), not by it.
     while time.monotonic() - started - dev.lost < SHOOT_LIMIT:
         before = dev.unanswered
-        if i % 5 == 0:
-            dev.call(status_bar_cmd(dev.udid, spec), "status_bar", handoff)  # again: after a launch the iPad's bar works out its weekday anew
         frame = tmp / f"{i}.png"
         cmd = ["xcrun", "simctl", "io", dev.udid, "screenshot", "--type=png"]
         if display:
@@ -212,7 +230,7 @@ def shoot_into(tmp, dev, display, out, spec, hashes, handoff, nap=time.sleep):
         if settled(hashes):
             frame.replace(out)
             lost = f", {dev.unanswered} calls asked again" if dev.unanswered else ""
-            return True, f"settled after {i + 1} frames (slowest call {dev.slowest:.1f} s{lost})"
+            return True, f"settled after {i + 1} frames ({dev.took()}{lost})"
         i += 1
         nap(FRAME_GAP)
     # Keep the last two frames in unsettled/, out of the shots' own glob, so the artifact shows what kept moving.
@@ -380,6 +398,17 @@ def selftest_recovery():
             raise AssertionError("three unanswered calls in one hand-off are stuck")
         except Stuck:
             assert sim.shots == 5
+        # The status bar is asked once a hand-off, before any frame, and not again: unanswered, the device is stuck.
+        sim = FakeSimctl(steps={"status_bar": "hang"})
+        dev = Device("U", run=sim, log=quiet)
+        try:
+            shoot_into(t, dev, None, t / "s.png", spec, [], "s.1", nap=lambda s: None)
+            raise AssertionError("an unanswered status bar is stuck")
+        except Stuck as exc:
+            assert sim.calls == ["status_bar"] and f"in {STATUS_BAR_LIMIT} s" in str(exc), (sim.calls, exc)
+        sim = FakeSimctl()
+        shoot_into(t, Device("U", run=sim, log=quiet), None, t / "s.png", spec, [], "s.1", nap=lambda s: None)
+        assert sim.calls == ["status_bar", "io", "io", "io"], sim.calls
         # The forced hang (the probe's CAPTURE_FORCE_HANG) runs through the same path: N forced, then real calls.
         sim = FakeSimctl()
         dev = Device("U", run=sim, log=quiet, force=2)
@@ -410,7 +439,7 @@ def selftest_recovery():
     assert "exit 2" in recover("U", spec, quiet=quiet, run=FakeSimctl(steps={"ui": (2, "")}), log=quiet)
     quieted = []
     assert recover("U", spec, quiet=quieted.append, run=FakeSimctl(), log=quiet) is None and quieted == ["U"]
-    assert WATCH_WORST + 30 <= 240, "ListingShotsUITests waits 240 s for the host"
+    assert WATCH_WORST + 30 <= 360, "ListingShotsUITests waits 360 s for the host"
 
 
 def selftest():

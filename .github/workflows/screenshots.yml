@@ -155,7 +155,7 @@ jobs:
         && 'gatefold-macos-pr-lane-screenshots-shots-0'
         || format('screenshots-shots-{0}-{1}-{2}', github.run_id, github.run_attempt, strategy.job-index) }}
       queue: max
-    timeout-minutes: 230 # the capture step (190), the boot wait (30), checkout, download and unpack
+    timeout-minutes: 240 # the capture step (200), the boot wait (30), checkout, download and unpack
     strategy:
       fail-fast: false
       # One device at a time per run: macOS runners are the scarce thing, and a release can wait.
@@ -204,11 +204,10 @@ jobs:
             xcrun simctl io "$UDID" enumerate | grep -iE "display|port|class|size|name" | head -40 || true
           fi
       - name: Capture every scene twice
-        # Worst case: the iPad's 5 scenes x 2 tries x 2 passes at about 6.6 min a try (waits of 90 + 90 s, the host's
-        # worst 185 s, capture.py WATCH_WORST, and launch): 132 min. Plus REBOOTS = 2 reboots (capture.py REBOOT_STEPS,
-        # staging and quiet: 20 min at most) each with its replacement try: 185. Healthy runs take about 2 min a scene
-        # in a pass.
-        timeout-minutes: 190
+        # Worst case: the iPad's 5 scenes x 2 tries x 2 passes at about 8.3 min a try (waits of 90 + 90 s, the host's
+        # worst 290 s, capture.py WATCH_WORST, and launch): 167 min. Plus REBOOTS = 1 reboot (capture.py REBOOT_STEPS,
+        # staging and quiet: 23 min at most) with its replacement try: 198. Healthy runs take about 2 min a scene a pass.
+        timeout-minutes: 200
         env:
           CAPTURE_FORCE_HANG: ${{ inputs.force_hang }}
         run: |
@@ -217,7 +216,8 @@ jobs:
           status=0
           # A try whose watcher found the simulator stopped answering (<scene>.<try>.stuck, gatefold#150) gets the
           # device rebooted and one replacement try, at most REBOOTS times a job. Every scene is still shot twice.
-          REBOOTS=2
+          # Once: in PR #292's first runs a reboot never brought back a device that a slow status bar had stalled.
+          REBOOTS=1
           reboots=0
           scenes="$(python3 -I scripts/screenshots/capture.py scenes --device "$DEVICE")"
           mkdir -p "$RUNNER_TEMP/logs"
