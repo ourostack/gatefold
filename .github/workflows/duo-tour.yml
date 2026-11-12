@@ -24,6 +24,13 @@ jobs:
   duo-tour:
     name: Duo tour
     runs-on: xcode-27
+    # PR lane (gatefold#286): see "macOS lanes" at the top of app.yml. Never cancel-in-progress.
+    concurrency:
+      group: >-
+        ${{ github.event_name == 'pull_request'
+        && 'gatefold-macos-pr-lane-duo-tour-0'
+        || format('duo-tour-{0}-{1}', github.run_id, github.run_attempt) }}
+      queue: max
     timeout-minutes: 60
     env:
       APP: bot.ouro.gatefold
