@@ -68,12 +68,19 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           SHA: ${{ steps.sha.outputs.sha }}
           EVENT: ${{ github.event_name }}
+          TF_RUN: ${{ github.event.workflow_run.id }}
         run: |
           set -euo pipefail
           fp="$(python3 -I scripts/screenshots/capture.py fingerprint)"
           echo "fingerprint=$fp" >> "$GITHUB_OUTPUT"
           say() { echo "::notice::$1"; echo "$1" >> "$GITHUB_STEP_SUMMARY"; }
           if [[ "$EVENT" == workflow_run ]]; then
+            # Most TestFlight runs publish nothing (the commit isn't green yet). Render only after one that tagged a
+            # build; otherwise a failed render of the last build retries on every App or Real unfold run on main.
+            tagged="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$TF_RUN/jobs" --jq '[.jobs[] | select(.name | startswith("Tag the published commit")) | select(.conclusion == "success")] | length')"
+            if [[ "$tagged" == 0 ]]; then
+              say "TestFlight run $TF_RUN published no build: no screenshots."; echo "render=false" >> "$GITHUB_OUTPUT"; exit 0
+            fi
             # A TestFlight run's own head is main's tip when it started, not the commit it published. Render the
             # newest published build's commit (its testflight/build-N tag); a run that published nothing changes nothing.
             tag="$(git tag --list 'testflight/build-*' | sort -t- -k2 -n | tail -1)"
