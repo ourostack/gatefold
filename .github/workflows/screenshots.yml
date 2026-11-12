@@ -98,6 +98,13 @@ jobs:
     needs: plan
     if: needs.plan.outputs.render == 'true'
     runs-on: xcode-27
+    # PR lane (gatefold#286): see "macOS lanes" at the top of app.yml. Never cancel-in-progress.
+    concurrency:
+      group: >-
+        ${{ github.event_name == 'pull_request'
+        && 'gatefold-macos-pr-lane-screenshots-build-0'
+        || format('screenshots-build-{0}-{1}', github.run_id, github.run_attempt) }}
+      queue: max
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
@@ -135,6 +142,13 @@ jobs:
     name: Shots (${{ matrix.device }})
     needs: [plan, build]
     runs-on: xcode-27
+    # PR lane (gatefold#286): see "macOS lanes" at the top of app.yml. Never cancel-in-progress.
+    concurrency:
+      group: >-
+        ${{ github.event_name == 'pull_request'
+        && 'gatefold-macos-pr-lane-screenshots-shots-0'
+        || format('screenshots-shots-{0}-{1}-{2}', github.run_id, github.run_attempt, strategy.job-index) }}
+      queue: max
     timeout-minutes: 95 # the capture step (80) plus download, unpack and boot
     strategy:
       fail-fast: false
