@@ -1,7 +1,7 @@
 name: App
 
-# Probe for gatefold#198 (never merged): does `simctl boot --disabledJob` for quiet-sim.labels keep a new simulator's
-# first boot short and quiet? Each job samples the runner's 1-min load every 20 s. No app, no tests, no book text.
+# Probe for gatefold#198 (never merged): where does `simctl boot --disabledJob` land on iOS 27, and does a job named
+# in its own domain (user/foreground) stay off? No app, no tests, no book text.
 
 on:
   workflow_dispatch:
@@ -10,38 +10,32 @@ permissions:
   contents: read
 
 jobs:
-  disabled:
-    name: First boot with quiet-sim.labels disabled (${{ matrix.set }} ${{ matrix.rep }})
+  where:
+    name: The bootstrap plist with --disabledJob, plain and domain-qualified (${{ matrix.form }})
     runs-on: xcode-27
-    timeout-minutes: 40
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        set: [labels, wider]
-        rep: [1, 2]
+        form: [plain, user-foreground, gui]
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/select-xcode
       - env:
-          SET: ${{ matrix.set }}
+          FORM: ${{ matrix.form }}
         run: |
           set -u
-          read -r rt dt < <(.github/probe/sim.sh pick); echo "runtime $rt type $dt"
-          jobs=$(grep -vE '^\s*(#|$)' .github/scripts/quiet-sim.labels)
-          if [ "$SET" = wider ]; then
-            jobs="$jobs com.apple.sociallayerd com.apple.fitnesscoachingd com.apple.healthd com.apple.amsengagementd com.apple.promotedcontentd com.apple.intelligenceplatformd com.apple.biomesyncd com.apple.duetexpertd com.apple.siriinferenced com.apple.modelcatalogd com.apple.intelligencecontextd com.apple.photos.ImageConversionService com.apple.jetpackassetd"
-          fi
-          args=(); for j in $jobs; do args+=("--disabledJob=$j"); done; echo "DISABLING ${#args[@]} jobs"
-          .github/probe/sim.sh sample "$SET" 1260 &
-          u=$(xcrun simctl create probe-ipad "$dt" "$rt"); echo "created $u"
-          t=$SECONDS; xcrun simctl boot "$u" "${args[@]}"; echo "BOOT returned ($?) after $((SECONDS-t)) s"
-          xcrun simctl bootstatus "$u" -b > "$RUNNER_TEMP/bs.txt" 2>&1; echo "BOOTSTATUS $SET done ($?) after $((SECONDS-t)) s"; tail -3 "$RUNNER_TEMP/bs.txt"
-          xcrun simctl spawn "$u" launchctl list | awk 'NR>1{print $3}' > "$RUNNER_TEMP/jobs.txt"
-          n=0; for j in $jobs; do grep -qx "$j" "$RUNNER_TEMP/jobs.txt" && { n=$((n+1)); echo "STILL LOADED $j"; }; done; echo "LOADED of the disabled: $n"
-          xcrun simctl spawn "$u" launchctl print-disabled system | grep -c "=> disabled" | sed 's/^/PRINT-DISABLED /'
-          for i in 1 2 3 4 5 6 7 8 9 10; do
-            t0=$SECONDS; xcrun simctl launch "$u" com.apple.Preferences >/dev/null 2>&1; r=$?
-            echo "LAUNCH $i $(date -u +%T) $((SECONDS-t0)) s exit $r load $(sysctl -n vm.loadavg | awk '{print $2}')"
-            xcrun simctl terminate "$u" com.apple.Preferences >/dev/null 2>&1; sleep 60
-          done
-          wait
+          read -r rt dt < <(.github/probe/sim.sh pick)
+          case "$FORM" in plain) p="";; user-foreground) p="user/foreground/";; gui) p="gui/501/";; esac
+          args=(); for j in com.apple.homed com.apple.geod com.apple.weatherd com.apple.triald com.apple.PosterBoard; do args+=("--disabledJob=$p$j"); done
+          u=$(xcrun simctl create probe-ipad "$dt" "$rt")
+          xcrun simctl boot "$u" "${args[@]}"; echo "boot exit $?"
+          d="$HOME/Library/Developer/CoreSimulator/Devices/$u/data"
+          sleep 20
+          f="$d/var/run/launchd_bootstrap.plist"; ls -la "$f"
+          plutil -p "$f" | grep -n -i -E "homed|geod|weatherd|triald|PosterBoard|disab" | head -30
+          plutil -p "$f" | head -60
+          xcrun simctl bootstatus "$u" -b >/dev/null 2>&1; echo "bootstatus $?"
+          for dom in system user/501 user/foreground gui/501; do echo "-- $dom"; xcrun simctl spawn "$u" launchctl print-disabled "$dom" 2>&1 | head -12; done
+          xcrun simctl spawn "$u" launchctl list | grep -E "homed|geod|weatherd|triald|PosterBoard"
+          xcrun simctl spawn "$u" launchctl print user/foreground/com.apple.homed 2>&1 | head -20
