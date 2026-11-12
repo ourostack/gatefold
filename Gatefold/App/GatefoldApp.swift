@@ -110,8 +110,9 @@ enum WebWarmup {
     /// sooner; the warm-up would only hold the main thread and start a second page process beside it.
     static var bookIsOpening = false
 
-    /// Starts WebKit a moment after the first frame, unless a book has already begun to.
+    /// Starts WebKit a moment after the first frame, unless a book has already begun to or `GatefoldNoWarm` is set.
     static func startUnlessABookOpens() async {
+        if LaunchOptions.noWarm { return }
         try? await Task.sleep(for: .milliseconds(600))
         if bookIsOpening {
             readerLog.notice("launch: web warm-up skipped; a book is already opening")
