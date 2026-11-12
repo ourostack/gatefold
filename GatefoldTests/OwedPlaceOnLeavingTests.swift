@@ -238,6 +238,85 @@ import Testing
         #expect(left.locations.progression == kept.locations.progression)
         #expect(left.text.highlight == words, "leaving the opened page dropped its words")
     }
+
+    /// A model opened, read on with one turn (kept with stand-in words), then rotated with the restore
+    /// stalled: the shared start of gatefold#276's tests.
+    private func stalledAfterATurn(_ name: String) async throws
+        -> (model: ReaderModel, read: Locator, his: String, saved: () -> Locator?) {
+        let sync = StubSync()
+        await sync.setLibrary(.success([ReaderSyncTests.frankenstein]))
+        await sync.setRemote(nil)
+        let app = AppModel(sync: sync, libraryRoot: URL.temporaryDirectory.appending(path: "\(name)-\(UUID().uuidString)"))
+        await app.library.refresh()
+        let publication = try await ReaderSyncTests.publication()
+        let book = try #require(app.library.book(ReaderSyncTests.frankenstein.fastHash))
+        let first = publication.readingOrder[0].url().string
+        let opening = Locator(href: try #require(AnyURL(string: first)), mediaType: .xhtml,
+                              locations: .init(progression: 0, totalProgression: 0))
+        let page = TwoStepJumpPage(at: opening, readsToLand: 1)
+        let model = ReaderModel(book: book, publication: publication, app: app, page: page)
+        page.model = model
+        await model.load()
+        let saved = { app.library.book(ReaderSyncTests.frankenstein.fastHash)?.locatorJSON.flatMap { try? Locator(jsonString: $0) } }
+        let read = try #require(await ReaderSyncTests.locate(publication, 0.31))
+        page.currentLocation = read
+        model.userTurnedPage()
+        await model.locationDidChange(read)
+        for _ in 0..<200 where saved()?.text.highlight == nil { await Task.yield() }
+        let his = try #require(saved()?.text.highlight, "his turn was kept with his words")
+        model.keeper.reflowWillBegin(.rotation)
+        model.reflowDidBegin()
+        return (model, read, his, saved)
+    }
+
+    /// gatefold#276 (PR #285's run 43147454242): under the stalled restore Readium still named the chapter's
+    /// start while the screen showed a page further on. Left with no words, the place was that chapter
+    /// start, and the reopen opened there. The page on screen is what is kept.
+    @Test func leavingAStalledPageKeepsThePageOnScreenNotReadiumsStaleLocation() async throws {
+        let (model, read, _, saved) = try await stalledAfterATurn("shown-stale")
+        let p = try #require(read.locations.progression)
+        let screen = max(0, p - 0.06)...max(0, p - 0.02)
+        let stale = read.copy(locations: { $0.progression = 0 }, text: { $0 = Locator.Text() })
+        try #require(model.reflowShownUnsettled(stale, onScreen: screen) != nil)
+        model.close()
+        let left = try #require(saved(), "leaving kept no place")
+        let at = try #require(left.locations.progression)
+        #expect(left.href.string == read.href.string)
+        #expect(at > screen.lowerBound && at < screen.upperBound,
+                "kept at in-file \(at), not on the page on screen (\(screen.lowerBound)..\(screen.upperBound))")
+        let total = try #require(left.locations.totalProgression)
+        #expect(total > 0 && total < (read.locations.totalProgression ?? 0),
+                "its total progression \(total) isn't the page on screen's, before his page")
+    }
+
+    /// gatefold#276 (CI 43075159905): Readium's location for the page shown was the page's first column,
+    /// a page boundary, and the reopen landed one page early (his page's start 616 characters in). The
+    /// place kept sits inside the page on screen, so the reopen can't round onto the page before.
+    @Test func leavingAStalledPageKeepsAPlaceInsideItNotOnItsBoundary() async throws {
+        let (model, read, _, saved) = try await stalledAfterATurn("shown-edge")
+        let p = try #require(read.locations.progression)
+        let start = max(0, p - 0.06)
+        let screen = start...(start + 0.04)
+        let edge = read.copy(locations: { $0.progression = start }, text: { $0 = Locator.Text() })
+        try #require(model.reflowShownUnsettled(edge, onScreen: screen) != nil)
+        model.close()
+        let at = try #require(saved()?.locations.progression)
+        #expect(at > screen.lowerBound + 0.01 && at < screen.upperBound - 0.01,
+                "kept at in-file \(at), on the page's edge (\(screen.lowerBound)..\(screen.upperBound))")
+    }
+
+    /// The page on screen starts at his kept place: it is the page his turn kept, so his words stay
+    /// with it (gatefold#133), read from the screen as from Readium.
+    @Test func leavingOnHisKeptPageReadFromTheScreenKeepsHisWords() async throws {
+        let (model, read, his, saved) = try await stalledAfterATurn("shown-his")
+        let p = try #require(read.locations.progression)
+        let screen = p...min(1, p + 0.04)
+        try #require(model.reflowShownUnsettled(read.copy(text: { $0 = Locator.Text() }), onScreen: screen) != nil)
+        model.close()
+        let left = try #require(saved(), "leaving kept no place")
+        #expect(left.locations.progression == p)
+        #expect(left.text.highlight == his, "leaving his own page, read from the screen, dropped his words")
+    }
 }
 
 /// A page whose jump goes out and is never reported: the chapter it went to is still loading (Readium's

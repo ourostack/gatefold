@@ -1810,7 +1810,7 @@ final class ReaderModel {
     /// Returns the note's number; its words come back with it (`wordsFor`), and count only while that
     /// note is still the one standing.
     @discardableResult
-    func reflowShownUnsettled(_ here: Locator, wordsFor note: Int? = nil) -> Int? {
+    func reflowShownUnsettled(_ here: Locator, onScreen: ClosedRange<Double>? = nil, wordsFor note: Int? = nil) -> Int? {
         guard keeper.reflowing != nil, !isClosed, !isWarming else { return nil }
         if let note { guard let shown = shownUnsettled, shown.move == moves, note == shownNotes else { return nil } }
         else { shownNotes += 1 }
