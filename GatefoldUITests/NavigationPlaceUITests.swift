@@ -55,10 +55,10 @@ final class NavigationPlaceUITests: XCTestCase {
     }
 
     /// Leaves without a turn and comes back: the reopen shows the page he left, and that page is not `words`.
-    /// The page left and the reopen are each read once their words hold still (`PageReads.settle`), in reads,
+    /// The page left and the reopen are each read once their words hold still (`ReaderReads.settle`), in reads,
     /// never a sleep (gatefold#309).
     private func leaveAndReturn(expecting words: String, _ how: String) {
-        let settled = PageReads.settle(app, "the \(how)'s page").words
+        let settled = ReaderReads.settle(app, "the \(how)'s page") { print("REPRO jump \($0)") }.words
         XCUIDevice.shared.press(.home)
         if !app.wait(for: .runningBackground, timeout: 3) {
             XCUIApplication(bundleIdentifier: "com.apple.springboard").activate()
@@ -67,7 +67,7 @@ final class NavigationPlaceUITests: XCTestCase {
         app.quit()
         app.launchArguments = common
         app.relaunch()
-        let back = PageReads.settle(app, "the reopen after a \(how)").words
+        let back = ReaderReads.settle(app, "the reopen after a \(how)") { print("REPRO jump \($0)") }.words
         XCTAssertEqual(opening(back), opening(settled), "after a \(how) and no turn, the reopen is on the page he jumped to")
         XCTAssertNotEqual(opening(settled), opening(words), "the \(how) moved the page")
     }
@@ -284,13 +284,23 @@ final class NavigationPlaceUITests: XCTestCase {
         // The jump's landing, in reads, never seconds: on CI's iPad its chapter can load for over 25 s, and the old
         // 20 s wait and 2 s sleep read the page before the jump as the page it settled on (gatefold#309, run
         // 43277705735: still on its way 25 s after the drag, at a load average of 528).
-        let moved = PageReads.until(reads: PageReads.veilReads) {
-            let now = PageReads.words(app)
-            return !now.isEmpty && opening(now) != opening(first)
-        }
+        let moved = readsUntilMoved(from: first)
         print("REPRO jump scrubber: moved \(moved.ok) after \(moved.reads) reads\(moved.hung ? " (hang guard)" : "")")
         XCTAssertTrue(moved.ok, "the scrubber jump never moved the page in \(moved.reads) reads\(moved.hung ? " (hang guard)" : "")")
         leaveAndReturn(expecting: first, "scrubber jump")
+    }
+
+    /// Reads, at least 0.3 s apart, until the page shows words other than `first`'s: up to `ReaderReads.coverReads`, as
+    /// long as a jump's chapter may take to load on a starved runner. `HangGuard` ends it only on a hang.
+    private func readsUntilMoved(from first: String) -> (ok: Bool, reads: Int, hung: Bool) {
+        let guardEnds = Date().addingTimeInterval(HangGuard.seconds(reads: ReaderReads.coverReads))
+        for read in 1...ReaderReads.coverReads {
+            let now = visibleText
+            if !now.isEmpty, opening(now) != opening(first) { return (true, read, false) }
+            if Date() > guardEnds { return (false, read, true) }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+        }
+        return (false, ReaderReads.coverReads, false)
     }
 
     /// The same jump left while its chapter still loads (`-GatefoldHoldJumpSends`: the jump never reaches
@@ -317,7 +327,7 @@ final class NavigationPlaceUITests: XCTestCase {
         app.quit()
         app.launchArguments = common
         app.relaunch()
-        let back = PageReads.settle(app, "the reopen after a scrubber jump left on its way").words
+        let back = ReaderReads.settle(app, "the reopen after a scrubber jump left on its way") { print("REPRO jump \($0)") }.words
         XCTAssertFalse(back.isEmpty, "the reopen shows words")
         XCTAssertNotEqual(opening(back), opening(first), "after a scrubber jump left while its chapter loaded, the reopen is on the jump's page, not the opening one")
     }
