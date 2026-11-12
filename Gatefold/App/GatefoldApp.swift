@@ -40,6 +40,9 @@ struct GatefoldApp: App {
                 // He may be leaving: a move a reflow still owes is kept now, in case that reflow never
                 // ends (gatefold#96); the push below waits for it.
                 let owed = app.activeReader?.owedPlaceOnLeaving()
+                // His last turn, its write still on its way, is written now: iOS may end Gatefold before
+                // that write lands (gatefold#301).
+                if owed == nil { app.activeReader?.keepTurnNow() }
                 if let reader = app.activeReader, let owed {
                     // The page a stalled restore left him is written now, before any wait (gatefold#133).
                     reader.keepShownPageNow(owed)
@@ -107,8 +110,9 @@ enum WebWarmup {
     /// sooner; the warm-up would only hold the main thread and start a second page process beside it.
     static var bookIsOpening = false
 
-    /// Starts WebKit a moment after the first frame, unless a book has already begun to.
+    /// Starts WebKit a moment after the first frame, unless a book has already begun to or `GatefoldNoWarm` is set.
     static func startUnlessABookOpens() async {
+        if LaunchOptions.noWarm { return }
         try? await Task.sleep(for: .milliseconds(600))
         if bookIsOpening {
             readerLog.notice("launch: web warm-up skipped; a book is already opening")

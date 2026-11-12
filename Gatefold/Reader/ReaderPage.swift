@@ -25,6 +25,8 @@ protocol ReaderPage: AnyObject {
     func progression(ofFragment id: String) async -> Double?
     /// The first words on the page the reader is on.
     func currentAnchor() async -> (ReadingAnchor, Locator)?
+    /// The same words, read only: nothing on screen (the running head) takes them up.
+    func wordsOnPage() async -> Locator?
     /// Starts loading `locator`'s page out of sight, so a jump there later is quick.
     func prepareStandby(at locator: Locator)
     func dropStandby()
@@ -51,6 +53,7 @@ extension ReaderPage {
     func settleLanding(_ anchor: ReadingAnchor, stillWanted: @escaping @MainActor () -> Bool) async {}
     var isLoadingChapter: Bool { false }
     var isTurning: Bool { false }
+    func wordsOnPage() async -> Locator? { await currentAnchor()?.1 }
     func prepareStandby(at locator: Locator) {}
     func dropStandby() {}
     func promoteStandby(for locator: Locator) async -> Bool { false }

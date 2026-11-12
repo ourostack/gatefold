@@ -86,7 +86,8 @@ enum LaunchOptions {
     static var isUITest: Bool { defaults.bool(forKey: "GatefoldUITest") }
     static var resetState: Bool { defaults.bool(forKey: "GatefoldReset") }
     static var skipWelcome: Bool { defaults.bool(forKey: "GatefoldSkipWelcome") }
-    /// Measure a cold open: no book is opened ahead of the tap.
+    /// Measure a cold open: no book is opened ahead of the tap and WebKit isn't started early. Also the
+    /// shelf's screenshot, whose CI simulator stopped answering under the hidden pages' WebKit (gatefold#150).
     static var noWarm: Bool { defaults.bool(forKey: "GatefoldNoWarm") }
     /// Films only: the spread's pages stay unpainted for this many seconds as the unfold swings, as on
     /// a busy device, to show the old page holding until they paint.
@@ -111,6 +112,10 @@ enum LaunchOptions {
     /// UI tests only: a jump of his to a place (the scrubber) is never sent to the page, as a chapter that
     /// never finishes loading: Readium never reports it, and he leaves on the page before (gatefold#279).
     static var holdJumpSends: Bool { isUITest && defaults.bool(forKey: "GatefoldHoldJumpSends") }
+    /// UI tests only: a turn's place write never lands (it holds after reading his words, before it maps its
+    /// position), as on a device that suspends or ends Gatefold a moment after he leaves, before the write it
+    /// had under way lands (gatefold#301). Other writes (the launch jump's) land as ever.
+    static var holdTurnWrites: Bool { isUITest && defaults.bool(forKey: "GatefoldHoldTurnWrites") }
     /// Debug only: Back's first this many sends are taken at their chapter's start, the chapter still
     /// loading meanwhile, as a web view still loading takes a jump (gatefold#170). Counted in sends, not
     /// looks, so a Back that stops sending stays short. Armed once per launch, by its first Back.

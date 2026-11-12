@@ -141,6 +141,9 @@ final class ReaderModel {
     /// A jump made while the book warmed behind the shelf (a test's launch jump reaches every book that
     /// opens) wrote nothing then; at his tap it is his, so the page he sees becomes the place, and a
     /// fresh open shows that page rather than making the jump afresh.
+    /// A test's launch jump not yet made or still on its way: from init until load() has ended it. The cover's
+    /// forced reveal waits for it (`forceReady`), as for the open's settle.
+    @ObservationIgnored private var launchJumpOwed = false
     /// A test's launch jump is still on its way to its page.
     @ObservationIgnored private var launchJumpInFlight = false { didSet { if !launchJumpInFlight { launchJumpDone() } } }
     @ObservationIgnored private var launchJumpWaiters: [CheckedContinuation<Void, Never>] = []
@@ -276,6 +279,7 @@ final class ReaderModel {
         // another book opened in the same launch) opens on its own place. Jumping every open re-made
         // the jump on a return and called the page it reached his (CI's page-numbers check).
         self.launchGoTo = initial == nil && (LaunchOptions.openBook == nil || LaunchOptions.openBook == book.id) ? (goTo ?? LaunchOptions.goTo) : nil
+        self.launchJumpOwed = launchGoTo != nil
         readerLog.notice("place read [r\(self.readerNumber, privacy: .public)]: \(book.id, privacy: .public) opening on \(initial.map(Self.placeTag) ?? "none", privacy: .public)")
         // UI tests: the place read carries his words or not (a reopen of a bare progression lands on a boundary).
         if LaunchOptions.isUITest { self.savedWordsProbe = initial?.text.highlight.map(ReaderJS.normalize) ?? "" }
@@ -687,6 +691,7 @@ final class ReaderModel {
                 if !placeOwed { owedJumpTarget = nil }
             }
         }
+        launchJumpOwed = false
         // A book about to land on the InkPad's place takes its first place there, not on the cover.
         if !awaitingLanding {
             try? await Task.sleep(for: .milliseconds(300))
@@ -756,6 +761,9 @@ final class ReaderModel {
     /// The picture is his page, so waiting costs nothing he can see; the settle ends long before on a
     /// device (29 s on CI's starved Duo).
     static let pictureSettleLooks = 900
+    /// Looks (one every 50 ms) the cover's forced reveal waits for a test's launch jump still on its way: 900,
+    /// about 45 s. The jump ends itself in reads (`JumpLanding`); this only bounds one whose page never answers.
+    static let launchJumpLooks = 900
 
     /// The cover gives way to the page. A reopen's picture of the page stays over it a moment longer,
     /// while the running head and footer come up beneath, then goes at once: the two are the same
@@ -863,6 +871,24 @@ final class ReaderModel {
                 }
                 await host?.waitWhileLoading()
             } while openSettleGoing && looks < Self.revealLooks && !isClosed
+            // A test's launch jump shows its page once, after the jump, like the open's settle above: forced
+            // mid-jump, the page showed where Readium first put it and moved to the jump's place 12 s later,
+            // under a test reading its words (gatefold#262: iPad on its side, shown at 0.3003, landed 0.3099).
+            looks = 0
+            if launchJumpOwed {
+                while launchJumpOwed, looks < Self.launchJumpLooks, !isClosed {
+                    looks += 1
+                    try? await Task.sleep(for: .milliseconds(50))
+                }
+                // The jump can land with its chapter still loading or a reflow still placing it: shown then, the
+                // page moves again. The same bounded waits as `markReady`.
+                looks = 0
+                while keeper.reflowing != nil, looks < Self.revealLooks, !isClosed {
+                    looks += 1
+                    try? await Task.sleep(for: .milliseconds(50))
+                }
+                await host?.waitWhileLoading()
+            }
             guard !pageReady, !isClosed else { return }
             readerLog.notice("first page forced ready after \(Date().timeIntervalSince(self.openedAt), privacy: .public) s")
             showPage()
@@ -1461,6 +1487,7 @@ final class ReaderModel {
                 self.newestWrittenMove = max(self.newestWrittenMove, self.moves)
                 readerLog.notice("place write [r\(self.readerNumber, privacy: .public)]: landing (\(fresh != nil ? "his first words" : "Readium's boundary", privacy: .public)) \(Self.placeTag(settledLocator), privacy: .public); kept total \(chosen?.totalProgression ?? here.locations.totalProgression ?? 0, privacy: .public); move \(self.moves, privacy: .public)")
                 self.placeRecords += 1
+                self.placeWrittenFor = max(self.placeWrittenFor, self.moves)
                 if LaunchOptions.isUITest { self.savedPlaceProbe = Self.probeTag(settledLocator) }
                 self.app.library.recordPlace(
                     bookID: self.bookID,
@@ -1752,6 +1779,7 @@ final class ReaderModel {
         pagesLeft = []
         newestWrittenMove = max(newestWrittenMove, moves)
         placeRecords += 1
+        placeWrittenFor = max(placeWrittenFor, moves)
         if LaunchOptions.isUITest { savedPlaceProbe = Self.probeTag(here) }
         app.library.recordPlace(bookID: bookID, locatorJSON: json, totalProgression: here.locations.totalProgression ?? 0,
                                 progression: here.locations.progression ?? 0, at: Date())
@@ -1965,7 +1993,7 @@ final class ReaderModel {
             anchorCheck = (visible.contains(anchor) ? "anchor-visible " : "anchor-lost ") + "\(reflowCount)"
             anchorDetail = "anchor \(anchor.href)@\(anchor.progression) [\(anchor.text?.prefix(40) ?? "-")] visible \(visible.href) \(visible.start)..\(visible.end) [\(visible.text?.prefix(60) ?? "nil")]"
             // The restore's verdict, numbers only (no book text), so a real unfold can be judged from the log.
-            readerLog.notice("reflow check: \(self.anchorCheck, privacy: .public) columns \(self.layout.columns == .two ? 2 : 1, privacy: .public) anchor \(anchor.progression, privacy: .public) visible \(visible.start, privacy: .public)..\(visible.end, privacy: .public) same file \(visible.href == anchor.href, privacy: .public)")
+            readerLog.notice("reflow check: \(self.anchorCheck, privacy: .public) columns \(self.layout.columns == .two ? 2 : 1, privacy: .public) anchor \(anchor.progression, privacy: .public) visible \(visible.start, privacy: .public)..\(visible.end, privacy: .public) same file \(visible.href == anchor.href, privacy: .public) words read \(visible.text != nil, privacy: .public)")
         } else {
             anchorCheck = "no-anchor \(reflowCount)"
         }
@@ -2014,7 +2042,7 @@ final class ReaderModel {
     /// `recordedMoves` after its write): a write still on its way for an older move yields to it.
     @ObservationIgnored private var newestWrittenMove = -1
     /// Every place recorded, by any path: a later write-back of words counts only if none came since.
-    @ObservationIgnored private var placeRecords = 0
+    @ObservationIgnored private(set) var placeRecords = 0
     /// The move whose first report is still reading his words before its write (`locationDidChange`).
     @ObservationIgnored private var claimedMove: Int?
     /// Reports of a move held back because an earlier write of it had claimed it (#82), counted for tests.
@@ -2311,7 +2339,14 @@ final class ReaderModel {
         if let json = try? here.jsonString() {
             let now = Date()
             let recordsBefore = placeRecords
+            // His turn's place, for a leave before this write lands (`keepTurnNow`).
+            if lastTurnMove == keeping { turnPlaceOnItsWay = (keeping, here) }
             await placeWriteWait()
+            // UI tests: a turn's write never lands, as on a device that ends Gatefold first (gatefold#301).
+            if LaunchOptions.holdTurnWrites, lastTurnMove == keeping {
+                readerLog.notice("place write [r\(self.readerNumber, privacy: .public)]: move \(keeping, privacy: .public), a turn's, held for good (test)")
+                while true { try? await Task.sleep(for: .seconds(3600)) }
+            }
             let exact = await mapper?.position(for: BookLocation(here), at: now)
             // The jump's target written as he left gives way to the jump's own report, written meanwhile:
             // that one is his page, with its words (gatefold#279).
@@ -2331,6 +2366,7 @@ final class ReaderModel {
             }
             readerLog.notice("place write [r\(self.readerNumber, privacy: .public)]: his move (\(fresh != nil ? "his first words" : "Readium's boundary", privacy: .public)) \(Self.placeTag(here), privacy: .public); reported \(Self.placeTag(locator), privacy: .public); move \(self.moves, privacy: .public), touched \(self.touchedSinceLocation, privacy: .public), layoutOnly \(self.layoutOnly, privacy: .public)")
             placeRecords += 1
+            placeWrittenFor = max(placeWrittenFor, keeping)
             app.library.recordPlace(
                 bookID: bookID,
                 locatorJSON: json,
@@ -2402,6 +2438,8 @@ final class ReaderModel {
         readOnAfterJump()
         hasMoved = true
         moves += 1
+        turnFalling = false
+        lastTurnMove = moves
         let step = steps
         Task {
             guard let first = page?.currentLocation else { return }
@@ -2423,6 +2461,82 @@ final class ReaderModel {
                 await locationDidChange(later, hisMove: true)
             }
         }
+    }
+
+    /// His turn has let go and will land (a tap's turn, or a drag let go past the turn): Readium is already
+    /// on the page beneath while the leaf falls, and the turn counts only when it lands (`userTurnedPage`).
+    /// His first words on that page are read while the leaf falls, for a leave before it lands.
+    func turnCommitted() {
+        // A tap's turn commits as it starts and again as its leaf lets go: once is the read.
+        guard !turnFalling else { return }
+        turnFalling = true
+        fallingWords = nil
+        turnCommits += 1
+        let commit = turnCommits
+        Task { [weak self] in
+            guard let read = await self?.page?.wordsOnPage(), let self, self.turnCommits == commit,
+                  read.text.highlight != nil else { return }
+            self.fallingWords = read
+        }
+    }
+    /// A turn of his between letting go and landing (`turnCommitted`).
+    @ObservationIgnored private var turnFalling = false
+    @ObservationIgnored private var turnCommits = 0
+    /// The first words on the page beneath his latest committed turn, read while it fell (`turnCommitted`).
+    @ObservationIgnored private(set) var fallingWords: Locator?
+    /// The move of his latest landed turn.
+    @ObservationIgnored private var lastTurnMove: Int?
+    /// The place his latest landed turn's write is carrying, set before that write's waits.
+    @ObservationIgnored private var turnPlaceOnItsWay: (move: Int, place: Locator)?
+    /// The newest move a place write has landed for (an older move's write landing late doesn't count for a newer one).
+    @ObservationIgnored private var placeWrittenFor = -1
+
+    /// Leaving (the app going inactive) with his last turn not yet written: the turn's page is written now,
+    /// in the caller's own turn, before any wait (gatefold#301): the page beneath a leaf still falling, else
+    /// the place the turn's own write is carrying, else (its report not yet read, no drag since) the page shown. The turn's write waits for the leaf to
+    /// land, then for his words and the mapped position, and iOS may end Gatefold a moment after he leaves:
+    /// the reopen came back where the last write had landed, pages before him. Only a turn of his: a turn
+    /// still falling, or one landed whose write hasn't, and nothing else owed (a reflow's debt, a jump on its
+    /// way, a stalled restore's page each keep their own leave write). Never the layout's report once his
+    /// turn is written (build 17: a boundary saved after a rotation reopened him a page early).
+    /// With his first words when they have been read for that very page (the turn's own read, or the one made
+    /// while the leaf fell): a bare progression reopens wherever Readium's first layout puts it, which can be
+    /// the chapter's start. Readium's bare place otherwise; the write under way, if the app lives on, adds them.
+    func keepTurnNow() {
+        guard !isClosed, !isWarming, !placeOwed, leavingOnShownPage == nil, keeper.reflowing == nil,
+              goingBack == nil, endLeaf == nil else { return }
+        let unwritten = lastTurnMove == moves && placeWrittenFor < moves
+        guard turnFalling || unwritten else { return }
+        func words(_ l: Locator?, on here: Locator) -> Locator? {
+            l.flatMap { $0.href == here.href && $0.locations.progression == here.locations.progression && $0.text.highlight != nil ? $0 : nil }
+        }
+        let place: Locator, bare: Locator, move: Int
+        if turnFalling, let here = page?.currentLocation {
+            // The leaf has let go: Readium is on the page beneath, the turn's page. It counts when it lands.
+            (place, bare, move) = (words(anchorLocator, on: here) ?? words(fallingWords, on: here) ?? here, here, moves + 1)
+        } else if let onItsWay = turnPlaceOnItsWay, onItsWay.move == moves {
+            // His landed turn's own write, still on its way: its place, not the page now under a drag of his.
+            (place, bare, move) = (onItsWay.place, onItsWay.place, moves)
+        } else if page?.isTurning != true, let here = page?.currentLocation {
+            // Landed, its report not yet read, and no drag since: the page on screen is the turn's.
+            (place, bare, move) = (words(anchorLocator, on: here) ?? here, here, moves)
+        } else {
+            return
+        }
+        if let kept = keptPlace, kept.href == bare.href, kept.locations.progression == bare.locations.progression { return }
+        guard let json = try? place.jsonString() else { return }
+        placeRecords += 1
+        // An older turn's write still on its way gives way to this one (`newestWrittenMove`); the turn's own
+        // write, with his words and the mapped position, still lands over it if the app lives on. Not
+        // `placeWrittenFor`: that write is still owed.
+        newestWrittenMove = max(newestWrittenMove, move)
+        if LaunchOptions.isUITest {
+            savedPlaceProbe = Self.probeTag(bare)
+            savedWordsProbe = place.text.highlight.map(ReaderJS.normalize) ?? ""
+        }
+        readerLog.notice("place write [r\(self.readerNumber, privacy: .public)]: his turn, on leaving, at once (\(self.turnFalling ? "the leaf still falling" : "its write still on its way", privacy: .public), \(place.text.highlight == nil ? "Readium's boundary" : "his first words", privacy: .public)) \(Self.placeTag(bare), privacy: .public); move \(move, privacy: .public)")
+        app.library.recordPlace(bookID: bookID, locatorJSON: json, totalProgression: bare.locations.totalProgression ?? 0,
+                                progression: bare.locations.progression ?? 0, at: Date())
     }
 
     /// Takes the first words on screen as the reader's place, unless a reflow is moving the page.
