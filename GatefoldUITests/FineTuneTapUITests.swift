@@ -103,8 +103,8 @@ final class FineTuneTapUITests: XCTestCase {
         return true
     }
 
-    /// The reflow's number now (0 before any): read before a turn, so the turn's own reflow can be told from
-    /// the launch's, which still reads "N settled".
+    /// The reflow's number now (0 before any): read before a turn or a touch, so its own reflow can be told from
+    /// an older one, which may still read "N settled".
     private func reflowNumber() -> Int {
         let now = (app.descendants(matching: .any)["reader.reflow"].firstMatch.value as? String) ?? ""
         return Int(now.split(separator: " ").first ?? "") ?? 0
@@ -112,8 +112,8 @@ final class FineTuneTapUITests: XCTestCase {
 
     /// Reads until a reflow newer than `before` has settled, its page fully shown (gatefold#175: touches sent
     /// just after a reflow placed its words were lost before they reached the app), or `landReads` run out. A
-    /// reflow that never settles is not judged here; the touch after it still is. `expected` false: when no newer
-    /// reflow has begun, nothing is waited for (a switch that doesn't reflow the book).
+    /// reflow that never settles is not judged here; the touch after it still is. `expected` false (a switch that
+    /// doesn't reflow the book): with no newer reflow begun, it waits only while an older one is still running.
     private func awaitReflowSettled(since before: Int, expected: Bool = true, _ what: String) {
         let reflow = app.descendants(matching: .any)["reader.reflow"].firstMatch
         var now = ""
@@ -124,7 +124,7 @@ final class FineTuneTapUITests: XCTestCase {
                     print("TAPRATE \(what): reflow \(now) after \(read) reads")
                     return
                 }
-            } else if !expected {
+            } else if !expected, now.isEmpty || now.hasSuffix("settled") {
                 return
             }
             RunLoop.current.run(until: Date().addingTimeInterval(0.1))
