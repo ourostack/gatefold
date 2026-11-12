@@ -405,7 +405,14 @@ final class NavigationPlaceUITests: XCTestCase {
         let his = opening(visibleText)
         XCTAssertFalse(his.isEmpty)
 
-        let portraitLayout = pageCountLayout
+        // The layout counted before the rotation, read until there is one (a fresh install, `-GatefoldReset`,
+        // keeps no counts, so every layout after it is counted behind the page).
+        var portraitLayout = pageCountLayout
+        for _ in 0..<40 where portraitLayout.isEmpty {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+            portraitLayout = pageCountLayout
+        }
+        XCTAssertFalse(portraitLayout.isEmpty, "the portrait page has a layout to count")
         XCUIDevice.shared.orientation = .landscapeLeft
         // He stays on the new spread until its page count has finished behind it, then until its words hold
         // still: counted in reads, never a fixed wait (gatefold#210, which a 45 s sleep let run out first).
@@ -486,15 +493,15 @@ final class NavigationPlaceUITests: XCTestCase {
     private var pageCount: String { (app.descendants(matching: .any)["reader.pageCount"].value as? String) ?? "" }
     private var pageCountLayout: String { (app.descendants(matching: .any)["reader.pageCountLayout"].value as? String) ?? "" }
 
-    /// After a rotation, true once a layout other than `old` (the one counted before it) has its whole
-    /// total. The layout is read on both sides of the total, so a total read across a layout swap never
+    /// After a rotation, true once the two-column spread (a layout other than `old`, the one counted before
+    /// it) has its whole total. The layout is read on both sides of the total, so a total read across a layout swap never
     /// counts: a portrait count still finishing during the reflow is the old layout's (#210's review).
     /// Bounded by reads; a whole count of a book on a slow iPad runner takes about 50 s (#94's probes),
     /// which 1200 reads a quarter second apart cover.
     private func spreadCounted(after old: String, reads limit: Int = 1200) -> Bool {
         for read in 0..<limit {
             let before = pageCountLayout, total = pageCount, after = pageCountLayout
-            if !before.isEmpty, before != old, before == after, !total.isEmpty {
+            if before.contains("-c2-"), before != old, before == after, !total.isEmpty {
                 print("ROTATION spread counted after \(read) reads")
                 return true
             }
