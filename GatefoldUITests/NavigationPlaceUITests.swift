@@ -506,8 +506,7 @@ final class NavigationPlaceUITests: XCTestCase {
     /// Where to tap `element`, read from its frame. Never `isHittable`: asked of an offer in the middle of
     /// folding, XCTest fails the test ("Activation point invalid", #171's probe 42966309493).
     private func tappable(_ element: XCUIElement) -> CGRect? {
-        let f = element.frame
-        return f.isEmpty || f.width < 1 || f.height < 1 || !app.frame.contains(CGPoint(x: f.midX, y: f.midY)) ? nil : f
+        HitCheck.frame(of: element).flatMap { HitCheck.usable($0, within: app.frame) }
     }
 
     private func takeTheCloudsOffer() -> String {
