@@ -32,8 +32,9 @@ permissions:
   contents: read
   actions: read
 
+# Release renders share one group; a dispatch has its own branch's group, so a probe never replaces a pending render.
 concurrency:
-  group: screenshots-${{ github.event_name == 'pull_request' && github.ref || 'main' }}
+  group: screenshots-${{ github.event_name == 'workflow_run' && 'main' || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
