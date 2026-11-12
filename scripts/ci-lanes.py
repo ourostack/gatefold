@@ -69,25 +69,39 @@ def jobs(text):
 
 
 def concurrency(block):
-    """The job's `concurrency:` block (4-space key) without comment lines, or None."""
+    """The job's `concurrency:` block (4-space key), without its 6-space comment lines, or None. Lines inside the
+    `group: >-` block scalar are kept as they are: there a `#` or a blank line is part of the value."""
     lines = block.splitlines()
     for i, line in enumerate(lines):
         if re.match(r"^    concurrency:", line):
             body = [line]
             for more in lines[i + 1:]:
                 if re.match(r"^      ", more) or not more.strip():
-                    if not more.strip().startswith("#"):
+                    if not re.match(r"^ {4,6}#", more):
                         body.append(more)
                 else:
                     break
-            return "\n".join(body)
+            return "\n".join(body).rstrip("\n")
     return None
 
 
 def group_of(conc):
-    """The `group: >-` expression, folded onto one line as YAML folds it."""
-    m = re.search(r"^      group: >-\n((?:        .*\n?)+)", conc, re.M)
-    return " ".join(l.strip() for l in m.group(1).splitlines()) if m else None
+    """The `group: >-` expression, folded onto one line as YAML folds it; None unless every line of the block is plain
+    text at 8 spaces (a blank, deeper or `#` line would put text into the name that a check here can't see)."""
+    lines = conc.splitlines()
+    for i, line in enumerate(lines):
+        if line == "      group: >-":
+            block = []
+            for more in lines[i + 1:]:
+                if more.strip() and not re.match(r"^ {7}", more):
+                    break
+                block.append(more)
+            while block and not block[-1].strip():
+                block.pop()
+            if not block or any(not re.match(r"^ {8}[^ #]", l) for l in block):
+                return None
+            return " ".join(l.strip() for l in block)
+    return None
 
 
 def lane(pr):
@@ -119,7 +133,8 @@ def check(files):
     errors, names, total = [], {}, 0
     for fname in sorted(files):
         text = files[fname]
-        if fname == "testflight.yml" and re.search(r"^  pull_request:", text, re.M):
+        on = re.search(r"^on:(.*?)(?=^\S)", text + "\nend:", re.M | re.S)
+        if fname == "testflight.yml" and on and re.search(r"\bpull_request(_target)?\b", on.group(1)):
             errors.append("testflight.yml runs on pull requests, so its exempt publish job needs a lane")
         for job, block in jobs(text):
             if not (MACOS.search(block) or (MATRIX_RUNS_ON.search(block) and re.search(r"\b(macos|xcode)-", block))):
@@ -127,7 +142,8 @@ def check(files):
             where = f"{fname}: {job}"
             if (fname, job) in EXEMPT:
                 need = EXEMPT[(fname, job)]
-                if need and need not in block:
+                job_if = re.search(r"^    if: (.*)$", block, re.M)
+                if need and not (job_if and need in job_if.group(1)):
                     errors.append(f"{where} is exempt only while its `if` holds `{need}`; give it a lane")
                 continue
             conc = concurrency(block)
@@ -145,8 +161,9 @@ def check(files):
                 continue
             off = g.group("off")
             per_leg = "strategy:" in block or job == "run" and fname == "ui-tests.yml"
-            if "github.run_id, github.run_attempt" not in off or (per_leg and not re.search(
-                    r"github\.run_attempt, (strategy\.job-index|inputs\.shard)\)$", off)):
+            if ("github.run_id, github.run_attempt" not in off or "gatefold-macos-pr-lane" in off
+                    or not re.match(r"format\('[^']*\{0\}[^']*\{1\}", off) or (per_leg and not re.search(
+                    r"github\.run_attempt, (strategy\.job-index|inputs\.shard)\)$", off))):
                 errors.append(f"{where}: push and dispatch need a group of their own: format(..., github.run_id, "
                               "github.run_attempt" + (", strategy.job-index or inputs.shard" if per_leg else "") + ")")
             name, lanes = lane(g.group("pr"))
@@ -254,6 +271,11 @@ def selftest():
         "testflight on PRs": ({**good, "testflight.yml": "on:\n  pull_request:\njobs:\n  publish:\n    runs-on: xcode-27\n"}, "testflight.yml runs on pull requests"),
         "matrix os": ({**good, "app.yml": GOOD_JOB + "  m:\n    runs-on: ${{ matrix.os }}\n    strategy:\n      matrix:\n        os: [macos-26]\n" + GOOD_CALLER}, "no lane"),
         "leg group": ({**good, "app.yml": GOOD_JOB.replace("    runs-on: xcode-27\n", "    runs-on: xcode-27\n    strategy:\n      matrix: {}\n") + GOOD_CALLER}, "group of their own"),
+        "hash in group": ({**good, "app.yml": GOOD_JOB.replace("        || format('app-unit", "        #${{ github.event.pull_request.number }}\n        || format('app-unit") + GOOD_CALLER}, "the group must read"),
+        "blank in group": ({**good, "app.yml": GOOD_JOB.replace("        || format('app-unit", "\n        || format('app-unit") + GOOD_CALLER}, "the group must read"),
+        "off-PR joins a lane": ({**good, "app.yml": GOOD_JOB.replace("format('app-unit-{0}-{1}'", "format('gatefold-macos-pr-lane-unit-0'") + GOOD_CALLER}, "group of their own"),
+        "condition in a step": ({**good, "real-unfold.yml": "jobs:\n  real-unfold:\n    if: always()\n    runs-on: xcode-27\n    steps:\n      - if: github.event_name != 'pull_request'\n"}, "exempt only while"),
+        "testflight inline on": ({**good, "testflight.yml": "on: [workflow_run, pull_request]\njobs:\n  publish:\n    runs-on: xcode-27\n"}, "testflight.yml runs on pull requests"),
         "exempt build": ({**good, "app.yml": GOOD_JOB + "  build:\n    runs-on: xcode-27\n" + GOOD_CALLER}, None),
         "linux": ({**good, "app.yml": GOOD_JOB + "  core:\n    runs-on: ubuntu-latest\n" + GOOD_CALLER}, None),
     }
