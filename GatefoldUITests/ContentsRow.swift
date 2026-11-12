@@ -14,7 +14,8 @@ import XCTest
 @MainActor
 enum ContentsRow {
     /// Taps `row` once it is wholly inside the list below its navigation bar and its frame has held still for two
-    /// reads. `later`: whether a row not built yet lies after the ones that are (the jumps go forward). Bounded by
+    /// reads. `later`: whether a row not built yet lies after the ones that are (the jumps go forward). With `later`
+    /// false the list is pulled down, which closes the sheet when the list is already at its top. Bounded by
     /// reads and drags, never seconds. Returns whether the tap was sent, and the drags it took.
     static func tap(_ row: XCUIElement, in app: XCUIApplication, later: Bool = true, reads: Int = 60, drags: Int = 20) -> (ok: Bool, drags: Int) {
         let list = app.collectionViews.firstMatch

@@ -75,7 +75,8 @@ final class RotationMidTransitionUITests: XCTestCase {
         _ = settle(60)
     }
 
-    private func tapContentsRow() {
+    /// Returns the row tapped, which is gone once the jump has closed the list.
+    private func tapContentsRow() -> XCUIElement {
         el("reader.page").coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
         let offered = readsUntil(reads: 50) { el("reader.contents").exists }
         print("MIDTURN contents offered=\(offered.ok) after \(offered.reads) reads\(offered.hung ? " (hang guard)" : "")")
@@ -92,8 +93,7 @@ final class RotationMidTransitionUITests: XCTestCase {
         let tapped = ContentsRow.tap(pick, in: app)
         print("MIDTURN contents row tapped=\(tapped.ok) after \(tapped.drags) drags")
         XCTAssertTrue(tapped.ok, "contents entry 31 came into view (not in \(tapped.drags) drags)")
-        let closed = readsUntil(reads: 50) { !pick.exists }
-        XCTAssertTrue(closed.ok, "the Contents jump was taken (the list still up after \(closed.reads) reads)")
+        return pick
     }
 
     private func turn() { el("reader.page").coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.5)).tap() }
@@ -132,11 +132,13 @@ final class RotationMidTransitionUITests: XCTestCase {
     func testTurningDuringAContentsJump() throws {
         try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .pad, "a spread on rotation is an iPad path")
         launch()
-        tapContentsRow()
+        let row = tapContentsRow()
         XCUIDevice.shared.orientation = .landscapeLeft
         // A cold Contents jump alone takes up to 8.8 s; on CI's erased iPad, with the turn on top, the
         // page loaded past 20 s (blank paper and a spinner, then the whole spread). Measured, bounded at 45.
         expectWholeSpread("a turn of the iPad during a Contents jump", within: 45)
+        // Asked after the turn, so the turn still comes straight after the tap, while the jump is moving.
+        XCTAssertFalse(row.exists, "the Contents jump was taken (the list is still up)")
     }
 
     /// The last resort: a restore that never comes back (held on purpose) still uncovers the spread
@@ -151,12 +153,13 @@ final class RotationMidTransitionUITests: XCTestCase {
     func testTurningDuringAPageTurn() throws {
         try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .pad, "a spread on rotation is an iPad path")
         launch()
-        tapContentsRow()
+        let row = tapContentsRow()
         turn()
         turn()
         XCUIDevice.shared.orientation = .landscapeLeft
         // The restore under the turns can need the 12 s watchdog, and a hosted runner runs about twice
         // as slow as this Mac (19 s here, 21 s there): bounded at 30 s, timing printed.
         expectWholeSpread("a turn of the iPad during page turns after a jump", within: 30)
+        XCTAssertFalse(row.exists, "the Contents jump was taken (the list is still up)")
     }
 }
