@@ -85,9 +85,15 @@ final class RotationMidTransitionUITests: XCTestCase {
         let listed = readsUntil(reads: 150) { rows.firstMatch.exists }
         print("MIDTURN contents listed=\(listed.ok) after \(listed.reads) reads\(listed.hung ? " (hang guard)" : "")")
         XCTAssertTrue(listed.ok, "the contents list is up (not in \(listed.reads) reads\(listed.hung ? ", hang guard" : ""))")
-        let pick = rows.element(boundBy: min(30, max(0, rows.count - 1)))
-        for _ in 0..<6 where !pick.isHittable { app.swipeUp() }
-        pick.tap()
+        // Entry 31, named: about a dozen rows past his chapter (entry 18 at 0.31), where the old pick, the 31st row
+        // built or the last, landed. That pick moved to another row after every swipe, and `isHittable` on a built
+        // row off screen failed the test (gatefold#98; `ContentsRow`).
+        let pick = app.buttons["contents.entry.31"]
+        let tapped = ContentsRow.tap(pick, in: app)
+        print("MIDTURN contents row tapped=\(tapped.ok) after \(tapped.drags) drags")
+        XCTAssertTrue(tapped.ok, "contents entry 31 came into view (not in \(tapped.drags) drags)")
+        let closed = readsUntil(reads: 50) { !pick.exists }
+        XCTAssertTrue(closed.ok, "the Contents jump was taken (the list still up after \(closed.reads) reads)")
     }
 
     private func turn() { el("reader.page").coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.5)).tap() }

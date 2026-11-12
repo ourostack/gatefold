@@ -80,9 +80,7 @@ final class NavigationPlaceUITests: XCTestCase {
         let row = app.buttons.matching(NSPredicate(format: "label CONTAINS[c] %@", "Chapter XXX")).firstMatch
         XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label CONTAINS[c] %@", "Chapter I")).firstMatch.waitForExistence(timeout: 10),
                       "the contents opened")
-        for _ in 0..<20 where !(row.exists && row.isHittable) { app.swipeUp(velocity: .slow) }
-        XCTAssertTrue(row.exists && row.isHittable, "the contents list chapter XXX")
-        row.tap()
+        XCTAssertTrue(ContentsRow.tap(row, in: app).ok, "the contents list chapter XXX")
         _ = waitForWords(changingFrom: first, timeout: 20)
         XCTAssertTrue(keptWhatIsShown(), "the jump kept a place other than the page shown")
         leaveAndReturn(expecting: first, "contents jump")
@@ -99,9 +97,7 @@ final class NavigationPlaceUITests: XCTestCase {
         let row = app.buttons.matching(NSPredicate(format: "label CONTAINS[c] %@", "Chapter XXX")).firstMatch
         XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label CONTAINS[c] %@", "Chapter I")).firstMatch.waitForExistence(timeout: 10),
                       "the contents opened")
-        for _ in 0..<20 where !(row.exists && row.isHittable) { app.swipeUp(velocity: .slow) }
-        XCTAssertTrue(row.exists && row.isHittable, "the contents list chapter XXX")
-        row.tap()
+        XCTAssertTrue(ContentsRow.tap(row, in: app).ok, "the contents list chapter XXX")
         let held = app.descendants(matching: .any)["reader.loadingHeld"]
         let veil = app.descendants(matching: .any)["reader.veil"]
         XCTAssertTrue(held.waitForExistence(timeout: 10), "the chapter's load is held open")
@@ -155,9 +151,7 @@ final class NavigationPlaceUITests: XCTestCase {
         let row = app.buttons.matching(NSPredicate(format: "label CONTAINS[c] %@", "Chapter XXX")).firstMatch
         XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label CONTAINS[c] %@", "Chapter I")).firstMatch.waitForExistence(timeout: 10),
                       "the contents opened")
-        for _ in 0..<20 where !(row.exists && row.isHittable) { app.swipeUp(velocity: .slow) }
-        XCTAssertTrue(row.exists && row.isHittable, "the contents list chapter XXX")
-        row.tap()
+        XCTAssertTrue(ContentsRow.tap(row, in: app).ok, "the contents list chapter XXX")
         // Both counted from the tap: the reads until the words change, and until Back is up.
         var reads = 0, move: Int?, back: Int?
         while reads < Self.jumpReadLimit, move == nil || back == nil {
@@ -378,8 +372,7 @@ final class NavigationPlaceUITests: XCTestCase {
         app.buttons["reader.contents"].tap()
         let row = app.buttons.matching(NSPredicate(format: "label CONTAINS[c] %@", "Chapter XXX")).firstMatch
         XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label CONTAINS[c] %@", "Chapter I")).firstMatch.waitForExistence(timeout: 10))
-        for _ in 0..<20 where !(row.exists && row.isHittable) { app.swipeUp(velocity: .slow) }
-        row.tap()
+        XCTAssertTrue(ContentsRow.tap(row, in: app).ok, "the contents list chapter XXX")
         var words = waitForWords(changingFrom: first, timeout: 20)
         XCTAssertTrue(keptWhatIsShown(), "the jump kept a place other than the page shown")
         sleep(3)
