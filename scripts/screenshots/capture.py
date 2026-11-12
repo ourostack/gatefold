@@ -268,6 +268,20 @@ def witness(dev, d, handoff, log):
         log(f"{handoff}: no process listing ({type(exc).__name__})", flush=True)
     keep = d / "unsettled"
     keep.mkdir(exist_ok=True)
+    # What the app itself is doing, as stacks: midnight's stuck devices had Gatefold at 48-70% CPU (gatefold#150).
+    # `sample` reads 3 s of the process's threads and takes about that long to write them; 20 s bounds a slow host.
+    # Function names and counts only, never the page's words.
+    try:
+        pid = dev.run(["pgrep", "-x", "Gatefold"], capture_output=True, timeout=10).stdout
+        pid = (pid.decode(errors="replace") if isinstance(pid, bytes) else (pid or "")).split()
+        if pid:
+            dev.run(["sample", pid[0], "3", "-file", str(keep / f"{handoff}-sample.txt")],
+                    check=True, capture_output=True, timeout=20)
+            log(f"{handoff}: the app's threads when stuck are in unsettled/{handoff}-sample.txt", flush=True)
+        else:
+            log(f"{handoff}: no Gatefold process to sample", flush=True)
+    except Exception as exc:
+        log(f"{handoff}: no sample of the app ({type(exc).__name__})", flush=True)
     try:
         dev.run(["xcrun", "simctl", "io", dev.udid, "screenshot", "--type=png", str(keep / f"{handoff}-stuck.png")],
                 check=True, capture_output=True, timeout=SIMCTL_LIMIT)
@@ -440,13 +454,14 @@ def selftest_recovery():
         # The watcher: stuck, then (after the workflow's reboot) the next try is a new hand-off that succeeds.
         d = t / "w"
         d.mkdir()
-        dev = Device("U", run=FakeSimctl(), log=quiet, force=ASKS + 1)
+        dev = Device("U", run=FakeSimctl(steps={"Gatefold": (0, "4242\n")}), log=quiet, force=ASKS + 1)
         dev.listing_answers = lambda: False
         (d / "midnight.1.ready").write_text("midnight")
         sweep(d, dev, None, spec, log=quiet)
         assert (d / "midnight.1.stuck").exists() and (d / "midnight.1.fail").exists(), sorted(os.listdir(d))
         assert "listing did not answer either" in (d / "midnight.1.stuck").read_text()
         assert "ps" in dev.run.calls, dev.run.calls  # the witness asked what was busy
+        assert ["pgrep", "sample"] == [c for c in dev.run.calls if c in ("pgrep", "sample")], dev.run.calls  # and sampled the app
         (d / "midnight.1r.ready").write_text("midnight")
         sweep(d, dev, None, spec, log=quiet)
         assert (d / "midnight.1r.done").exists() and "1 calls asked again" in (d / "midnight.1r.done").read_text()
