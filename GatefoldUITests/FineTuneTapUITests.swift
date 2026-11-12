@@ -103,24 +103,6 @@ final class FineTuneTapUITests: XCTestCase {
         return true
     }
 
-    /// Touch (0)'s reflow (justify's typography) has settled, its page fully shown, before touch (1) goes in:
-    /// XCUITest's synthesizer lost touches sent 0.1 to 0.3 s after a reflow placed its words, while its cover
-    /// faded, and the app's own UIApplication.sendEvent never saw them (gatefold#175, runs 42881927745 and
-    /// 42891025460). In reads, like the change itself; a reflow that never settles is not judged here, the
-    /// touch after it still is.
-    private func awaitReflowSettled(_ what: String) {
-        let reflow = app.descendants(matching: .any)["reader.reflow"].firstMatch
-        for read in 1...Self.landReads {
-            let now = (reflow.value as? String) ?? ""
-            if now.isEmpty || now.hasSuffix("settled") {
-                if read > 1 { print("TAPRATE \(what): reflow settled after \(read) reads") }
-                return
-            }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
-        }
-        print("TAPRATE \(what): reflow still running after \(Self.landReads) reads")
-    }
-
     /// The reflow's number now (0 before any): read before a turn, so the turn's own reflow can be told from
     /// the launch's, which still reads "N settled".
     private func reflowNumber() -> Int {
@@ -128,20 +110,26 @@ final class FineTuneTapUITests: XCTestCase {
         return Int(now.split(separator: " ").first ?? "") ?? 0
     }
 
-    /// A turn that changes the columns reflows the book, which the window's frame doesn't show; the old sleep(3)
-    /// covered it. Reads until a reflow newer than `before` has settled (gatefold#175: touches sent just after a
-    /// reflow placed its words were lost), or `landReads` run out, which a turn that kept its columns does.
-    private func awaitReflowAfterTurn(since before: Int) {
+    /// Reads until a reflow newer than `before` has settled, its page fully shown (gatefold#175: touches sent
+    /// just after a reflow placed its words were lost before they reached the app), or `landReads` run out. A
+    /// reflow that never settles is not judged here; the touch after it still is. `expected` false: when no newer
+    /// reflow has begun, nothing is waited for (a switch that doesn't reflow the book).
+    private func awaitReflowSettled(since before: Int, expected: Bool = true, _ what: String) {
         let reflow = app.descendants(matching: .any)["reader.reflow"].firstMatch
+        var now = ""
         for read in 1...Self.landReads {
-            let now = (reflow.value as? String) ?? ""
-            if (Int(now.split(separator: " ").first ?? "") ?? 0) > before, now.hasSuffix("settled") {
-                print("TAPRATE after the turn: reflow \(now) after \(read) reads")
+            now = (reflow.value as? String) ?? ""
+            if (Int(now.split(separator: " ").first ?? "") ?? 0) > before {
+                if now.hasSuffix("settled") {
+                    print("TAPRATE \(what): reflow \(now) after \(read) reads")
+                    return
+                }
+            } else if !expected {
                 return
             }
             RunLoop.current.run(until: Date().addingTimeInterval(0.1))
         }
-        print("TAPRATE after the turn: no newer reflow settled in \(Self.landReads) reads (was \(before))")
+        print("TAPRATE \(what): no newer reflow settled in \(Self.landReads) reads (was \(before), now \(now))")
     }
 
     private func quickTouches() {
@@ -150,9 +138,14 @@ final class FineTuneTapUITests: XCTestCase {
             let toggle = app.switches[id].firstMatch
             XCTAssertTrue(toggle.waitForExistence(timeout: 10), id)
             for _ in 0..<4 where !toggle.isHittable { panel.swipeUp() }
+            var reflowBefore = 0
             for i in 0..<4 {
-                if i == 1 { awaitReflowSettled("before a quick touch on \(id) (1)") }
+                // Touch (0)'s reflow settles before touch (1): XCUITest's synthesizer lost touches sent 0.1 to 0.3 s
+                // after a reflow placed its words, and the app's UIApplication.sendEvent never saw them (gatefold#175,
+                // runs 42881927745 and 42891025460). Touches (2) and (3) go in while their reflows run.
+                if i == 1 { awaitReflowSettled(since: reflowBefore, expected: id == "appearance.justify", "before a quick touch on \(id) (1)") }
                 let before = valueBefore(toggle, "a quick touch on \(id) (\(i))")
+                if i == 0 { reflowBefore = reflowNumber() }
                 toggle.press(forDuration: 0)
                 guard assertChangedOnce(toggle, from: before, "a quick touch on \(id) changes it (\(i))") else { return }
             }
@@ -176,6 +169,9 @@ final class FineTuneTapUITests: XCTestCase {
     /// 25 taps in a row, in one launch, in one posture, so a method fits one CI shard; together they are the
     /// old two methods' 4 x 25 taps in each posture, each judged the same way. One difference, accepted: each
     /// switch now starts on a freshly opened reader, not one still busy from the switches tapped before it.
+    /// A tap that reflows the book (Justify) lets its reflow settle before the next tap (gatefold#175): the
+    /// switch's value changes before the reflow ends, and on a spread a tap sent as the reflow placed its words
+    /// and faded its cover never reached the app (its UIApplication.sendEvent saw nothing).
     private func tapRate(_ shown: String, _ id: String) {
         let panel = app.descendants(matching: .any)["appearance.panel"].firstMatch
         var trials = 0, misses = 0
@@ -184,6 +180,7 @@ final class FineTuneTapUITests: XCTestCase {
         for _ in 0..<4 where !toggle.isHittable { panel.swipeUp() }
         for tap in 1...25 {
             let before = valueBefore(toggle, "a tap on \(id)")
+            let reflowBefore = reflowNumber()
             toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
             trials += 1
             let (changed, reads, hung) = readsUntilChanged(toggle, from: before)
@@ -197,6 +194,7 @@ final class FineTuneTapUITests: XCTestCase {
                 misses += 1
                 print("TAPRATE miss on \(id) at tap \(tap) (changed, then back)")
             }
+            awaitReflowSettled(since: reflowBefore, expected: id == "appearance.justify", "after tap \(tap) on \(id)")
         }
         print("TAPRATE \(shown) \(id) trials=\(trials) misses=\(misses) hangGuard=\(Int(HangGuard.seconds(reads: Self.landReads))) s, step end \(ProcessInfo.processInfo.environment["GATEFOLD_STEP_UNTIL"] == nil ? "not passed" : "passed")")
         XCTAssertEqual(misses, 0, "every one of \(trials) taps on \(id) flipped its switch")
@@ -264,7 +262,8 @@ final class FineTuneTapUITests: XCTestCase {
             // A square window looks the same either way round: the turn can't be proved by shape.
             print("TAPRATE window is square: the turn is not provable by its shape")
         }
-        awaitReflowAfterTurn(since: reflowBefore)
+        // A turn that changes the columns reflows the book, which the window's frame doesn't show.
+        awaitReflowSettled(since: reflowBefore, "after the turn")
         openFineTune(launching: false)
         tapRate("landscape", id)
     }
