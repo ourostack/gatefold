@@ -9,7 +9,7 @@ import XCTest
 /// had not opened its book 120 s later (#122). A wall-time wait reads that as a failure.
 @MainActor
 enum ReaderReads {
-    /// Reads a wait gets while the reader is on its way or its opening cover is up (`reader.pageReady` 0): 1200, at
+    /// Reads a wait gets while the reader is on its way or its page isn't ready (`ready`): 1200, at
     /// least 0.3 s apart, as CountingPlaceholder's page-ready wait (#94). A reopen on a starved host has shown no words
     /// for over a minute: 63 s in #238's round 2 (run 43214477644), still loading after 67 s in #195's round 4 (run
     /// 43238536988), #214.
@@ -27,8 +27,11 @@ enum ReaderReads {
         app.descendants(matching: .any)[id].firstMatch
     }
 
+    /// The reader reports its page ready and no reopen picture covers it. A relaunch's picture can stay up after
+    /// `pageReady` (`ReaderModel.showPage`), and the words probe and the count are both held while it is up, so the
+    /// ready allowances start only once it is gone.
     private static func ready(_ app: XCUIApplication) -> Bool {
-        (el(app, "reader.pageReady").value as? String) == "1"
+        (el(app, "reader.pageReady").value as? String) == "1" && !el(app, "reader.reopenPicture").exists
     }
 
     /// The reader's page is up (`reader.page`, there once the reader has laid out its first frame), and the reads it
@@ -85,7 +88,8 @@ enum ReaderReads {
 
     /// The book's page count (`reader.pageCount`), or nil: judged in reads and the reader's own ready report, never
     /// seconds (#122). Up to `coverReads` while the page isn't ready, as the count waits on it, then `countReads` once
-    /// it is: a book never counted once its page is ready returns nil, and `say` says which. The caller asserts.
+    /// it is: a book never counted once its page is ready returns nil, and `say` says which. The caller asserts. Every
+    /// read here is at least 0.5 s apart, so the cover's reads give a fast runner at least 600 s, not `settle`'s 360 s.
     static func counted(_ app: XCUIApplication, _ what: String, say: (String) -> Void,
                         file: StaticString = #filePath, line: UInt = #line) -> Int? {
         let count = el(app, "reader.pageCount")

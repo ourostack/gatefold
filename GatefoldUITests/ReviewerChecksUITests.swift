@@ -280,7 +280,7 @@ final class ReviewerChecksUITests: XCTestCase {
         app.launch()
         XCTAssertTrue(opened("pride"), "the book opened")
         guard let count = counted("pride") else { return XCTFail("the book was never counted") }
-        _ = settle()
+        _ = settled("pride")
         XCTAssertTrue(numbersShown(), "a number is up")
         var last = numbers, turns = 0
         note("start numbers=\(last) labels=\(app.descendants(matching: .any).matching(identifier: "reader.pageNumber").allElementsBoundByIndex.map(\.label))")
