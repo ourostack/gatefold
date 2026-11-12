@@ -1614,6 +1614,10 @@ final class ReaderModel {
             placeOwed = true
             leavingOnShownPage = nil
             contentsLeftMove = moves
+            // Written now, in the caller's own turn: the leave's ordinary write reads the page, which the
+            // chapter still loading can hold past the app's suspension (CI run 43222781890 logged the target
+            // and never wrote it). That write still follows, and the landing writes over both.
+            writeContentsTargetAtOnce(target)
             return target
         }
         // No move owed, but a restore that never settled left him the page as it was: that page is what he
@@ -1761,6 +1765,23 @@ final class ReaderModel {
         shownLeaveSteps.append("written")
         if LaunchOptions.isUITest { savedWordsProbe = here.text.highlight.map(ReaderJS.normalize) ?? "" }
         readerLog.notice("place write [r\(self.readerNumber, privacy: .public)]: the page left unsettled written on leaving, at once, at \(here.locations.totalProgression ?? -1, privacy: .public), \(here.text.highlight == nil ? "Readium's location" : "with his first words", privacy: .public)")
+    }
+    /// A contents jump's target, as he leaves it on its way (gatefold#259): kept as of now, with no read of
+    /// the page, which is still on the place before the jump.
+    private func writeContentsTargetAtOnce(_ here: Locator) {
+        guard let json = try? here.jsonString() else {
+            readerLog.notice("place write [r\(self.readerNumber, privacy: .public)]: the contents jump's target could not be encoded; not written at once")
+            return
+        }
+        recordedMoves = moves
+        pagesLeft = []
+        newestWrittenMove = max(newestWrittenMove, moves)
+        placeRecords += 1
+        if LaunchOptions.isUITest { savedPlaceProbe = Self.probeTag(here) }
+        app.library.recordPlace(bookID: bookID, locatorJSON: json, totalProgression: here.locations.totalProgression ?? 0,
+                                progression: here.locations.progression ?? 0, at: Date())
+        app.library.flushPushes()
+        readerLog.notice("place write [r\(self.readerNumber, privacy: .public)]: the contents jump's target written on leaving, at once, at \(here.locations.totalProgression ?? -1, privacy: .public)")
     }
     /// The exact position for that same write, when the chapter's mapping comes (it reads the chapter, which a
     /// stalled page can hold: gatefold#240): written only over that very write (no newer place, no newer
