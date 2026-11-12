@@ -147,8 +147,8 @@ final class RotationRepro: XCTestCase {
     /// The same, noted at the place his turn kept, as when Readium reports nothing new under the stall
     /// (CI 43075159905): the leave keeps his words, and the reopen opens on them (gatefold#133).
     func testRotateThenLeaveWhileTheRestoreWaitsOnHisKeptPlaceWithoutItsWords() throws {
-        try rotateThenLeave(extra: ["-GatefoldSlowRestorePage", "YES", "-GatefoldShownPageWithoutWords", "YES",
-                                    "-GatefoldShownPageAtHisPlace", "YES"])
+        try rotateThenLeave(extra: Self.slowRestore + ["-GatefoldShownPageWithoutWords", "YES",
+                                                       "-GatefoldShownPageAtHisPlace", "YES"], countBeforeJump: false)
     }
 
     /// The same, with each reopen landing on the chapter's start (`-GatefoldReopenOnChapterStart`), as a
