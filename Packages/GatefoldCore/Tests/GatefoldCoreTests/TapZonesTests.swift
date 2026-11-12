@@ -11,17 +11,36 @@ import Testing
         #expect(TapZones.edge(viewWidth: 320, spread: false) == 80)
     }
 
-    /// The iPad on its side: 1376 pt across, two pages. The zone is a margin, not half a page's text.
-    @Test func anIPadSpreadTurnsOnlyInItsMargins() {
-        #expect(TapZones.edge(viewWidth: 1376, spread: true) == 88)
+    /// The iPad on its side: 1376 pt across, two pages. Each page's outer quarter turns: its margin and
+    /// the edge of its text, where a thumb lands at 7% or 90% of the width (gatefold#304). Its middle,
+    /// 30% of the width, wakes the controls.
+    @Test func anIPadSpreadTurnsOnEachPagesOuterQuarter() {
+        let width: CGFloat = 1376
+        let edge = TapZones.edge(viewWidth: width, spread: true)
+        #expect(edge == 172)
+        for x in [0.03, 0.07, 0.10] as [CGFloat] { #expect(width * x < edge, "a tap at \(x) of the width turns back") }
+        for x in [0.90, 0.93, 0.97] as [CGFloat] { #expect(width * x > width - edge, "a tap at \(x) of the width turns forward") }
+        #expect(width * 0.3 > edge, "a tap on the left page's middle wakes the controls")
+        #expect(width * 0.7 < width - edge, "a tap on the right page's middle wakes the controls")
     }
 
     /// The Duo unfolded: a tap a third of the way across (the left page's middle) is the controls'.
     @Test func aSpreadTurnsOnlyOnEachPagesOuterQuarter() {
         let width: CGFloat = 1100
         let edge = TapZones.edge(viewWidth: width, spread: true)
-        #expect(edge == 88)
+        #expect(edge == 137.5)
         #expect(width * 0.3 > edge, "a tap on the left page's middle turns back")
+    }
+
+    /// The Duo's spread as the simulator lays it out, 951 pt: a tap at 90% of the width turns (gatefold#304).
+    @Test func theDuoSpreadTurnsAtNinetyPercent() {
+        let width: CGFloat = 951
+        #expect(width * 0.9 > width - TapZones.edge(viewWidth: width, spread: true))
+    }
+
+    /// A single page keeps its cap: a wide page's quarter would be half its text.
+    @Test func aWideSinglePageTurnsOnlyInItsMargin() {
+        #expect(TapZones.edge(viewWidth: 1032, spread: false) == 88)
     }
 }
 
