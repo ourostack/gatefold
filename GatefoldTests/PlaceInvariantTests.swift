@@ -387,7 +387,7 @@ import Testing
             // A leave that read nothing of the page leaves no read to hold: the landing's own go free.
             if beat >= 3, kept.leaveDone, f.page.holdNextAnchor { f.page.holdNextAnchor = false }
             // The read held, if any, is the leave's own: asked before the jump reads the page again.
-            if beat == 3, let at = kept.readsAtArm, f.page.isHoldingAnchor, f.page.anchorReads == at + 1 { kept.heldTheLeaves = true }
+            if beat == 3, !kept.leaveDone, let at = kept.readsAtArm, f.page.isHoldingAnchor, f.page.anchorReads == at + 1 { kept.heldTheLeaves = true }
             // The first place written after he left is the leave's own: the chapter's place comes later.
             if kept.onLeaving == nil, saved(f) != before { kept.onLeaving = saved(f) }
             if beat == 30, how != "inactive, landing at once" {
