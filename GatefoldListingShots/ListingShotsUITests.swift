@@ -73,15 +73,18 @@ final class ListingShotsUITests: XCTestCase {
         print(String(format: "ListingShots timing: %@ ready %.1f s after launch", id, Date().timeIntervalSince(launched)))
         // The shelf reads ready seconds after launch, while -GatefoldDownloadAll is still fetching every book: each
         // one downloading pulses its icon, and the host's status bar and screenshots stalled behind that load on all
-        // of shelf's tries in three runs (gatefold#150). Hand over only once no book on screen is still downloading.
+        // of shelf's tries in three runs (gatefold#150). Hand over only once every book on screen is fetched: none
+        // downloading, and none still waiting in the cloud (the books download one at a time, so between two of them
+        // nothing reads "downloading").
         // Scenes that open a book are past it (the reader is up), so only the library's scenes ask.
         let opensABook = (scene["args"] as? [String] ?? []).contains("-GatefoldOpenBook")
         let downloading = app.descendants(matching: .any)
-            .matching(NSPredicate(format: "identifier BEGINSWITH 'book.' AND value CONTAINS 'downloading'")).firstMatch
+            .matching(NSPredicate(format: "identifier BEGINSWITH 'book.' AND (value CONTAINS 'downloading' OR value CONTAINS 'in PocketBook Cloud')"))
+            .firstMatch
         if !opensABook, downloading.exists {
             let fetched = XCTWaiter.wait(for: [expectation(for: NSPredicate(format: "exists == false"),
                                                            evaluatedWith: downloading)], timeout: 90)
-            guard fetched == .completed else { XCTFail("\(id): a book was still downloading after 90 s"); return }
+            guard fetched == .completed else { XCTFail("\(id): a book was still not fetched after 90 s"); return }
         }
         print(String(format: "ListingShots timing: %@ downloads done %.1f s after launch", id, Date().timeIntervalSince(launched)))
         fflush(stdout)  // written now, so a runner that dies still leaves it in the log
