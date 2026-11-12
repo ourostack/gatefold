@@ -135,7 +135,7 @@ jobs:
     name: Shots (${{ matrix.device }})
     needs: [plan, build]
     runs-on: xcode-27
-    timeout-minutes: 75
+    timeout-minutes: 95 # the capture step (80) plus download, unpack and boot
     strategy:
       fail-fast: false
       # One device at a time per run: macOS runners are the scarce thing, and a release can wait.
@@ -186,8 +186,8 @@ jobs:
             xcrun simctl io "$UDID" enumerate | grep -iE "display|port|class|size|name" | head -40 || true
           fi
       - name: Capture every scene twice
-        # Worst case: 3 scenes x 2 tries x 2 passes at about 4.5 min a try (waits of 60 + 60 + 120 s, and launch).
-        timeout-minutes: 75
+        # Worst case: 3 scenes x 2 tries x 2 passes at about 5.5 min a try (waits of 90 + 90 + 120 s, and launch).
+        timeout-minutes: 80
         run: |
           # The step's default shell is bash -e; a failed try must reach the retry, not end the step.
           set +e -uo pipefail
@@ -196,7 +196,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/logs"
           for pass in a b; do
             dir="$RUNNER_TEMP/shots/$pass"
-            mkdir -p "$RUNNER_TEMP/results"
+            mkdir -p "$dir" "$RUNNER_TEMP/results"
             python3 -I scripts/screenshots/capture.py watch --udid "$UDID" --device "$DEVICE" --dir "$dir" > "$RUNNER_TEMP/logs/watch-$pass.log" 2>&1 &
             watcher=$!
             # One test run per scene, and one more try for a scene whose run failed (an XCUITest query can time
@@ -222,6 +222,8 @@ jobs:
             done
             kill -0 "$watcher" 2>/dev/null || { echo "::error::Pass $pass: the capture watcher had stopped"; status=1; }
             touch "$dir/finished"; wait "$watcher" || true
+            # A pass with a missing scene can't be matched by the next one: stop, and leave the runner sooner.
+            [ "$status" = 0 ] || { echo "== pass $pass"; cat "$RUNNER_TEMP/logs/watch-$pass.log"; break; }
             echo "== pass $pass"; cat "$RUNNER_TEMP/logs/watch-$pass.log"
             python3 -I scripts/screenshots/capture.py check --device "$DEVICE" --dir "$dir" || status=1
           done

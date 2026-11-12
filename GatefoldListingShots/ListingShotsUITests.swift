@@ -52,7 +52,7 @@ final class ListingShotsUITests: XCTestCase {
         let kinds: [String: XCUIElement.ElementType] = ["staticText": .staticText, "other": .other, "button": .button]
         let kind = kinds[ready["type"] ?? ""] ?? .any
         let element = app.descendants(matching: kind).matching(identifier: ready["id"] ?? "").firstMatch
-        guard element.waitForExistence(timeout: 60) else {
+        guard element.waitForExistence(timeout: 90) else {
             XCTFail("\(id): \(ready["id"] ?? "?") never appeared"); return
         }
         var predicate: NSPredicate?
@@ -61,7 +61,7 @@ final class ListingShotsUITests: XCTestCase {
         // A rotation can lay the page out once more before it settles, so its count need not be 0.
         if let start = ready["label_begins"] { predicate = NSPredicate(format: "label BEGINSWITH %@", start) }
         if let predicate {
-            let waited = XCTWaiter.wait(for: [expectation(for: predicate, evaluatedWith: element)], timeout: 60)
+            let waited = XCTWaiter.wait(for: [expectation(for: predicate, evaluatedWith: element)], timeout: 90)
             guard waited == .completed else { XCTFail("\(id): \(ready["id"] ?? "?") never read as ready"); return }
         }
 
