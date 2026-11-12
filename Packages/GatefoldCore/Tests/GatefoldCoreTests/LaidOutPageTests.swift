@@ -4,8 +4,8 @@ import Testing
 /// gatefold#58 at c01be7c (Real unfold, job 131123753460): half open, then flat again. The spread settle put his
 /// words on the left page; the read of the page straight after came back 1.0..1.0 with his place at 0.8765, so the
 /// reflow check said his words were lost. Readium's next report, with nothing moved, was 0.8696: his page.
-/// Here the web view is still laying the spread out for `layingOut` reads: they find no words, and their start is
-/// Readium's lagging report. Counted in reads, never seconds.
+/// Here the web view is still laying the spread out for `layingOut` reads: they find no words, and their range is
+/// the collapsed one that read had. Counted in reads, never seconds.
 @MainActor @Suite struct LaidOutPageTests {
     static let file = "OEBPS/chapter-10.html"
     static let his = ReadingAnchor(href: file, progression: 0.876543, text: "the first words of his sentence on the left page")
@@ -42,6 +42,18 @@ import Testing
         let (range, reads) = await LaidOutPage.read(read, beat: {})
         #expect(reads == LaidOutPage.reads && made() == LaidOutPage.reads)
         #expect(range?.text == nil && range.map { $0.contains(Self.his) } == false)
+    }
+
+    /// A page that shows other words is judged lost at once: waiting is only for a page with no words yet.
+    @Test func aPageShowingOtherWordsIsStillLost() async {
+        var made = 0
+        let read: () async -> VisibleRange? = {
+            made += 1
+            return VisibleRange(href: Self.file, start: 0.869565, end: 0.891304, text: "a page of other words entirely")
+        }
+        let (range, reads) = await LaidOutPage.read(read, beat: {})
+        #expect(reads == 1 && made == 1)
+        #expect(range.map { $0.contains(Self.his) } == false, "a page without his words read as his")
     }
 
     /// Overtaken (a newer reflow, his move): no more reads.

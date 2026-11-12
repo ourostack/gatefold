@@ -1065,9 +1065,9 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         guard let text = anchor.text?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else { return nil }
         let surface = WebSpread(host: self, anchor: anchor, text: text)
         guard await SpreadSettler.keepOnLeft(surface, current: current, purpose: purpose) == true, current() else { return nil }
-        // Judged once the page shows text: read straight after the moves, the web view can still be laying the
-        // spread out, and a read with no words takes Readium's lagging start for the page (gatefold#58).
-        let (visible, reads) = await LaidOutPage.read({ await self.visibleRange() }, beat: { await surface.beat() }, current: current)
+        // Judged from the page as the web view has it, once it shows text: read straight after the moves, the
+        // start Readium reports can still be the layout before (gatefold#58: 1.0 on a page that was at 0.8696).
+        let (visible, reads) = await LaidOutPage.read({ await self.liveVisibleRange() }, beat: { await surface.beat() }, current: current)
         // The settler also ends here when its passes run out with the words still off the left page.
         readerLog.notice("spread: words placed on the left page; \(surface.moves, privacy: .public) moves (last read side \(surface.lastSide.map { String($0.rawValue) } ?? "nil", privacy: .public)); page read \(reads, privacy: .public) times, words \(visible?.text != nil, privacy: .public)")
         return visible
@@ -1484,6 +1484,24 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             let end = try await navigator.answer(ReaderJS.pageEnd) as? Double
             return VisibleRange(href: location.href.string, start: start, end: max(start, min(1, end ?? start + 0.0001)), text: text)
         }
+    }
+
+    /// What's on screen now, with its start and end from the web view's own columns rather than Readium's last
+    /// report, which lags a layout (gatefold#58); as `visibleRange` when the columns can't be read in its chapter.
+    func liveVisibleRange() async -> VisibleRange? {
+        guard let shown = await visibleRange() else { return nil }
+        let chapter = shown.href.split(separator: "#", maxSplits: 1).first.map(String.init) ?? shown.href
+        let live: (Double, Double)? = await Self.onSpread {
+            guard let json = try await self.navigator.answer(ReaderJS.geometry) as? String,
+                  let data = json.data(using: .utf8) else { return nil }
+            struct Columns: Decodable { var w: Double; var l: Double; var v: Double; var doc: String? }
+            guard let found = try? JSONDecoder().decode(Columns.self, from: data), found.w > found.v + 1 else { return nil }
+            if let doc = found.doc, !ScreenPageGeometry.document(doc, isChapter: chapter) { return nil }
+            let left = abs(found.l)
+            return (left / found.w, min(1, (left + found.v) / found.w))
+        }
+        guard let (start, end) = live else { return shown }
+        return VisibleRange(href: shown.href, start: start, end: max(start, end), text: shown.text)
     }
 
     /// Where `quote` is in the resource on screen, as a progression; nil when it isn't there.
