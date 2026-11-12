@@ -40,6 +40,9 @@ struct GatefoldApp: App {
                 // He may be leaving: a move a reflow still owes is kept now, in case that reflow never
                 // ends (gatefold#96); the push below waits for it.
                 let owed = app.activeReader?.owedPlaceOnLeaving()
+                // His last turn, its write still on its way, is written now: iOS may end Gatefold before
+                // that write lands (gatefold#301).
+                if owed == nil { app.activeReader?.keepTurnNow() }
                 if let reader = app.activeReader, let owed {
                     // The page a stalled restore left him is written now, before any wait (gatefold#133).
                     reader.keepShownPageNow(owed)
