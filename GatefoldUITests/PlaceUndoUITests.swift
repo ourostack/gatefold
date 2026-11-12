@@ -222,6 +222,22 @@ final class PlaceUndoUITests: XCTestCase {
         XCTAssertNotEqual((try? back.snapshot())?.label, "Couldn't go back. Try again")
     }
 
+    /// A Contents jump whose chapter load never ends: the veil lets go at its limit (about 30 s), his
+    /// page stays on screen and answers his taps; the screen is never frozen behind it (gatefold#173).
+    func testAContentsJumpThatNeverLoadsLetsTheVeilGo() {
+        let first = openFresh(["-GatefoldHangLinkJumps", "1"])
+        let veil = el("reader.veil")
+        contentsJump(to: "Chapter XL")
+        XCTAssertTrue(veil.waitForExistence(timeout: 10), "the jump put up no veil")
+        // The veil's limit is 150 beats of 200 ms; well past it, it must have let go.
+        XCTAssertTrue(veil.waitForNonExistence(timeout: 90), "the veil froze the screen past its limit")
+        let shown = waitForWords()
+        XCTAssertEqual(opening(shown), opening(first), "the jump that never came back moved the page")
+        // His taps reach the page again: one brings the controls up.
+        if !app.buttons["reader.contents"].exists { el("reader.page").coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap() }
+        XCTAssertTrue(app.buttons["reader.contents"].waitForExistence(timeout: 10), "a tap on the page after the veil let go brought no controls")
+    }
+
     /// A touch resting on the scrubber, and a short wobble on it, never move the page.
     func testATouchOnTheScrubberNeverJumps() {
         let first = openFresh()
