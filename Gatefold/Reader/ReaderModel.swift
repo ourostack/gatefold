@@ -1459,6 +1459,7 @@ final class ReaderModel {
                 self.newestWrittenMove = max(self.newestWrittenMove, self.moves)
                 readerLog.notice("place write [r\(self.readerNumber, privacy: .public)]: landing (\(fresh != nil ? "his first words" : "Readium's boundary", privacy: .public)) \(Self.placeTag(settledLocator), privacy: .public); kept total \(chosen?.totalProgression ?? here.locations.totalProgression ?? 0, privacy: .public); move \(self.moves, privacy: .public)")
                 self.placeRecords += 1
+                self.placeWrittenFor = max(self.placeWrittenFor, self.moves)
                 if LaunchOptions.isUITest { self.savedPlaceProbe = Self.probeTag(settledLocator) }
                 self.app.library.recordPlace(
                     bookID: self.bookID,
@@ -1724,6 +1725,7 @@ final class ReaderModel {
         pagesLeft = []
         newestWrittenMove = max(newestWrittenMove, moves)
         placeRecords += 1
+        placeWrittenFor = max(placeWrittenFor, moves)
         if LaunchOptions.isUITest { savedPlaceProbe = Self.probeTag(here) }
         app.library.recordPlace(bookID: bookID, locatorJSON: json, totalProgression: here.locations.totalProgression ?? 0,
                                 progression: here.locations.progression ?? 0, at: Date())
@@ -2284,6 +2286,7 @@ final class ReaderModel {
             }
             readerLog.notice("place write [r\(self.readerNumber, privacy: .public)]: his move (\(fresh != nil ? "his first words" : "Readium's boundary", privacy: .public)) \(Self.placeTag(here), privacy: .public); reported \(Self.placeTag(locator), privacy: .public); move \(self.moves, privacy: .public), touched \(self.touchedSinceLocation, privacy: .public), layoutOnly \(self.layoutOnly, privacy: .public)")
             placeRecords += 1
+            placeWrittenFor = max(placeWrittenFor, keeping)
             app.library.recordPlace(
                 bookID: bookID,
                 locatorJSON: json,
@@ -2355,6 +2358,7 @@ final class ReaderModel {
         readOnAfterJump()
         hasMoved = true
         moves += 1
+        turnFalling = false
         lastTurnMove = moves
         let step = steps
         Task {
@@ -2379,8 +2383,61 @@ final class ReaderModel {
         }
     }
 
+    /// His turn has let go and will land (a tap's turn, or a drag let go past the turn): Readium is already
+    /// on the page beneath while the leaf falls, and the turn counts only when it lands (`userTurnedPage`).
+    /// His first words on that page are read while the leaf falls, for a leave before it lands.
+    func turnCommitted() {
+        turnFalling = true
+        fallingWords = nil
+        turnCommits += 1
+        let commit = turnCommits
+        Task { [weak self] in
+            guard let read = await self?.page?.wordsOnPage(), let self, self.turnCommits == commit,
+                  read.text.highlight != nil else { return }
+            self.fallingWords = read
+        }
+    }
+    /// A turn of his between letting go and landing (`turnCommitted`).
+    @ObservationIgnored private var turnFalling = false
+    @ObservationIgnored private var turnCommits = 0
+    /// The first words on the page beneath his latest committed turn, read while it fell (`turnCommitted`).
+    @ObservationIgnored private(set) var fallingWords: Locator?
     /// The move of his latest landed turn.
     @ObservationIgnored private var lastTurnMove: Int?
+    /// The newest move a place write has landed for (an older move's write landing late doesn't count for a newer one).
+    @ObservationIgnored private var placeWrittenFor = -1
+
+    /// Leaving (the app going inactive) with his last turn not yet written: the page Readium shows is written
+    /// now, in the caller's own turn, before any wait (gatefold#301). The turn's write waits for the leaf to
+    /// land, then for his words and the mapped position, and iOS may end Gatefold a moment after he leaves:
+    /// the reopen came back where the last write had landed, pages before him. Only a turn of his: a turn
+    /// still falling, or one landed whose write hasn't, and nothing else owed (a reflow's debt, a jump on its
+    /// way, a stalled restore's page each keep their own leave write). Never the layout's report once his
+    /// turn is written (build 17: a boundary saved after a rotation reopened him a page early).
+    /// With his first words when they have been read for that very page (the turn's own read, or the one made
+    /// while the leaf fell): a bare progression reopens wherever Readium's first layout puts it, which can be
+    /// the chapter's start. Readium's bare place otherwise; the write under way, if the app lives on, adds them.
+    func keepTurnNow() {
+        guard !isClosed, !isWarming, !placeOwed, leavingOnShownPage == nil, keeper.reflowing == nil,
+              goingBack == nil, endLeaf == nil else { return }
+        let unwritten = lastTurnMove == moves && placeWrittenFor < moves
+        guard turnFalling || unwritten, let here = page?.currentLocation else { return }
+        if let kept = keptPlace, kept.href == here.href, kept.locations.progression == here.locations.progression { return }
+        func words(_ l: Locator?) -> Locator? {
+            l.flatMap { $0.href == here.href && $0.locations.progression == here.locations.progression && $0.text.highlight != nil ? $0 : nil }
+        }
+        let place = words(anchorLocator) ?? words(fallingWords) ?? here
+        guard let json = try? place.jsonString() else { return }
+        placeRecords += 1
+        // Not `placeWrittenFor`: the turn's own write, with his words, still lands over this one if the app lives on.
+        if LaunchOptions.isUITest {
+            savedPlaceProbe = Self.probeTag(here)
+            savedWordsProbe = place.text.highlight.map(ReaderJS.normalize) ?? ""
+        }
+        readerLog.notice("place write [r\(self.readerNumber, privacy: .public)]: his turn, on leaving, at once (\(self.turnFalling ? "the leaf still falling" : "its write still on its way", privacy: .public), \(place.text.highlight == nil ? "Readium's boundary" : "his first words", privacy: .public)) \(Self.placeTag(here), privacy: .public); move \(self.moves, privacy: .public)")
+        app.library.recordPlace(bookID: bookID, locatorJSON: json, totalProgression: here.locations.totalProgression ?? 0,
+                                progression: here.locations.progression ?? 0, at: Date())
+    }
 
     /// Takes the first words on screen as the reader's place, unless a reflow is moving the page.
     func captureAnchor() async {

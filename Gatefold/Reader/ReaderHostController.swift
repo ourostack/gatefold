@@ -1536,15 +1536,23 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         await Self.onSpread { try await self.readAnchor() }
     }
 
-    private func readAnchor() async throws -> (ReadingAnchor, Locator)? {
+    func wordsOnPage() async -> Locator? {
+        await Self.onSpread { try await self.readAnchor(publish: false) }?.1
+    }
+
+    /// `publish`: the page's heading and Contents entry become the running head's (not for a page still
+    /// under a falling leaf, which isn't his page yet).
+    private func readAnchor(publish: Bool = true) async throws -> (ReadingAnchor, Locator)? {
         _ = try await navigator.answer(ReaderJS.install)
         guard let location = navigator.currentLocation else { return nil }
         let anchors = weakModel?.contents.fragments(in: location.href.string) ?? []
         let json = try await navigator.answer(ReaderJS.anchor(column: 0, contentsAnchors: anchors)) as? String
         struct Found: Decodable { var highlight: String; var before: String?; var heading: String?; var contents: String? }
         let found = json.flatMap { $0.data(using: .utf8) }.flatMap { try? JSONDecoder().decode(Found.self, from: $0) }
-        weakModel?.heading = found?.heading.map(ReaderJS.tidyHeading)
-        weakModel?.contentsFragment = found?.contents
+        if publish {
+            weakModel?.heading = found?.heading.map(ReaderJS.tidyHeading)
+            weakModel?.contentsFragment = found?.contents
+        }
         readerLog.notice("anchor: heading \(found?.heading ?? "none", privacy: .public) contents \(found?.contents ?? "none", privacy: .public) in \(location.href.string, privacy: .public)")
         let anchor = ReadingAnchor(
             href: location.href.string,
@@ -1669,6 +1677,8 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     /// A whole turn without a finger: lift from the lower corner and sweep across.
     private func animatedTurn(forward: Bool, from finger: CGPoint?) async {
         guard await prepareTurn(forward: forward, startingAt: finger ?? CGPoint(x: view.bounds.width, y: view.bounds.height * 0.86)) else { return }
+        // A tap's turn has let go as it starts: Readium is on the page beneath, and leaving now leaves it.
+        weakModel?.turnCommitted()
         // The same leaf as a drag: the corner lifts up and in first, so the page bends as a cylinder
         // rather than folding along a flat vertical strip, then sweeps over.
         if curl.style == .curl, !(weakModel?.reduceMotion ?? false) {
@@ -1743,6 +1753,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     }
 
     private func finish(complete: Bool, velocity: CGFloat) async {
+        if complete { weakModel?.turnCommitted() }
         let landing = CurlTiming.landing(isSpread: curl.isSpread)
         let duration = complete ? landing.duration : 0.3
         let settle = complete && curl.isSpread && curl.style == .curl && Self.probesLanding ? watchSettle(forward: !curl.mirrored) : nil
