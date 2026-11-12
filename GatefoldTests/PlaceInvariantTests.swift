@@ -403,14 +403,17 @@ import Testing
         if how.hasPrefix("inactive, landing before") {
             for _ in 0..<400 where (saved(f).flatMap { try? Locator(jsonString: $0) }?.locations.progression ?? 0) < 0.5 { await Task.yield() }
             let landed = try #require(saved(f).flatMap { try? Locator(jsonString: $0) }, "no place kept")
-            #expect((landed.locations.progression ?? 0) > 0.5, "the jump that went on after he left didn't keep where it landed")
+            // The target and the landing must differ, or the target standing over the landing passes unseen.
+            let leftAt = try #require(kept.onLeaving.flatMap { try? Locator(jsonString: $0) }, "leaving kept no place")
+            try #require(abs((leftAt.locations.progression ?? -1) - 0.6) > 0.01, "the target is the landed place itself")
+            #expect(abs((landed.locations.progression ?? -1) - 0.6) < 0.001, "the jump that went on after he left didn't keep where it landed")
             #expect(kept.heldTheLeaves || (kept.leaveDone && !f.page.isHoldingAnchor), "a read other than the leave's was held")
             // Now the page answers the leave's read, if it asked one.
             f.page.releaseAnchor()
             await kept.leave?.value
             for _ in 0..<50 { await Task.yield() }
             let final = try #require(saved(f).flatMap { try? Locator(jsonString: $0) }, "no place kept")
-            #expect((final.locations.progression ?? 0) > 0.5, "the leave's write, held past the landing, stood over the page the jump landed on")
+            #expect(abs((final.locations.progression ?? -1) - 0.6) < 0.001, "the leave's write, held past the landing, stood over the page the jump landed on")
             f.model.close()
             return
         }
