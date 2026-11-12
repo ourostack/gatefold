@@ -247,6 +247,9 @@ final class UnreportedJumpPage: ReaderPage {
     /// and the target written after it never replaces them.
     @Test func theJumpsOwnReportDuringTheInactiveLeavesWriteKeepsHisWords() async throws {
         let (app, model, page) = try await open("scrub-leave-race")
+        // Readium names the opening page before the jump, as it does once the book opens.
+        let opening = try #require(page.currentLocation)
+        await model.locationDidChange(opening)
         await model.go(toProgression: 0.43, rememberBack: true)
         let target = try #require(page.sent.last, "the jump went out")
         let gate = LeaveGate()
@@ -256,6 +259,11 @@ final class UnreportedJumpPage: ReaderPage {
         let leave = Task { await model.keepOwedPlace(owed) }
         for _ in 0..<200 where await gate.waiters < 1 { await Task.yield() }
         #expect(await gate.waiters == 1, "the leave's write reached its wait")
+
+        // A re-report of the page before the jump (the layout as the app goes inactive) is not the jump's.
+        let stray = Task { await model.locationDidChange(opening) }
+        await stray.value
+        #expect(await gate.waiters == 1, "a re-report of the page before the jump was written as his move")
 
         // The chapter loads and Readium reports the jump's page while the leave's write waits.
         page.words = "stand-in-words-of-the-jumped-page"

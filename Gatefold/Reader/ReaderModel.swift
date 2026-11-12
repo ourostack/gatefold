@@ -1589,7 +1589,7 @@ final class ReaderModel {
         // target: the page on screen is still the one before it, and with no report nothing was written,
         // so the reopen had no place at all (gatefold#279). Not a contents jump's (gatefold#254 keeps the
         // place before), and not once a touch or a report has made the page his.
-        if let (target, move) = jumpOnItsWay, move == moves, recordedMoves != moves, !touchedSinceLocation,
+        if let (target, move, _) = jumpOnItsWay, move == moves, recordedMoves != moves, !touchedSinceLocation,
            fragmentJumpMove != moves {
             readerLog.notice("place: leaving a jump still on its way; its target kept at \(Self.placeTag(target), privacy: .public)")
             owedJumpTarget = (target, move)
@@ -1914,7 +1914,9 @@ final class ReaderModel {
     @ObservationIgnored private var owedJumpTarget: (Locator, Int)?
     /// The newest jump of his to a place (the scrubber, a bookmark, a search result) and its move: the place
     /// a leave keeps while that move has no report yet (gatefold#279).
-    @ObservationIgnored private var jumpOnItsWay: (Locator, Int)?
+    /// `from` is Readium's last report before the jump: the page it leaves, which a leave's write never
+    /// takes for the jump's own report (the leave's own call names the target as the last report).
+    @ObservationIgnored private var jumpOnItsWay: (target: Locator, move: Int, from: Locator?)?
     /// A jump of his to a place is being sent to the page (a UI test's `-GatefoldHoldJumpSends` holds it).
     @ObservationIgnored private(set) var isJumpingToPlace = false
     /// The move whose jump target a leave is writing (`keepOwedPlace`), while that write waits.
@@ -2037,7 +2039,7 @@ final class ReaderModel {
         // A leave still writing a jump's target (gatefold#279) hasn't kept the move: the jump's own report,
         // arriving during that write's waits, is his page with its words, and it writes. Only a page that
         // moved: a re-report of the page before the jump (the layout, the app going inactive) is not it.
-        let leaveWriting = leaveWriteMove == moves && !leaving && Self.pageMoved(reportedBefore, locator)
+        let leaveWriting = leaveWriteMove == moves && !leaving && Self.pageMoved(jumpOnItsWay?.from, locator)
         let alreadyKept = (moves == recordedMoves && !hisMove && !leaveWriting) || claimedByEarlier
         let touchedAtReport = touchedSinceLocation
         let readerMoved = (!layoutOnly && !alreadyKept) || touchedAtReport
@@ -2383,7 +2385,7 @@ final class ReaderModel {
         defer { publishBack(back) }
         if let locator = await publication.locate(progression: progression) {
             // His own jumps only: a Cloud landing (`his: false`) records its place once it has settled.
-            if his { jumpOnItsWay = (locator, moves) }
+            if his { jumpOnItsWay = (locator, moves, lastReported) }
             isJumpingToPlace = his
             await veiled { _ = await self.page?.go(to: locator) }
             isJumpingToPlace = false
@@ -2523,7 +2525,7 @@ final class ReaderModel {
         moves += 1
         let back = rememberBack ? rememberPlace() : nil
         defer { publishBack(back) }
-        jumpOnItsWay = (locator, moves)
+        jumpOnItsWay = (locator, moves, lastReported)
         await veiled { _ = await self.page?.go(to: locator) }
         await captureAnchor()
     }
