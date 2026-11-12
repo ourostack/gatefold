@@ -281,10 +281,14 @@ final class ReaderModel {
         readerLog.notice("place read [r\(self.readerNumber, privacy: .public)]: \(book.id, privacy: .public) opening on \(initial.map(Self.placeTag) ?? "none", privacy: .public)")
         // UI tests: the place read carries his words or not (a reopen of a bare progression lands on a boundary).
         if LaunchOptions.isUITest { self.savedWordsProbe = initial?.text.highlight.map(ReaderJS.normalize) ?? "" }
+        // UI tests: a reopen holds the place it read as kept until a move of his writes another; empty, a
+        // reopen that never moved could not be judged against the place it showed.
+        if LaunchOptions.isUITest { self.savedPlaceProbe = initial.map(Self.probeTag) ?? "" }
         // His saved words are the place from the first frame. A reflow can start before the page has
         // shown any words (an iPad relaunched in landscape lays out in portrait first, then rotates);
         // with nothing held, the spread stayed where Readium's re-layout guessed: two spreads early,
         // on the chapter opening before his (the build 15 review's page 98).
+        openedOnSavedPlace = initial != nil
         if let anchor = Self.openingAnchor(from: initial) {
             keeper = AnchorKeeper(anchor: anchor)
             anchorLocator = initial
@@ -736,6 +740,8 @@ final class ReaderModel {
             revealing = false
             guard !pageReady, !isClosed else { return }
             Task { [weak self] in await self?.host?.logTypography() }
+            await holdForOpenPlace()
+            guard !pageReady, !isClosed else { return }
             readerLog.notice("first page ready after \(Date().timeIntervalSince(self.isWarming ? self.openedAt : self.askedAt), privacy: .public) s\(self.isWarming ? " (behind the shelf)" : "", privacy: .public)")
             showPage()
         }
@@ -748,6 +754,29 @@ final class ReaderModel {
     /// anyway: 60, about 3 s. The settle itself is bounded at 4 rounds of two page reads; this only
     /// bounds a page whose reads never come back.
     static let revealLooks = 60
+    /// Looks (one every 50 ms) the cover waits for a reopen's own place to be put on screen: 900, about 45 s.
+    /// Past it the page shows as it is and a place with his words is offered, as before (gatefold#310).
+    static let openPlaceLooks = 900
+    /// The reader opened on a saved place (his, or the Cloud's), not a book's first open.
+    @ObservationIgnored private var openedOnSavedPlace = false
+    /// The open's saved place is still to be put on screen: its settle on his words, or the restore of a reflow
+    /// begun as it opened, hasn't landed, and he hasn't moved.
+    private var openPlaceOwed: Bool {
+        guard openedOnSavedPlace, hisMoves == 0, !touchedSinceLocation, !isClosed else { return false }
+        return openSettling || openSettleGoing || keeper.reflowing != nil
+    }
+
+    /// The cover stays while a reopen's place is still owed (gatefold#310). On CI's starved iPad, Readium put a
+    /// reopen on its file's first page while the chapter loaded, and the page then answered no script for over
+    /// 14 s. Shown then, it was the wrong page, and his place could only be offered or put back under his eyes.
+    /// HX ruling: a longer cover beats a wrong page. Build 21's rule (a place found once the page is in view is
+    /// offered, never moved to) still holds, but only past this bound. Counted in looks, never seconds.
+    private func holdForOpenPlace() async {
+        guard openPlaceOwed else { return }
+        var looks = 0
+        while openPlaceOwed, looks < Self.openPlaceLooks { looks += 1; try? await Task.sleep(for: .milliseconds(50)) }
+        readerLog.notice("open: the cover held \(looks, privacy: .public) looks for the reopen's place (\(self.openPlaceOwed ? "still owed; shown as it is" : "placed", privacy: .public))")
+    }
     /// How long Catch up, taken over the opening cover, waits for the first page to show, in looks: past
     /// the cover's own worst case (its 11.5 s, `revealLooks`, then a load waited out over up to 1200 looks
     /// that each take longer than 50 ms), so on a starved host it never lands into a page still loading.
@@ -887,6 +916,7 @@ final class ReaderModel {
                 }
                 await host?.waitWhileLoading()
             }
+            await holdForOpenPlace()
             guard !pageReady, !isClosed else { return }
             readerLog.notice("first page forced ready after \(Date().timeIntervalSince(self.openedAt), privacy: .public) s")
             showPage()
@@ -3019,7 +3049,8 @@ final class ReaderModel {
     /// For UI tests: the words of the place his last move saved, so a test can tell a word's tail the
     /// place skipped (`ReaderJS.anchor`) from a page that skipped his place (`ReopenMatch`).
     private(set) var savedWordsProbe = ""
-    /// UI tests: the file and the progression in it of the place last written by a move of his (no words).
+    /// UI tests: the file and the progression in it of the place last written by a move of his (no words), or
+    /// the place the reader opened on until one is.
     private(set) var savedPlaceProbe = ""
     /// UI tests: the same for the page Readium last reported, written or not.
     private(set) var shownPlaceProbe = ""

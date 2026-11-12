@@ -75,24 +75,17 @@ final class QuickLeaveUITests: XCTestCase {
             XCUIApplication(bundleIdentifier: "com.apple.springboard").activate()
         }
         app.quit()
-        app.launchArguments = base
+        // The reopen meets CI's starved iPad (gatefold#310): the page answers no script for 400 looks (at least 20 s),
+        // past the cover's own 11.5 s, and a place with no words opens on its file's first page.
+        app.launchArguments = base + ["-GatefoldReopenOnChapterStart", "YES", "-GatefoldStallOpenScripts", "400"]
         app.relaunch()
         XCTAssertTrue(el("reader.page").waitForExistence(timeout: 120), "the book reopened")
         XCTAssertFalse(settle(120).isEmpty, "the reopened page never came up")
-        // A starved host can show the page before his place is set on it (the cover's bound forces it up):
-        // then his saved place is offered, not moved to under his eyes (build 21), and he takes it.
-        let offer = app.buttons["banner.jump"]
-        var offered = false
-        var landed = reads(75) {
-            if shown == last { return true }
-            offered = offer.exists
-            return offered
-        } && shown == last
-        if !landed, offered {
-            print("QUICKLEAVE reopened \(shown), his saved place offered; taking it")
-            offer.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
-            landed = reads(75) { shown == last }
-        }
+        // Judged as the cover lifts: the page itself is on his last turn's page. His saved place offered and taken,
+        // or put right after the page showed, is not a landing (gatefold#310).
+        XCTAssertTrue(reads(1200) { (el("reader.pageReady").value as? String) == "1" }, "the reopened page never showed")
+        let landed = reads(4) { shown == last }
+        if app.buttons["banner.jump"].exists { print("QUICKLEAVE reopened \(shown) with his saved place offered") }
         print("QUICKLEAVE reopened \(shown)")
         XCTAssertTrue(landed, "the reopen is on \(shown), not the page of his last turn (\(last)); opened at \(opened)")
     }
