@@ -126,19 +126,6 @@ final class PlaceUndoUITests: XCTestCase {
                       "a tap in the middle brings up the controls")
     }
 
-    /// After a swipe the list may still be scrolling, and asking a row whether it is hittable then can fail
-    /// the test outright ("activation point invalid": main 42855033645, gatefold#196). So ask once its
-    /// frame holds still for two reads in a row, or it isn't there.
-    private func holdsStill(_ e: XCUIElement) {
-        var last = CGRect.null
-        _ = readsUntil(reads: 30) {
-            guard e.exists else { return true }
-            let now = e.frame
-            defer { last = now }
-            return now == last
-        }
-    }
-
     private func contentsJump(to chapter: String) {
         showChrome()
         app.buttons["reader.contents"].tap()
@@ -146,14 +133,9 @@ final class PlaceUndoUITests: XCTestCase {
         // The list opens centred on the current chapter, so the first rows are not built yet.
         XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label BEGINSWITH[c] %@", "Chapter")).firstMatch.waitForExistence(timeout: 10),
                       "the contents list opens")
-        for _ in 0..<20 where !hung {
-            holdsStill(row)
-            if row.exists && row.isHittable { break }
-            app.swipeUp(velocity: .slow)
-        }
-        holdsStill(row)
-        XCTAssertTrue(row.exists && row.isHittable, "the contents list \(chapter)")
-        row.tap()
+        // Asking a row whether it is hittable fails the test outright when the list has built it off screen
+        // ("activation point invalid": main 42855033645, gatefold#196, #98), so `ContentsRow` reads its frame.
+        XCTAssertTrue(ContentsRow.tap(row, in: app).ok, "the contents list \(chapter)")
     }
 
     /// A Contents jump, then the controls gone: "Back" is on the page, and one tap on it is his page again.
