@@ -158,7 +158,9 @@
       ],
       "args": [
         "-GatefoldTheme",
-        "daylight"
+        "daylight",
+        "-GatefoldNoWarm",
+        "YES"
       ],
       "ready": {
         "id": "library.syncHealth",
