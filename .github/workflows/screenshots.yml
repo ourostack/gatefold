@@ -155,9 +155,12 @@ jobs:
         && 'gatefold-macos-pr-lane-screenshots-shots-0'
         || format('screenshots-shots-{0}-{1}-{2}', github.run_id, github.run_attempt, strategy.job-index) }}
       queue: max
-    # About 1.5 times the slowest measured, 32 min (job 131135005824); green took 16-22. It binds before the boot
-    # wait (30) and the capture step (40) add up: a job that needs both in full is a stall to fix, not to wait out.
-    timeout-minutes: 50
+    # About 1.5 times the slowest measured or estimated (gatefold#150). iPhone and Duo: 32 min, job 131135005824 (a
+    # stall, a reboot and its replacement try); green took 16-22. iPad, with more scenes: about 42 min for a stall and
+    # one reboot, from job 131093420221 (38.5 min with two reboots) less a reboot and a stuck try, plus pass b; green
+    # took 17-20. It binds before the boot wait (30) and the capture step add up: a job that needs both in full is a
+    # stall to fix, not to wait out.
+    timeout-minutes: ${{ matrix.device == 'ipad' && 65 || 50 }}
     strategy:
       fail-fast: false
       # One device at a time per run: macOS runners are the scarce thing, and a release can wait.
@@ -206,10 +209,12 @@ jobs:
             xcrun simctl io "$UDID" enumerate | grep -iE "display|port|class|size|name" | head -40 || true
           fi
       - name: Capture every scene twice
-        # About 1.5 times the slowest measured: 26 min, in Screenshots run 43201036810's Shots (iphone) (job
-        # 131135005824: a stall, a reboot and its replacement try). Green runs took 10.8-16.4 min. A run past this
-        # is a hang to fix at its cause, not a limit to raise.
-        timeout-minutes: 40
+        # About 1.5 times the slowest measured or estimated. iPhone and Duo: 26 min, in run 43201036810's Shots
+        # (iphone) (job 131135005824: a stall, a reboot and its replacement try); green took 10.7-16.4 min. iPad: about
+        # 30 min, from job 131093420221 (30.5 min of pass a with 3 stuck tries and 2 reboots) less one stuck try and
+        # one reboot (about 7 min), plus pass b (about 6); green took 10.9. A run past this is a hang to fix at its
+        # cause, not a limit to raise.
+        timeout-minutes: ${{ matrix.device == 'ipad' && 45 || 40 }}
         env:
           CAPTURE_FORCE_HANG: ${{ inputs.force_hang }}
         run: |
