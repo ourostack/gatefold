@@ -140,6 +140,9 @@ final class ReaderModel {
     /// opens) wrote nothing then; at his tap it is his, so the page he sees becomes the place, and a
     /// fresh open shows that page rather than making the jump afresh.
     /// A test's launch jump is still on its way to its page.
+    /// A test's launch jump not yet made or still on its way: from init until load() has ended it. The cover's
+    /// forced reveal waits for it (`forceReady`), as for the open's settle.
+    @ObservationIgnored private var launchJumpOwed = false
     @ObservationIgnored private var launchJumpInFlight = false { didSet { if !launchJumpInFlight { launchJumpDone() } } }
     @ObservationIgnored private var launchJumpWaiters: [CheckedContinuation<Void, Never>] = []
     /// Returns once a launch jump on its way has landed or given up (or the reader closed): an event,
@@ -274,6 +277,7 @@ final class ReaderModel {
         // another book opened in the same launch) opens on its own place. Jumping every open re-made
         // the jump on a return and called the page it reached his (CI's page-numbers check).
         self.launchGoTo = initial == nil && (LaunchOptions.openBook == nil || LaunchOptions.openBook == book.id) ? (goTo ?? LaunchOptions.goTo) : nil
+        self.launchJumpOwed = launchGoTo != nil
         readerLog.notice("place read [r\(self.readerNumber, privacy: .public)]: \(book.id, privacy: .public) opening on \(initial.map(Self.placeTag) ?? "none", privacy: .public)")
         // UI tests: the place read carries his words or not (a reopen of a bare progression lands on a boundary).
         if LaunchOptions.isUITest { self.savedWordsProbe = initial?.text.highlight.map(ReaderJS.normalize) ?? "" }
@@ -685,6 +689,7 @@ final class ReaderModel {
                 if !placeOwed { owedJumpTarget = nil }
             }
         }
+        launchJumpOwed = false
         // A book about to land on the InkPad's place takes its first place there, not on the cover.
         if !awaitingLanding {
             try? await Task.sleep(for: .milliseconds(300))
@@ -754,6 +759,9 @@ final class ReaderModel {
     /// The picture is his page, so waiting costs nothing he can see; the settle ends long before on a
     /// device (29 s on CI's starved Duo).
     static let pictureSettleLooks = 900
+    /// Looks (one every 50 ms) the cover's forced reveal waits for a test's launch jump still on its way: 900,
+    /// about 45 s. The jump ends itself in reads (`JumpLanding`); this only bounds one whose page never answers.
+    static let launchJumpLooks = 900
 
     /// The cover gives way to the page. A reopen's picture of the page stays over it a moment longer,
     /// while the running head and footer come up beneath, then goes at once: the two are the same
@@ -861,6 +869,14 @@ final class ReaderModel {
                 }
                 await host?.waitWhileLoading()
             } while openSettleGoing && looks < Self.revealLooks && !isClosed
+            // A test's launch jump shows its page once, after the jump, like the open's settle above: forced
+            // mid-jump, the page showed where Readium first put it and moved to the jump's place 12 s later,
+            // under a test reading its words (gatefold#262: iPad on its side, shown at 0.3003, landed 0.3099).
+            looks = 0
+            while launchJumpOwed, looks < Self.launchJumpLooks, !isClosed {
+                looks += 1
+                try? await Task.sleep(for: .milliseconds(50))
+            }
             guard !pageReady, !isClosed else { return }
             readerLog.notice("first page forced ready after \(Date().timeIntervalSince(self.openedAt), privacy: .public) s")
             showPage()
