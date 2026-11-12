@@ -134,7 +134,8 @@ final class NavigationPlaceUITests: XCTestCase {
     /// The far chapter's load after the start is the same code for both and is not compared: on CI's
     /// iPad, at a load average near 400, it took 5.8 to 26.8 s run to run, with or without the hold,
     /// either one the slower (#73: loaded 22 and still loading 11 reads at e8d5ae1, 14 and 33 at
-    /// d2534bd). In every one of those runs the jump pictured its old page in one look, under 0.7 s.
+    /// d2534bd; run 43188075650, held first and last: held 10, loaded 27, loaded 26, held 11). In every
+    /// one of those runs the jump pictured its old page in one look, under 0.7 s.
     func testAJumpFromAPageStillLoadingStartsAtOnce() {
         let plain = contentsJumpReads([])
         let held = contentsJumpReads(["-GatefoldHoldOldPageLoad", "1200"])
