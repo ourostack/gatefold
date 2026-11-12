@@ -1326,7 +1326,7 @@ final class ReaderModel {
     /// Returns the jump's step; `step` is one the caller took for it beforehand.
     @discardableResult
     private func veiled(riffle: Bool = false, forward: Bool = true, step: Int? = nil, toward: AnyURL? = nil,
-                        _ body: @escaping () async -> Void) async -> Int {
+                        keepsItsOwnWatch: Bool = false, _ body: @escaping () async -> Void) async -> Int {
         let jump = step ?? takeStep()
         let watch = VeilWatch()
         let his = hisSteps
@@ -1365,7 +1365,9 @@ final class ReaderModel {
         // (gatefold#173). At the veil's old limit it lets go, the chapter shows its own loading, and the
         // jump goes on and lands when the load comes in. Inside, not alongside: a jump of his made while a
         // hung one is still out is watched too.
-        if step == nil, Self.outerVeil == nil { watchVeil(jump: jump, toward: toward, watch) }
+        // Keyed on Back's own flag, not on a step taken beforehand: a Contents jump into a chapter's
+        // fragment takes its step first too, and must still let go at the limit.
+        if !keepsItsOwnWatch, Self.outerVeil == nil { watchVeil(jump: jump, toward: toward, watch) }
         await Self.$outerVeil.withValue(Self.outerVeil ?? jump) {
             // Behind the cover placeholder there's nothing to veil.
             if let host, pageReady {
@@ -2760,7 +2762,7 @@ final class ReaderModel {
         // start). Never once he has moved on or the trip was given up.
         // A swipe under the veil (slide mode) is a step of his, not a move: that also ends the re-sends.
         var sends = 0, backLanded = false
-        await veiled(step: jump) {
+        await veiled(step: jump, keepsItsOwnWatch: true) {
             guard let inFile = back.locations.progression, inFile > 0 else {
                 // Not over a move of his made while the old page was pictured.
                 guard self.goingBack == trip, self.moves == move, self.steps == jump, !self.isClosed else { return }

@@ -97,8 +97,12 @@ final class ScriptedPage: ReaderPage {
     /// Link jumps sent, and how many to refuse first (a web view still loading never reaches the file).
     private(set) var linkJumps = 0
     var linkRefusals = 0
+    /// Link jumps that never come back until released (a chapter's load that hangs), apart from
+    /// `holdsJumps` so tests that hold locator jumps keep their link jumps free.
+    var holdsLinkJumps = false
     func go(to link: ReadiumShared.Link) async {
         linkJumps += 1
+        if holdsLinkJumps { await withCheckedContinuation { held.append($0) } }
         if linkRefusals > 0 { linkRefusals -= 1; return }
         guard let opens = linkOpens else { return }
         currentLocation = opens

@@ -299,8 +299,10 @@ import Testing
         f.page.linkOpens = fileStart
         f.page.fragmentAt = [:]
         f.page.loadingChapter = true
-        // The load comes in only after more beats than the flat budget has reads.
-        let loadsAt = JumpLanding.reads + 20
+        // The load comes in only after the landing has made more reads than the flat budget has. The veil's
+        // own watch beats through the same closure until it lets go (`JumpLanding.reads` beats), so the
+        // landing's share is counted past both.
+        let loadsAt = 2 * JumpLanding.reads + 20
         beats.act = { beat in
             if beat == loadsAt {
                 f.page.loadingChapter = false
@@ -679,6 +681,33 @@ import Testing
         #expect(abs((f.page.currentLocation?.locations.totalProgression ?? -1) - 0.7) < 0.03, "the jump never landed")
         #expect(abs((Self.kept(f) ?? -1) - 0.7) < 0.03, "the place kept isn't where the jump landed")
         #expect(f.model.showJumpBack, "the jump has no way back")
+        f.model.close()
+    }
+
+    /// A Contents jump into a chapter's fragment takes its step before its veil (columns land it inside
+    /// the file): under a load that never ends, its veil lets go at the limit too, and the jump still
+    /// lands on the chapter when the load comes in (gatefold#173; CI on #195 after main's #269).
+    @Test func aContentsJumpIntoAChaptersFragmentPastTheVeilsLimitLetsTheVeilGo() async throws {
+        let f = try await S.make(remote: { _, _ in nil }, startAt: 0.05, jumpBeat: { await Task.yield() })
+        await f.model.load()
+        await f.model.locationDidChange(try #require(f.page.currentLocation))
+        let entry = try #require(f.model.toc.last(where: { $0.progression > 0.3 && $0.link.url().fragment != nil }))
+        let fragment = try #require(entry.link.url().fragment)
+        nonisolated(unsafe) let publication = f.publication
+        let opened = try #require(await publication.locate(entry.link))
+        f.page.linkOpens = opened.copy(locations: { $0.fragments = []; $0.progression = 0 }, text: { $0 = Locator.Text() })
+        f.page.fragmentAt[fragment] = 0.6
+        f.page.holdsLinkJumps = true
+        f.page.loadingChapter = true
+        let jump = Task { await f.model.go(to: entry) }
+        await Self.settle { f.model.jumpsPastTheVeil == 1 }
+        #expect(f.model.jumpsPastTheVeil == 1, "the Contents jump's veil held the screen past its limit")
+        f.page.loadingChapter = false
+        f.page.holdsLinkJumps = false
+        f.page.releaseJumps()
+        await jump.value
+        await Self.settle { (f.page.currentLocation?.locations.progression ?? 0) > 0.5 }
+        #expect((f.page.currentLocation?.locations.progression ?? 0) > 0.5, "the jump never landed on the chapter he chose")
         f.model.close()
     }
 
