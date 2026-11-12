@@ -14,7 +14,15 @@ public actor FakeSyncService: SyncService {
         public var remoteAge: TimeInterval
     }
 
-    public static let seeds: [Seed] = [
+    /// The shelf: every seed, or only those named in the launch argument `-GatefoldFakeShelf moby-dick,dracula,...`
+    /// (the listing screenshots show only books in the public domain everywhere).
+    public static var seeds: [Seed] {
+        guard let only = UserDefaults.standard.string(forKey: "GatefoldFakeShelf") else { return allSeeds }
+        let names = only.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+        return names.compactMap { name in allSeeds.first { $0.resource == name } }
+    }
+
+    public static let allSeeds: [Seed] = [
         Seed(resource: "moby-dick", title: "Moby-Dick", authors: ["Herman Melville"], remoteProgression: 0.42, remoteAge: 2 * 3600),
         Seed(resource: "pride-and-prejudice", title: "Pride and Prejudice", authors: ["Jane Austen"], remoteProgression: 0.18, remoteAge: 26 * 3600),
         Seed(resource: "frankenstein", title: "Frankenstein", authors: ["Mary Wollstonecraft Shelley"], remoteProgression: 0.66, remoteAge: 5 * 86400),
