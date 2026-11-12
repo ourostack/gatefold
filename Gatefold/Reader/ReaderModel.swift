@@ -1196,6 +1196,7 @@ final class ReaderModel {
         offersHisPlace = false
         let tapped = ContinuousClock.now
         readerLog.notice("catch-up: tapped (exact place \(locator != nil, privacy: .public))")
+        if LaunchOptions.holdOpeningLoadUntilCatchUp { host?.releaseHoldForCatchUp() }
         suggestionLocator = nil
         suggestionRemote = nil
         suggestionCloud = nil

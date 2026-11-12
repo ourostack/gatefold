@@ -109,6 +109,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         if let model = weakModel { readerLog.notice("open: host loads after \(Date().timeIntervalSince(model.openedAt), privacy: .public) s") }
         if LaunchOptions.isUITest || LaunchOptions.openTour != nil { traceWebViews() }
         if LaunchOptions.isUITest, let looks = LaunchOptions.holdOpeningLoadLooks, looks > 0 { holdLoadForTest(looks: looks) }
+        if LaunchOptions.holdOpeningLoadUntilCatchUp { heldUntilCatchUp = true; holdLoadForTest(looks: 0) }
         view.clipsToBounds = true
         addChild(navigator)
         navigator.view.frame = view.bounds
@@ -1886,7 +1887,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
                 heldSends -= 1
                 // The sends still held, for the test to read (the log stream can drop lines).
                 heldLoadMarker?.accessibilityValue = "\(heldSends)"
-                if heldSends == 0, heldLoadLooks == 0 { heldLoadMarker?.removeFromSuperview(); heldLoadMarker = nil }
+                if heldSends == 0, heldLoadLooks == 0, !heldUntilCatchUp { heldLoadMarker?.removeFromSuperview(); heldLoadMarker = nil }
                 readerLog.notice("test: a held load takes a send at its chapter's start, \(self.heldSends, privacy: .public) left")
                 return await navigator.go(to: Locator(href: locator.href, mediaType: locator.mediaType), options: .init(animated: false))
             }
@@ -2256,6 +2257,16 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     /// Looks left in a load held open for a test (`-GatefoldHoldChapterLoad`), and its marker.
     private var heldLoadLooks = 0
     private var heldLoadMarker: UIView?
+    /// Tests only (`-GatefoldHoldOpeningLoadUntilCatchUp`): the opening load is held until Catch up is taken.
+    private var heldUntilCatchUp = false
+
+    /// Tests only: Catch up was taken, so the opening load held for it goes on.
+    func releaseHoldForCatchUp() {
+        guard heldUntilCatchUp else { return }
+        heldUntilCatchUp = false
+        readerLog.notice("open: the load held for Catch up goes on")
+        if heldLoadLooks == 0, heldSends == 0 { heldLoadMarker?.removeFromSuperview(); heldLoadMarker = nil }
+    }
     /// UI tests: up once a jump's old page has been held as loading, so a test knows the hold armed.
     private var oldPageHeldMarker: UIView?
 
@@ -2276,7 +2287,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
 
     /// Readium's own loading spinner is showing: the page in view hasn't loaded yet.
     var isLoadingPage: Bool {
-        if heldSends > 0 { return true }
+        if heldSends > 0 || heldUntilCatchUp { return true }
         if heldLoadLooks > 0 {
             heldLoadLooks -= 1
             if heldLoadLooks == 0 { heldLoadMarker?.removeFromSuperview(); heldLoadMarker = nil }
@@ -2288,7 +2299,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     /// A load under way, read without spending a held load's looks: a test's held load, Readium's spinner,
     /// or a web view in view still loading (its document can sit at about:blank for seconds, gatefold#94).
     var isLoadingChapter: Bool {
-        if heldSends > 0 || heldLoadLooks > 0 || readiumSpinner != nil { return true }
+        if heldSends > 0 || heldLoadLooks > 0 || heldUntilCatchUp || readiumSpinner != nil { return true }
         let host = navigator.view!
         // Hidden ones count too: Readium hides a web view still loading by its scroll view's alpha
         // (`unveilPlacedPages`), so the one on its way is often the hidden one.
@@ -2595,10 +2606,12 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     @discardableResult
     func waitWhileLoading() async -> Int {
         var looks = 0
-        while isLoadingPage, looks < Self.loadingLooks {
+        // A load held until Catch up has no allowance and spends none: the test's tap ends it, and the real
+        // load after it still gets its own.
+        while isLoadingPage, looks < Self.loadingLooks || heldUntilCatchUp {
             await unveilPlacedPages()
             guard isLoadingPage else { break }
-            looks += 1
+            if !heldUntilCatchUp { looks += 1 }
             try? await Task.sleep(for: .milliseconds(50))
         }
         if looks > 0 { readerLog.notice("veil: waited \(looks, privacy: .public) looks for the chapter to load") }
