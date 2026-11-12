@@ -1991,6 +1991,11 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     }
 
     func go(to link: ReadiumShared.Link) async {
+        if LaunchOptions.isUITest, LaunchOptions.hangLinkJumps {
+            readerLog.notice("test: a contents jump that never comes back")
+            while !Task.isCancelled { try? await Task.sleep(for: .seconds(3600)) }
+            return
+        }
         _ = await navigator.go(to: link, options: .init(animated: false))
     }
 
@@ -2098,6 +2103,9 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
                 readerLog.notice("veil: jump \(jump, privacy: .public) pictured its page \(ReaderModel.ms(since: jumpTapped), privacy: .public) ms after it began, \(self?.lastSnapshotLooks ?? -1, privacy: .public) looks")
                 return page
             }
+            // Leaves stopped by a veil let go at its limit (his turns are his again) still return only once
+            // the jump is back: the model's put-back and its words wait on the landing, not on the leaves.
+            await travel.value
             readerLog.notice("veil: jump \(jump, privacy: .public) lifted \(ReaderModel.ms(since: jumpTapped), privacy: .public) ms after it began")
             cover.removeFromSuperview()
             if veil === cover { veil = nil; veilJump = nil }
@@ -2163,11 +2171,16 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         // keep turning, so the thumb never stops on the bare old page waiting for it: one sweep.
         let t0 = ContinuousClock.now
         var page: UIImage?
-        let picturing = Task { @MainActor in page = await fresh() }
+        var pictured = false
+        let picturing = Task { @MainActor in page = await fresh(); pictured = true }
         while i < 3 || (page == nil && i < 40) {
             await leaf(top: old, beneath: old, index: i, size: size, forward: forward, duration: 0.12)
             i += 1
         }
+        // A veil let go at its limit (`abandonVeil`) gives his turns back at once: the leaves stop
+        // waiting on a jump that may never come back (gatefold#173).
+        while !pictured, veil === cover { try? await Task.sleep(for: .milliseconds(100)) }
+        guard veil === cover else { return }
         await picturing.value
         readerLog.notice("riffle: \(i, privacy: .public) leaves, new page pictured at \(ReaderModel.ms(since: t0), privacy: .public) ms")
         // The last leaf uncovers the new page, and its chapter comes up in the head as it does:

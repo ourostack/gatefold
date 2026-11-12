@@ -93,13 +93,47 @@ final class ReopenAfterControlsUITests: XCTestCase {
         // 0.3 s apart (the old 60 s on a fast runner); the 2400 s guard only catches a hang: a look is up to five
         // queries of the app, and a starved runner has taken 1-2 s a query, so 200 looks can run to about 2000 s.
         let start = Date(), hung = start.addingTimeInterval(2400)
-        var looks = 0, taken = false
-        while looks < 200, words.isEmpty {
+        // Read from one snapshot each and tapped at the point, never `isHittable`: asked of an offer mid-fold, it
+        // fails the test (gatefold#236). After an offer tap the page gets 10 looks to answer before another, as
+        // NavigationPlace's offer taps since #171. Taken only once the offer and its tab are both gone (taking it
+        // hides the slip at once): an offer that folded just before its tap leaves the tab, and that tap may have
+        // turned the page instead, which fails below rather than going on from the wrong page.
+        let window = app.frame
+        // Gone means gone on two looks in a row (one read can come back empty on a starved runner), and words seen
+        // while a tap's quiet looks run don't end the look: the slip fades out over 0.35 s after a take.
+        // The offer is tapped as soon as its frame is read, with no other query between, and a tab tap is followed
+        // straight away by a look for the offer it opened (no quiet looks): opened, it folds again 10 s later, and on
+        // a loaded runner two quiet looks outlasted that every time (#238's run 43030197427: 30 tab taps, the offer
+        // seen between them and never tapped), where `element.tap()` on the next look took it (main, 4.7 s after).
+        // That look skips even the words read: a tab just up means an offer to take. An offer still up once a tap's
+        // quiet looks are spent is tapped again (the old loop stopped there and failed).
+        var looks = 0, taps = 0, quiet = 0, gone = 0, taken = false, afterTab = false
+        while looks < 200 {
             if Date() > hung { XCTFail("hang: looking for the Cloud's offer ran \(looks) looks over 2400 s"); return }
             looks += 1
-            if offer.exists, offer.isHittable { offer.tap(); taken = true; break }
-            if tab.exists, tab.isHittable { tab.tap() }
+            let wordsShown = afterTab ? false : !words.isEmpty
+            afterTab = false
+            if wordsShown, taps == 0 { break }
+            let offerAt = HitCheck.frame(of: offer)
+            if quiet == 0, let f = offerAt.flatMap({ HitCheck.usable($0, within: window) }) {
+                HitCheck.tap(f, in: app); taps += 1; quiet = 10; gone = 0
+                RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+                continue
+            }
+            let tabAt = HitCheck.frame(of: tab)
+            gone = taps > 0 && offerAt == nil && tabAt == nil ? gone + 1 : 0
+            if gone >= 2 { taken = true; break }
+            if wordsShown, quiet == 0, gone == 0 { break }
+            if quiet > 0 {
+                quiet -= 1
+            } else if let f = tabAt.flatMap({ HitCheck.usable($0, within: window) }) {
+                HitCheck.tap(f, in: app); afterTab = true
+            }
             RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+        }
+        if taps > 0, !taken {
+            XCTFail("\(taps) taps meant for the Cloud's offer didn't take it in \(looks) looks (its tab is still up, words \(!words.isEmpty))")
+            return
         }
         let secs = String(format: "%.1f", Date().timeIntervalSince(start))
         // "REOPEN round N:" so the iPad step's log filter keeps it.
@@ -107,7 +141,7 @@ final class ReopenAfterControlsUITests: XCTestCase {
             print("REOPEN round \(round): no offer taken after \(looks) looks in \(secs) s; tab \(tab.exists) offer \(offer.exists) words \(!words.isEmpty)")
             return
         }
-        print("REOPEN round \(round): offer taken after \(looks) looks in \(secs) s")
+        print("REOPEN round \(round): offer taken after \(looks) looks (\(taps) taps) in \(secs) s")
         // Its own clock, so a slow look above doesn't spend this loop's guard.
         let shown = Date(), stuck = shown.addingTimeInterval(2400)
         var reads = 0

@@ -30,6 +30,7 @@ main|iPad Pro 13-inch|PageFurnitureUITests/testOnTheIPadSpreadTwoTogglesThenAReo
 main|iPad Pro 13-inch|PageFurnitureUITests/testTurningNumbersOnKeepsTheWordsAndIsKept
 main|iPad Pro 13-inch|PageNumberUITests/testOnASpreadEveryTurnMovesOnTwoPages
 main|iPad Pro 13-inch|PlaceUndoUITests/testAChaptersFirstPageTurnsBackByTapAndBySwipe
+main|iPad Pro 13-inch|PlaceUndoUITests/testAContentsJumpThatNeverLoadsLetsTheVeilGo
 main|iPad Pro 13-inch|PlaceUndoUITests/testAJumpIsOneTapToUndoWithTheControlsHidden
 main|iPad Pro 13-inch|PlaceUndoUITests/testATapAboveYourPageClosesItAndKeepsThePage
 main|iPad Pro 13-inch|PlaceUndoUITests/testATapAtTheLeftEdgeTurnsBackPromptly

@@ -428,14 +428,14 @@ jobs:
             timeout: 52 # 30 + 2 x 4.8 + 12
             lane: 3
           - shard: ipad-undo-rest
-            # The catch-all for new undo tests: 94, and the spread's left edge
+            # The catch-all for new undo tests: 94, the spread's left edge, and the jumps whose veil lets go (9.8 min: the slowest passes, 190 s, 179 s, 124 s and 95 s)
             tests: >-
               PlaceUndoUITests
             skip: >-
               PlaceUndoUITests/testATapWhileAJumpIsUnderWayLandsWhereHeChose PlaceUndoUITests/testATapAboveYourPageClosesItAndKeepsThePage PlaceUndoUITests/testAChaptersFirstPageTurnsBackByTapAndBySwipe PlaceUndoUITests/testAJumpIsOneTapToUndoWithTheControlsHidden PlaceUndoUITests/testATapAtTheLeftEdgeTurnsBackPromptly PlaceUndoUITests/testATapAtTheLeftEdgeTurnsBackPromptlyWithinAChapter
             pr_tests: none
             cold: false
-            timeout: 51 # 30 + 2 x 4.4 + 12
+            timeout: 62 # 30 + 2 x 9.8 + 12
             lane: 15
     uses: ./.github/workflows/ui-tests.yml
     with:

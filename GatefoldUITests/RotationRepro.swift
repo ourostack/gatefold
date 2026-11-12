@@ -209,7 +209,7 @@ final class RotationRepro: XCTestCase {
         // hittable, and a push up would take it away.
         let ids = loaded.compactMap { Int($0) }
         let above = ids.isEmpty ? false : 11 < (ids.min()! + ids.max()!) / 2
-        for _ in 0..<10 where !(pick.exists && pick.isHittable) {
+        for _ in 0..<10 where !(pick.exists && HitCheck.hittable(pick, in: app)) {
             // A short drag inside the list, never a swipe from its top: a pull-down there closes the sheet.
             let from = list.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: above ? 0.35 : 0.65))
             let to = list.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: above ? 0.65 : 0.35))
