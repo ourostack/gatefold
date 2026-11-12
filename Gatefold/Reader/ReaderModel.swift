@@ -1971,6 +1971,8 @@ final class ReaderModel {
     @ObservationIgnored private var placeRecords = 0
     /// The move whose first report is still reading his words before its write (`locationDidChange`).
     @ObservationIgnored private var claimedMove: Int?
+    /// Reports of a move held back because an earlier write of it had claimed it (#82), counted for tests.
+    @ObservationIgnored private(set) var reportsHeldByAClaim = 0
     /// A launch jump that never landed, and its move: owed by a reflow, its target is the place kept.
     @ObservationIgnored private var owedJumpTarget: (Locator, Int)?
     /// The newest jump of his to a place (the scrubber, a bookmark, a search result) and its move: the place
@@ -2117,7 +2119,11 @@ final class ReaderModel {
         let claimedByEarlier = claimedMove == moves && !hisMove && !touchedSinceLocation
         // A report dropped for a claim may be the real place (a two-step jump names its file's start,
         // then the place): the claimant then keeps whichever of the two the page on screen holds.
-        if claimedByEarlier { contestingReport = locator }
+        if claimedByEarlier {
+            contestingReport = locator
+            reportsHeldByAClaim += 1
+            readerLog.notice("place: a report of move \(self.moves, privacy: .public) while its claimed write reads his words (\(Self.placeTag(locator), privacy: .public)); not written over it")
+        }
         // A leave still writing a jump's target (gatefold#279) hasn't kept the move: the jump's own report,
         // arriving during that write's waits, is his page with its words, and it writes. Only a page that
         // moved: a re-report of the page before the jump (the layout, the app going inactive) is not it.

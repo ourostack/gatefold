@@ -360,18 +360,19 @@ import Testing
                 for _ in 0..<50 { await Task.yield() }
             }
         }
+        final class Kept { var onLeaving: String?; var leave: Task<Void, Never>?; var heldBefore: Int? }
+        let kept = Kept()
         if how == "inactive" {
             // Readium's boundary a beat after the landing (#82), reported while the landing reads his words:
             // never written over them.
             f.model.beforeLandingWrite = { @MainActor in
                 f.model.beforeLandingWrite = nil
+                kept.heldBefore = f.model.reportsHeldByAClaim
                 Task { await f.model.locationDidChange(fileStart) }
             }
         }
         for _ in 0..<20 { await Task.yield() }
         let before = saved(f)
-        final class Kept { var onLeaving: String?; var leave: Task<Void, Never>? }
-        let kept = Kept()
         beats.act = { beat in
             if beat == 2 {
                 if how == "close" { f.model.close() } else if let owed = f.model.owedPlaceOnLeaving() {
@@ -411,6 +412,8 @@ import Testing
             let final = try #require(saved(f).flatMap { try? Locator(jsonString: $0) }, "no place kept")
             #expect((landed.locations.progression ?? 0) > 0.5, "the jump that went on after he left didn't keep where it landed")
             #expect((final.locations.progression ?? 0) > 0.5, "a boundary report during the landing's write was kept over it")
+            let heldBefore = try #require(kept.heldBefore, "the landing never started its write")
+            #expect(f.model.reportsHeldByAClaim == heldBefore + 1, "the boundary report during the landing's write wasn't held by its claim (\(f.model.reportsHeldByAClaim - heldBefore) held)")
             f.model.close()
         }
     }
