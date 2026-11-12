@@ -1666,6 +1666,9 @@ final class ReaderModel {
             readerLog.notice("place: the contents jump left on its way landed before its target was written; its landing stands")
         } else {
             if jumpOwed { leaveWriteMove = moves; reportWroteInLeave = false }
+            // The chapter he chose is his move, whatever a reflow before it left the page marked as: a
+            // layout-only page dropped this write without a word (CI run 43218442143 reopened at the start).
+            if contentsMove != nil { layoutOnly = false }
             await locationDidChange(here, hisMove: true, placeOnly: true, leaving: true)
             if jumpOwed { leaveWriteMove = nil }
             await afterLeaveWrite?()

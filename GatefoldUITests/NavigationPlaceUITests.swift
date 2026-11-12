@@ -330,9 +330,15 @@ final class NavigationPlaceUITests: XCTestCase {
         XCTAssertTrue(app.descendants(matching: .any)["reader.loadingHeld"].waitForExistence(timeout: 10), "the chapter's load is held open")
         // He leaves while it is still on its way.
         leaveAndRelaunch()
-        XCTAssertFalse(waitForWords().isEmpty, "the reopen shows words")
+        // Judged by places, not words: the place from before the jump is the book's opening, its cover
+        // page, which has none, so a reopen there (main's, the red) shows no words to wait for.
+        XCTAssertTrue(app.descendants(matching: .any)["reader.page"].waitForExistence(timeout: 60), "the book reopened")
         XCTAssertTrue(keptWhatIsShown(), "the reopen shows the place it kept")
         let reopened = tag(app.descendants(matching: .any)["reader.savedPlace"])
+        // Past the opening (the chapter's place), the page must show words: a blank page there is a reopen bug.
+        if let r = reopened, "\(r.0)@\(String(format: "%.5f", r.1))" != before, !r.0.hasPrefix("wrap") {
+            XCTAssertFalse(waitForWords().isEmpty, "the reopen on the chapter's place shows words")
+        }
         // The same jump, to its end: where the chapter he chose is.
         showChrome()
         contentsTap("Chapter XL")

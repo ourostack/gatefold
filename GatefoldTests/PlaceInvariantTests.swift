@@ -340,6 +340,12 @@ import Testing
         nonisolated(unsafe) let publication = f.publication
         let opened = try #require(await publication.locate(entry.link))
         let fileStart = opened.copy(locations: { $0.fragments = []; $0.progression = 0 }, text: { $0 = Locator.Text() })
+        // The open's own reflow (the iPad turned on its side) has ended, leaving the page marked as the
+        // layout's: the leave's write must still keep the chapter (CI run 43218442143 dropped it).
+        f.model.keeper.reflowWillBegin(.rotation)
+        f.model.reflowDidBegin()
+        f.model.reflowDidFinish(visible: await f.page.visibleRange())
+        for _ in 0..<20 { await Task.yield() }
         f.page.linkOpens = fileStart
         f.page.fragmentAt = [:]
         f.page.loadingChapter = true
