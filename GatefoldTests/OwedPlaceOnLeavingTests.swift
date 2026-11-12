@@ -177,7 +177,9 @@ final class UnreportedJumpPage: ReaderPage {
     func progression(of quote: String) async -> Double? { words == nil ? nil : currentLocation?.locations.progression }
     func currentAnchor() async -> (ReadingAnchor, Locator)? {
         guard let words, let here = currentLocation else { return nil }
-        return (ReadingAnchor(href: here.href.string, progression: here.locations.progression ?? 0, text: words), here)
+        // As the host does: the place it reads carries the words it found.
+        return (ReadingAnchor(href: here.href.string, progression: here.locations.progression ?? 0, text: words),
+                here.copy(text: { $0 = Locator.Text(highlight: words) }))
     }
 }
 
