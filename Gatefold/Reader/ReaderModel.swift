@@ -2385,7 +2385,7 @@ final class ReaderModel {
         defer { publishBack(back) }
         if let locator = await publication.locate(progression: progression) {
             // His own jumps only: a Cloud landing (`his: false`) records its place once it has settled.
-            if his { jumpOnItsWay = (locator, moves, lastReported) }
+            if his { jumpOnItsWay = (locator, moves, lastReported ?? page?.currentLocation) }
             isJumpingToPlace = his
             await veiled { _ = await self.page?.go(to: locator) }
             isJumpingToPlace = false
@@ -2525,7 +2525,7 @@ final class ReaderModel {
         moves += 1
         let back = rememberBack ? rememberPlace() : nil
         defer { publishBack(back) }
-        jumpOnItsWay = (locator, moves, lastReported)
+        jumpOnItsWay = (locator, moves, lastReported ?? page?.currentLocation)
         await veiled { _ = await self.page?.go(to: locator) }
         await captureAnchor()
     }
