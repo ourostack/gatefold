@@ -1668,6 +1668,8 @@ final class ReaderModel {
             if jumpOwed { leaveWriteMove = moves; reportWroteInLeave = false }
             // The chapter he chose is his move, whatever a reflow before it left the page marked as: a
             // layout-only page dropped this write without a word (CI run 43218442143 reopened at the start).
+            // Layout reports stay out until the landing all the same: while the jump is the newest move,
+            // only a leave gets past `locationDidChange`'s `fragmentJumpMove` guard.
             if contentsMove != nil { layoutOnly = false }
             await locationDidChange(here, hisMove: true, placeOnly: true, leaving: true)
             if jumpOwed { leaveWriteMove = nil }
@@ -2594,8 +2596,19 @@ final class ReaderModel {
         if leftOnItsWay {
             contentsLandedMove = move
             if owedJumpTarget?.1 == move { owedJumpTarget = nil }
+            // His move still claims its write, as a report's would (#82): another report of the same move
+            // while this one reads his words (Readium's boundary a beat after) is not written over it.
+            claimedMove = move
+            contestingReport = nil
+            beforeLandingWrite?()
         }
         await locationDidChange(here, hisMove: leftOnItsWay)
+        if leftOnItsWay {
+            if claimedMove == move { claimedMove = nil }
+            // One leave, one landing: the gate is spent.
+            contentsLeftMove = nil
+            contentsLandedMove = nil
+        }
     }
     /// A contents jump inside its file still on its way: while it is the newest move, its reports are not
     /// places (`land(on:inside:move:)`).
@@ -2617,6 +2630,8 @@ final class ReaderModel {
     @ObservationIgnored private var contentsLandedMove: Int?
     /// Tests only: runs once the leave's write has returned, so a landing can be made to come inside it.
     @ObservationIgnored var afterLeaveWrite: (@MainActor () async -> Void)?
+    /// Tests only: runs as a landing left on its way starts its write, so another report can come during it.
+    @ObservationIgnored var beforeLandingWrite: (@MainActor () -> Void)?
 
     /// The place a contents jump on its way is going to, as a place with no words: the chapter's own place
     /// in its file if it is known, otherwise the entry's placed total progression. None for an entry not
