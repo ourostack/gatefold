@@ -86,11 +86,15 @@ shasum -a 256 "$ipa" | tee "$out/Gatefold.ipa.sha256"
 # UUID goes on to step 4, which judges the build by App Store Connect's own processing state. Any other non-zero
 # exit is a failed upload.
 upload_ok=true
+poll_checks=120
 kit xcode run --kind altool-upload --mode apply --package-path "$ipa" --platform ios \
   --api-key "$key_id" --api-issuer "$issuer_id" --p8-file-path "$key_path" \
   --provider-public-id "$provider_id" --json > "$out/altool-upload.raw" || upload_ok=false
-# Keep the key and issuer IDs in the argv out of the published artifact.
-jq 'del(.command, .argv, .args)' "$out/altool-upload.raw" > "$out/altool-upload.json" 2>/dev/null \
+# Keep the key and issuer IDs, in the argv or in altool's own output, out of the log and the published artifact.
+jq --arg k "$key_id" --arg i "$issuer_id" \
+  'def scrub: reduce ([$k, $i][] | select(length > 0)) as $s (.; split($s) | join("[REDACTED]"));
+   del(.command, .argv, .args) | if type == "object" then (.stdout, .stderr) |= (if type == "string" then scrub else . end) else . end' \
+  "$out/altool-upload.raw" > "$out/altool-upload.json" 2>/dev/null \
   || { : > "$out/altool-upload.json"; [[ "$upload_ok" == false ]] || fail "the kit's upload answer is not JSON"; }
 : > "$out/altool-upload.raw"
 if [[ "$upload_ok" == false ]]; then
@@ -102,22 +106,25 @@ if [[ "$upload_ok" == false ]]; then
   fi
   printf '%s\n' "$delivery" > "$out/delivery-uuid.txt"
   echo "::warning title=altool exited non-zero after delivering::altool logged UPLOAD SUCCEEDED (delivery $delivery) but exited non-zero; App Store Connect's processing state decides (gatefold#337)."
+  # altool has already waited on processing (up to an hour), so the poll gets 15 minutes, which keeps its own
+  # verdict inside the job's 90-minute limit.
+  poll_checks=30
 fi
 date -u +%FT%TZ > "$out/uploaded-at.txt"
 
-# 4. Wait for processing (up to an hour).
+# 4. Wait for processing (up to an hour, or 15 minutes after altool's own wait).
 build_id=""
-for attempt in $(seq 1 120); do
+for attempt in $(seq 1 "$poll_checks"); do
   asc_get --path /v1/builds --query "filter[app]=$app_id" --query "filter[version]=$build" \
     --query "filter[preReleaseVersion.version]=$version" --query limit=5 > "$out/asc-build-poll.json" || true
   state="$(jq -r '[.result.data[]?.attributes.processingState] | unique | join(",")' "$out/asc-build-poll.json" 2>/dev/null || true)"
   build_id="$(jq -r '.result.data[]? | select(.attributes.processingState == "VALID") | .id' "$out/asc-build-poll.json" 2>/dev/null | head -1)"
   [[ -n "$build_id" ]] && break
   [[ "$state" == *FAILED* || "$state" == *INVALID* ]] && fail "App Store Connect processing ended $state"
-  echo "build $build not processed yet (state=${state:-not listed}, check $attempt/120)"
+  echo "build $build not processed yet (state=${state:-not listed}, check $attempt/$poll_checks)"
   sleep 30
 done
-[[ -n "$build_id" ]] || fail "build $build was not processed within an hour"
+[[ -n "$build_id" ]] || fail "build $build was not processed within $((poll_checks / 2)) minutes of polling"
 date -u +%FT%TZ > "$out/processed-at.txt"
 echo "Build $build is processed ($build_id)"
 

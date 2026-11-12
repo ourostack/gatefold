@@ -79,14 +79,17 @@ expect() {
   for not in "$@"; do grep -q -- "$not" "$work/$name" && { bad "$what (has \"$not\")" "$name"; return; }; done
   [ "$(cat "$work/$name.exit")" != 0 ] || { bad "$what (exited 0; step 5's fake should fail it)" "$name"; return; }
   # The key and issuer IDs stay out of the log and the artifacts.
-  if grep -rqF -e "$KEY_ID" -e "$ISSUER_ID" "$work/$name" "$work/$name.out"; then bad "$what (leaked the key or issuer ID)" "$name"; return; fi
+  if grep -rqF -e "$KEY_ID" -e "$ISSUER_ID" -e "$KEY_PATH" "$work/$name" "$work/$name.out"; then bad "$what (leaked the key or issuer ID)" "$name"; return; fi
   ok "$what"
 }
 polled() { [ -s "$work/$1.fake/polls" ]; }
 
-# Run 43318514534's own stderr, shortened: three 500s, then the success line and the delivery UUID.
-delivered=$'Running altool at path \'/Applications/Xcode_27.1.app/Contents/SharedFrameworks/ContentDelivery.framework/Resources/altool\'...\n\n2026-11-12 22:27:23.496 ERROR: [ContentDelivery.Uploader.753CC8EBC0] CHANGE UPLOAD STATE TO COMPLETE (UPLOADING ASSET DESCRIPTION): received status code 500; internal server error. (7NF5LZ3LK6IJFLQIDES6CHH43E) (500)\n2026-11-12 22:28:55.029 ERROR: [ContentDelivery.Uploader.753CC8D3C0] CHANGE UPLOAD STATE TO COMPLETE (): received status code 500; internal server error. (PB6O5HGYM44NFZBVFOP7L7QW7U) (500)\n2026-11-12 22:28:55.986  INFO: [ContentDelivery.Uploader.753CC8D3C0] \n==========================================\nUPLOAD SUCCEEDED with no errors\nDelivery UUID: 1ff41b62-e50a-4179-a851-cbd916ff509d\nTransferred 22866961 bytes in 16.193 seconds (1.4MB/s, 11.297Mbps)\n==========================================\n'
+# Run 43318514534's own stderr, shortened: 500s, then the success line and the delivery UUID. A made-up DEBUG line
+# names the fake key and issuer IDs, which the script must scrub from what it prints and keeps.
+delivered=$'Running altool at path \'/Applications/Xcode_27.1.app/Contents/SharedFrameworks/ContentDelivery.framework/Resources/altool\'...\n\n2026-11-12 22:27:20.001 DEBUG: [ContentDelivery] API key FAKEKEYID0123, issuer fake-issuer-0000-1111\n2026-11-12 22:27:23.496 ERROR: [ContentDelivery.Uploader.753CC8EBC0] CHANGE UPLOAD STATE TO COMPLETE (UPLOADING ASSET DESCRIPTION): received status code 500; internal server error. (7NF5LZ3LK6IJFLQIDES6CHH43E) (500)\n2026-11-12 22:28:55.029 ERROR: [ContentDelivery.Uploader.753CC8D3C0] CHANGE UPLOAD STATE TO COMPLETE (): received status code 500; internal server error. (PB6O5HGYM44NFZBVFOP7L7QW7U) (500)\n2026-11-12 22:28:55.986  INFO: [ContentDelivery.Uploader.753CC8D3C0] \n==========================================\nUPLOAD SUCCEEDED with no errors\nDelivery UUID: 1ff41b62-e50a-4179-a851-cbd916ff509d\nTransferred 22866961 bytes in 16.193 seconds (1.4MB/s, 11.297Mbps)\n==========================================\n'
 failed=$'Running altool at path \'/Applications/Xcode_27.1.app/Contents/SharedFrameworks/ContentDelivery.framework/Resources/altool\'...\n\n2026-11-12 22:27:23.496 ERROR: [ContentDelivery.Uploader.753CC8EBC0] CHANGE UPLOAD STATE TO COMPLETE (UPLOADING ASSET DESCRIPTION): received status code 500; internal server error. (7NF5LZ3LK6IJFLQIDES6CHH43E) (500)\n'
+uuid_only=$'2026-11-12 22:28:55.029 ERROR: [ContentDelivery.Uploader.753CC8D3C0] CHANGE UPLOAD STATE TO COMPLETE (): received status code 500; internal server error. (PB6O5HGYM44NFZBVFOP7L7QW7U) (500)\nDelivery UUID: 1ff41b62-e50a-4179-a851-cbd916ff509d\n'
+then_failed="$delivered"$'UPLOAD FAILED with 1 error\n'
 no_uuid=$'==========================================\nUPLOAD SUCCEEDED with no errors\n==========================================\n'
 
 run delivered-exit-1 1 VALID "$delivered"
@@ -109,6 +112,16 @@ run no-uuid-exit-1 1 VALID "$no_uuid"
 expect no-uuid-exit-1 "UPLOAD SUCCEEDED with no delivery UUID and exit 1: fails with \"upload failed\"" \
   "ci-publish-testflight: upload failed" "is processed"
 polled no-uuid-exit-1 && bad "  ...and never polls" no-uuid-exit-1
+
+run uuid-only-exit-1 1 VALID "$uuid_only"
+expect uuid-only-exit-1 "a delivery UUID with no UPLOAD SUCCEEDED and exit 1: fails with \"upload failed\"" \
+  "ci-publish-testflight: upload failed" "is processed"
+polled uuid-only-exit-1 && bad "  ...and never polls" uuid-only-exit-1
+
+run then-failed-exit-1 1 VALID "$then_failed"
+expect then-failed-exit-1 "UPLOAD SUCCEEDED and a UUID, then UPLOAD FAILED, and exit 1: fails with \"upload failed\"" \
+  "ci-publish-testflight: upload failed" "is processed"
+polled then-failed-exit-1 && bad "  ...and never polls" then-failed-exit-1
 
 run delivered-exit-0 0 VALID "$delivered"
 expect delivered-exit-0 "exit 0: goes on to the poll as before" "Build 28 is processed (fake-build)" "upload failed" "::warning"
