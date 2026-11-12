@@ -283,10 +283,6 @@ enum ReaderJS {
         },
         // How many pages the script reads the screen as.
         pages: function () { return twoPages() ? 2 : 1; },
-        // All the text on screen, whitespace collapsed. A spread is read page by page: from the left
-        // page's first words to the right page's last. Scanned across both pages at once, a left page
-        // opening with a picture (whose caption is never a place) started at the right page's first
-        // line, and his words on the left page read as off screen (Real unfold, #58).
         // UI tests (gatefold#303): how many columns of text are on screen, from the laid-out lines themselves.
         // A line that crosses the middle is one column; lines on both sides with none across are two.
         columns: function () {
@@ -307,6 +303,10 @@ enum ReaderJS {
           const shown = across > 0 ? 1 : (left > 0 && right > 0 ? 2 : (left + right > 0 ? 1 : 0));
           return "columns " + shown + " css " + (isNaN(css) ? "auto" : css) + " lines " + across + "/" + left + "/" + right + " view " + Math.round(w);
         },
+        // All the text on screen, whitespace collapsed. A spread is read page by page: from the left
+        // page's first words to the right page's last. Scanned across both pages at once, a left page
+        // opening with a picture (whose caption is never a place) started at the right page's first
+        // line, and his words on the left page read as off screen (Real unfold, #58).
         visibleText: function () {
           const w = window.innerWidth;
           const two = twoPages();

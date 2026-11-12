@@ -2916,13 +2916,21 @@ final class ReaderModel {
     /// UI tests: the web view's count of the columns on screen, measured with each new look at the page
     /// (`ReaderJS.columns`), with the layout's own count after it.
     private(set) var columnsProbe = ""
+    /// Each measure's turn: only the newest look writes the probe, so an older one finishing late never
+    /// overwrites it.
+    private var columnsLook = 0
 
     private func refreshBookmarkState(_ visible: VisibleRange?) {
         if LaunchOptions.isUITest, reopenPicture == nil, let text = visible?.text { visibleTextProbe = String(text.prefix(2400)) }
         if LaunchOptions.columnsProbe, reopenPicture == nil, visible != nil {
+            columnsLook += 1
+            let look = columnsLook
             Task { [weak self] in
-                guard let self, let measure = await self.page?.columnMeasure() else { return }
-                self.columnsProbe = "\(measure) layout \(self.layout.columns == .two ? 2 : 1)"
+                guard let self else { return }
+                let measure = await self.page?.columnMeasure()
+                guard look == self.columnsLook else { return }
+                // No measure is no answer: the probe empties rather than keep an older page's count.
+                self.columnsProbe = measure.map { "\($0) layout \(self.layout.columns == .two ? 2 : 1)" } ?? ""
             }
         }
         guard let location else { return }

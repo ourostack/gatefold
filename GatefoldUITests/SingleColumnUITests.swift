@@ -60,10 +60,13 @@ final class SingleColumnUITests: XCTestCase {
         XCTAssertEqual(el("reader.posture").label, "single", "\(step): the posture on a one-page screen", file: file, line: line)
     }
 
-    private func turn(forward: Bool = true) {
+    /// A turn that never lands fails here, so the next step never measures the same page again.
+    private func turn(forward: Bool = true, file: StaticString = #filePath, line: UInt = #line) {
         let before = words
         page.coordinate(withNormalizedOffset: CGVector(dx: forward ? 0.93 : 0.07, dy: 0.5)).tap()
-        _ = readsUntil(reads: 100) { words != before && !words.isEmpty }
+        let turned = readsUntil(reads: 100) { words != before && !words.isEmpty }
+        XCTAssertTrue(turned.ok, "the \(forward ? "forward" : "back") turn landed within \(turned.reads) reads\(turned.hung ? " (hang guard)" : "")",
+                      file: file, line: line)
     }
 
     private func hideControls() {
@@ -115,7 +118,8 @@ final class SingleColumnUITests: XCTestCase {
         let before = words
         scrubber.coordinate(withNormalizedOffset: CGVector(dx: 0.3, dy: 0.5))
             .press(forDuration: 0.1, thenDragTo: scrubber.coordinate(withNormalizedOffset: CGVector(dx: 0.55, dy: 0.5)))
-        _ = readsUntil(reads: 150) { words != before && !words.isEmpty }
+        let scrubbed = readsUntil(reads: 150) { words != before && !words.isEmpty }
+        XCTAssertTrue(scrubbed.ok, "the scrub moved the page within \(scrubbed.reads) reads\(scrubbed.hung ? " (hang guard)" : "")")
         hideControls()
         expectOneColumn("after a scrub")
         topCentreTap()
@@ -132,6 +136,24 @@ final class SingleColumnUITests: XCTestCase {
         turn()
         topCentreTap()
         expectOneColumn("after Contents, a turn then a top-centre tap")
+
+        // A jump through Contents lays another chapter out.
+        showControls()
+        app.buttons["reader.contents"].tap()
+        let row = app.buttons.matching(NSPredicate(format: "label CONTAINS[c] %@", "Chapter XXX")).firstMatch
+        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label CONTAINS[c] %@", "Chapter I")).firstMatch.waitForExistence(timeout: 10),
+                      "the contents opened again")
+        for _ in 0..<20 where !(row.exists && row.isHittable) { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(row.exists && row.isHittable, "the contents list a chapter to jump to")
+        let beforeJump = words
+        row.tap()
+        let jumped = readsUntil(reads: 300) { words != beforeJump && !words.isEmpty }
+        XCTAssertTrue(jumped.ok, "the Contents jump moved the page within \(jumped.reads) reads\(jumped.hung ? " (hang guard)" : "")")
+        hideControls()
+        expectOneColumn("after a Contents jump")
+        turn()
+        topCentreTap()
+        expectOneColumn("after a Contents jump, a turn then a top-centre tap")
 
         // Leave and come back: the reopen lays the page out again, on the same screen.
         XCUIDevice.shared.press(.home)

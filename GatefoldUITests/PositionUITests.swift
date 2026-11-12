@@ -97,15 +97,18 @@ final class PositionUITests: XCTestCase {
         XCTAssertTrue(last.hasPrefix("anchor-visible"), "\(what): probe says \(last) (was reflow \(before)) — \(probe.value as? String ?? "")", file: file, line: line)
     }
 
-    /// Posture changes at a width where a reader can see them. A folded Duo's 466 pt cover screen can
+    /// Posture changes on a screen where a reader can see them. A folded Duo's 466 pt cover screen can
     /// never show a spread (`ReaderLayout.minimumSpreadWidth` is 700), and forcing one there, two
     /// 233 pt pages, failed most runs on a layout no reader reaches. The real hinge (folded cover to
     /// the 951 pt inner screen and back) is judged by the Real unfold workflow on every reader change.
+    /// An upright screen never lays out a spread, forced or not (gatefold#303), so the iPad walks them on
+    /// its side.
     func testEveryPostureKeepsThePlace() throws {
+        XCUIDevice.shared.orientation = .landscapeLeft
         launch()
-        let width = app.windows.firstMatch.frame.width
-        try XCTSkipIf(width < 700,
-                      "a \(Int(width)) pt screen can't show a spread; the Real unfold workflow moves the Duo's hinge")
+        let size = app.windows.firstMatch.frame.size
+        try XCTSkipIf(size.width < 700 || size.width <= size.height,
+                      "a \(Int(size.width)) x \(Int(size.height)) pt screen can't show a spread; the Real unfold workflow moves the Duo's hinge")
         for posture in ["spread", "tabletop", "single", "spread", "single"] {
             expectAnchorKept("into \(posture)") { app.buttons["debug.posture.\(posture)"].tap() }
             expectPosture(posture)
