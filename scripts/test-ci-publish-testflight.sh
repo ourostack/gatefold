@@ -27,7 +27,7 @@ case "$1 $2" in
       *"filter[version]="*)
         echo poll >> "$FAKE/polls"
         [ "$FAKE_PROCESSING" = none ] && { echo '{"ok":true,"result":{"data":[]}}'; exit 0; }
-        echo "{\"ok\":true,\"result\":{\"data\":[{\"id\":\"fake-build\",\"attributes\":{\"processingState\":\"$FAKE_PROCESSING\"}}]}}" ;;
+        echo "{\"ok\":true,\"result\":{\"data\":[{\"id\":\"fake-build\",\"attributes\":{\"processingState\":\"$FAKE_PROCESSING\",\"uploadedDate\":\"$FAKE_UPLOADED\"}}]}}" ;;
       *"--path /v1/builds "*) echo '{"ok":true,"result":{"data":[]}}' ;;
       *) echo "FAKE: reached step 5" >&2; echo '{"ok":false,"error":"fake"}'; exit 1 ;;
     esac ;;
@@ -38,6 +38,17 @@ case "$1 $2" in
     exit "$FAKE_UPLOAD_EXIT" ;;
   *) echo "fake kit: unexpected $*" >&2; exit 2 ;;
 esac
+FAKE
+cat > "$work/bin/curl" <<'FAKE'
+#!/usr/bin/env bash
+# Fake curl for GitHub's attempts API: attempt 1 of run 43318514534 ran 22:18-23:27Z (its own times), and the
+# token must be the fake one.
+for a in "$@"; do case "$a" in
+  "Authorization: Bearer fake-github-token") auth=ok ;;
+  */repos/ourostack/gatefold/actions/runs/43318514534/attempts/1) url=ok ;;
+esac; done
+[ "${auth:-}" = ok ] && [ "${url:-}" = ok ] || { echo "curl: (22) 404" >&2; exit 22; }
+echo '{"run_attempt":1,"run_started_at":"2026-11-12T22:17:58Z","updated_at":"2026-11-12T23:27:05Z"}'
 FAKE
 cat > "$work/bin/xcodebuild" <<'FAKE'
 #!/usr/bin/env bash
@@ -57,14 +68,16 @@ FAKE
 chmod +x "$work/bin/"*
 
 fails=0
-# run <name> <upload exit> <processing state or none> <altool's stderr> [<altool's stdout> [<run attempt>]]: runs the
-# publish script; its output is in $work/<name>.
+# run <name> <upload exit> <processing state or none> <altool's stderr> [<altool's stdout> [<run attempt>
+# [<the listed build's uploadedDate>]]]: runs the publish script; its output is in $work/<name>.
 run() {
   local name="$1"
   export FAKE="$work/$name.fake"
   mkdir -p "$FAKE"
   FAKE_UPLOAD_EXIT="$2" FAKE_PROCESSING="$3" FAKE_UPLOAD_STDERR="$4" FAKE_UPLOAD_STDOUT="${5:-}" FAKE_BUILD=28 \
-    PATH="$work/bin:$PATH" GITHUB_OUTPUT="$work/$name.github-output" GITHUB_RUN_ATTEMPT="${6:-1}" \
+    FAKE_UPLOADED="${7:-2026-11-12T14:28:56-08:00}" PATH="$work/bin:$PATH" GITHUB_OUTPUT="$work/$name.github-output" \
+    GITHUB_RUN_ATTEMPT="${6:-1}" GITHUB_RUN_ID=43318514534 GITHUB_REPOSITORY=ourostack/gatefold \
+    GITHUB_API_URL=https://api.github.com GATEFOLD_GITHUB_TOKEN=fake-github-token \
     APPLE_DISTRIBUTION_KIT_BIN=fake-cli.js APPLE_DISTRIBUTION_KIT_CONFIG="$work/asc.json" \
     GATEFOLD_SIGNING_XCCONFIG=fake.xcconfig GATEFOLD_EXPORT_OPTIONS_PLIST=fake.plist \
     GATEFOLD_WHATS_NEW_FILE="$work/whats-new.txt" GATEFOLD_BUILD_NUMBER=28 GATEFOLD_ARTIFACT_DIR="$work/$name.out" \
@@ -81,7 +94,7 @@ expect() {
   for not in "$@"; do grep -q -- "$not" "$work/$name" && { bad "$what (has \"$not\")" "$name"; return; }; done
   [ "$(cat "$work/$name.exit")" != 0 ] || { bad "$what (exited 0; step 5's fake should fail it)" "$name"; return; }
   # The key and issuer IDs stay out of the log and the artifacts.
-  if grep -rqF -e "$KEY_ID" -e "$ISSUER_ID" -e "$KEY_PATH" "$work/$name" "$work/$name.out"; then bad "$what (leaked the key or issuer ID)" "$name"; return; fi
+  if grep -rqF -e "$KEY_ID" -e "$ISSUER_ID" -e "$KEY_PATH" -e fake-github-token "$work/$name" "$work/$name.out"; then bad "$what (leaked the key or issuer ID or the GitHub token)" "$name"; return; fi
   ok "$what"
 }
 polled() { [ -s "$work/$1.fake/polls" ]; }
@@ -140,6 +153,10 @@ expect duplicate-rerun-unlisted "a rerun refused as a duplicate, with no build 2
 
 run duplicate-first-attempt 1 VALID "$duplicate_err" "$duplicate_out" 1
 expect duplicate-first-attempt "a first attempt refused as a duplicate: fails with \"upload failed\" (another run's build)" \
+  "ci-publish-testflight: upload failed: App Store Connect already lists" "is processed"
+
+run duplicate-rerun-other-run 1 VALID "$duplicate_err" "$duplicate_out" 2 2026-11-12T15:40:00-08:00
+expect duplicate-rerun-other-run "a rerun refused as a duplicate of a build 28 uploaded after attempt 1 ended: fails (another run's build)" \
   "ci-publish-testflight: upload failed: App Store Connect already lists" "is processed"
 
 run duplicate-of-27 1 VALID "${duplicate_err//28/27}" "${duplicate_out//28/27}" 2

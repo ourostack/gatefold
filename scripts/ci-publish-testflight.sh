@@ -37,6 +37,23 @@ asc_get() {
   printf '%s\n' "$body"
 }
 
+# Seconds since 1970 for an ISO 8601 time, with Z or an offset (App Store Connect writes -08:00; GitHub writes Z).
+iso_epoch='def epoch: capture("^(?<t>[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2})(\\.[0-9]+)?(?<z>Z|[+-][0-9]{2}:?[0-9]{2})$")
+  | (.t + "Z" | fromdateiso8601) - (if .z == "Z" then 0 else (if .z[0:1] == "-" then -1 else 1 end) * ((.z[1:3] | tonumber) * 3600 + (.z[-2:] | tonumber) * 60) end);'
+# True when the time ($1, App Store Connect's uploadedDate) falls inside an earlier attempt of this workflow run.
+uploaded_in_earlier_attempt() {
+  local at="$1" n
+  [[ -n "$at" && "${GITHUB_RUN_ATTEMPT:-1}" =~ ^[0-9]+$ && -n "${GATEFOLD_GITHUB_TOKEN:-}" && -n "${GITHUB_REPOSITORY:-}" \
+    && -n "${GITHUB_RUN_ID:-}" ]] || return 1
+  for (( n = 1; n < GITHUB_RUN_ATTEMPT; n++ )); do
+    curl -fsS -H "Authorization: Bearer $GATEFOLD_GITHUB_TOKEN" -H "Accept: application/vnd.github+json" \
+      "${GITHUB_API_URL:-https://api.github.com}/repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$n" \
+      | jq -e --arg at "$at" "$iso_epoch"' ($at | epoch) as $t | ($t >= (.run_started_at | epoch)) and ($t <= (.updated_at | epoch))' \
+      > /dev/null 2>&1 && return 0
+  done
+  return 1
+}
+
 for v in APPLE_DISTRIBUTION_KIT_BIN APPLE_DISTRIBUTION_KIT_CONFIG GATEFOLD_SIGNING_XCCONFIG GATEFOLD_EXPORT_OPTIONS_PLIST GATEFOLD_WHATS_NEW_FILE; do
   [[ -n "${!v:-}" ]] || fail "$v is not set"
 done
@@ -86,9 +103,9 @@ shasum -a 256 "$ipa" | tee "$out/Gatefold.ipa.sha256"
 #    "UPLOAD SUCCEEDED" with a delivery UUID, waited an hour on processing (the kit passes --wait) and exited 1.
 #  - A rerun of that run: App Store Connect refuses the same build number as a duplicate
 #    (ENTITY_ERROR.ATTRIBUTE.INVALID.DUPLICATE, previousBundleVersion = this build). That counts only when App Store
-#    Connect lists a build with this number and version and this is a rerun (GITHUB_RUN_ATTEMPT > 1), so the build is
-#    this commit's: publishing is serialized, and a rerun publishes the same commit. A first attempt that hits it
-#    is uploading a number another run took, and fails.
+#    Connect lists a build with this number and version, uploaded while an earlier attempt of this run was running
+#    (GitHub's attempts API, with GATEFOLD_GITHUB_TOKEN). Publishing is serialized, so no other run uploads then, and
+#    a rerun publishes the same commit. A build uploaded at any other time is another run's, and the upload fails.
 upload_ok=true
 poll_checks=120
 kit xcode run --kind altool-upload --mode apply --package-path "$ipa" --platform ios \
@@ -120,7 +137,7 @@ if [[ "$upload_ok" == false ]]; then
     if [[ "$listed" == 0 ]]; then
       fail "upload failed: App Store Connect already has an upload of build $build but lists no $version ($build); publish with a higher build_number"
     fi
-    if (( ${GITHUB_RUN_ATTEMPT:-1} < 2 )); then
+    if ! uploaded_in_earlier_attempt "$(jq -r '.result.data[0].attributes.uploadedDate // empty' "$out/asc-build-existing.json")"; then
       fail "upload failed: App Store Connect already lists $version ($build), uploaded by another run; publish with a higher build_number"
     fi
     echo "::warning title=build $build was already uploaded::A previous attempt of this run uploaded $version ($build); App Store Connect's processing state decides (gatefold#337)."
