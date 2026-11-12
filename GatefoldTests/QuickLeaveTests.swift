@@ -73,11 +73,13 @@ import Testing
         #expect(atOnce.text.highlight != nil, "the words his turn had already read were not kept: a bare place can reopen on the chapter's start")
 
         // The app wasn't ended after all: the write under way lands on the same page, with his words.
+        let records = o.model.placeRecords
         await held.open()
-        for _ in 0..<400 where o.saved()?.text.highlight == nil { await Task.yield() }
+        for _ in 0..<400 where o.model.placeRecords == records { await Task.yield() }
+        #expect(o.model.placeRecords > records, "the write under way never landed")
         let after = try #require(o.saved())
         #expect(after.locations.progression == turned.locations.progression, "the write under way moved the place")
-        #expect(after.text.highlight != nil, "the write under way never added his words")
+        #expect(after.text.highlight != nil, "the write under way dropped his words")
         o.model.close()
     }
 
@@ -99,9 +101,11 @@ import Testing
         #expect(atOnce.text.highlight == o.model.fallingWords?.text.highlight, "the words read while the leaf fell were not kept")
 
         // The leaf lands: his turn's own write keeps the same page, with his words.
+        let records = o.model.placeRecords
         o.model.userTurnedPage()
         await o.model.locationDidChange(turned)
-        for _ in 0..<400 where o.saved()?.text.highlight == nil { await Task.yield() }
+        for _ in 0..<400 where o.model.placeRecords == records { await Task.yield() }
+        #expect(o.model.placeRecords > records, "the landing's write never landed")
         let after = try #require(o.saved())
         #expect(after.locations.progression == turned.locations.progression)
         #expect(after.text.highlight != nil, "the landing's write never added his words")
@@ -136,13 +140,67 @@ import Testing
         o.model.close()
     }
 
-    /// A drag that hasn't let go is no turn: leaving mid-drag writes nothing (the page beneath may spring back).
-    @Test func leavingMidDragWritesNothing() async throws {
+    /// His turn has landed and its write is on its way when a drag of his begins (the Home swipe can start
+    /// one, backward): Readium is on the page beneath the lifted leaf, which may spring back. Leaving then
+    /// writes his turn's page, never the page beneath.
+    @Test func aLeaveMidDragKeepsTheTurnBeforeIt() async throws {
         let o = try await open()
-        let read = try await turnAndKeep(o, to: 0.12)
-        o.page.currentLocation = try #require(await ReaderSyncTests.locate(o.publication, 0.31))
+        _ = try await turnAndKeep(o, to: 0.12)
+        let held = LeaveGate()
+        o.model.placeWriteWait = { await held.wait() }
+        let turned = try #require(await ReaderSyncTests.locate(o.publication, 0.31))
+        o.page.currentLocation = turned
+        o.model.userTurnedPage()
+        for _ in 0..<400 where await held.waiters == 0 { await Task.yield() }
+        try #require(await held.waiters == 1, "the turn's write waits on its way")
+        o.page.isTurning = true
+        let beneath = try #require(await ReaderSyncTests.locate(o.publication, 0.10))
+        o.page.currentLocation = beneath
         o.model.keepTurnNow()
-        #expect(o.saved()?.locations.progression == read.locations.progression, "leaving mid-drag wrote the page beneath")
+        let atOnce = try #require(o.saved())
+        #expect(atOnce.locations.progression == turned.locations.progression,
+                "kept at \(atOnce.locations.progression ?? -1), the page beneath his drag, not his turn's (\(turned.locations.progression ?? -1))")
+        o.page.isTurning = false
+        await held.open()
         o.model.close()
+    }
+
+    /// Quick turns: the write of one turn is still on its way when the next turn's leaf falls and he
+    /// leaves. That older write, landing after the leave, never puts the place back a page.
+    @Test func anOlderTurnsWriteLandingAfterTheLeaveKeepsHisLastTurn() async throws {
+        let o = try await open()
+        _ = try await turnAndKeep(o, to: 0.12)
+        let gates = TwoGates()
+        o.model.placeWriteWait = { await gates.wait() }
+        let first = try #require(await ReaderSyncTests.locate(o.publication, 0.31))
+        o.page.currentLocation = first
+        o.model.userTurnedPage()
+        for _ in 0..<400 where await gates.first.waiters == 0 { await Task.yield() }
+        try #require(await gates.first.waiters == 1, "the first turn's write waits on its way")
+        let last = try #require(await ReaderSyncTests.locate(o.publication, 0.52))
+        o.page.currentLocation = last
+        o.model.turnCommitted()
+        o.model.keepTurnNow()
+        #expect(o.saved()?.locations.progression == last.locations.progression, "leaving didn't keep the falling turn's page")
+
+        // The first turn's write lands late: the place stays on his last turn.
+        let records = o.model.placeRecords
+        await gates.first.open()
+        for _ in 0..<400 where o.model.placeRecords == records { await Task.yield() }
+        #expect(o.saved()?.locations.progression == last.locations.progression,
+                "the older turn's write put the place back to \(o.saved()?.locations.progression ?? -1)")
+        await gates.second.open()
+        o.model.close()
+    }
+}
+
+/// The first place write waits on `first`, every later one on `second`.
+actor TwoGates {
+    let first = LeaveGate()
+    let second = LeaveGate()
+    private var calls = 0
+    func wait() async {
+        calls += 1
+        if calls == 1 { await first.wait() } else { await second.wait() }
     }
 }

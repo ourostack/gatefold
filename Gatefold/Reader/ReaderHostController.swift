@@ -1817,6 +1817,8 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             if forward { weakModel?.reachedEnd() }
             return false
         }
+        // Readium is on the turn's page, beneath the leaf: leaving now leaves it.
+        weakModel?.turnCommitted()
         lifted.beneath = await renderedSnapshot(afterChange: true)
         let t = lifted.turnedFinger
         let target = lifted.mirrored ? CGPoint(x: lifted.size.width - t.x, y: t.y) : t

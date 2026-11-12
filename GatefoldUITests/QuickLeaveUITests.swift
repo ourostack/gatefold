@@ -79,7 +79,20 @@ final class QuickLeaveUITests: XCTestCase {
         app.relaunch()
         XCTAssertTrue(el("reader.page").waitForExistence(timeout: 120), "the book reopened")
         XCTAssertFalse(settle(120).isEmpty, "the reopened page never came up")
-        let landed = reads(25) { shown == last }
+        // A starved host can show the page before his place is set on it (the cover's bound forces it up):
+        // then his saved place is offered, not moved to under his eyes (build 21), and he takes it.
+        let offer = app.buttons["banner.jump"]
+        var offered = false
+        var landed = reads(75) {
+            if shown == last { return true }
+            offered = offer.exists
+            return offered
+        } && shown == last
+        if !landed, offered {
+            print("QUICKLEAVE reopened \(shown), his saved place offered; taking it")
+            offer.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+            landed = reads(75) { shown == last }
+        }
         print("QUICKLEAVE reopened \(shown)")
         XCTAssertTrue(landed, "the reopen is on \(shown), not the page of his last turn (\(last)); opened at \(opened)")
     }
