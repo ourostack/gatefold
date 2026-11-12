@@ -100,10 +100,10 @@ final class ListingShotsUITests: XCTestCase {
             XCTFail("\(id): could not write to the shots folder: \(error)"); return
         }
         // The host shoots until the screen holds still; a scene that never settles fails there, with its reason.
-        // Longer than the host's worst case (capture.py WATCH_WORST, 220 s): a slow status bar, 80 s of frames, a last
-        // screenshot, and the unanswered screenshots it asks again (gatefold#150), each bounded.
+        // Longer than the host's worst case (capture.py WATCH_WORST + WITNESS_WORST, 258 s): a slow status bar, 80 s of
+        // frames, a last screenshot, the unanswered screenshots it asks again, and a stuck device's witness (gatefold#150).
         let handed = Date()
-        let deadline = handed.addingTimeInterval(240)
+        let deadline = handed.addingTimeInterval(280)
         while Date() < deadline {
             if FileManager.default.fileExists(atPath: done.path) {
                 print(String(format: "ListingShots timing: %@ host answered in %.1f s", id, Date().timeIntervalSince(handed)))
@@ -114,7 +114,7 @@ final class ListingShotsUITests: XCTestCase {
             if let why = try? String(contentsOf: fail, encoding: .utf8) { XCTFail("\(id): \(why)"); return }
             Thread.sleep(forTimeInterval: 0.5)
         }
-        XCTFail("\(id): the host took no picture within 240 s")
+        XCTFail("\(id): the host took no picture within 280 s")
     }
 
     /// Wherever the app speaks of the reader's device (the sync line and slip, the catch-up offer and its tab, a
