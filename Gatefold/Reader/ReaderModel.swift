@@ -443,6 +443,10 @@ final class ReaderModel {
     /// UI tests: how many times the number's slot was drawn empty on a page he can see, with page numbers on
     /// in a paged layout: neither the number nor "Counting pages…" (gatefold#262). Never set outside UI tests.
     var slotBlankProbe = 0
+    /// UI tests: display frames an unfold's leaf stood risen, waiting on its spread (gatefold#302).
+    var leafStoodFramesProbe = 0
+    /// UI tests: reflows that found their page loaded anew (the chapter thrown away and reloaded; gatefold#302).
+    var reflowFreshPagesProbe = 0
     /// UI tests only: the latest reflow's number and how far it has got ("3 reflowing", "3 placed", then
     /// "3 settled" once its page is fully shown, its cover faded or its swing played; a restore that gave way
     /// to his move counts as settled when its page starts showing), so a test can let a reflow settle before

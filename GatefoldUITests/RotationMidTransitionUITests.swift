@@ -150,6 +150,139 @@ final class RotationMidTransitionUITests: XCTestCase {
         expectWholeSpread("a turn of the iPad whose restore never settles")
     }
 
+    // MARK: A cold turn on its side, and back (gatefold#302)
+
+    /// One look at a landscape spread: the share of dark pixels on each page, and whether a grey band stands
+    /// across the page from top to bottom (a leaf on edge, risen and not laid flat; build 25's frames had one
+    /// about 300 px wide over the left page for 6 s and more). Whole is words on both pages and no band.
+    struct SpreadLook {
+        let ink: (Double, Double)
+        let band: Bool
+        var whole: Bool { ink.0 > 0.01 && ink.1 > 0.01 && !band }
+        var text: String { String(format: "%.3f/%.3f%@", ink.0, ink.1, band ? " band" : "") }
+    }
+
+    static func look(_ image: UIImage) -> SpreadLook? {
+        guard let cg = image.cgImage else { return nil }
+        let w = cg.width, h = cg.height
+        var px = [UInt8](repeating: 0, count: w * h)
+        guard let ctx = CGContext(data: &px, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w,
+                                  space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGImageAlphaInfo.none.rawValue) else { return nil }
+        ctx.draw(cg, in: CGRect(x: 0, y: 0, width: w, height: h))
+        // The spread runs along the picture's long side, whichever way the raw picture is turned.
+        let alongX = w >= h
+        let long = alongX ? w : h, short = alongX ? h : w
+        var a = 0, b = 0, run = 0, longest = 0
+        for p in stride(from: 0, to: long, by: 2) {
+            var grey = 0, samples = 0
+            for q in stride(from: 0, to: short, by: 2) {
+                let v = alongX ? px[q * w + p] : px[p * w + q]
+                if v < 110 { if p < long / 2 { a += 1 } else { b += 1 } }
+                // Paper is white, words near black; a leaf's shade is the grey between, from top to bottom.
+                if v >= 120, v < 230 { grey += 1 }
+                samples += 1
+            }
+            if samples > 0, Double(grey) / Double(samples) >= 0.6 { run += 2; longest = max(longest, run) } else { run = 0 }
+        }
+        let half = Double(w * h) / 8
+        return SpreadLook(ink: (Double(a) / half, Double(b) / half), band: longest >= long / 100)
+    }
+
+    private func count(_ id: String) -> Int { Int((el(id).value as? String) ?? "") ?? 0 }
+    private func hash(_ s: String) -> String {
+        SHA256.hash(data: Data(s.utf8)).prefix(6).map { String(format: "%02x", $0) }.joined()
+    }
+    private func head(_ t: String) -> String { String(t.trimmingCharacters(in: .whitespacesAndNewlines).prefix(30)) }
+
+    /// The build 25 review's path: a fresh open in portrait at 0.31, counted, a Contents jump (entry 31), two pages
+    /// read. Returns his page's words (compared, never printed).
+    private func readTwoPagesAfterAJump() -> String {
+        launch()
+        let pageCount = el("reader.pageCount")
+        let counted = readsUntil(reads: 3000) { pageCount.exists && !((pageCount.value as? String) ?? "").isEmpty }
+        XCTAssertTrue(counted.ok, "the book was counted before the turn (not in \(counted.reads) reads)")
+        _ = settle(30)
+        let row = tapContentsRow()
+        _ = readsUntil(reads: 300) { !row.exists }
+        _ = settle(40)
+        for _ in 0..<2 {
+            let before = words
+            turn()
+            _ = readsUntil(reads: 150) { let now = words; return !now.isEmpty && now != before }
+            _ = settle(20)
+        }
+        return words
+    }
+
+    /// Turned on its side, cold: the spread opens whole and stays whole, and the leaf rising from the spine never
+    /// stands waiting on it. Build 25 kept the old portrait page up with the right page blank and the risen leaf
+    /// standing over it for 6 s and more; its check took a look from before the turn as the whole spread
+    /// (`wholeAt=0.0 s`). Judged in frames: the app's display frames with the leaf standing, and looks at the
+    /// screen from the first one the reader lays out as a spread.
+    func testAColdTurnOnItsSideOpensAWholeSpreadWithNoStandingLeaf() throws {
+        try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .pad, "a spread on rotation is an iPad path")
+        _ = readTwoPagesAfterAJump()
+        let stoodBefore = count("reader.leafStoodFrames")
+        XCUIDevice.shared.orientation = .landscapeLeft
+        let spread = readsUntil(reads: 100) { el("reader.posture").label == "spread" }
+        XCTAssertTrue(spread.ok, "the reader laid out a spread (not in \(spread.reads) reads)")
+        // The first looks can still be the picture from before the turn, and the unfold itself (the leaf rising,
+        // then swinging open) covers part of the spread for a moment: those are not counted against it. A look
+        // that isn't whole counts once the leaf has stood waiting, or once the reflow has settled.
+        var looks: [SpreadLook] = [], standingLooks = 0, afterSettled = 0, quiet = 0
+        for n in 0..<60 {
+            // Asked before the picture is taken, so a look counted as after the settle is one.
+            let settled = ((el("reader.reflow").value as? String) ?? "").hasSuffix("settled")
+            let shot = XCUIScreen.main.screenshot()
+            guard let look = Self.look(shot.image) else { continue }
+            looks.append(look)
+            if !look.whole {
+                if count("reader.leafStoodFrames") > stoodBefore { standingLooks += 1 }
+                if settled { afterSettled += 1 }
+                if looks.filter({ !$0.whole }).count <= 6 {
+                    let a = XCTAttachment(screenshot: shot); a.name = "turn-look-\(n)-\(look.text)"; a.lifetime = .keepAlways; add(a)
+                }
+            }
+            // Done once the reflow has settled and the spread has held whole for eight looks running.
+            quiet = look.whole && settled ? quiet + 1 : 0
+            if quiet >= 8 { break }
+        }
+        let stood = count("reader.leafStoodFrames") - stoodBefore
+        let nonWhole = looks.filter { !$0.whole }
+        print("COLDTURN looks=\(looks.count) nonWhole=\(nonWhole.count) blankHalf=\(nonWhole.filter { $0.ink.0 <= 0.01 || $0.ink.1 <= 0.01 }.count) band=\(nonWhole.filter(\.band).count) standingLooks=\(standingLooks) afterSettled=\(afterSettled) leafStoodFrames=\(stood) [\(looks.map(\.text).joined(separator: ", "))]")
+        XCTAssertEqual(stood, 0, "the leaf stood risen over the old page for \(stood) frames, waiting on its spread")
+        XCTAssertEqual(standingLooks, 0, "\(standingLooks) looks showed a blank page or a standing leaf while the leaf stood")
+        XCTAssertEqual(afterSettled, 0, "\(afterSettled) looks showed a blank page or a leaf after the reflow settled")
+        XCTAssertGreaterThanOrEqual(quiet, 8, "the spread didn't settle whole in \(looks.count) looks")
+    }
+
+    /// Turned on its side and back upright without a turn of the page, he is on his page: the chapter's page is kept
+    /// through both turns (build 25 loaded it again, which opens at the chapter's first page: a title page for
+    /// about 1.4 s), and its margins are the ones the page was read in (build 25's open kept a phone's margins in
+    /// portrait until the first turn on its side set the iPad's, so back upright his words fell a third of a page
+    /// down another page: 16 became 17). Judged in reads: the page's loads, and his first words, by hash.
+    func testTurnedOnItsSideAndBackHeIsOnHisPage() throws {
+        try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .pad, "a spread on rotation is an iPad path")
+        let his = readTwoPagesAfterAJump()
+        XCTAssertFalse(his.isEmpty, "his page's words are readable")
+        let freshBefore = count("reader.reflowFreshPages")
+        XCUIDevice.shared.orientation = .landscapeLeft
+        _ = readsUntil(reads: 100) { el("reader.posture").label == "spread" }
+        _ = readsUntil(reads: 300) { ((el("reader.reflow").value as? String) ?? "").hasSuffix("settled") }
+        let spread = settle(30)
+        XCUIDevice.shared.orientation = .portrait
+        _ = readsUntil(reads: 100) { el("reader.posture").label == "single" }
+        _ = readsUntil(reads: 300) { ((el("reader.reflow").value as? String) ?? "").hasSuffix("settled") }
+        let back = settle(30)
+        let fresh = count("reader.reflowFreshPages") - freshBefore
+        let at = back.range(of: head(his)).map { back.distance(from: back.startIndex, to: $0.lowerBound) } ?? -1
+        print("TURNBACK hisHead=\(hash(head(his))) spreadHasHis=\(spread.contains(head(his))) backHead=\(hash(head(back))) hisStartAt=\(at) freshPages=\(fresh)")
+        XCTAssertEqual(fresh, 0, "the chapter's page was loaded again \(fresh) times across the two turns (a reload opens on its first page)")
+        XCTAssertTrue(spread.contains(head(his)), "on its side, the spread holds his page's first words")
+        // By hash: book text never goes into a log.
+        XCTAssertEqual(hash(head(back)), hash(head(his)), "back upright, his page opens on his first words (they start \(at) characters in)")
+    }
+
     func testTurningDuringAPageTurn() throws {
         try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .pad, "a spread on rotation is an iPad path")
         launch()

@@ -736,6 +736,12 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         // A long ease-out: it is still moving, if slowly, whenever the spread is ready.
         let lift = UIViewPropertyAnimator(duration: 2.6, controlPoint1: CGPoint(x: 0.2, y: 0.6), controlPoint2: CGPoint(x: 0.35, y: 1))
         lift.addAnimations { view.layer.transform = Self.leafAngle(-.pi * 0.30, width: frame.width) }
+        // Run to its end only when nothing swung it open or took it away first (both stop it without
+        // finishing): from here the leaf stands still over the old page, the stuck curl of gatefold#302.
+        lift.addCompletion { [weak self, weak view] position in
+            guard position == .end, let self, let view, self.leaf?.view === view else { return }
+            self.leafStands(view)
+        }
         lift.startAnimation()
         leaf = (view, shade, lift, through)
         readerLog.notice("unfold: the leaf starts to lift at the bell (old words through it \(through != nil, privacy: .public))")
@@ -762,6 +768,21 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         layer.addSublayer(words)
         layer.sublayerTransform = CATransform3DMakeAffineTransform(CGAffineTransform(a: -1, b: 0, c: 0, d: 1, tx: size.width, ty: 0))
         return layer
+    }
+
+    /// Counts the display frames the risen leaf stands still, for the log and the UI tests' probe, until it
+    /// swings open or is taken away.
+    private func leafStands(_ view: UIView) {
+        readerLog.notice("unfold: the leaf has risen and stands, the spread not laid out yet")
+        let watch = LeafWatch { [weak self, weak view] in
+            guard let self, let view, self.leaf?.view === view else { return false }
+            return true
+        } frame: { [weak self] in
+            if LaunchOptions.isUITest { self?.weakModel?.leafStoodFramesProbe += 1 }
+        } ended: { frames in
+            readerLog.notice("unfold: the leaf stood \(frames, privacy: .public) frames before it swung open or went")
+        }
+        watch.start()
     }
 
     private func dropLeaf() {
@@ -968,6 +989,10 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         _ = await Self.onSpread { () async throws -> Void? in
             let navigator = self.navigator // the one on screen now, on each try
             guard current() else { return nil }
+            // UI tests: a page with none of our script on it is one loaded since the last look (gatefold#302).
+            if LaunchOptions.isUITest, (try await navigator.answer(ReaderJS.isFresh) as? NSNumber)?.intValue == 1 {
+                self.weakModel?.reflowFreshPagesProbe += 1
+            }
             _ = try await navigator.answer(ReaderJS.install)
             self.firstScriptBack = max(self.firstScriptBack, generation)
             _ = try await navigator.answer(ReaderJS.setColumns(self.columns))
@@ -2854,6 +2879,40 @@ final class FrameWatch: NSObject {
         link.invalidate()
         self.link = nil
         readerLog.notice("turn frames: \(self.frames, privacy: .public) frames, \(self.late, privacy: .public) late, worst \(Int(self.worst * 1000), privacy: .public) ms, counting \(counting, privacy: .public)")
+    }
+}
+
+/// Counts display frames while `standing` holds (the risen leaf of an unfold waiting on its spread), then stops.
+@MainActor
+final class LeafWatch: NSObject {
+    private var link: CADisplayLink?
+    private var frames = 0
+    private let standing: () -> Bool
+    private let frame: () -> Void
+    private let ended: (Int) -> Void
+
+    init(standing: @escaping () -> Bool, frame: @escaping () -> Void, ended: @escaping (Int) -> Void) {
+        self.standing = standing
+        self.frame = frame
+        self.ended = ended
+    }
+
+    /// The link holds this watch until the leaf stops standing.
+    func start() {
+        let link = CADisplayLink(target: self, selector: #selector(tick(_:)))
+        link.add(to: .main, forMode: .common)
+        self.link = link
+    }
+
+    @objc private func tick(_ link: CADisplayLink) {
+        guard standing() else {
+            link.invalidate()
+            self.link = nil
+            ended(frames)
+            return
+        }
+        frames += 1
+        frame()
     }
 }
 

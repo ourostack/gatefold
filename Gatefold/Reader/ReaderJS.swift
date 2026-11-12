@@ -339,6 +339,8 @@ enum ReaderJS {
         return "window.gatefold ? window.gatefold.pinToTop(\(q)) : null"
     }
     static let removeVerso = "window.gatefold ? window.gatefold.removeVerso() : null"
+    /// 1 on a page our script hasn't been installed on yet: one loaded since the last look.
+    static let isFresh = "window.gatefold ? 0 : 1"
 
     static func setColumns(_ n: Int) -> String { "window.gatefoldColumns = \(n); true" }
 
