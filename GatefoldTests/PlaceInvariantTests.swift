@@ -401,7 +401,7 @@ import Testing
 
         await f.model.go(to: entry)
         if how.hasPrefix("inactive, landing before") {
-            for _ in 0..<400 where (saved(f).flatMap { try? Locator(jsonString: $0) }?.locations.progression ?? 0) < 0.5 { await Task.yield() }
+            for _ in 0..<400 where abs((saved(f).flatMap { try? Locator(jsonString: $0) }?.locations.progression ?? -1) - 0.6) >= 0.001 { await Task.yield() }
             let landed = try #require(saved(f).flatMap { try? Locator(jsonString: $0) }, "no place kept")
             // The target and the landing must differ, or the target standing over the landing passes unseen.
             let leftAt = try #require(kept.onLeaving.flatMap { try? Locator(jsonString: $0) }, "leaving kept no place")
