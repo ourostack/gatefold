@@ -127,10 +127,11 @@ final class SingleColumnUITests: XCTestCase {
 
         showControls()
         app.buttons["reader.contents"].tap()
-        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label CONTAINS[c] %@", "Chapter I")).firstMatch.waitForExistence(timeout: 10),
-                      "the contents opened")
+        // The list opens scrolled to the chapter he is in, so its current row says it is up.
+        let current = el("contents.current")
+        XCTAssertTrue(current.waitForExistence(timeout: 10), "the contents opened")
         app.swipeDown(velocity: .fast)
-        _ = readsUntil(reads: 50) { !app.buttons.matching(NSPredicate(format: "label CONTAINS[c] %@", "Chapter I")).firstMatch.exists }
+        _ = readsUntil(reads: 50) { !current.exists }
         hideControls()
         expectOneColumn("Contents opened and closed")
         turn()
@@ -140,10 +141,10 @@ final class SingleColumnUITests: XCTestCase {
         // A jump through Contents lays another chapter out.
         showControls()
         app.buttons["reader.contents"].tap()
-        let row = app.buttons.matching(NSPredicate(format: "label CONTAINS[c] %@", "Chapter XXX")).firstMatch
-        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label CONTAINS[c] %@", "Chapter I")).firstMatch.waitForExistence(timeout: 10),
-                      "the contents opened again")
-        for _ in 0..<20 where !(row.exists && row.isHittable) { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(el("contents.current").waitForExistence(timeout: 10), "the contents opened again")
+        // Another chapter than his, a few rows on from the one the list opened at.
+        let entries = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", "contents.entry."))
+        let row = (0..<min(entries.count, 12)).map { entries.element(boundBy: $0) }.last { $0.isHittable } ?? entries.firstMatch
         XCTAssertTrue(row.exists && row.isHittable, "the contents list a chapter to jump to")
         let beforeJump = words
         row.tap()
