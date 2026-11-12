@@ -1895,6 +1895,28 @@ final class ReaderModel {
         return owedJumpTarget.flatMap { $0.1 == moves && !touchedSinceLocation ? $0.0 : nil } ?? page?.currentLocation
     }
 
+    /// A jump's target, as he leaves it on its way (gatefold#309): written with no read of the page, which is
+    /// still the one before the jump and whose chapter load can hold any script until iOS has ended Gatefold.
+    /// As `keepTurnNow`, the move is not counted as kept: the leave's ordinary write still follows, with the
+    /// mapped position, and the jump's own report, should the app live on, writes his page and its words over it.
+    private func writeJumpTargetAtOnce(_ here: Locator) {
+        // An older write still on its way gives way to this move, whether or not it is written again here.
+        newestWrittenMove = max(newestWrittenMove, moves)
+        if let kept = keptPlace, kept.href == here.href, kept.locations.progression == here.locations.progression { return }
+        guard let json = try? here.jsonString() else {
+            readerLog.notice("place write [r\(self.readerNumber, privacy: .public)]: the jump's target could not be encoded; not written at once")
+            return
+        }
+        placeRecords += 1
+        if LaunchOptions.isUITest {
+            savedPlaceProbe = Self.probeTag(here)
+            savedWordsProbe = ""
+        }
+        app.library.recordPlace(bookID: bookID, locatorJSON: json, totalProgression: here.locations.totalProgression ?? 0,
+                                progression: here.locations.progression ?? 0, at: Date())
+        app.library.flushPushes()
+        readerLog.notice("place write [r\(self.readerNumber, privacy: .public)]: the jump's target written on leaving, at once, at \(here.locations.totalProgression ?? -1, privacy: .public)")
+    }
     /// Writes the place a reflow owed, as he leaves: the reader may have closed, and the reflow may
     /// still be under way. Only the place; nothing on screen changes. If he hasn't closed the book
     /// (the app only went inactive), the debt stands: a reflow that settles later still records his
@@ -2004,25 +2026,6 @@ final class ReaderModel {
         shownLeaveSteps.append("written")
         if LaunchOptions.isUITest { savedWordsProbe = here.text.highlight.map(ReaderJS.normalize) ?? "" }
         readerLog.notice("place write [r\(self.readerNumber, privacy: .public)]: the page left unsettled written on leaving, at once, at \(here.locations.totalProgression ?? -1, privacy: .public), \(here.text.highlight == nil ? "no words" : "with his first words", privacy: .public)")
-    }
-    /// A jump's target, as he leaves it on its way (gatefold#309): written with no read of the page, which is
-    /// still the one before the jump and whose chapter load can hold any script until iOS has ended Gatefold.
-    /// As `keepTurnNow`, the move is not counted as kept: the leave's ordinary write still follows, with the
-    /// mapped position, and the jump's own report, should the app live on, writes his page and its words over it.
-    private func writeJumpTargetAtOnce(_ here: Locator) {
-        if let kept = keptPlace, kept.href == here.href, kept.locations.progression == here.locations.progression { return }
-        guard let json = try? here.jsonString() else {
-            readerLog.notice("place write [r\(self.readerNumber, privacy: .public)]: the jump's target could not be encoded; not written at once")
-            return
-        }
-        placeRecords += 1
-        // An older write still on its way gives way to this one.
-        newestWrittenMove = max(newestWrittenMove, moves)
-        if LaunchOptions.isUITest { savedPlaceProbe = Self.probeTag(here) }
-        app.library.recordPlace(bookID: bookID, locatorJSON: json, totalProgression: here.locations.totalProgression ?? 0,
-                                progression: here.locations.progression ?? 0, at: Date())
-        app.library.flushPushes()
-        readerLog.notice("place write [r\(self.readerNumber, privacy: .public)]: the jump's target written on leaving, at once, at \(here.locations.totalProgression ?? -1, privacy: .public)")
     }
     /// The exact position for that same write, when the chapter's mapping comes (it reads the chapter, which a
     /// stalled page can hold: gatefold#240): written only over that very write (no newer place, no newer

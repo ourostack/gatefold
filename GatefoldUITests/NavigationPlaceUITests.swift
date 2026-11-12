@@ -81,7 +81,9 @@ final class NavigationPlaceUITests: XCTestCase {
         XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label CONTAINS[c] %@", "Chapter I")).firstMatch.waitForExistence(timeout: 10),
                       "the contents opened")
         XCTAssertTrue(ContentsRow.tap(row, in: app).ok, "the contents list chapter XXX")
-        _ = waitForWords(changingFrom: first, timeout: 20)
+        let moved = readsUntilMoved(from: first)
+        print("REPRO jump contents: moved \(moved.ok) after \(moved.reads) reads\(moved.hung ? " (hang guard)" : "")")
+        XCTAssertTrue(moved.ok, "the contents jump never moved the page in \(moved.reads) reads\(moved.hung ? " (hang guard)" : "")")
         XCTAssertTrue(keptWhatIsShown(), "the jump kept a place other than the page shown")
         leaveAndReturn(expecting: first, "contents jump")
     }
@@ -290,13 +292,16 @@ final class NavigationPlaceUITests: XCTestCase {
         leaveAndReturn(expecting: first, "scrubber jump")
     }
 
-    /// Reads, at least 0.3 s apart, until the page shows words other than `first`'s: up to `ReaderReads.coverReads`, as
-    /// long as a jump's chapter may take to load on a starved runner. `HangGuard` ends it only on a hang.
+    /// Reads, at least 0.3 s apart, until the jump has landed: its veil down and the page showing words other than
+    /// `first`'s (a page the jump passes on its way, its file's first, shows under the veil). Up to
+    /// `ReaderReads.coverReads`, as long as a jump's chapter may take to load on a starved runner. `HangGuard` ends it
+    /// only on a hang.
     private func readsUntilMoved(from first: String) -> (ok: Bool, reads: Int, hung: Bool) {
+        let veil = app.descendants(matching: .any)["reader.veil"]
         let guardEnds = Date().addingTimeInterval(HangGuard.seconds(reads: ReaderReads.coverReads))
         for read in 1...ReaderReads.coverReads {
             let now = visibleText
-            if !now.isEmpty, opening(now) != opening(first) { return (true, read, false) }
+            if !now.isEmpty, opening(now) != opening(first), !veil.exists { return (true, read, false) }
             if Date() > guardEnds { return (false, read, true) }
             RunLoop.current.run(until: Date().addingTimeInterval(0.3))
         }
