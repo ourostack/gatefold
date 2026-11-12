@@ -1923,6 +1923,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             if oldPageHeldMarker == nil {
                 let marker = UIView(frame: CGRect(x: 0, y: 0, width: 1, height: 1))
                 marker.isAccessibilityElement = true
+                marker.isUserInteractionEnabled = false
                 marker.accessibilityIdentifier = "reader.oldPageHeld"
                 view.addSubview(marker)
                 oldPageHeldMarker = marker
@@ -1971,6 +1972,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             if veiledJumpLooksMarker == nil {
                 let marker = UIView(frame: CGRect(x: 0, y: 0, width: 1, height: 1))
                 marker.isAccessibilityElement = true
+                marker.isUserInteractionEnabled = false
                 marker.accessibilityIdentifier = "reader.jumpStartLooks"
                 view.addSubview(marker)
                 veiledJumpLooksMarker = marker

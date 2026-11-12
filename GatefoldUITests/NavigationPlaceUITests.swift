@@ -134,7 +134,7 @@ final class NavigationPlaceUITests: XCTestCase {
     /// The far chapter's load after the start is the same code for both and is not compared: on CI's
     /// iPad, at a load average near 400, it took 5.8 to 26.8 s run to run, with or without the hold,
     /// either one the slower (#73: loaded 22 and still loading 11 reads at e8d5ae1, 14 and 33 at
-    /// d2534bd). The jump started in one look and under 0.7 s in every one of those runs.
+    /// d2534bd). In every one of those runs the jump pictured its old page in one look, under 0.7 s.
     func testAJumpFromAPageStillLoadingStartsAtOnce() {
         let plain = contentsJumpReads([])
         let held = contentsJumpReads(["-GatefoldHoldOldPageLoad", "1200"])
@@ -144,6 +144,7 @@ final class NavigationPlaceUITests: XCTestCase {
         // 42490481581); the 81 was a 37 s jump, which is not at once.
         XCTAssertLessThanOrEqual(plain.move, Self.jumpReadCeiling, "the jump from a loaded page moved the page only after \(plain.move) reads")
         XCTAssertLessThanOrEqual(held.move, Self.jumpReadCeiling, "the jump from a page still loading moved the page only after \(held.move) reads")
+        XCTAssertLessThanOrEqual(plain.back, Self.jumpReadCeiling, "the jump from a loaded page put up Back only after \(plain.back) reads")
         XCTAssertLessThanOrEqual(held.back, Self.jumpReadCeiling, "the jump from a page still loading put up Back only after \(held.back) reads")
         // The start. Both jumps ran under a veil, and the app kept the looks its old page took.
         XCTAssertNotNil(plain.looks, "the jump from a loaded page ran under a veil")
@@ -170,6 +171,8 @@ final class NavigationPlaceUITests: XCTestCase {
                       "the contents opened")
         for _ in 0..<20 where !(row.exists && row.isHittable) { app.swipeUp(velocity: .slow) }
         XCTAssertTrue(row.exists && row.isHittable, "the contents list chapter XXX")
+        let marker = app.descendants(matching: .any)["reader.jumpStartLooks"]
+        XCTAssertFalse(marker.exists, "no veiled jump ran before the Contents jump")
         row.tap()
         // All counted from the tap: the reads until the veil is up, until the words change, and until
         // Back is up. A jump that moved the page with no veil seen started no later than it moved.
@@ -183,7 +186,6 @@ final class NavigationPlaceUITests: XCTestCase {
             if back == nil, app.buttons["reader.back"].exists { back = reads }
             RunLoop.current.run(until: Date().addingTimeInterval(0.2))
         }
-        let marker = app.descendants(matching: .any)["reader.jumpStartLooks"]
         let looks = marker.exists ? (marker.value as? String).flatMap { Int($0) } : nil
         XCTAssertTrue(keptWhatIsShown(), "the jump kept a place other than the page shown")
         if extra.contains("-GatefoldHoldOldPageLoad") {
