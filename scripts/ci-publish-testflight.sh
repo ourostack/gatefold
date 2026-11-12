@@ -80,14 +80,29 @@ ipa_build="$(unzip -p "$ipa" 'Payload/*.app/Info.plist' | plutil -extract CFBund
 [[ "$ipa_build" == "$build" ]] || fail "the IPA is build ${ipa_build:-unknown}, expected $build"
 shasum -a 256 "$ipa" | tee "$out/Gatefold.ipa.sha256"
 
-# 3. Upload.
+# 3. Upload. altool can exit non-zero after it has delivered the build: in run 43318514534 App Store Connect
+# answered three 500s, altool still logged "UPLOAD SUCCEEDED" with a delivery UUID, then waited an hour on
+# processing (the kit passes --wait) and exited 1 (gatefold#337). An exit that follows that line and a delivery
+# UUID goes on to step 4, which judges the build by App Store Connect's own processing state. Any other non-zero
+# exit is a failed upload.
+upload_ok=true
 kit xcode run --kind altool-upload --mode apply --package-path "$ipa" --platform ios \
   --api-key "$key_id" --api-issuer "$issuer_id" --p8-file-path "$key_path" \
-  --provider-public-id "$provider_id" --json > "$out/altool-upload.raw" \
-  || { jq 'del(.command, .argv, .args)' "$out/altool-upload.raw" || true; fail "upload failed"; }
+  --provider-public-id "$provider_id" --json > "$out/altool-upload.raw" || upload_ok=false
 # Keep the key and issuer IDs in the argv out of the published artifact.
-jq 'del(.command, .argv, .args)' "$out/altool-upload.raw" > "$out/altool-upload.json"
+jq 'del(.command, .argv, .args)' "$out/altool-upload.raw" > "$out/altool-upload.json" 2>/dev/null \
+  || { : > "$out/altool-upload.json"; [[ "$upload_ok" == false ]] || fail "the kit's upload answer is not JSON"; }
 : > "$out/altool-upload.raw"
+if [[ "$upload_ok" == false ]]; then
+  cat "$out/altool-upload.json"
+  upload_log="$(jq -r '[.stdout, .stderr] | map(strings) | join("\n")' "$out/altool-upload.json" 2>/dev/null || true)"
+  delivery="$(sed -nE 's/^Delivery UUID: ([0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12})[[:space:]]*$/\1/p' <<< "$upload_log" | tail -1)"
+  if ! grep -q '^UPLOAD SUCCEEDED' <<< "$upload_log" || grep -q 'UPLOAD FAILED' <<< "$upload_log" || [[ -z "$delivery" ]]; then
+    fail "upload failed"
+  fi
+  printf '%s\n' "$delivery" > "$out/delivery-uuid.txt"
+  echo "::warning title=altool exited non-zero after delivering::altool logged UPLOAD SUCCEEDED (delivery $delivery) but exited non-zero; App Store Connect's processing state decides (gatefold#337)."
+fi
 date -u +%FT%TZ > "$out/uploaded-at.txt"
 
 # 4. Wait for processing (up to an hour).
