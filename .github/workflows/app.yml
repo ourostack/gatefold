@@ -303,13 +303,13 @@ jobs:
             timeout: 69 # 30 + 2 x 10.9 + 5 + 12
             lane: 14
           - shard: ipad-place-scroll-stalled
-            # The switch to Scroll under a stalled reflow (gatefold#342): about 220 locally, its own job so place-rest keeps its budget
+            # The switch to Scroll under a stalled reflow (gatefold#342): 265-280 s on CI, its own job so place-rest keeps its budget
             tests: >-
               NavigationPlaceUITests/testScrolledAfterAStalledSwitchToScrollKeepsWhereHeScrolled
             skip: ""
             pr_tests: none
             cold: false
-            timeout: 52 # 30 + 2 x 5.0 + 12
+            timeout: 57 # 30 + 2 x 4.7 + 5 + 12
             lane: 1
           - shard: ipad-place-shelf
             # 155 + 155
@@ -517,7 +517,7 @@ jobs:
               FineTuneTapUITests/testAQuickTouchChangesEverySwitchOnce FineTuneTapUITests/testATapOnTheRowsNameChangesItsSwitch FineTuneTapUITests/testEveryTapFlipsJustifyPortrait FineTuneTapUITests/testEveryTapFlipsPageNumbersPortrait FineTuneTapUITests/testEveryTapFlipsPositionLabelPortrait FineTuneTapUITests/testEveryTapFlipsPagesLeftPortrait FineTuneTapUITests/testEveryTapFlipsJustifyLandscape FineTuneTapUITests/testEveryTapFlipsPageNumbersLandscape FineTuneTapUITests/testEveryTapFlipsPositionLabelLandscape FineTuneTapUITests/testEveryTapFlipsPagesLeftLandscape
             pr_tests: none
             cold: false
-            timeout: 65 # 30 + 2 x 8.7 + 5 + 12
+            timeout: 75 # 30 + 2 x 13.6 + 5 + 12
             lane: 2
           - shard: ipad-taps-furniture
             # 130 + 129 + 86
