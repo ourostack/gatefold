@@ -117,4 +117,36 @@ enum ReaderReads {
         }
         return nil
     }
+
+    /// The reader's reflow number now (`reader.reflow`, "N reflowing", "N placed" or "N settled"; 0 before any). Read
+    /// before a switch that reflows the book, so its own reflow can be told from an older one that still reads "settled".
+    static func reflowNumber(_ app: XCUIApplication) -> Int {
+        let now = (el(app, "reader.reflow").value as? String) ?? ""
+        return Int(now.split(separator: " ").first ?? "") ?? 0
+    }
+
+    /// Reads until a reflow newer than `before` has settled, its page laid out and shown, and the reads it took, or nil
+    /// after `coverReads`. A reflow the 12 s watchdog showed unsettled still reads "reflowing" while it starts again, and
+    /// its page may still be loading: a touch then lands on a page that can't move, and the words probe holds still
+    /// only because nothing reports (gatefold#342). `say` notes the outcome.
+    static func reflowSettled(_ app: XCUIApplication, since before: Int, _ what: String, say: (String) -> Void,
+                              file: StaticString = #filePath, line: UInt = #line) -> Int? {
+        let reflow = el(app, "reader.reflow")
+        let guardEnds = Date().addingTimeInterval(HangGuard.seconds(reads: coverReads))
+        var now = ""
+        for read in 1...coverReads {
+            now = (reflow.value as? String) ?? ""
+            if (Int(now.split(separator: " ").first ?? "") ?? 0) > before, now.hasSuffix("settled") {
+                say("\(what): reflow \(now) at read \(read)")
+                return read
+            }
+            if Date() > guardEnds {
+                XCTFail("hang: \(what) ran \(read) reads without its reflow settling (was \(before), now \(now))", file: file, line: line)
+                return nil
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+        }
+        say("\(what): no reflow newer than \(before) settled in \(coverReads) reads (now \(now))")
+        return nil
+    }
 }
