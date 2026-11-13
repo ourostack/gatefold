@@ -1,147 +1,185 @@
-name: Duo tour
+name: Build 36 delight review
 
-# Photographs Gatefold on an iPhone Duo simulator in its real poses: shut (cover screen), open flat (the
-# spread, gutter on the fold) and stood half-open (tabletop). DeviceHub (Xcode 27.1) moves the hinge; the
-# helper in .github/scripts/duo drives its window through accessibility. It also records the page curl and
-# a fold from the spread to tabletop that keeps the page. Because it drives a window, it runs on demand
-# and when the tour itself changes, not on every pull request.
+# Review branch only (review-delight-build36), never merged: it borrows the Duo tour's dispatchable workflow so the
+# reviewers' drivers (GatefoldUITests/TasteB36UITests.swift, TasteB36.swift) run on hosted runners. One job per
+# device, the iPad first, then the Duo. Each test runs on its own with the screen recorded
+# (.github/scripts/review/run.sh). The boot, the quiet first boot and the hang guards are app.yml's (gatefold#198,
+# #209, #126); the hinge is the Duo tour's DeviceHub helper.
 
 on:
   workflow_dispatch:
-  pull_request:
-    paths:
-      - .github/workflows/duo-tour.yml
-      - .github/scripts/duo/**
 
 permissions:
   contents: read
 
-concurrency:
-  group: duo-tour-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
-
 jobs:
-  duo-tour:
-    name: Duo tour
+  ipad:
+    name: iPad Pro 13-inch
     runs-on: xcode-27
-    # PR lane (gatefold#286): see "macOS lanes" at the top of app.yml. Never cancel-in-progress.
-    concurrency:
-      group: >-
-        ${{ github.event_name == 'pull_request'
-        && 'gatefold-macos-pr-lane-duo-tour-0'
-        || format('duo-tour-{0}-{1}', github.run_id, github.run_attempt) }}
-      queue: max
-    timeout-minutes: 60
+    timeout-minutes: 345
     env:
-      APP: bot.ouro.gatefold
+      DEVICE: iPad Pro 13-inch
+      SIM: gatefold-ipad
     steps:
+      - run: echo "JOB_DEADLINE=$(( $(date +%s) + 345 * 60 ))" >> "$GITHUB_ENV"
       - uses: actions/checkout@v4
       - uses: ./.github/actions/select-xcode
+      - name: Start the simulator booting
+        run: python3 -I scripts/ci-simulator.py start "$SIM" "$DEVICE"
+      - name: Sample the runner's load every 20 s
+        run: |
+          # shellcheck disable=SC2016
+          nohup sh -c 'while :; do echo "== $(date -u +%T) $(sysctl -n vm.loadavg)"; sleep 20; done' >> "$RUNNER_TEMP/load.log" 2>&1 &
       - name: Install the Metal toolchain
         run: xcodebuild -downloadComponent MetalToolchain
       - name: Generate the project
         run: |
           brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
           xcodegen generate
-      - name: Create and boot an iPhone Duo
-        id: sim
+      - name: Build the app and its tests
+        timeout-minutes: 40
         run: |
-          set -euo pipefail
-          runtime="$(xcrun simctl list runtimes --json | python3 -c 'import json,sys; r=[x for x in json.load(sys.stdin)["runtimes"] if x["platform"]=="iOS" and x["isAvailable"] and any(d["name"].startswith("iPhone Duo") for d in x.get("supportedDeviceTypes",[]))]; print(max(r, key=lambda x: [int(p) for p in x["version"].split(".")])["identifier"])')"
-          udid="$(.github/scripts/boot-sim.sh gatefold-duo com.apple.CoreSimulator.SimDeviceType.iPhone-Duo "$runtime")"
-          echo "udid=$udid" >> "$GITHUB_OUTPUT"
-          echo "destination=platform=iOS Simulator,arch=$(uname -m),id=$udid" >> "$GITHUB_OUTPUT"
-      - name: Build the app and the demo UI test
-        run: |
-          set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/duo/shots"
+          set -o pipefail
           xcodebuild build-for-testing -project Gatefold.xcodeproj -scheme Gatefold \
-            -destination "${{ steps.sim.outputs.destination }}" -only-testing:GatefoldUITests/DemoUITests \
-            -derivedDataPath "$RUNNER_TEMP/duo/DerivedData" CODE_SIGNING_ALLOWED=NO 2>&1 | tail -40
-          # CoreSimulator sometimes restarts right after a build ("Mach error -308, server died"); wait for the device and try again.
-          for attempt in 1 2 3; do
-            xcrun simctl bootstatus "${{ steps.sim.outputs.udid }}" -b >/dev/null 2>&1 || true
-            if xcrun simctl install "${{ steps.sim.outputs.udid }}" "$RUNNER_TEMP/duo/DerivedData/Build/Products/Debug-iphonesimulator/Gatefold.app"; then break; fi
-            [ "$attempt" = 3 ] && exit 1
-            sleep 15
-          done
+            -destination 'generic/platform=iOS Simulator' ARCHS="$(uname -m)" \
+            -derivedDataPath "$RUNNER_TEMP/dd" 2>&1 | tee "$RUNNER_TEMP/build.log" | tail -40
+          echo "XCTESTRUN=$(ls "$RUNNER_TEMP"/dd/Build/Products/*.xctestrun | head -1)" >> "$GITHUB_ENV"
+      - name: The simulator finished booting
+        timeout-minutes: 30
+        env:
+          CI_SIMULATOR_BUDGET: "1740"
+        run: python3 -I scripts/ci-simulator.py wait "$SIM" "$DEVICE" 1200
+      - name: Keep the app's place and reader logs (never the book's words)
+        run: |
+          mkdir -p "$RUNNER_TEMP/out" "$RUNNER_TEMP/xcr"
+          nohup sh -c 'xcrun simctl spawn "$0" log stream --style compact --predicate "subsystem == \"bot.ouro.gatefold\" AND category == \"reader\"" 2>/dev/null \
+            | grep --line-buffered -v -E "text:|\] visible|\] anchor[: ]" >> "$1"' "$UDID" "$RUNNER_TEMP/out/reader.log" >/dev/null 2>&1 &
+      - name: Reviewer tests, one at a time, recorded
+        timeout-minutes: 300
+        env:
+          OUT: ${{ runner.temp }}/out
+          DISPLAYS: default
+        run: |
+          r=.github/scripts/review/run.sh
+          # Cold first: the build 19 blocker on a just-booted device.
+          $r aris-coldrot TasteB36/testA_ColdRotation 1500
+          $r spazz-portrait TasteB36UITests/testS_spazz 3600 TASTE_ROUNDS=2
+          $r spazz-landscape TasteB36UITests/testS_spazz 2700 TASTE_LANDSCAPE=1 TASTE_ROUNDS=1
+          $r aris-place-portrait TasteB36/testE_PlaceByHand 1500
+          $r aris-place-noprobe TasteB36/testE_PlaceByHand 1500 R2_NOPROBE=1
+          $r books-chain-landscape TasteB36UITests/testB_reopenChain 1800 TASTE_LANDSCAPE=1
+          $r aris-reopen-landscape TasteB36/testB_ReopenOnWords 1800 R2_LANDSCAPE=1 R2_ROUNDS=8
+          $r books-contents-landscape TasteB36UITests/testK_contentsJump 900 TASTE_LANDSCAPE=1
+          $r books-catchup-landscape TasteB36UITests/testL_catchUp 600 TASTE_LANDSCAPE=1
+          $r books-looks-portrait TasteB36UITests/testM_looks 900
+          $r books-looks-landscape TasteB36UITests/testM_looks 900 TASTE_LANDSCAPE=1
+          $r books-burst-landscape TasteB36UITests/testD_burst 600 TASTE_LANDSCAPE=1
+          $r books-portraitpanel TasteB36UITests/testJ_portraitPanel 900
+          $r books-placeholder-landscape TasteB36UITests/testI_placeholder 600 TASTE_LANDSCAPE=1
+          $r books-numbers-landscape TasteB36UITests/testA_numbers 900 TASTE_LANDSCAPE=1
+          $r books-taprate-landscape TasteB36UITests/testF_tapRate 900 TASTE_LANDSCAPE=1
+          $r aris-place-remote TasteB36/testE_PlaceByHand 1500 R2_REMOTE=20
+          $r aris-jumps TasteB36/testC_Jumps 900
+          $r books-global-landscape TasteB36UITests/testC_global 900 TASTE_LANDSCAPE=1
+          $r books-rowfeel TasteB36UITests/testH_rowFeel 900
+      - name: Close the logs
+        if: always()
+        run: |
+          pkill -f "log stream --style compact" || true
+          cp "$RUNNER_TEMP/load.log" "$RUNNER_TEMP/out/" || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: b36-ipad
+          retention-days: 7
+          path: ${{ runner.temp }}/out
+
+  duo:
+    name: iPhone Duo
+    needs: ipad
+    if: ${{ !cancelled() }}
+    runs-on: xcode-27
+    timeout-minutes: 345
+    env:
+      DEVICE: iPhone Duo
+      SIM: gatefold-duo
+    steps:
+      - run: echo "JOB_DEADLINE=$(( $(date +%s) + 345 * 60 ))" >> "$GITHUB_ENV"
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/select-xcode
+      - name: Start the simulator booting
+        run: python3 -I scripts/ci-simulator.py start "$SIM" "$DEVICE"
+      - name: Sample the runner's load every 20 s
+        run: |
+          # shellcheck disable=SC2016
+          nohup sh -c 'while :; do echo "== $(date -u +%T) $(sysctl -n vm.loadavg)"; sleep 20; done' >> "$RUNNER_TEMP/load.log" 2>&1 &
+      - name: Install the Metal toolchain
+        run: xcodebuild -downloadComponent MetalToolchain
+      - name: Generate the project
+        run: |
+          brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
+          xcodegen generate
+      - name: Build the app and its tests
+        timeout-minutes: 40
+        run: |
+          set -o pipefail
+          xcodebuild build-for-testing -project Gatefold.xcodeproj -scheme Gatefold \
+            -destination 'generic/platform=iOS Simulator' ARCHS="$(uname -m)" \
+            -derivedDataPath "$RUNNER_TEMP/dd" 2>&1 | tee "$RUNNER_TEMP/build.log" | tail -40
+          echo "XCTESTRUN=$(ls "$RUNNER_TEMP"/dd/Build/Products/*.xctestrun | head -1)" >> "$GITHUB_ENV"
+      - name: The simulator finished booting
+        timeout-minutes: 30
+        env:
+          CI_SIMULATOR_BUDGET: "1740"
+        run: python3 -I scripts/ci-simulator.py wait "$SIM" "$DEVICE" 1200
       - name: Open DeviceHub
         run: |
           set -euo pipefail
-          # A busy runner can time the compiler out (signal 14); the helper needs no optimisation, so build it plain and retry.
           for attempt in 1 2 3; do
-            swiftc -Onone .github/scripts/duo/devicehub.swift -o "$RUNNER_TEMP/duo/devicehub" && break
+            swiftc -Onone .github/scripts/duo/devicehub.swift -o "$RUNNER_TEMP/devicehub" && break
             [ "$attempt" = 3 ] && exit 1
             sleep 10
           done
           sleep 30
           open -a "$(xcode-select -p)/../Applications/DeviceHub.app"
           sleep 20
-          "$RUNNER_TEMP/duo/devicehub" dump
-      - name: Photograph every pose
+          "$RUNNER_TEMP/devicehub" dump
+          echo "HUB=$RUNNER_TEMP/devicehub" >> "$GITHUB_ENV"
+      - name: Keep the app's place and reader logs (never the book's words)
         run: |
-          set -uo pipefail
-          udid="${{ steps.sim.outputs.udid }}"
-          hub="$RUNNER_TEMP/duo/devicehub"
-          shots="$RUNNER_TEMP/duo/shots"
-          base=(-GatefoldSkipWelcome YES -GatefoldSignedIn YES -GatefoldDownloadAll YES)
-          book=(-GatefoldOpenBook gutenberg-pride-and-prejudice -GatefoldGoTo 0.31)
-          shoot() { for d in 1 3; do xcrun simctl io "$udid" screenshot --display=$d "$shots/$1-display$d.png" >/dev/null 2>&1 || true; done; }
-          scenes() {
-            xcrun simctl launch --terminate-running-process "$udid" "$APP" "${base[@]}" >/dev/null; sleep 12; shoot "$1-library"
-            xcrun simctl launch --terminate-running-process "$udid" "$APP" "${base[@]}" "${book[@]}" -GatefoldTheme vellum >/dev/null; sleep 20; shoot "$1-reader-light"
-            xcrun simctl launch --terminate-running-process "$udid" "$APP" "${base[@]}" "${book[@]}" -GatefoldTheme midnight >/dev/null; sleep 20; shoot "$1-reader-dark"
-          }
-          "$hub" press "Closed"; sleep 6; scenes 1-folded
-          "$hub" press "Open"; sleep 6; scenes 2-spread
-          "$hub" press "Rotate Right"; sleep 4; "$hub" press "Partially Open"; sleep 6; scenes 3-tabletop
-          screencapture -x "$shots/0-devicehub-tabletop.png" || true
-      - name: Record a fold from the spread to tabletop, keeping the page
+          mkdir -p "$RUNNER_TEMP/out" "$RUNNER_TEMP/xcr"
+          xcrun simctl io "$UDID" enumerate > "$RUNNER_TEMP/out/io-enumerate.txt" 2>&1 || true
+          nohup sh -c 'xcrun simctl spawn "$0" log stream --style compact --predicate "subsystem == \"bot.ouro.gatefold\" AND category == \"reader\"" 2>/dev/null \
+            | grep --line-buffered -v -E "text:|\] visible|\] anchor[: ]" >> "$1"' "$UDID" "$RUNNER_TEMP/out/reader.log" >/dev/null 2>&1 &
+      - name: Reviewer tests, one at a time, recorded on both screens
+        timeout-minutes: 300
+        env:
+          OUT: ${{ runner.temp }}/out
+          DISPLAYS: "1 3"
         run: |
-          set -uo pipefail
-          udid="${{ steps.sim.outputs.udid }}"
-          hub="$RUNNER_TEMP/duo/devicehub"
-          "$hub" press "Open"; sleep 4
-          for turn in 1 2 3; do "$hub" press "Rotate Right"; sleep 3; done
-          xcrun simctl launch --terminate-running-process "$udid" "$APP" -GatefoldSkipWelcome YES -GatefoldSignedIn YES \
-            -GatefoldDownloadAll YES -GatefoldOpenBook gutenberg-pride-and-prejudice -GatefoldGoTo 0.31 -GatefoldTheme vellum >/dev/null
-          sleep 20
-          xcrun simctl io "$udid" recordVideo --display=3 --codec=h264 --force "$RUNNER_TEMP/duo/shots/fold-spread-to-tabletop.mp4" &
-          rec=$!
-          sleep 3
-          "$hub" press "Rotate Right"; sleep 4
-          "$hub" press "Partially Open"; sleep 6
-          "$hub" press "Open"; sleep 4
-          for turn in 1 2 3; do "$hub" press "Rotate Right"; sleep 3; done
-          sleep 4
-          kill -INT "$rec"; wait "$rec" || true
-      - name: Record the page curl on the cover screen
+          r=.github/scripts/review/run.sh
+          # One recorder per test: simctl io records one display at a time (build 25's second recorder failed).
+          # Display 1 is the cover screen (folded), display 3 the inner screen (open).
+          DISPLAYS=1 $r spazz-duo TasteB36UITests/testS_spazz 4200 POSE=Closed TASTE_FOLD=1 TASTE_ROUNDS=2
+          DISPLAYS=1 $r duo-poses TasteB36UITests/testN_duoPoses 1500 POSE=Closed
+          DISPLAYS=3 $r aris-duo-open TasteB36/testD_Duo 1800 POSE=Open
+          DISPLAYS=1 $r aris-place-duo-closed TasteB36/testE_PlaceByHand 1500 POSE=Closed
+          DISPLAYS=3 $r aris-place-duo-open TasteB36/testE_PlaceByHand 1500 POSE=Open
+          DISPLAYS=3 $r books-chain-duo-open TasteB36UITests/testB_reopenChain 1800 POSE=Open
+          DISPLAYS=3 $r books-catchup-duo-open TasteB36UITests/testL_catchUp 600 POSE=Open
+          DISPLAYS=3 $r books-looks-duo-open TasteB36UITests/testM_looks 900 POSE=Open
+          DISPLAYS=1 $r books-looks-duo-closed TasteB36UITests/testM_looks 900 POSE=Closed
+          DISPLAYS=3 $r books-contents-duo-open TasteB36UITests/testK_contentsJump 900 POSE=Open
+          DISPLAYS=3 $r books-numbers-duo-open TasteB36UITests/testA_numbers 900 POSE=Open
+          DISPLAYS=3 $r books-burst-duo-open TasteB36UITests/testD_burst 600 POSE=Open
+      - name: Close the logs
+        if: always()
         run: |
-          set -uo pipefail
-          udid="${{ steps.sim.outputs.udid }}"
-          "$RUNNER_TEMP/duo/devicehub" press "Closed"; sleep 6
-          xcrun simctl io "$udid" recordVideo --display=1 --codec=h264 --force "$RUNNER_TEMP/duo/shots/page-curl.mp4" &
-          rec=$!
-          sleep 2
-          status=0
-          xcodebuild test-without-building -project Gatefold.xcodeproj -scheme Gatefold \
-            -destination "${{ steps.sim.outputs.destination }}" -only-testing:GatefoldUITests/DemoUITests \
-            -retry-tests-on-failure -test-iterations 2 \
-            -derivedDataPath "$RUNNER_TEMP/duo/DerivedData" -resultBundlePath "$RUNNER_TEMP/duo/demo.xcresult" \
-            > "$RUNNER_TEMP/duo/demo.log" 2>&1 || status=$?
-          # Stop the recorder whatever happened, so the video is written out.
-          kill -INT "$rec" || true; wait "$rec" || true
-          grep -E "error:|Test Case .*(passed|failed)|TEST (EXECUTE )?(SUCCEEDED|FAILED)" "$RUNNER_TEMP/duo/demo.log" | tail -30 || true
-          exit $status
-      - name: Why each failed test failed (from the result bundles, text withheld)
-        if: failure() || cancelled()
-        timeout-minutes: 5
-        run: python3 -I scripts/ci-failures.py "$RUNNER_TEMP"/duo/demo.xcresult
+          pkill -f "log stream --style compact" || true
+          cp "$RUNNER_TEMP/load.log" "$RUNNER_TEMP/out/" || true
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: duo-tour
-          path: |
-            ${{ runner.temp }}/duo/shots
-            ${{ runner.temp }}/duo/demo.xcresult
-            ${{ runner.temp }}/duo/demo.log
+          name: b36-duo
+          retention-days: 7
+          path: ${{ runner.temp }}/out
