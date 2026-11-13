@@ -356,8 +356,10 @@ final class ReaderModel {
             hostController = try ReaderHostController(
                 model: self,
                 publication: publication,
-                initialLocation: LaunchOptions.reopenOnChapterStart && Self.openingAnchor(from: initial) == nil
-                    ? initial?.copy(locations: { $0 = Locator.Locations(progression: 0) }) : initial,
+                initialLocation: Self.openingAnchor(from: initial) == nil
+                    ? (LaunchOptions.reopenOnChapterStart ? initial?.copy(locations: { $0 = Locator.Locations(progression: 0) }) : initial)
+                    : (LaunchOptions.reopenOffHisWords
+                       ? initial?.copy(locations: { $0 = Locator.Locations(progression: 0) }, text: { $0 = Locator.Text() }) : initial),
                 preferences: opening
             )
         } catch {

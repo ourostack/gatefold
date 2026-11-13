@@ -122,6 +122,10 @@ enum LaunchOptions {
     /// Tests only: a book opened on a place with no words opens on its chapter's start, as a reopen whose
     /// stalled restore settled there did on CI (gatefold#250); the saved place itself is unchanged.
     static var reopenOnChapterStart: Bool { isUITest && defaults.bool(forKey: "GatefoldReopenOnChapterStart") }
+    /// Tests only: a book opened on a place with his words is handed to Readium at its chapter's start, so only the
+    /// open's settle on his words can bring him back, as when CI's starved iPad put a reopen 6 pages before his
+    /// words (gatefold#373); the saved place itself is unchanged.
+    static var reopenOffHisWords: Bool { isUITest && defaults.bool(forKey: "GatefoldReopenOffHisWords") }
     /// Debug only: a jump's chapter counts as still loading (Readium's spinner up) for this many looks,
     /// so a test can hold the load open as a slow device does and watch the veil (#38).
     static var holdChapterLoadLooks: Int? { defaults.object(forKey: "GatefoldHoldChapterLoad") == nil ? nil : defaults.integer(forKey: "GatefoldHoldChapterLoad") }

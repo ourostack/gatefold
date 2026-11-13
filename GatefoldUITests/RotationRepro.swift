@@ -70,15 +70,18 @@ final class RotationRepro: XCTestCase {
     /// Non-empty, then the same words `quiet` reads in a row. A short settle (3 reads) stands for the old
     /// 2.5 s of quiet. A long one (12 reads, about 9 s on the fastest runner's 0.5 s reads) stands for the
     /// old settle, 4 s and a second settle, so a late move after the first quiet is still seen. A settle the
-    /// hang guard ended is logged: its words are the latest read, not a quiet page.
+    /// hang guard ended is logged: its words are the latest read, not a quiet page. Quiet counts only once the
+    /// page is shown (`reader.pageReady`): beneath a reopen's cover the words probe can report the page a restore's
+    /// watchdog read, which he never sees, while the reopen still puts his place back (gatefold#332, #310).
     private static let longQuiet = 12
     private func settle(quiet: Int = 3, hangGuard: TimeInterval = 60, _ when: String = "") -> String {
         let hung = Date().addingTimeInterval(hangGuard)
-        var last = "", same = 0, reads = 0
+        var last = "", same = 0, reads = 0, shown = false
         while Date() < hung {
+            if !shown { shown = (el("reader.pageReady").value as? String) == "1" }
             let now = vtext
             reads += 1
-            if now.isEmpty || now != last { last = now; same = now.isEmpty ? 0 : 1 } else { same += 1 }
+            if now.isEmpty || now != last || !shown { last = now; same = now.isEmpty || !shown ? 0 : 1 } else { same += 1 }
             if same >= quiet { break }
             RunLoop.current.run(until: Date().addingTimeInterval(0.25))
         }

@@ -58,7 +58,9 @@ enum ReaderReads {
 
     /// The page's words once they have come and then repeated unchanged for `quietReads` reads, and the reads it took.
     /// Judged in reads and the reader's own ready report, never seconds (#94, #214). Empty words never count as
-    /// settled. `say` notes why a settle failed.
+    /// settled, nor do words read before the page is ready: the words probe can report the page laid out beneath the
+    /// cover (a restore's watchdog reads it, gatefold#332), which he can't see, and a reopen's place may still be put
+    /// back there (gatefold#310). `say` notes why a settle failed.
     static func settle(_ app: XCUIApplication, _ what: String, say: (String) -> Void,
                        file: StaticString = #filePath, line: UInt = #line) -> (words: String, reads: Int) {
         let text = el(app, "reader.visibleText")
@@ -66,9 +68,10 @@ enum ReaderReads {
         var last = "", same = 0, readyAt: Int?
         for read in 1...coverReads {
             let now = (text.value as? String) ?? ""
-            if now == last { same += 1 } else { last = now; same = 0 }
-            if !now.isEmpty, same >= quietReads { return (now, read) }
             if readyAt == nil, ready(app) { readyAt = read }
+            // Counted only once the page is shown, so words that held still beneath the cover need their quiet reads again.
+            if now == last, readyAt != nil { same += 1 } else { last = now; same = 0 }
+            if !now.isEmpty, same >= quietReads { return (now, read) }
             if let readyAt, now.isEmpty, read - readyAt >= readyReads {
                 say("\(what) blank: the page was ready at read \(readyAt) and showed no words \(readyReads) reads later")
                 XCTFail("\(what): the page was ready and showed no words for \(readyReads) reads", file: file, line: line)
