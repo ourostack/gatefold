@@ -141,8 +141,9 @@ jobs:
             local try t0 took status
             for try in 1 2; do
               t0=$(date +%s)
-              perl -e 'alarm shift; exec @ARGV' 120 "$hub" press "$1"
-              status=$?
+              # The step runs under bash -e: the status is taken, never left to end the step.
+              status=0
+              perl -e 'alarm shift; exec @ARGV' 120 "$hub" press "$1" || status=$?
               took=$(( $(date +%s) - t0 ))
               # 142 is the alarm's SIGALRM. Any other status is the press's own answer (not found, refused): named, and
               # left to the verdicts, as before.
@@ -159,7 +160,7 @@ jobs:
           }
           unfolds() {
           for place in 0.12 0.31 0.47 0.66 0.83; do
-            press "Closed"; sleep 6
+            press "Closed" || return 1; sleep 6
             xcrun simctl launch --terminate-running-process "$udid" "$APP" -GatefoldUITest YES -GatefoldFakeCloud YES \
               -GatefoldReset YES -GatefoldSkipWelcome YES -GatefoldSignedIn YES -GatefoldDownloadAll YES \
               -GatefoldOpenBook gutenberg-pride-and-prejudice -GatefoldGoTo "$place" >/dev/null
@@ -167,24 +168,24 @@ jobs:
             for round in $(seq 1 "$rounds"); do
               in_time || return 1
               echo "UNFOLD place $place round $round" | tee -a "$out/marks.log"
-              press "Open"; sleep 14
+              press "Open" || return 1; sleep 14
               xcrun simctl io "$udid" screenshot --display=3 "$out/shots/$place-$round-open.png" >/dev/null 2>&1 || true
-              press "Closed"; sleep 12
+              press "Closed" || return 1; sleep 12
             done
             # Half open: tabletop on the inner screen, then flat again and folded.
             in_time || return 1
             echo "HALF OPEN place $place" | tee -a "$out/marks.log"
-            press "Open"; sleep 12
-            press "Partially Open"; sleep 14
+            press "Open" || return 1; sleep 12
+            press "Partially Open" || return 1; sleep 14
             xcrun simctl io "$udid" screenshot --display=3 "$out/shots/$place-half.png" >/dev/null 2>&1 || true
-            press "Open"; sleep 12
-            press "Closed"; sleep 12
+            press "Open" || return 1; sleep 12
+            press "Closed" || return 1; sleep 12
           done
           # Early unfolds: opened folded, then unfolded 2 s after the page shows, as the posture test
           # switches (the reviewer's failures came on the first switch after launch).
           for place in 0.12 0.31 0.47 0.66 0.83 0.12 0.31 0.47; do
             in_time || return 1
-            press "Closed"; sleep 6
+            press "Closed" || return 1; sleep 6
             shown="$(grep -c "open: page shown" "$out/reader.log" || true)"
             xcrun simctl launch --terminate-running-process "$udid" "$APP" -GatefoldUITest YES -GatefoldFakeCloud YES \
               -GatefoldReset YES -GatefoldSkipWelcome YES -GatefoldSignedIn YES -GatefoldDownloadAll YES \
@@ -196,11 +197,13 @@ jobs:
             sleep 2
             echo "EARLY UNFOLD place $place" | tee -a "$out/marks.log"
             echo "EARLY UNFOLD place $place" >> "$out/reader.log"
-            press "Open"; sleep 16
+            press "Open" || return 1; sleep 16
             xcrun simctl io "$udid" screenshot --display=3 "$out/shots/early-$place-$wait.png" >/dev/null 2>&1 || true
           done
           }
-          unfolds
+          # The flags carry how it ended; the verdicts below print either way.
+          : > "$out/marks.log"
+          unfolds || true
           kill "$stream" || true
           grep -E "reflow check|reflow begins|host size|layout (single|spread|tabletop)|spread: " "$out/reader.log" | sed -E 's/^[0-9-]+ //' | tail -200
           echo "--- verdicts after an unfold (two columns) ---"
@@ -213,12 +216,12 @@ jobs:
           grep -c "reflow begins: posture" "$out/reader.log" || true
           echo "--- the app's main thread held a minute or more ---"
           grep -E "main: held [0-9]+ ms" "$out/reader.log" | awk '{ for (i = 1; i < NF; i++) if ($i == "held" && $(i + 1) >= 60000) print "::warning::the app'"'"'s main thread was held " int($(i + 1) / 1000) " s, ending " $2 }'
-          # Every unfold must have been judged, and no posture change may have lost his words.
-          [ -n "$spreads" ] || { echo "::error::no unfold reached a spread"; exit 1; }
+          # No posture change may have lost his words, and every unfold must have been judged.
           if echo "$verdicts" | grep -q "anchor-lost"; then echo "::error::a posture change lost the reader's words"; exit 1; fi
           # Its verdicts printed, a run cut short is still red: the unfolds it never made weren't judged.
           [ "$stalled" = 0 ] || { echo "::error::a DeviceHub press stalled twice, so the unfolds after it never ran ($(grep -c "" "$out/marks.log") of $planned begun)"; exit 1; }
           [ "$out_of_time" = 0 ] || { echo "::error::the unfolds stopped for time with $(grep -c "" "$out/marks.log") of $planned begun"; exit 1; }
+          [ -n "$spreads" ] || { echo "::error::no unfold reached a spread"; exit 1; }
       - uses: actions/upload-artifact@v4
         if: always()
         with:
