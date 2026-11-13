@@ -321,14 +321,14 @@ final class NavigationPlaceUITests: XCTestCase {
         let before = (app.descendants(matching: .any)["reader.savedPlace"].value as? String) ?? ""
         showChrome()
         contentsTap("Chapter XL")
-        XCTAssertTrue(app.descendants(matching: .any)["reader.loadingHeld"].waitForExistence(timeout: 10), "the chapter's load is held open")
+        XCTAssertTrue(readsUntil(40) { self.app.descendants(matching: .any)["reader.loadingHeld"].exists }, "the chapter's load is held open")
         // He leaves while it is still on its way. The reopen meets CI's starved iPad (gatefold#310): Readium puts it
         // on its file's first page, and the page answers no script past the cover's own bound.
         relaunchExtra = Self.stalledReopen
         leaveAndRelaunch()
         // Judged by places, not words: the place from before the jump is the book's opening, its cover
         // page, which has none, so a reopen there (main's, the red) shows no words to wait for.
-        XCTAssertTrue(app.descendants(matching: .any)["reader.page"].waitForExistence(timeout: 60), "the book reopened")
+        XCTAssertTrue(readsUntil(240) { self.app.descendants(matching: .any)["reader.page"].exists }, "the book reopened")
         // Judged as the cover lifts: the first page he sees is the place kept, not one put right later.
         XCTAssertTrue(pageReady(), "the reopened page showed")
         XCTAssertTrue(keptWhatIsShown(reads: 4), "the reopen shows the place it kept")
@@ -340,8 +340,9 @@ final class NavigationPlaceUITests: XCTestCase {
         // The same jump, to its end: where the chapter he chose is.
         showChrome()
         contentsTap("Chapter XL")
-        sleep(1)
-        XCTAssertTrue(app.descendants(matching: .any)["reader.veil"].waitForNonExistence(timeout: 60), "the jump landed")
+        let veil = app.descendants(matching: .any)["reader.veil"]
+        _ = readsUntil(4) { veil.exists }
+        XCTAssertTrue(readsUntil(240) { !veil.exists }, "the jump landed")
         XCTAssertTrue(keptWhatIsShown(), "the jump kept the page shown")
         let chapter = tag(app.descendants(matching: .any)["reader.savedPlace"])
         print("CONTENTSLEFT before \(before) reopened \(reopened.map { "\($0.0)@\($0.1)" } ?? "none") chapter \(chapter.map { "\($0.0)@\($0.1)" } ?? "none")")
@@ -359,8 +360,8 @@ final class NavigationPlaceUITests: XCTestCase {
         // `Headings.tidy`), alone or followed by its page number, and "Chapter XL" also starts XLI to XLIX.
         let row = app.buttons.matching(NSPredicate(format: "label ==[c] %@ OR label BEGINSWITH[c] %@ OR label BEGINSWITH[c] %@", title, title + ",", title + " ")).firstMatch
         // Contents opens scrolled to the chapter he is in, so any chapter row shows it opened.
-        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label BEGINSWITH[c] %@", "Chapter ")).firstMatch.waitForExistence(timeout: 10),
-                      "the contents opened")
+        let anyChapter = app.buttons.matching(NSPredicate(format: "label BEGINSWITH[c] %@", "Chapter ")).firstMatch
+        XCTAssertTrue(readsUntil(40) { anyChapter.exists }, "the contents opened")
         // Chapter XL is further down the list than XXX, which 20 slow swipes reach; opened past it, swipe back.
         for _ in 0..<40 where !(row.exists && row.isHittable) { app.swipeUp(velocity: .slow) }
         for _ in 0..<40 where !(row.exists && row.isHittable) { app.swipeDown(velocity: .slow) }
@@ -397,11 +398,18 @@ final class NavigationPlaceUITests: XCTestCase {
     /// Reads (at least 0.25 s apart) until the reader reports its page shown: 1200, past the cover's longest hold.
     private func pageReady(reads: Int = 1200) -> Bool {
         let ready = app.descendants(matching: .any)["reader.pageReady"]
+        return readsUntil(reads) { (ready.value as? String) == "1" }
+    }
+
+    /// Judged in reads, one every 0.25 s, never a timeout in seconds; a hang guard sized from the reads stops a stuck query.
+    private func readsUntil(_ reads: Int, _ done: () -> Bool) -> Bool {
+        let hung = Date().addingTimeInterval(HangGuard.seconds(reads: reads))
         for _ in 0..<reads {
-            if (ready.value as? String) == "1" { return true }
+            if done() { return true }
+            if Date() > hung { return false }
             RunLoop.current.run(until: Date().addingTimeInterval(0.25))
         }
-        return false
+        return done()
     }
 
     /// The review's path on the iPad spread: his place is saved (a turn there and back), he closes the
