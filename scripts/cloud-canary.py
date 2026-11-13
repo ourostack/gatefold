@@ -2,14 +2,16 @@
 """CI only: judge a cloud canary run and report it (gatefold#372).
 
     python3 -I scripts/cloud-canary.py report --log <canary log> --outcome <success|failure> \
-        --state-in <previous state.json or missing> --state-out <state.json>
+        --state-in <previous state.json or missing> --state-out <state.json> [--capture <dir>] [--fixtures <dir>]
     python3 -I scripts/cloud-canary.py --selftest
 
 The canary test (LiveCanaryTests) logs one `CANARY <step> ok|FAILED|INCONCLUSIVE` line per step. Verdicts:
 
 - green: every step ran and passed. Comments once on an open `cloud-drift` issue that it is green again,
   and closes an open `canary-lockout` issue.
-- drift: a step failed. Opens, or comments on, the one open `cloud-drift` issue with the redacted steps.
+- drift: a step failed. Opens, or comments on, the one open `cloud-drift` issue with the redacted steps,
+  every refused exchange from the capture (RecordingTransport) and how each answer's shape differs from
+  the unit-test fixture recorded for it: fields gone, new, or changed in type or format.
   A coding agent acts on every cloud-drift issue, so nothing but a real failed step lands there.
 - inconclusive: the cloud's login limit (429) stopped sign-in, so the run couldn't check anything. No
   cloud-drift issue; the job summary says so with the retry time. Only when sign-in has been refused this
@@ -66,7 +68,110 @@ def parse_iso(text):
     return datetime.strptime(text, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
 
 
-def judge(log, outcome, state, now):
+FIXTURES = {  # live path (after /api/vX.Y) -> the unit-test fixture recorded for it
+    r"/auth/login": "auth-providers.json",
+    r"/auth/login/[^/]+": "auth-token.json",
+    r"/books": "books-page.json",
+    r"/fileops/info/?": "fileops-info.json",
+    r"/user": "user.json",
+    r"/notes": "notes-list.json",
+}
+WILD = {"redacted", "null"}
+
+
+def kind(value):
+    """A value's class: enough to see a field change type or format (November's md5_hash did)."""
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "bool"
+    if isinstance(value, (int, float)):
+        return "number"
+    if isinstance(value, str):
+        if value.startswith("<redacted") or value in ("<email>", "REDACTED"):
+            return "redacted"
+        if re.fullmatch(r"[0-9a-f]{32}", value):
+            return "hex32"
+        if re.fullmatch(r"\d{4}-\d\d-\d\dT[\d:.]+(Z|[+-]\d\d:?\d\d)?", value):
+            return "date"
+        if value.startswith(("http://", "https://")):
+            return "url"
+        if len(value) >= 8 and len(value) % 4 == 0 and re.fullmatch(r"[A-Za-z0-9+/]+={0,2}", value):
+            try:
+                import base64
+                return "base64-md5" if len(base64.b64decode(value)) == 16 else "base64"
+            except ValueError:
+                pass
+        return "string"
+    return type(value).__name__
+
+
+def shape(value, prefix="", out=None):
+    """{field path: set of classes}, with arrays' elements merged under `[]`."""
+    out = {} if out is None else out
+    if isinstance(value, dict):
+        out.setdefault(prefix or ".", set()).add("object")
+        for k, v in value.items():
+            shape(v, f"{prefix}.{k}" if prefix else k, out)
+    elif isinstance(value, list):
+        out.setdefault(prefix or ".", set()).add("array")
+        for v in value:
+            shape(v, prefix + "[]", out)
+    else:
+        out.setdefault(prefix or ".", set()).add(kind(value))
+    return out
+
+
+def compare(fixture, live):
+    """Lines describing how the live answer's shape differs from the fixture's."""
+    a, b = shape(fixture), shape(live)
+    lines = [f"- missing now: `{k}` (fixture: {', '.join(sorted(a[k]))})" for k in sorted(a.keys() - b.keys())]
+    lines += [f"- new: `{k}` ({', '.join(sorted(b[k]))})" for k in sorted(b.keys() - a.keys())]
+    for k in sorted(a.keys() & b.keys()):
+        fa, fb = a[k] - WILD, b[k] - WILD
+        if fa and fb and not fa & fb:
+            lines.append(f"- changed: `{k}` was {', '.join(sorted(fa))}, now {', '.join(sorted(fb))}")
+    return lines
+
+
+def capture_diff(capture_dir, fixtures_dir):
+    """Markdown: every refused exchange, and each answer whose shape differs from its fixture."""
+    if not capture_dir or not os.path.isdir(capture_dir):
+        return ""
+    out, seen = [], set()
+    for name in sorted(os.listdir(capture_dir)):
+        if not name.endswith(".json"):
+            continue
+        try:
+            entry = json.load(open(os.path.join(capture_dir, name)))
+        except ValueError:
+            continue
+        path = re.sub(r"^/api/v[\d.]+", "", entry.get("path", ""))
+        status = entry.get("status")
+        call = f"{entry.get('method')} {entry.get('path')}"
+        if entry.get("query"):
+            call += "?" + "&".join(f"{k}={v}" for k, v in sorted(entry["query"].items()))
+        if status is None or status >= 400:
+            said = json.dumps(entry.get("body")) if "body" in entry else entry.get("text", "")
+            out.append(f"- `{call}` -> {status if status is not None else 'no answer'}: `{redact(str(said))[:300]}`")
+            continue
+        fixture = next((f for p, f in FIXTURES.items() if re.fullmatch(p, path)), None)
+        if not fixture or fixture in seen or "body" not in entry or entry.get("method") != "GET" and fixture != "auth-token.json":
+            continue
+        fixture_path = os.path.join(fixtures_dir, fixture)
+        if not os.path.exists(fixture_path):
+            continue
+        seen.add(fixture)
+        lines = compare(json.load(open(fixture_path)), entry["body"])
+        if lines:
+            out.append(f"- `{call}` -> {status}, differs from `{fixture}`:")
+            out += ["  " + l for l in lines[:40]]
+    if not out:
+        return ""
+    return "Live answers against the fixtures (redacted):\n\n" + "\n".join(out)
+
+
+def judge(log, outcome, state, now, diff=""):
     """Pure: the verdict, the summary, the new state, and what to do with issues."""
     lines = steps(log)
     locked = next((l for l in lines if "CANARY INCONCLUSIVE" in l), None)
@@ -96,8 +201,9 @@ def judge(log, outcome, state, now):
                     "summary": "### Broken: the canary never ran\n\nNo step lines in the log: the build or the runner "
                                "failed first. Nothing is known about the cloud, so no issue is opened."}
         body = "\n".join(lines)
-        return {"verdict": "drift", "state": state, "lockout": None, "green": False, "drift": body,
-                "summary": f"### Red: PocketBook Cloud drifted\n\n```\n{body}\n```"}
+        extra = f"\n\n{diff}" if diff else ""
+        return {"verdict": "drift", "state": state, "lockout": None, "green": False, "drift": body, "diff": diff,
+                "summary": f"### Red: PocketBook Cloud drifted\n\n```\n{body}\n```{extra}"}
     return {"verdict": "green", "state": state, "drift": None, "lockout": None, "green": True,
             "summary": "### Green: the cloud's basics work\n\n```\n" + "\n".join(lines) + "\n```"}
 
@@ -118,6 +224,8 @@ def act(result, run_url):
                         "-R", os.environ["GITHUB_REPOSITORY"]], capture_output=True)
     if result["drift"]:
         body = f"The cloud canary went red: {run_url}\n\nSteps:\n```\n{result['drift']}\n```\n"
+        if result.get("diff"):
+            body += f"\n{result['diff']}\n\nThe redacted exchanges are the run's `canary-capture` artifact.\n"
         issue = open_issue(DRIFT)
         if issue:
             gh("issue", "comment", issue, "--body", body)
@@ -150,7 +258,8 @@ def report(argv, now=None):
     log_path, state_in = arg(argv, "--log"), arg(argv, "--state-in")
     log = open(log_path, encoding="utf-8", errors="replace").read() if log_path and os.path.exists(log_path) else ""
     state = json.load(open(state_in)) if state_in and os.path.exists(state_in) else {}
-    result = judge(log, arg(argv, "--outcome", "failure"), state, now)
+    diff = capture_diff(arg(argv, "--capture"), arg(argv, "--fixtures", "Packages/GatefoldCloud/Tests/GatefoldCloudTests/Fixtures"))
+    result = judge(log, arg(argv, "--outcome", "failure"), state, now, diff)
     with open(arg(argv, "--state-out"), "w") as f:
         json.dump(result["state"], f)
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
@@ -205,6 +314,31 @@ def selftest():
 
     assert next_run(datetime(2026, 11, 13, 18, 17, tzinfo=timezone.utc)) == datetime(2026, 11, 14, 0, 17, tzinfo=timezone.utc)
     assert next_run(datetime(2026, 11, 13, 23, 59, tzinfo=timezone.utc)) == datetime(2026, 11, 14, 0, 17, tzinfo=timezone.utc)
+    # Capture on red: November 2026's md5_hash (base64 of the fast_hash) and the position that moved
+    # behind include_metadata both show, and so does the refused write, all without secrets.
+    import tempfile
+    with tempfile.TemporaryDirectory() as root:
+        fixtures, capture = os.path.join(root, "fx"), os.path.join(root, "cap")
+        os.makedirs(fixtures); os.makedirs(capture)
+        json.dump({"fast_hash": "56f8619536655be4a1541a40c5702d32", "md5_hash": "HpCKqamClMQ9Aai870mKVQ==",
+                   "bytes": 440131, "position": {"offs": 3}, "download_link": "https://x/y?signature=s"},
+                  open(os.path.join(fixtures, "fileops-info.json"), "w"))
+        json.dump({"method": "GET", "path": "/api/v1.1/fileops/info/", "query": {"fast_hash": "56f8"}, "status": 200,
+                   "body": {"fast_hash": "56f8619536655be4a1541a40c5702d32", "bytes": 440131,
+                            "md5_hash": "NTZmODYxOTUzNjY1NWJlNGExNTQxYTQwYzU3MDJkMzI=",
+                            "download_link": "https://x/y?signature=<redacted>", "mime": "application/epub+zip"}},
+                  open(os.path.join(capture, "001-GET-api_v1.1_fileops_info.json"), "w"))
+        json.dump({"method": "POST", "path": "/api/v1.1/books/read-position", "query": {"fast_hash": "56f8"}, "status": 422,
+                   "body": {"error_code": 0, "error_msg": "position: File not found. a@b.com"}},
+                  open(os.path.join(capture, "002-POST-api_v1.1_books_read-position.json"), "w"))
+        diff = capture_diff(capture, fixtures)
+        assert "changed: `md5_hash` was base64-md5, now base64" in diff, diff
+        assert "missing now: `position`" in diff and "new: `mime`" in diff, diff
+        assert "-> 422" in diff and "File not found" in diff and "a@b.com" not in diff, diff
+        assert "download_link" not in diff, "a URL field that only lost its signature is not a change"
+        r = judge(ok + "LIVE CANARY position read: a place is there FAILED: no position\n", "failure", {}, now, diff)
+        assert r["verdict"] == "drift" and "base64-md5" in r["summary"]
+        assert capture_diff(os.path.join(root, "none"), fixtures) == ""
     print("cloud-canary selftest ok")
     return 0
 
