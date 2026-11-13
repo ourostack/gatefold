@@ -486,9 +486,10 @@ jobs:
             timeout: 59 # 30 + 2 x 8.2 + 12
             lane: 10
           - shard: ipad-taps-rest
-            # The catch-all for new Fine-Tune tests: 183, and margin taps on a fresh spread (gatefold#304; no pass on main yet)
+            # The catch-all for new Fine-Tune tests: 183, margin taps on a fresh spread (gatefold#304), and taps after
+            # swipes on a book opened from the shelf (gatefold#321; no pass on main yet)
             tests: >-
-              FineTuneTapUITests MarginTapUITests
+              FineTuneTapUITests MarginTapUITests SwallowedTapUITests
             skip: >-
               FineTuneTapUITests/testAQuickTouchChangesEverySwitchOnce FineTuneTapUITests/testATapOnTheRowsNameChangesItsSwitch FineTuneTapUITests/testEveryTapFlipsJustifyPortrait FineTuneTapUITests/testEveryTapFlipsPageNumbersPortrait FineTuneTapUITests/testEveryTapFlipsPositionLabelPortrait FineTuneTapUITests/testEveryTapFlipsPagesLeftPortrait FineTuneTapUITests/testEveryTapFlipsJustifyLandscape FineTuneTapUITests/testEveryTapFlipsPageNumbersLandscape FineTuneTapUITests/testEveryTapFlipsPositionLabelLandscape FineTuneTapUITests/testEveryTapFlipsPagesLeftLandscape
             pr_tests: none

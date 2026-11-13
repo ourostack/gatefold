@@ -26,6 +26,8 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     private let curl = CurlModel()
     private lazy var curlHost = UIHostingController(rootView: CurlOverlay(model: curl))
     private var observers: [Any] = []
+    /// Taps on the page, told by the glass when a finger comes down alone (gatefold#321).
+    private lazy var pageTaps = PageTapObserver { [weak self] event in self?.handleTap(at: event.location) ?? false }
 
     private var lastSize: CGSize = .zero
     private var reflowTask: Task<Void, Never>?
@@ -119,7 +121,9 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
 
         // Any touch on the page means the next location is the reader's own (slide and scroll swipes
         // belong to Readium, so they're noticed here rather than in the pan handler).
-        let noticer = TouchNoticer(onTouch: { [weak self] in
+        let noticer = TouchNoticer(onTouch: { [weak self] alone in
+            // A finger down with no other on the glass: no finger the page still waits on is down.
+            if alone { self?.pageTaps.aloneOnTheGlass() }
             // Web views loaded since the last location change bring their own scroll pans; switch them
             // off before this touch can drag the page sideways under the curl.
             self?.disablePanningIfNeeded()
@@ -153,7 +157,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         navigator.delegate = self
         if let noticer { navigator.view.addGestureRecognizer(noticer) }
         observers = [
-            navigator.addObserver(.tap { [weak self] event in self?.handleTap(at: event.location) ?? false }),
+            navigator.addObserver(pageTaps),
             navigator.addObserver(.key(.arrowRight) { [weak self] in self?.turn(forward: true) ?? false }),
             navigator.addObserver(.key(.arrowLeft) { [weak self] in self?.turn(forward: false) ?? false }),
             navigator.addObserver(.key(.space) { [weak self] in self?.turn(forward: true) ?? false }),
@@ -2776,15 +2780,44 @@ struct ReaderHostView: UIViewControllerRepresentable {
     func updateUIViewController(_ controller: ReaderHostController, context: Context) {}
 }
 
+/// Readium's tap, with a memory that a fresh touch can clear. Readium's own waited for ever on a
+/// finger whose web view went away before it reported lifting, and no tap was answered again (gatefold#321).
+@MainActor private final class PageTapObserver: InputObserving {
+    private var tracker = TapTracker<AnyHashable>()
+    private let onTap: @MainActor (PointerEvent) async -> Bool
+
+    init(onTap: @escaping @MainActor (PointerEvent) async -> Bool) {
+        self.onTap = onTap
+    }
+
+    func aloneOnTheGlass() { tracker.aloneOnTheGlass() }
+
+    func didReceive(_ event: PointerEvent) async -> Bool {
+        // Taps only: a mouse or trackpad click is Readium's, as it was with `.tap`.
+        guard event.pointer.type == .touch else { return false }
+        let phase: TapTracker<AnyHashable>.Phase = switch event.phase {
+        case .down: .down
+        case .move: .move
+        case .up: .up
+        case .cancel: .cancel
+        }
+        guard tracker.receive(phase, id: event.pointer.id, at: event.location) else { return false }
+        return await onTap(event)
+    }
+
+    func didReceive(_ event: KeyEvent) async -> Bool { false }
+}
+
 /// Reports that a touch began, then steps aside without claiming it.
 private final class TouchNoticer: UIGestureRecognizer {
-    private let onTouch: () -> Void
+    /// Called with true when no other finger is on the glass.
+    private let onTouch: (Bool) -> Void
     private let onDrag: () -> Void
     /// The first finger down and where it went down, until it travels far enough to be a drag (a tap
     /// never does). Only that finger is measured: two fingers apart are no drag.
     private var first: (touch: UITouch, at: CGPoint)?
 
-    init(onTouch: @escaping () -> Void, onDrag: @escaping () -> Void) {
+    init(onTouch: @escaping (Bool) -> Void, onDrag: @escaping () -> Void) {
         self.onTouch = onTouch
         self.onDrag = onDrag
         super.init(target: nil, action: nil)
@@ -2794,7 +2827,8 @@ private final class TouchNoticer: UIGestureRecognizer {
     }
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
-        onTouch()
+        let down = event.allTouches?.filter { $0.phase != .ended && $0.phase != .cancelled }.count ?? touches.count
+        onTouch(down <= touches.count)
         if first == nil, let touch = touches.first { first = (touch, touch.location(in: view)) }
     }
 
