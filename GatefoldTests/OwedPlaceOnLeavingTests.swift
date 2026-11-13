@@ -332,8 +332,9 @@ import Testing
         let (model, read, his, saved) = try await stalledAfterATurn("shown-late") { stub = $0 }
         let page = try #require(stub)
         let p = try #require(read.locations.progression)
+        try #require(p > 0.02 && p < 0.96, "his page sits far enough into its file for a spread around it")
         // His kept page's start sits inside the spread on screen, not at its start.
-        let screen = max(0, p - 0.02)...min(1, p + 0.04)
+        let screen = (p - 0.02)...(p + 0.04)
         try #require(model.reflowShownUnsettled(read.copy(text: { $0 = Locator.Text() })) != nil)
         page.spanNow = screen
         model.close()
@@ -343,6 +344,27 @@ import Testing
                 "kept at in-file \(at), not on the page on screen (\(screen.lowerBound)..\(screen.upperBound))")
         #expect(at != p, "kept at Readium's stale name, his kept place, not the page on screen")
         #expect(left.text.highlight != his, "the stale name took his words to a page that doesn't start with them")
+    }
+
+    /// The app going inactive, then the book closed: the first leave reads the screen, and the second keeps
+    /// that same place, never reading it again nor giving it his words.
+    @Test func aSecondLeaveKeepsThePlaceTheFirstReadFromTheScreen() async throws {
+        var stub: TwoStepJumpPage?
+        let (model, read, his, saved) = try await stalledAfterATurn("shown-late-twice") { stub = $0 }
+        let page = try #require(stub)
+        let p = try #require(read.locations.progression)
+        try #require(p > 0.02 && p < 0.96, "his page sits far enough into its file for a spread around it")
+        try #require(model.reflowShownUnsettled(read.copy(text: { $0 = Locator.Text() })) != nil)
+        let screen = (p - 0.02)...(p + 0.04)
+        page.spanNow = screen
+        let first = try #require(model.owedPlaceOnLeaving(), "the inactive leave owed no place")
+        model.keepShownPageNow(first)
+        page.spanNow = (p + 0.1)...min(1, p + 0.16)
+        model.close()
+        let left = try #require(saved(), "leaving kept no place")
+        #expect(left.locations.progression == first.locations.progression,
+                "the close kept \(left.locations.progression ?? -1), not the place the first leave read (\(first.locations.progression ?? -1))")
+        #expect(left.text.highlight != his, "the second leave gave the page his words")
     }
 
     /// The span read as he leaves starts at his kept place: it is his kept page after all, and his words

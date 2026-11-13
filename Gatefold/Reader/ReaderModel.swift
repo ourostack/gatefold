@@ -2194,8 +2194,11 @@ final class ReaderModel {
     /// (gatefold#346, CI 43321734349 and 43370826599). The span is native, so it answers while the page's
     /// scripts wait on the restore. Unread now too, Readium's name stands, as before.
     private func shownOnLeavingReadNow() -> Locator? {
-        guard let shown = shownOnLeaving, let note = shownUnsettled, !note.measured, shown.text.highlight == nil,
-              let span = page?.spanOnScreenNow(of: shown) else { return shownOnLeaving }
+        guard let shown = shownOnLeaving, let note = shownUnsettled, !note.measured, shown.text.highlight == nil else { return shownOnLeaving }
+        guard let span = page?.spanOnScreenNow(of: shown) else {
+            readerLog.notice("reflow: the page shown unsettled, unread at the watchdog, is still unread as he leaves; Readium's name stands")
+            return shown
+        }
         let here = pageOnScreen(shown, span)
         shownUnsettled = (here, note.move, true)
         readerLog.notice("reflow: the page shown unsettled, unread at the watchdog, read from the screen as he leaves at \(here.locations.totalProgression ?? -1, privacy: .public)")

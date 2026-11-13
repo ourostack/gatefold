@@ -383,7 +383,8 @@ jobs:
             lane: 7
           - shard: ipad-rotate-chapter-start
             # Main only, like ipad-rotate-stalled (gatefold#250), and the two leaves whose span is read late
-            # (gatefold#346). Three runs of about the slowest red's 415 s (job 131724413822): 20.8 min
+            # (gatefold#346; the ordinary-reopen one is here for the budget, ipad-rotate-restore is full).
+            # Three tests of about the slowest red's 415 s each (job 131724413822): 20.8 min
             tests: >-
               RotationRepro/testRotateThenLeaveWithoutItsWordsAndReopenOnTheChapterStart
               RotationRepro/testRotateThenLeaveWithItsSpanReadLateAndReopenOnTheChapterStart

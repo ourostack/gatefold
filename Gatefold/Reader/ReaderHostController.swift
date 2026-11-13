@@ -587,8 +587,13 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     /// so it answers while the page's scripts wait on a stalled restore (gatefold#276). Nil unless the web
     /// view most on screen holds that very chapter, paginated left to right.
     private func spanOnScreen(of named: Locator) -> ClosedRange<Double>? {
+        // Each way it goes unread is logged: a leave that keeps Readium's name instead says why (gatefold#346).
+        func unread(_ why: String) -> ClosedRange<Double>? {
+            readerLog.notice("reflow: the page's span on screen unread: \(why, privacy: .public)")
+            return nil
+        }
         guard let host = navigator.view, navigator.settings.readingProgression == .ltr,
-              !navigator.settings.verticalText else { return nil }
+              !navigator.settings.verticalText else { return unread("not a left-to-right paginated page") }
         var best: (web: WKWebView, area: CGFloat)?
         func walk(_ v: UIView) {
             if let web = v as? WKWebView {
@@ -600,20 +605,24 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             v.subviews.forEach(walk)
         }
         walk(host)
-        guard let web = best?.web, let file = web.url?.lastPathComponent, !file.isEmpty,
+        guard let web = best?.web else { return unread("no web view on screen") }
+        guard let file = web.url?.lastPathComponent, !file.isEmpty,
               (named.href.string.components(separatedBy: "#").first ?? "").removingPercentEncoding?
-                .split(separator: "/").last.map(String.init) == file else { return nil }
+                .split(separator: "/").last.map(String.init) == file else {
+            return unread("the web view most on screen holds \(web.url?.lastPathComponent ?? "no file"), not the chapter named")
+        }
         let scroll = web.scrollView
         let total = scroll.contentSize.width, view = scroll.bounds.width
         let offset = scroll.contentOffset.x + scroll.adjustedContentInset.left
-        guard total > 0, view > 0, total >= view else { return nil }
+        guard total > 0, view > 0, total >= view else { return unread("not laid out (content \(total) wide, view \(view))") }
         let first = max(0, min(1, offset / total))
         let last = max(first, min(1, (offset + view) / total))
         return last > first ? Double(first)...Double(last) : nil
     }
 
-    /// `spanOnScreen`, for a leave whose watchdog note couldn't read it (gatefold#346). Unread under the test
-    /// hook that names the place, which stands for a page never read from the screen at all.
+    /// `spanOnScreen`, for a leave whose watchdog note couldn't read it (gatefold#346). Unread under
+    /// `LaunchOptions.shownPageAtHisPlace`, which stands for a page never read from the screen at all; not under
+    /// `shownSpanLate`, whose span goes unread only at the watchdog.
     func spanOnScreenNow(of named: Locator) -> ClosedRange<Double>? {
         LaunchOptions.shownPageAtHisPlace ? nil : spanOnScreen(of: named)
     }
