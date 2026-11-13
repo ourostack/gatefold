@@ -333,7 +333,8 @@ jobs:
             timeout: 54 # 30 + 2 x 5.7 + 12
             lane: 11
           - shard: ipad-rotate-midturn
-            # Rotation: 182 + 160, then on main the rotate-then-leave repro, 545, after the mid-turn tests as #167 runs
+            # Rotation: 182 + 160, the cold turn on its side and back (#302: 229 + 205 in probe 43288337838), then on
+            # main the rotate-then-leave repro, 545, after the mid-turn tests as #167 runs
             # it. On today's main the repro passes with #176's fix taken out in every order tried (#193), so never give
             # it a shard of its own until #193 is fixed. On a pull request only the mid-turn tests run, unless it
             # touches the reader's place code.
@@ -347,7 +348,7 @@ jobs:
             # On a pull request: Place kept through a jump and a rotation (#130), on place changes (359 s).
             pr_when: place-jumps
             cold: true
-            timeout: 79 # 30 + 2 x 18.1 + 12
+            timeout: 93 # 30 + 2 x 25.4 + 12
             lane: 6
           - shard: ipad-rotate-stalled
             # Main only: 470 (#266's probe 43110085155, the slowest of 3 passes)
