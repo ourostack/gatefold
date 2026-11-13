@@ -612,6 +612,12 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         return last > first ? Double(first)...Double(last) : nil
     }
 
+    /// `spanOnScreen`, for a leave whose watchdog note couldn't read it (gatefold#346). Unread under the test
+    /// hook that names the place, which stands for a page never read from the screen at all.
+    func spanOnScreenNow(of named: Locator) -> ClosedRange<Double>? {
+        LaunchOptions.shownPageAtHisPlace ? nil : spanOnScreen(of: named)
+    }
+
     private static func firstWebView(in view: UIView) -> WKWebView? {
         if let web = view as? WKWebView { return web }
         for sub in view.subviews { if let web = firstWebView(in: sub) { return web } }
@@ -937,9 +943,10 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     /// restore is waiting on), so a leave before the restore ends keeps it (gatefold#133).
     private func noteShownUnsettled() {
         guard let model = weakModel, let named = navigator.currentLocation else { return }
-        let here = LaunchOptions.shownPageAtHisPlace ? (model.keptPlace.map { $0.copy(text: { $0 = Locator.Text() }) } ?? named) : named
-        // Read from the screen, never Readium (whose reports wait on the stalled page), unless the test hook names the place.
-        let note = model.reflowShownUnsettled(here, onScreen: LaunchOptions.shownPageAtHisPlace ? nil : spanOnScreen(of: named))
+        let stale = LaunchOptions.shownPageAtHisPlace || LaunchOptions.shownSpanLate
+        let here = stale ? (model.keptPlace.map { $0.copy(text: { $0 = Locator.Text() }) } ?? named) : named
+        // Read from the screen, never Readium (whose reports wait on the stalled page), unless a test hook names the place.
+        let note = model.reflowShownUnsettled(here, onScreen: stale ? nil : spanOnScreen(of: named))
         guard note != nil, !LaunchOptions.shownPageWithoutWords else { return }
         // The watchdog starts the restore again right after this: the model takes the words only while
         // this very note stands (a settle, a new reflow or a newer note drops it).

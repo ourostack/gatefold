@@ -362,6 +362,8 @@ jobs:
               RotationRepro/testRotateThenLeaveWhileTheRestoreWaitsOnItsPageWithoutItsWords
               RotationRepro/testRotateThenLeaveWhileTheRestoreWaitsOnHisKeptPlaceWithoutItsWords
               RotationRepro/testRotateThenLeaveWithoutItsWordsAndReopenOnTheChapterStart
+              RotationRepro/testRotateThenLeaveWithItsSpanReadLateAndReopenOnTheChapterStart
+              RotationRepro/testRotateThenLeaveWhileTheRestoreWaitsWithItsSpanReadLate
             pr_tests: none
             cold: true
             timeout: 58 # 30 + 2 x 7.8 + 12
@@ -380,13 +382,16 @@ jobs:
             timeout: 79 # 30 + 2 x 18.5 + 12
             lane: 7
           - shard: ipad-rotate-chapter-start
-            # Main only, like ipad-rotate-stalled (gatefold#250)
+            # Main only, like ipad-rotate-stalled (gatefold#250), and the two leaves whose span is read late
+            # (gatefold#346). Three runs of about the slowest red's 415 s (job 131724413822): 20.8 min
             tests: >-
               RotationRepro/testRotateThenLeaveWithoutItsWordsAndReopenOnTheChapterStart
+              RotationRepro/testRotateThenLeaveWithItsSpanReadLateAndReopenOnTheChapterStart
+              RotationRepro/testRotateThenLeaveWhileTheRestoreWaitsWithItsSpanReadLate
             skip: ""
             pr_tests: none
             cold: true
-            timeout: 54 # 30 + 2 x 5.8 + 12
+            timeout: 84 # 30 + 2 x 20.8 + 12
             lane: 17
     uses: ./.github/workflows/ui-tests.yml
     with:

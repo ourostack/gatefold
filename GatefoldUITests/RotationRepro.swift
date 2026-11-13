@@ -162,6 +162,20 @@ final class RotationRepro: XCTestCase {
                             reopenExtra: ["-GatefoldReopenOnChapterStart", "YES"])
     }
 
+    /// gatefold#346 (CI 43321734349 and 43370826599): at the watchdog the page's span on screen went unread and
+    /// Readium still named his kept place from before the rotation (`-GatefoldShownSpanLate`). That stale name
+    /// took his words, and the chapter-start reopen opened on his portrait page, every round. The leave reads
+    /// the screen, and the reopen comes back to the spread he saw.
+    func testRotateThenLeaveWithItsSpanReadLateAndReopenOnTheChapterStart() throws {
+        try rotateThenLeave(extra: Self.slowRestore + Self.spanLate, reopenExtra: ["-GatefoldReopenOnChapterStart", "YES"])
+    }
+
+    /// The same stale, unread note with the ordinary reopen, as in the restore tests: the page he saw.
+    func testRotateThenLeaveWhileTheRestoreWaitsWithItsSpanReadLate() throws {
+        try rotateThenLeave(extra: Self.slowRestore + Self.spanLate, countBeforeJump: false)
+    }
+
+    private static let spanLate = ["-GatefoldShownPageWithoutWords", "YES", "-GatefoldShownSpanLate", "YES"]
     private static let slowRestore = ["-GatefoldSlowRestorePage", "YES"]
 
     /// `countBeforeJump`: the book is counted before the Contents jump, as in the first repro; otherwise
