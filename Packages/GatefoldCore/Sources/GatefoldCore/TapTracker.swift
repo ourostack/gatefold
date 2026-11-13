@@ -45,7 +45,8 @@ public struct TapTracker<ID: Hashable> {
                 // A finger already gone moving is a late report; one still down makes two fingers.
                 if !alone { state = .failed(waiting: [current, id]) }
             } else if abs(last.x - point.x) > Self.slop || abs(last.y - point.y) > Self.slop {
-                state = .failed(waiting: [current])
+                // A finger already thought gone that drags is a late report: nothing waits on it.
+                state = alone ? .idle : .failed(waiting: [current])
             } else {
                 state = .recognizing(id: current, last: point, alone: alone)
             }
@@ -65,8 +66,10 @@ public struct TapTracker<ID: Hashable> {
     }
 
     /// A finger came down with no other on the glass: any finger still waiting to lift is one whose
-    /// page went away under it. A touch being recognized may be this new finger, its down reported
-    /// first, so it is kept; but a different finger's down next starts afresh instead of failing.
+    /// page went away under it. The glass says so before the page reports the new finger down (UIKit
+    /// runs gesture recognizers as it sends the touch; the page's reports come later, through a task),
+    /// so a touch still being recognized is an old one: kept, should its lift still come, but a
+    /// different finger's down next starts afresh instead of failing.
     public mutating func aloneOnTheGlass() {
         switch state {
         case .failed: state = .idle

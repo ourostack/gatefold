@@ -98,4 +98,13 @@ import Testing
         #expect(!up)
         #expect(Self.touch(&taps, id: 2))
     }
+
+    /// A late drag from the finger already thought gone leaves nothing waiting.
+    @Test func aLateDragFromAGoneFingerKeepsNothingWaiting() {
+        var taps = TapTracker<Int>()
+        _ = taps.receive(.down, id: 188, at: CGPoint(x: 708, y: 676))
+        taps.aloneOnTheGlass()
+        _ = taps.receive(.move, id: 188, at: CGPoint(x: 600, y: 676))
+        #expect(Self.touch(&taps, id: 193))
+    }
 }

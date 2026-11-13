@@ -93,10 +93,15 @@ final class SwallowedTapUITests: XCTestCase {
         app.buttons["reader.contents"].firstMatch.tap()
         let rows = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH 'contents.entry.'"))
         XCTAssertTrue(readsUntil(reads: Self.reads, "the contents list is up") { rows.firstMatch.exists }.ok, "the contents list is up")
+        let shown = el("reader.shownPlace")
+        let placeBefore = shown.value as? String
         let row = ContentsRow.tap(app.buttons["contents.entry.11"], in: app)
         XCTAssertTrue(row.ok, "contents entry 11 came into view (not in \(row.drags) drags)")
         let veil = el("reader.veil")
-        let landedJump = readsUntil(reads: Self.reads, "the jump lands") { !rows.firstMatch.exists && !veil.exists && (probe.value as? String) == "1" }
+        let landedJump = readsUntil(reads: Self.reads, "the jump lands") {
+            // The place shown has moved (the veil may not be up yet when the list goes), and the veil is gone.
+            !rows.firstMatch.exists && (shown.value as? String) != placeBefore && !veil.exists && (probe.value as? String) == "1"
+        }
         print("SWALLOWED jump landed=\(landedJump.ok) after \(landedJump.reads) reads")
         XCTAssertTrue(landedJump.ok, "the jump lands")
         if close.exists { at(0.5, 0.5).tap(); _ = readsUntil(reads: Self.reads, "the controls go") { !close.exists } }
