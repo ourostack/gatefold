@@ -21,6 +21,18 @@ final class LibraryStore {
     private(set) var lastSynced: Date? {
         didSet { UserDefaults.standard.set(lastSynced, forKey: Self.lastSyncedKey) }
     }
+    /// Books whose last place read here the Cloud turned away, so the e-reader never got it. While any
+    /// remain, the shelf says so instead of "In step with your e-reader". Kept across launches.
+    private(set) var placesNotSent: Set<String> = [] {
+        didSet { try? JSONEncoder().encode(placesNotSent.sorted()).write(to: placesNotSentURL) }
+    }
+    var placesReachEReader: Bool { placesNotSent.isEmpty }
+    static let placesNotSentLine = "Places read here aren't reaching your e-reader. The cloud is turning them away."
+    private var placesNotSentURL: URL { root.appending(path: "places-not-sent.json") }
+
+    func placeRefused(_ fastHash: String) { placesNotSent.insert(fastHash) }
+    func placeSent(_ fastHash: String) { if placesNotSent.contains(fastHash) { placesNotSent.remove(fastHash) } }
+
     /// The last Cloud fetch came back with no books at all: only then is an empty shelf really empty.
     private(set) var cloudIsEmpty = false
     /// Covers that couldn't be fetched: these books wear a typeset cover. Every other book without its
@@ -44,6 +56,9 @@ final class LibraryStore {
         try? FileManager.default.createDirectory(at: booksDir, withIntermediateDirectories: true)
         try? FileManager.default.createDirectory(at: coversDir, withIntermediateDirectories: true)
         load()
+        if let data = try? Data(contentsOf: placesNotSentURL), let saved = try? JSONDecoder().decode([String].self, from: data) {
+            placesNotSent = Set(saved)
+        }
     }
 
     static var defaultRoot: URL {
