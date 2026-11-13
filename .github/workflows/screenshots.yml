@@ -267,7 +267,7 @@ jobs:
                     -resultBundlePath "$RUNNER_TEMP/results/$pass-$scene-$try.xcresult" > "$log" 2>&1
                 code=$?
                 # Only these lines reach the (public) artifact: the full log and the result bundle can carry page text.
-                grep -E "Test Case .*(passed|failed)|ListingShotsUITests.swift:[0-9]+: error|ListingShots timing:" "$log" \
+                grep -E "Test Case .*(passed|failed)|ListingShotsUITests.swift:[0-9]+: error|ListingShots (timing|reads):" "$log" \
                   | sed "s/^/$pass $scene #$try: /" | tee -a "$RUNNER_TEMP/logs/tests.log" || true
                 [ "$code" = 0 ] && [ -f "$dir/$scene.$try.done" ] && break
                 if [ -f "$dir/$scene.$try.stuck" ]; then

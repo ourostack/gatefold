@@ -47,26 +47,40 @@ final class ListingShotsUITests: XCTestCase {
         defer { app.terminate() }
 
         let ready = scene["ready"] as? [String: String] ?? [:]
-        // A query by element type and identifier, never the whole tree: the reader's web views make a whole-tree
-        // snapshot slow enough to time out on a busy runner (gatefold#28).
-        let kinds: [String: XCUIElement.ElementType] = ["staticText": .staticText, "other": .other, "button": .button, "any": .any]
-        let kind = kinds[ready["type"] ?? ""] ?? .any
-        let element = app.descendants(matching: kind).matching(identifier: ready["id"] ?? "").firstMatch
-        let launched = Date()
-        guard element.waitForExistence(timeout: 90) else {
-            XCTFail("\(id): \(ready["id"] ?? "?") never appeared"); return
-        }
-        var predicate: NSPredicate?
-        if let label = ready["label"] { predicate = NSPredicate(format: "label == %@", label) }
-        if let part = ready["label_contains"] { predicate = NSPredicate(format: "label CONTAINS %@", part) }
+        let readyID = ready["id"] ?? ""
+        var wanted: ((String) -> Bool)?
+        if let label = ready["label"] { wanted = { $0 == label } }
+        if let part = ready["label_contains"] { wanted = { $0.contains(part) } }
         // A rotation can lay the page out once more before it settles, so its count need not be 0.
-        if let start = ready["label_begins"] { predicate = NSPredicate(format: "label BEGINSWITH %@", start) }
-        if let predicate {
-            let waited = XCTWaiter.wait(for: [expectation(for: predicate, evaluatedWith: element)], timeout: 90)
-            // Say what it read instead (a status like "settling 1" or "ready 1", never page text), so a red tells a
-            // slow device from a check that settled elsewhere (gatefold#297).
-            guard waited == .completed else {
-                XCTFail("\(id): \(ready["id"] ?? "?") never read as ready; it reads \"\(element.label)\""); return
+        if let start = ready["label_begins"] { wanted = { $0.hasPrefix(start) } }
+        let opensABook = (scene["args"] as? [String] ?? []).contains("-GatefoldOpenBook")
+        let launched = Date()
+        if opensABook {
+            // Judged in reads and the reader's own ready report, never seconds (gatefold#297): on a starved runner the
+            // same scene's page took from 11 s to past 90 s to open (run 43319078326), and a wall-time wait failed it
+            // with the check one read from ready. Each change of the label is logged with its read, never page text.
+            let (reads, label) = ReaderReads.reads(app, readyID, as: wanted, id, say: { print("ListingShots reads: \($0)") })
+            guard reads != nil else {
+                XCTFail("\(id): \(readyID) never read as ready; it reads \(label.map { "\"\($0)\"" } ?? "nothing")"); return
+            }
+        } else {
+            // A query by element type and identifier, never the whole tree: the reader's web views make a whole-tree
+            // snapshot slow enough to time out on a busy runner (gatefold#28).
+            let kinds: [String: XCUIElement.ElementType] = ["staticText": .staticText, "other": .other, "button": .button, "any": .any]
+            let kind = kinds[ready["type"] ?? ""] ?? .any
+            let element = app.descendants(matching: kind).matching(identifier: readyID).firstMatch
+            guard element.waitForExistence(timeout: 90) else {
+                XCTFail("\(id): \(readyID) never appeared"); return
+            }
+            var predicate: NSPredicate?
+            if let label = ready["label"] { predicate = NSPredicate(format: "label == %@", label) }
+            if let part = ready["label_contains"] { predicate = NSPredicate(format: "label CONTAINS %@", part) }
+            if let start = ready["label_begins"] { predicate = NSPredicate(format: "label BEGINSWITH %@", start) }
+            if let predicate {
+                let waited = XCTWaiter.wait(for: [expectation(for: predicate, evaluatedWith: element)], timeout: 90)
+                guard waited == .completed else {
+                    XCTFail("\(id): \(readyID) never read as ready; it reads \"\(element.label)\""); return
+                }
             }
         }
         // The workflow keeps these lines (tests.log), to measure the waits below and the host's (gatefold#150).
@@ -77,7 +91,6 @@ final class ListingShotsUITests: XCTestCase {
         // downloading, and none still waiting in the cloud (the books download one at a time, so between two of them
         // nothing reads "downloading").
         // Scenes that open a book are past it (the reader is up), so only the library's scenes ask.
-        let opensABook = (scene["args"] as? [String] ?? []).contains("-GatefoldOpenBook")
         let downloading = app.descendants(matching: .any)
             .matching(NSPredicate(format: "identifier BEGINSWITH 'book.' AND (value CONTAINS 'downloading' OR value CONTAINS 'in PocketBook Cloud')"))
             .firstMatch

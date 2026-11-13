@@ -117,4 +117,43 @@ enum ReaderReads {
         }
         return nil
     }
+
+    /// Element `id` is there and its label passes `wanted` (any label when nil), and the reads it took, or nil with the
+    /// label it last read: judged in reads and the reader's own ready report, never seconds (#297). Up to `coverReads`
+    /// while the page isn't ready, then `readyReads` once it is: a probe still wrong that long after the page is ready
+    /// is the app's, not the runner's. `say` notes each change of the label or the ready report, with its read, so a
+    /// red tells a late page from a check that settled elsewhere. Only for probes whose labels carry no book text.
+    static func reads(_ app: XCUIApplication, _ id: String, as wanted: ((String) -> Bool)?, _ what: String,
+                      say: (String) -> Void, file: StaticString = #filePath, line: UInt = #line) -> (reads: Int?, label: String?) {
+        let probe = el(app, id)
+        let guardEnds = Date().addingTimeInterval(HangGuard.seconds(reads: coverReads + readyReads))
+        var readyAt: Int?, last: String?, lastReady = false, noted = false
+        for read in 1...(coverReads + readyReads) {
+            let label: String? = probe.exists ? probe.label : nil
+            let isReady = ready(app)
+            if readyAt == nil, isReady { readyAt = read }
+            if !noted || last != label || lastReady != isReady {
+                say("\(what) read \(read): \(id) \(label.map { "\"\($0)\"" } ?? "absent"), page ready \(isReady ? 1 : 0)")
+                last = label; lastReady = isReady; noted = true
+            }
+            if let label, wanted?(label) ?? true {
+                say("\(what) read as wanted at read \(read), ready at read \(readyAt.map(String.init) ?? "never")")
+                return (read, label)
+            }
+            if let readyAt, read - readyAt >= readyReads {
+                say("\(what) not as wanted: the page was ready at read \(readyAt) and \(readyReads) reads later still was not")
+                return (nil, label)
+            }
+            if readyAt == nil, read >= coverReads {
+                say("\(what) not as wanted: the page was never ready in \(coverReads) reads")
+                return (nil, label)
+            }
+            if Date() > guardEnds {
+                XCTFail("hang: \(what) ran \(read) reads without \(id) as wanted", file: file, line: line)
+                return (nil, label)
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+        }
+        return (nil, nil)
+    }
 }

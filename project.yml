@@ -92,7 +92,8 @@ targets:
   GatefoldListingShots:
     type: bundle.ui-testing
     platform: iOS
-    sources: [GatefoldListingShots]
+    # The reader's read-counted waits (gatefold#297), shared with GatefoldUITests.
+    sources: [GatefoldListingShots, GatefoldUITests/ReaderReads.swift, GatefoldUITests/HangGuard.swift]
     dependencies:
       - target: Gatefold
     settings:
