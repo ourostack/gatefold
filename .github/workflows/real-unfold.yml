@@ -127,7 +127,8 @@ jobs:
           stop_at=$(( JOB_START + (75 - 10) * 60 ))
           rounds="${{ inputs.rounds || '3' }}"
           planned=$(( 5 * (rounds + 1) + 8 ))
-          out_of_time=0 stalled=0
+          # Inside `unfolds || true` bash's -e is off, so each command the step needs says when it failed.
+          out_of_time=0 stalled=0 failed=0
           in_time() {
             [ "$stalled" = 0 ] || return 1
             [ "$(date +%s)" -lt "$stop_at" ] && return 0
@@ -163,7 +164,8 @@ jobs:
             press "Closed" || return 1; sleep 6
             xcrun simctl launch --terminate-running-process "$udid" "$APP" -GatefoldUITest YES -GatefoldFakeCloud YES \
               -GatefoldReset YES -GatefoldSkipWelcome YES -GatefoldSignedIn YES -GatefoldDownloadAll YES \
-              -GatefoldOpenBook gutenberg-pride-and-prejudice -GatefoldGoTo "$place" >/dev/null
+              -GatefoldOpenBook gutenberg-pride-and-prejudice -GatefoldGoTo "$place" >/dev/null \
+              || { echo "::error::the app's launch at $place failed"; failed=1; return 1; }
             sleep 30
             for round in $(seq 1 "$rounds"); do
               in_time || return 1
@@ -189,7 +191,8 @@ jobs:
             shown="$(grep -c "open: page shown" "$out/reader.log" || true)"
             xcrun simctl launch --terminate-running-process "$udid" "$APP" -GatefoldUITest YES -GatefoldFakeCloud YES \
               -GatefoldReset YES -GatefoldSkipWelcome YES -GatefoldSignedIn YES -GatefoldDownloadAll YES \
-              -GatefoldOpenBook gutenberg-pride-and-prejudice -GatefoldGoTo "$place" >/dev/null
+              -GatefoldOpenBook gutenberg-pride-and-prejudice -GatefoldGoTo "$place" >/dev/null \
+              || { echo "::error::the app's launch at $place failed"; failed=1; return 1; }
             for wait in $(seq 1 120); do
               [ "$(grep -c "open: page shown" "$out/reader.log" || true)" -gt "$shown" ] && break
               sleep 0.5
@@ -219,6 +222,7 @@ jobs:
           # No posture change may have lost his words, and every unfold must have been judged.
           if echo "$verdicts" | grep -q "anchor-lost"; then echo "::error::a posture change lost the reader's words"; exit 1; fi
           # Its verdicts printed, a run cut short is still red: the unfolds it never made weren't judged.
+          [ "$failed" = 0 ] || { echo "::error::a launch failed, so the unfolds after it never ran ($(grep -c "" "$out/marks.log") of $planned begun)"; exit 1; }
           [ "$stalled" = 0 ] || { echo "::error::a DeviceHub press stalled twice, so the unfolds after it never ran ($(grep -c "" "$out/marks.log") of $planned begun)"; exit 1; }
           [ "$out_of_time" = 0 ] || { echo "::error::the unfolds stopped for time with $(grep -c "" "$out/marks.log") of $planned begun"; exit 1; }
           [ -n "$spreads" ] || { echo "::error::no unfold reached a spread"; exit 1; }
