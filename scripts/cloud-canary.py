@@ -30,7 +30,7 @@ from datetime import datetime, timedelta, timezone
 
 LOCKOUT_LIMIT = timedelta(hours=24)
 SCHEDULE_MINUTE, SCHEDULE_HOURS = 17, 6  # cloud-canary.yml's cron: "17 */6 * * *"
-DRIFT, LOCKOUT = "cloud-drift", "canary-lockout"
+DRIFT, LOCKOUT, TOLERATED = "cloud-drift", "canary-lockout", "cloud-tolerated"
 GREEN_AGAIN = "The cloud canary is green again"
 
 REDACTIONS = [
@@ -207,8 +207,13 @@ def judge(log, outcome, state, now, diff=""):
         extra = f"\n\n{diff}" if diff else ""
         return {"verdict": "drift", "state": state, "lockout": None, "green": False, "drift": body, "diff": diff,
                 "summary": f"### Red: PocketBook Cloud drifted\n\n```\n{body}\n```{extra}"}
-    return {"verdict": "green", "state": state, "drift": None, "lockout": None, "green": True,
-            "summary": "### Green: the cloud's basics work\n\n```\n" + "\n".join(lines) + "\n```"}
+    # The app got through, but only by tolerating a change (CloudDrift, gatefold#383): green, and listed, so the
+    # change is seen before it becomes the kind the app can't do without. Not cloud-drift: nothing to fix now.
+    tolerated = [l.split("CANARY tolerated:", 1)[1].strip() for l in lines if "CANARY tolerated:" in l]
+    head = ("### Green, with changes the app tolerated\n\n" + "\n".join(f"- {t}" for t in tolerated) + "\n\n"
+            if tolerated else "### Green: the cloud's basics work\n\n")
+    return {"verdict": "green", "state": state, "drift": None, "lockout": None, "green": True, "tolerated": tolerated,
+            "summary": head + "```\n" + "\n".join(lines) + "\n```"}
 
 
 def gh(*args):
@@ -240,6 +245,21 @@ def act(result, run_url):
     if result["lockout"] and not open_issue(LOCKOUT):
         gh("issue", "create", "--label", LOCKOUT, "--title", "Cloud canary: test account locked out of sign-in for over 24 h",
            "--body", f"{result['lockout']}\n\nLatest run: {run_url}")
+    if result.get("tolerated"):
+        subprocess.run(["gh", "label", "create", TOLERATED, "--color", "C5DEF5", "--description",
+                        "PocketBook Cloud changed, and the app tolerated it (the cloud canary stayed green)",
+                        "-R", os.environ["GITHUB_REPOSITORY"]], capture_output=True)
+        issue = open_issue(TOLERATED)
+        seen = gh("issue", "view", issue, "--json", "body,comments", "-q", '[.body] + [.comments[].body] | join("\\n")') if issue else ""
+        new = [t for t in result["tolerated"] if t not in seen]
+        if new:
+            body = f"The canary stayed green, but the app tolerated these changes: {run_url}\n\n" + "\n".join(f"- {t}" for t in new)
+            if issue:
+                gh("issue", "comment", issue, "--body", body)
+            else:
+                gh("issue", "create", "--label", TOLERATED, "--title", "Cloud canary: PocketBook Cloud changed, and the app tolerated it",
+                   "--body", body + "\n\nNothing is broken. Decide whether `Packages/GatefoldCloud` should adopt the new shape "
+                   "(and its fixtures follow), then close this.")
     if result["green"]:
         issue = open_issue(DRIFT)
         if issue:
@@ -295,6 +315,11 @@ def selftest():
     assert r["verdict"] == "drift", r
     r = judge(ok, "success", {}, now)
     assert r["verdict"] == "green" and r["green"] and not r["drift"] and r["state"] == {"locked_since": None}
+    assert r["tolerated"] == [] and "tolerated" not in r["summary"]
+    # Tolerated drift (CloudDrift): still green, never a cloud-drift issue, but listed for a person.
+    r = judge(ok + "LIVE CANARY tolerated: library: 2 entries without fast_hash\n", "success", {}, now)
+    assert r["verdict"] == "green" and not r["drift"] and r["tolerated"] == ["library: 2 entries without fast_hash"], r
+    assert "app tolerated" in r["summary"] and "- library: 2 entries without fast_hash" in r["summary"], r["summary"]
 
     r = judge(ok + "LIVE CANARY download: size matches the listing FAILED: listed 10 bytes, got 9 for a@b.com "
               "https://x/y?signature=abc&payload=def Bearer abc.def\n", "failure", {}, now)
