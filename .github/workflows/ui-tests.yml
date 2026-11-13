@@ -162,6 +162,9 @@ jobs:
           # shellcheck disable=SC2016
           nohup sh -c 'xcrun simctl spawn "$0" log stream --style compact --predicate "subsystem == \"bot.ouro.gatefold\" AND category == \"reader\"" 2>/dev/null \
             | grep --line-buffered -v "text:" >> "$1"' "$UDID" "$RUNNER_TEMP/reader.log" >/dev/null 2>&1 &
+          # Every thread of the app and its busiest neighbours while main is held past 30 s (gatefold#357): the app's
+          # own watch names main's work only, and nothing when main waits on another thread or the process starves.
+          nohup sh scripts/ci-hang-sample.sh "$RUNNER_TEMP/reader.log" "$RUNNER_TEMP/hangs" >> "$RUNNER_TEMP/hangs.log" 2>&1 &
       - id: left
         uses: ./.github/actions/time-left
         with:
@@ -238,6 +241,7 @@ jobs:
         timeout-minutes: 2
         run: |
           pkill -f "log stream --style compact" || true
+          pkill -f "ci-hang-sample.sh" || true
           wc -l < "$RUNNER_TEMP/place.log" || true
       - uses: actions/upload-artifact@v4
         # Every run, so a green run can be audited too (gatefold#127): kept 3 days unless the job failed.
@@ -255,6 +259,8 @@ jobs:
             ${{ runner.temp }}/load.log
             ${{ runner.temp }}/crashes
             ${{ runner.temp }}/ui.log
+            ${{ runner.temp }}/hangs
+            ${{ runner.temp }}/hangs.log
       - uses: actions/upload-artifact@v4
         # The result bundles only when the job did not pass: they are large (gatefold#127).
         if: failure() || cancelled()
