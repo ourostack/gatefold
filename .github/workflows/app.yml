@@ -8,8 +8,9 @@ name: App
 #
 # Build once: `build` makes the app and its tests for the simulator (build-for-testing) and uploads them, named by
 # commit and Xcode version; no simulator job compiles the app again (gatefold#39: each job spent 10 to 16 min building).
-# Every simulator job starts with the run, boots its new simulator while `build` builds, waits for that artifact
-# (.github/actions/await-build) and runs test-without-building.
+# Every simulator job starts with the run (a capped shard, when a slot frees; gatefold#243), boots its new simulator
+# (alongside `build`, when it starts with the run), waits for that artifact (.github/actions/await-build) and runs
+# test-without-building.
 #
 # UI tests run in shards (.github/workflows/ui-tests.yml), each on its own runner; a gate job named for each required
 # check is green only when all of its shards passed.
@@ -39,12 +40,15 @@ concurrency:
 # On 2026-11-12 gatefold's pull requests held 48 of them with 270 more queued, and spoonjoy got 2. So on a pull request
 # every macOS job but Build for testing waits in a shared lane, a job-level `concurrency` group with `queue: max`: a
 # lane runs one job at a time across every open pull request, first come first served, and never cancels one.
-#   - UI test shards: 18 lanes, `lane` in each matrix entry, balanced by timeout; ui-tests.yml waits in it.
+#   - UI test shards: 18 lanes, `lane` in each matrix entry, balanced by timeout; ui-tests.yml waits in it. Odd and
+#     even pull requests (last digit) each get their own 18, so 36 shard lanes in all.
 #   - Release build and Unit tests: 3 lanes each, by the pull request number's last digit.
 #   - Duo tour, the cloud package, and the screenshots' build and shots: 1 lane each.
-# That is 28 lanes, a hard cap, plus one Build for testing per pull request being pushed (not laned: the shards and
-# Unit tests wait for its artifact inside their own jobs), so about 36 runners with 8 pushed at once, within the 38 of
-# the enterprise's 50 that ourostack's pull requests may use (12 stay for main, merge queues and spoonjoy).
+# That is 46 lanes, a hard cap, plus one Build for testing per pull request being pushed (not laned: the shards and
+# Unit tests wait for its artifact inside their own jobs). Since 2026-11-13 spoonjoy is outside the enterprise, so
+# ourostack has all 50 slots and main still gets its share through the hosted queue; with 28 lanes 12 open pull
+# requests left about 27 Macs idle. If spoonjoy rejoins, go back to one shard set (SHARD_SETS and BUDGET in
+# scripts/ci-lanes.py).
 # Main and dispatch runs are never laned: each job's group there is its own (run id, attempt, shard).
 # A newer push still cancels its pull request's older run, including its jobs waiting in a lane. A lane job's
 # timeout counts from when it starts, so waiting in a lane doesn't spend it; a shard holding a lane while it waits
@@ -222,8 +226,12 @@ jobs:
           python3 -I scripts/ci-lanes.py --selftest
           python3 -I scripts/ci-lanes.py check
 
-  # UI tests run in shards, each on its own runner (.github/workflows/ui-tests.yml). Every shard starts with the run: it
-  # boots its new simulator while `build` builds, then waits for the build's artifact. On main each shard holds about
+  # UI tests run in shards, each on its own runner (.github/workflows/ui-tests.yml). A shard starts with the run, or
+  # when its matrix has a free slot: it boots its new simulator (alongside `build`, when it starts with the run), then
+  # waits for the build's artifact.
+  # Per run, each matrix's `max-parallel` caps how many of its shards run at once, so full-list runs leave macOS runners
+  # for app pull requests (gatefold#243). The five caps sum to 12 on main and 8 on a pull request running the full lists;
+  # one running only its tier is uncapped. GitHub may start a matrix's shards in any order. On main each shard holds about
   # 5 min of tests by its median pass on main (eight runs, 42605267361 to 42905906538). On a pull request a shard runs
   # its `pr_tests` only when its `pr_when` group is in `changes`' `fired`; every other shard reports from a no-op job.
   # Each `timeout` is 30 min of setup (the simulator wait step's own limit; gatefold#198), plus twice the sum of its
@@ -241,6 +249,7 @@ jobs:
     if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
     strategy:
       fail-fast: false
+      max-parallel: ${{ github.event_name != 'pull_request' && 3 || needs.changes.outputs.full != 'false' && 2 || 10 }}
       matrix:
         include:
           - shard: ipad-place-portrait
@@ -392,6 +401,7 @@ jobs:
     if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
     strategy:
       fail-fast: false
+      max-parallel: ${{ github.event_name != 'pull_request' && 1 || needs.changes.outputs.full != 'false' && 1 || 4 }}
       matrix:
         include:
           - shard: ipad-undo-underway
@@ -458,6 +468,7 @@ jobs:
     if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
     strategy:
       fail-fast: false
+      max-parallel: ${{ github.event_name != 'pull_request' && 2 || needs.changes.outputs.full != 'false' && 1 || 7 }}
       matrix:
         include:
           - shard: ipad-taps-quick
@@ -551,6 +562,7 @@ jobs:
     if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
     strategy:
       fail-fast: false
+      max-parallel: ${{ github.event_name != 'pull_request' && 3 || needs.changes.outputs.full != 'false' && 2 || 5 }}
       matrix:
         include:
           - shard: ipad-reviewer-smoke
@@ -626,6 +638,7 @@ jobs:
     if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
     strategy:
       fail-fast: false
+      max-parallel: ${{ github.event_name != 'pull_request' && 3 || needs.changes.outputs.full != 'false' && 2 || 9 }}
       matrix:
         include:
           - shard: duo-taps-portrait
