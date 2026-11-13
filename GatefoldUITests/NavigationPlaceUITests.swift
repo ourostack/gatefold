@@ -390,7 +390,7 @@ final class NavigationPlaceUITests: XCTestCase {
         let first = ReaderReads.settle(app, "the launch jump's page") { print("REOPENLATE \($0)") }.words
         // His turn writes his place with his words.
         turn(forward: true)
-        _ = waitForWords(changingFrom: first, timeout: 30)
+        XCTAssertTrue(readsUntil(240) { let now = self.visibleText; return !now.isEmpty && now != first }, "his turn moved the page")
         let his = ReaderReads.settle(app, "his page") { print("REOPENLATE \($0)") }.words
         XCTAssertNotEqual(opening(his), opening(first), "his turn moved the page")
         let saved = (app.descendants(matching: .any)["reader.savedWords"].value as? String) ?? ""
