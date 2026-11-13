@@ -175,7 +175,10 @@ def judge(log, outcome, state, now, diff=""):
     """Pure: the verdict, the summary, the new state, and what to do with issues."""
     lines = steps(log)
     locked = next((l for l in lines if "CANARY INCONCLUSIVE" in l), None)
-    failed = [l for l in lines if "FAILED" in l or "recorded an issue" in l]
+    # A known-failing step (withKnownIssue) logs KNOWN and Swift Testing says "recorded a known issue":
+    # neither is drift. A known issue that stops happening is a real failure ("Known issue was not recorded").
+    failed = [l for l in lines if ("FAILED" in l or "recorded an issue" in l or "Known issue was not recorded" in l)
+              and "KNOWN:" not in l and "known issue" not in l]
     if locked:
         m = re.search(r"retry-after=(\d+)", locked)
         retry = now + timedelta(seconds=int(m.group(1))) if m else None
@@ -281,6 +284,15 @@ def selftest():
     ok = "LIVE CANARY sign-in: store lookup ok\nLIVE CANARY library ok\nLIVE CANARY download ok\n"
     limited = "LIVE CANARY INCONCLUSIVE sign-in rate-limited retry-after=unknown\n"
 
+    # Run 43471343764: the 422 write is known-failing, the test passed, and it must stay green (it opened
+    # a false cloud-drift issue, #382, before this). Both the old FAILED wording and Swift Testing's own line.
+    known = (ok + "LIVE CANARY position write: lands KNOWN: the write did not land\n"
+             "Test theBasicsStillWork() recorded a known issue at LiveCanaryTests.swift:78:9: Expectation failed: ok\n")
+    r = judge(known, "success", {}, now)
+    assert r["verdict"] == "green" and not r["drift"], r
+    # A known issue that went missing (the cloud took the write) is red: time to drop the known issue.
+    r = judge(ok + "Known issue was not recorded\n", "failure", {}, now)
+    assert r["verdict"] == "drift", r
     r = judge(ok, "success", {}, now)
     assert r["verdict"] == "green" and r["green"] and not r["drift"] and r["state"] == {"locked_since": None}
 
