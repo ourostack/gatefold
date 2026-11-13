@@ -54,6 +54,12 @@ public struct CloudBook: Sendable, Codable, Hashable, Identifiable {
     public var bytes: Int64
     /// Base64 of the full-file MD5. Can be nil on the server.
     public var md5Base64: String?
+    /// `md5Base64` when it really is an MD5 (16 bytes). Since November 2026 the Cloud's `md5_hash`
+    /// is often the base64 of the fast_hash string (32 bytes), which no file matches.
+    public var verifiableMD5: String? {
+        guard let md5Base64, let digest = Data(base64Encoded: md5Base64), digest.count == 16 else { return nil }
+        return md5Base64
+    }
     public var createdAt: Date?
     public var modifiedAt: Date?
     public var readStatus: String?
@@ -341,6 +347,10 @@ public enum CloudChange: Sendable, Hashable {
     /// A queued annotation reached the Cloud; carries its server `uuid`. Update the app's copy with it.
     case annotationSaved(fastHash: String, CloudAnnotation)
     case outbox(pending: Int)
+    /// The Cloud turned a queued position away and it was dropped: the e-reader won't get this place.
+    case positionRefused(fastHash: String)
+    /// A queued position reached the Cloud (or lost fairly to a newer one from another client).
+    case positionSent(fastHash: String)
     case signedIn(CloudAccount)
     case signedOut
     /// The refresh token stopped working; the user must sign in again.
