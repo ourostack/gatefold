@@ -12,6 +12,7 @@ public actor CloudSession {
     let tokenStore: TokenStore
     let base: URL
     let now: @Sendable () -> Date
+    let sleep: @Sendable (Duration) async throws -> Void
     let language: String
 
     private var stored: StoredSession?
@@ -26,13 +27,31 @@ public actor CloudSession {
     public private(set) var serverClockOffset: TimeInterval = 0
 
     public init(transport: HTTPTransport, credentials: ClientCredentialsProvider, tokenStore: TokenStore,
-                base: URL = CloudSession.defaultBase, language: String = "en", now: @escaping @Sendable () -> Date = { Date() }) {
+                base: URL = CloudSession.defaultBase, language: String = "en", now: @escaping @Sendable () -> Date = { Date() },
+                sleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) }) {
         self.transport = transport
         self.credentials = credentials
         self.tokenStore = tokenStore
         self.base = base
         self.language = language
         self.now = now
+        self.sleep = sleep
+    }
+
+    /// Sign-in calls the Cloud refuses spuriously are asked this many times in all, a second apart.
+    /// Since November 2026 it answers a real account's lookup with 404 "No one account has been found",
+    /// and about one correct password in three with 403 error 1204, the same answer a wrong password
+    /// gets (seen live 2026-11-13). Three tries make a false "no account" or "wrong password" rare.
+    static let signInAttempts = 3
+
+    private func performSignInCall(_ endpoint: Endpoint, refusedWhen refused: (HTTPURLResponse) -> Bool) async throws -> (Data, HTTPURLResponse) {
+        var attempt = 1
+        while true {
+            let (data, response) = try await perform(endpoint, bearer: nil)
+            guard refused(response), attempt < Self.signInAttempts else { return (data, response) }
+            attempt += 1
+            try await sleep(.seconds(1))
+        }
     }
 
     public var account: CloudAccount? {
@@ -54,7 +73,7 @@ public actor CloudSession {
             "username": email.trimmingCharacters(in: .whitespacesAndNewlines),
             "client_id": creds.id, "client_secret": creds.secret, "language": language,
         ])
-        let (data, response) = try await perform(endpoint, bearer: nil)
+        let (data, response) = try await performSignInCall(endpoint) { $0.statusCode == 404 }
         if response.statusCode == 404 { throw CloudError.noAccount }
         try Self.check(response, data)
         return try WireDecoder.stores(data)
@@ -66,7 +85,7 @@ public actor CloudSession {
             "shop_id": store.shopID, "username": email.trimmingCharacters(in: .whitespacesAndNewlines), "password": password,
             "client_id": creds.id, "client_secret": creds.secret, "grant_type": "password", "language": language,
         ]))
-        let (data, response) = try await perform(endpoint, bearer: nil)
+        let (data, response) = try await performSignInCall(endpoint) { $0.statusCode == 403 }
         if [400, 401, 403].contains(response.statusCode) { throw CloudError.invalidCredentials }
         try Self.check(response, data)
         let token = try WireDecoder.token(data, now: now())

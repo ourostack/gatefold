@@ -5,7 +5,7 @@ import Testing
 private let fakeCredentials = StaticCredentials(ClientCredentials(id: "test-id", secret: "test-secret"))
 
 private func makeSession(_ transport: ScriptedTransport, store: any TokenStore = InMemoryTokenStore(), clock: TestClock = TestClock()) -> CloudSession {
-    CloudSession(transport: transport, credentials: fakeCredentials, tokenStore: store, now: { clock.now })
+    CloudSession(transport: transport, credentials: fakeCredentials, tokenStore: store, now: { clock.now }, sleep: { _ in })
 }
 
 private func signedIn(_ transport: ScriptedTransport, clock: TestClock = TestClock(), store: any TokenStore = InMemoryTokenStore()) async throws -> CloudSession {
@@ -58,8 +58,29 @@ struct CredentialsTests {
         let t = ScriptedTransport()
         await t.on("GET", "/browser/", .data(Data("<html></html>".utf8)))
         await #expect(throws: CloudError.clientCredentialsUnavailable) {
-            _ = try await WebBundleCredentials(transport: t).credentials(refresh: false)
+            _ = try await WebBundleCredentials(transport: t, fallback: nil).credentials(refresh: false)
         }
+    }
+
+    /// PocketBook's new web app (November 2026) serves no `/browser/` bundle and keeps its secret on
+    /// its server, so discovery finds nothing. Sign-in falls back to the pair we know works.
+    @Test func fallsBackToTheKnownPairWhenTheWebAppNoLongerShipsIt() async throws {
+        let t = ScriptedTransport() // every path answers 404, as /browser/ does now
+        let fallback = ClientCredentials(id: "FALLBACK1", secret: "FallbackSecretLongEnough0123456789")
+        #expect(try await WebBundleCredentials(transport: t, fallback: fallback).credentials(refresh: false) == fallback)
+    }
+
+    @Test func signInHasAPairByDefault() async throws {
+        let t = ScriptedTransport()
+        let creds = try await WebBundleCredentials(transport: t).credentials(refresh: false)
+        #expect(creds == ClientCredentials.pocketBookWeb)
+        #expect(creds.id.count >= 4 && creds.secret.count >= 16)
+    }
+
+    @Test func offlineIsStillOffline() async throws {
+        let t = ScriptedTransport()
+        await t.setOffline(true)
+        await #expect(throws: CloudError.offline) { _ = try await WebBundleCredentials(transport: t).credentials(refresh: false) }
     }
 }
 
@@ -80,6 +101,44 @@ struct SessionTests {
         let t = ScriptedTransport()
         await t.on("GET", "/auth/login", .json(#"{"error_code":0,"error_msg":"Not found"}"#, status: 404))
         await #expect(throws: CloudError.noAccount) { _ = try await makeSession(t).stores(forEmail: "nobody@example.com") }
+    }
+
+    /// Since November 2026 the Cloud sometimes answers a real account's lookup with 404 "No one account
+    /// has been found", then finds it a second later (seen live 2026-11-13). Asked again before it counts.
+    @Test func aLookupTheCloudFumblesIsAskedAgain() async throws {
+        let t = ScriptedTransport()
+        await t.on("GET", "/auth/login", .json(#"{"error_code":111,"error_msg":"No one account has been found"}"#, status: 404),
+                   .data(try Fixture.data("auth-providers.json")))
+        let stores = try await makeSession(t).stores(forEmail: "reader@example.com")
+        #expect(stores.map(\.alias) == ["pocketbook_de"])
+    }
+
+    @Test func anUnknownEmailIsAskedThreeTimesInAll() async throws {
+        let t = ScriptedTransport()
+        await t.on("GET", "/auth/login", .json(#"{"error_code":111,"error_msg":"No one account has been found"}"#, status: 404))
+        await #expect(throws: CloudError.noAccount) { _ = try await makeSession(t).stores(forEmail: "nobody@example.com") }
+        #expect(await t.requests("GET", "/auth/login").count == 3)
+    }
+
+    /// The Cloud refuses about one correct password in three with 403 error 1204 "Authorization partner
+    /// user failed", the same answer a wrong password gets (seen live 2026-11-13). Tried again before
+    /// we tell the reader the password is wrong.
+    @Test func aCorrectPasswordThePartnerStoreRefusesOnceSignsIn() async throws {
+        let t = ScriptedTransport()
+        await t.on("POST", "/auth/login/pocketbook_de", .json(#"{"error_code":1204,"error_msg":"Authorization partner user failed"}"#, status: 403),
+                   .json(tokenJSON("a1")))
+        await t.on("GET", "/api/v1.0/user", .data(try Fixture.data("user.json")))
+        _ = try await makeSession(t).signIn(email: "reader@example.com", password: "pw", store: testStore())
+        #expect(await t.requests("POST", "/auth/login/pocketbook_de").count == 2)
+    }
+
+    @Test func aPasswordRefusedThreeTimesIsWrong() async throws {
+        let t = ScriptedTransport()
+        await t.on("POST", "/auth/login/pocketbook_de", .json(#"{"error_code":1204,"error_msg":"Authorization partner user failed"}"#, status: 403))
+        await #expect(throws: CloudError.invalidCredentials) {
+            _ = try await makeSession(t).signIn(email: "reader@example.com", password: "bad", store: testStore())
+        }
+        #expect(await t.requests("POST", "/auth/login/pocketbook_de").count == 3)
     }
 
     @Test func signsInWithThePasswordGrantAndKeepsOnlyTokens() async throws {

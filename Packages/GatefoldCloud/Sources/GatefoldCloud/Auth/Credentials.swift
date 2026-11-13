@@ -8,6 +8,12 @@ public struct ClientCredentials: Sendable, Hashable, Codable {
         self.id = id
         self.secret = secret
     }
+
+    /// The pair PocketBook's web app shipped in its public JavaScript until November 2026, also
+    /// published in open-source clients (PaddeK/pocketorbit src/pocketbook.ts). The Cloud still
+    /// accepts it (live check 2026-11-13). The new web app keeps its secret on its server, so when
+    /// discovery finds nothing, sign-in uses this.
+    public static let pocketBookWeb = ClientCredentials(id: "qNAx1RDb", secret: "K3YYSjCgDJNoWKdGVOyO1mrROp3MMZqqRNXNXTmh")
 }
 
 public protocol ClientCredentialsProvider: Sendable {
@@ -21,18 +27,22 @@ public struct StaticCredentials: ClientCredentialsProvider {
     public func credentials(refresh: Bool) async throws -> ClientCredentials { value }
 }
 
-/// Reads the client pair from the web app's bundle at runtime instead of committing it, so the
-/// app follows PocketBook if they rotate it. The pair is the two string constants that follow
-/// the `/api/v1.1/` base URL in the bundle's config module.
+/// Reads the client pair from the web app's bundle at runtime, so the app follows PocketBook if
+/// they rotate it. The pair is the two string constants that follow the `/api/v1.1/` base URL in
+/// the bundle's config module. When the bundle is gone or changes shape (PocketBook's new web app,
+/// November 2026, has none), it falls back to `fallback`.
 public actor WebBundleCredentials: ClientCredentialsProvider {
     let transport: HTTPTransport
     let site: URL
+    let fallback: ClientCredentials?
     private var cached: ClientCredentials?
 
-    public init(transport: HTTPTransport, site: URL = URL(string: "https://cloud.pocketbook.digital")!, cached: ClientCredentials? = nil) {
+    public init(transport: HTTPTransport, site: URL = URL(string: "https://cloud.pocketbook.digital")!, cached: ClientCredentials? = nil,
+                fallback: ClientCredentials? = .pocketBookWeb) {
         self.transport = transport
         self.site = site
         self.cached = cached
+        self.fallback = fallback
     }
 
     /// Fetching the bundle is slow (it's megabytes of JavaScript), so callers who arrive while a
@@ -60,6 +70,9 @@ public actor WebBundleCredentials: ClientCredentialsProvider {
             let (js, _) = try await transport.send(URLRequest(url: site.appendingPathComponent(String(script.dropFirst()))))
             guard let pair = Self.extract(from: String(decoding: js, as: UTF8.self)) else { throw CloudError.clientCredentialsUnavailable }
             return pair
+        } catch CloudError.clientCredentialsUnavailable {
+            guard let fallback else { throw CloudError.clientCredentialsUnavailable }
+            return fallback
         } catch let error as CloudError {
             throw error
         } catch {
