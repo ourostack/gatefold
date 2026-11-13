@@ -402,11 +402,12 @@ final class NavigationPlaceUITests: XCTestCase {
     }
 
     /// Judged in reads, one every 0.25 s, never a timeout in seconds; a hang guard sized from the reads stops a stuck query.
-    private func readsUntil(_ reads: Int, _ done: () -> Bool) -> Bool {
+    /// A hang fails on its own, with its read count and the caller's line, so a red says which it was (`HangGuard`).
+    private func readsUntil(_ reads: Int, file: StaticString = #filePath, line: UInt = #line, _ done: () -> Bool) -> Bool {
         let hung = Date().addingTimeInterval(HangGuard.seconds(reads: reads))
-        for _ in 0..<reads {
+        for read in 0..<reads {
             if done() { return true }
-            if Date() > hung { return false }
+            if Date() > hung { XCTFail("hang guard: stuck at read \(read) of \(reads)", file: file, line: line); return false }
             RunLoop.current.run(until: Date().addingTimeInterval(0.25))
         }
         return done()
