@@ -1,0 +1,78 @@
+name: Cloud API watch
+
+# Once a day: does PocketBook's own web app (cloud.pocketbook.com) call its API differently from the
+# snapshot in scripts/cloud-web-api.json? (gatefold#372) A change opens, or comments on, one
+# `cloud-api-change` issue with what is new and gone; the same change is reported once, by its
+# fingerprint. A site that can't be read is inconclusive: a warning, no issue. Linux, never signs in,
+# not a required check. The pull request that adapts Gatefold refreshes the snapshot with
+# `python3 -I scripts/cloud-api-watch.py write`.
+on:
+  schedule:
+    - cron: "41 5 * * *"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "scripts/cloud-api-watch.py"
+      - ".github/workflows/cloud-api-watch.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  selftest:
+    name: Cloud API watch (selftest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+      - run: python3 -I scripts/cloud-api-watch.py --selftest
+
+  watch:
+    name: PocketBook web app API
+    if: github.repository == 'ourostack/gatefold' && github.event_name != 'pull_request'
+    needs: selftest
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Compare with the snapshot
+        id: check
+        run: |
+          set +e
+          python3 -I scripts/cloud-api-watch.py check --report "$RUNNER_TEMP/report.md"
+          status=$?
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          [ "$status" = 3 ] && echo "### Inconclusive: the web app couldn't be read" >> "$GITHUB_STEP_SUMMARY"
+          [ "$status" = 0 ] && echo "### No change in the web app's API calls" >> "$GITHUB_STEP_SUMMARY"
+          [ "$status" = 1 ] && cat "$RUNNER_TEMP/report.md" >> "$GITHUB_STEP_SUMMARY"
+          [ "$status" = 0 ] || [ "$status" = 1 ] || [ "$status" = 3 ]
+
+      - name: Report the change
+        if: steps.check.outputs.status == '1'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          report="$RUNNER_TEMP/report.md"
+          print=$(sed -nE 's/^fingerprint: ([0-9a-f]+)$/\1/p' "$report")
+          gh label create cloud-api-change -R "$GITHUB_REPOSITORY" --color 5319E7 \
+            --description "PocketBook's web app calls its API differently (cloud-api-watch.yml)" 2>/dev/null || true
+          issue=$(gh issue list -R "$GITHUB_REPOSITORY" --label cloud-api-change --state open --json number -q '.[0].number // empty')
+          run="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          if [ -z "$issue" ]; then
+            gh issue create -R "$GITHUB_REPOSITORY" --label cloud-api-change \
+              --title "Cloud API watch: PocketBook's web app changed its API calls" \
+              --body "$(cat "$report")
+
+          Run: $run. Check whether Gatefold's client (\`Packages/GatefoldCloud\`) needs the change, then refresh the snapshot with \`python3 -I scripts/cloud-api-watch.py write\` in the same pull request."
+          elif ! gh issue view "$issue" -R "$GITHUB_REPOSITORY" --json body,comments -q '[.body] + [.comments[].body] | join("\n")' | grep -q "fingerprint: $print"; then
+            gh issue comment "$issue" -R "$GITHUB_REPOSITORY" --body "$(cat "$report")
+
+          Run: $run"
+          else
+            echo "Already reported (fingerprint $print)."
+          fi
