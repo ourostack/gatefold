@@ -135,6 +135,7 @@ enum WebWarmup {
         web.frame = CGRect(x: 0, y: 0, width: 1, height: 1)
         web.alpha = 0.01
         web.isUserInteractionEnabled = false
+        ReaderHostController.sealed(web, true)
         window?.insertSubview(web, at: 0)
     }
 }
@@ -195,6 +196,17 @@ struct RootView: View {
         .background {
             if reader == nil {
                 ZStack { ForEach(warm, id: \.bookID) { WarmPage(model: $0) } }
+            }
+        }
+        // UI tests only: how many books behind the shelf have their page up (ShelfAccessibilityUITests).
+        .overlay(alignment: .topLeading) {
+            if LaunchOptions.isUITest, reader == nil {
+                Text("warm")
+                    .font(.system(size: 1))
+                    .opacity(0.01)
+                    .accessibilityIdentifier("library.warmReady")
+                    .accessibilityValue("\(warm.filter(\.pageReady).count)")
+                    .allowsHitTesting(false)
             }
         }
         .task(id: warmKeys) { await warmUp() }
