@@ -69,6 +69,7 @@ iPad Pro 13-inch|RotationRepro/testRotateThenLeaveWithoutItsWordsAndReopenOnTheC
 iPad Pro 13-inch|RotationRepro/testRotateThenLeaveWithoutTurning	570	# p95 of 101, slowest 709
 iPad Pro 13-inch|RotationRepro/testRotateThenLeaveWithoutTurningAfterStalledReflows	562	# p95 of 93, slowest 664
 iPad Pro 13-inch|SingleColumnUITests/testAOnePageScreenStaysOneColumnThroughTheReviewSteps	240	# estimate (#307's 240; one pass, 201)
+iPad Pro 13-inch|ShelfAccessibilityUITests/testNoPageBehindTheShelfReachesAccessibility	90	# estimate (#357; 42 on a Mac)
 iPad Pro 13-inch|SpreadTurnSettleUITests/testSpreadTurnsLandWithoutSliding	203	# p95 of 118, slowest 251
 iPad Pro 13-inch|SwallowedTapUITests/testTapsAfterSwipesAndAJumpAreAnswered	292	# one CI pass on #343 (292 s), an estimate until CI has timed more
 iPad Pro 13-inch|WindowFitUITests/testOnItsSide	158	# p95 of 113, slowest 180
