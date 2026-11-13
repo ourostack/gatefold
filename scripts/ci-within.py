@@ -18,12 +18,14 @@ was rounded off, so a 6 min budget stopped its tests at 3 min 59 s (gatefold#353
 before `setup` minutes, which leaves spare minutes, and showed when a slow boot used them up. A setup that ran past
 `boot` minutes, so the tests could no longer get their whole budget, fails as infrastructure before any test runs.
 """
+import io
 import os
 import signal
 import subprocess
 import sys
 import tempfile
 import time
+from contextlib import redirect_stdout
 
 GRACE = 120  # seconds before the step's end: the 90 s for the command to end, and a margin
 SETTLE = 90
@@ -66,10 +68,11 @@ def left(job_start, limit, boot, setup, reserve, cap, now):
         return None, None, f"A limit of {limit} min leaves no tests' budget after {boot} for setup and {reserve} for logs"
     took = now - job_start
     if took > boot * 60:
-        return None, None, (f"Setup took {took // 60} min {took % 60} s, past the {boot} min this job holds for it, so "
-                            f"its tests can't have their whole {budget} min. Infrastructure, not the app: no test ran. "
-                            f"Rerun the failed job for a fresh runner (gatefold#353)")
-    tests_end = max(now, job_start + setup * 60) + budget * 60
+        return None, None, (f"Setup (the build wait, the boot and the download) took {took // 60} min {took % 60} s, "
+                            f"past the {boot} min this job holds for it, so its tests can't have their whole {budget} "
+                            f"min. Infrastructure, not the app: no test ran. Rerun the failed job (gatefold#353)")
+    # Never past `boot`, so the step never runs into the reserve by more than GRACE.
+    tests_end = max(now, job_start + min(setup, boot) * 60) + budget * 60
     until = min(tests_end + GRACE, now + cap * 60)
     minutes = max(1, -(-(until - now) // 60))
     line = (f"{minutes} min for this step: {(tests_end - now) // 60} min {(tests_end - now) % 60} s of tests "
@@ -125,7 +128,20 @@ def selftest():
     assert m is None and "no tests' budget" in why
     m, u, _ = left(0, 48, 30, 12, 12, 3, now=60)
     assert u == 60 + 3 * 60 and m == 3, "the cap bounds the step"
-    assert main(["left", "0", "48", "30", "12", "12", "600"]) == 1, "a job that began at the epoch overran"
+    m, u, _ = left(0, 48, 5, 12, 12, 600, now=60)  # a `setup` past `boot` counts as `boot`
+    assert u == (5 + 31) * 60 + GRACE
+    with tempfile.TemporaryDirectory() as scratch, redirect_stdout(io.StringIO()) as said:
+        out = os.path.join(scratch, "out")
+        os.environ["GITHUB_OUTPUT"] = out
+        began = int(time.time())
+        assert main(["left", str(began - 60), "48", "30", "12", "12", "600"]) == 0
+        got = dict(l.split("=", 1) for l in open(out).read().split())
+        assert int(got["minutes"]) * 60 >= int(got["until"]) - began >= (int(got["minutes"]) - 1) * 60 - 2
+        assert int(got["until"]) == began - 60 + 18 * 60 + GRACE, "the step's outputs are the sum's"
+        assert main(["left", "0", "48", "30", "12", "12", "600"]) == 1, "a job that began at the epoch overran"
+        assert main(["left", "0", "48.0", "30", "12", "12", "600"]) == 2
+        del os.environ["GITHUB_OUTPUT"]
+    assert "Setup overran" in said.getvalue() and "must be whole numbers" in said.getvalue()
     print("ci-within: selftest passed")
     return 0
 
@@ -133,7 +149,10 @@ def selftest():
 def main(argv):
     if argv == ["--selftest"]:
         return selftest()
-    if len(argv) == 7 and argv[0] == "left" and all(a.isdigit() for a in argv[1:]):
+    if argv[:1] == ["left"]:
+        if len(argv) != 7 or not all(a.isdigit() for a in argv[1:]):
+            print(f"::error::ci-within.py left: its six inputs must be whole numbers, not {argv[1:]}", flush=True)
+            return 2
         minutes, until, line = left(*map(int, argv[1:]), now=int(time.time()))
         if minutes is None:
             print(f"::error title=Setup overran::{line}", flush=True)
