@@ -37,6 +37,28 @@ asc_get() {
   printf '%s\n' "$body"
 }
 
+# Seconds since 1970 for an ISO 8601 time, with Z or an offset (App Store Connect writes -08:00; GitHub writes Z).
+iso_epoch='def epoch: capture("^(?<t>[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2})(\\.[0-9]+)?(?<z>Z|[+-][0-9]{2}:?[0-9]{2})$")
+  | (.t + "Z" | fromdateiso8601) - (if .z == "Z" then 0 else (if .z[0:1] == "-" then -1 else 1 end) * ((.z[1:3] | tonumber) * 3600 + (.z[-2:] | tonumber) * 60) end);'
+# True when the time ($1, App Store Connect's uploadedDate) falls inside this step ("Archive, upload and publish to
+# Gatefold Internal") in an earlier attempt of this workflow run. The step's own times, not the run's: the publish
+# job can queue behind another run's publish, and only while the step runs does it hold the publish group.
+uploaded_in_earlier_attempt() {
+  local at="$1" attempts="${GITHUB_RUN_ATTEMPT:-1}" n
+  [[ -n "$at" && "$attempts" =~ ^[0-9]+$ && -n "${GATEFOLD_GITHUB_TOKEN:-}" && -n "${GITHUB_REPOSITORY:-}" \
+    && -n "${GITHUB_RUN_ID:-}" ]] || return 1
+  for (( n = 1; n < attempts; n++ )); do
+    curl -fsS -H "Authorization: Bearer $GATEFOLD_GITHUB_TOKEN" -H "Accept: application/vnd.github+json" \
+      "${GITHUB_API_URL:-https://api.github.com}/repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$n/jobs?per_page=100" \
+      | jq -e --arg at "$at" "$iso_epoch"' ($at | epoch) as $t
+          | any(.jobs[]? | select(.name == "Publish to Gatefold Internal") | .steps[]?
+                | select(.name == "Archive, upload and publish to Gatefold Internal" and .started_at != null and .completed_at != null);
+              $t >= (.started_at | epoch) and $t <= (.completed_at | epoch))' \
+      > /dev/null 2>&1 && return 0
+  done
+  return 1
+}
+
 for v in APPLE_DISTRIBUTION_KIT_BIN APPLE_DISTRIBUTION_KIT_CONFIG GATEFOLD_SIGNING_XCCONFIG GATEFOLD_EXPORT_OPTIONS_PLIST GATEFOLD_WHATS_NEW_FILE; do
   [[ -n "${!v:-}" ]] || fail "$v is not set"
 done
@@ -80,29 +102,69 @@ ipa_build="$(unzip -p "$ipa" 'Payload/*.app/Info.plist' | plutil -extract CFBund
 [[ "$ipa_build" == "$build" ]] || fail "the IPA is build ${ipa_build:-unknown}, expected $build"
 shasum -a 256 "$ipa" | tee "$out/Gatefold.ipa.sha256"
 
-# 3. Upload.
+# 3. Upload. A non-zero exit from altool is a failed upload, except in two cases where the build did reach App
+# Store Connect; both go on to step 4, which judges the build by its processing state (gatefold#337).
+#  - Delivered, then non-zero: in run 43318514534 App Store Connect answered three 500s, altool still logged
+#    "UPLOAD SUCCEEDED" with a delivery UUID, waited an hour on processing (the kit passes --wait) and exited 1.
+#  - A rerun of that run: App Store Connect refuses the same build number as a duplicate
+#    (ENTITY_ERROR.ATTRIBUTE.INVALID.DUPLICATE, previousBundleVersion = this build). That counts only when App Store
+#    Connect lists a build with this number and version, uploaded while this step ran in an earlier attempt of this
+#    run (GitHub's jobs API, with GATEFOLD_GITHUB_TOKEN). Publishing is serialized, so no other run uploads then, and
+#    a rerun publishes the same commit. A build uploaded at any other time is another run's, and the upload fails.
+upload_ok=true
+poll_checks=120
 kit xcode run --kind altool-upload --mode apply --package-path "$ipa" --platform ios \
   --api-key "$key_id" --api-issuer "$issuer_id" --p8-file-path "$key_path" \
-  --provider-public-id "$provider_id" --json > "$out/altool-upload.raw" \
-  || { jq 'del(.command, .argv, .args)' "$out/altool-upload.raw" || true; fail "upload failed"; }
-# Keep the key and issuer IDs in the argv out of the published artifact.
-jq 'del(.command, .argv, .args)' "$out/altool-upload.raw" > "$out/altool-upload.json"
+  --provider-public-id "$provider_id" --json > "$out/altool-upload.raw" || upload_ok=false
+# Keep the key and issuer IDs, in the argv or in altool's own output, out of the log and the published artifact.
+jq --arg k "$key_id" --arg i "$issuer_id" \
+  'def scrub: reduce ([$k, $i][] | select(length > 0)) as $s (.; split($s) | join("[REDACTED]"));
+   del(.command, .argv, .args) | if type == "object" then (.stdout, .stderr) |= (if type == "string" then scrub else . end) else . end' \
+  "$out/altool-upload.raw" > "$out/altool-upload.json" 2>/dev/null \
+  || { : > "$out/altool-upload.json"; [[ "$upload_ok" == false ]] || fail "the kit's upload answer is not JSON"; }
 : > "$out/altool-upload.raw"
+if [[ "$upload_ok" == false ]]; then
+  cat "$out/altool-upload.json"
+  upload_log="$(jq -r '[.stdout, .stderr] | map(strings) | join("\n")' "$out/altool-upload.json" 2>/dev/null || true)"
+  delivery="$(sed -nE 's/^Delivery UUID: ([0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12})[[:space:]]*$/\1/p' <<< "$upload_log" | tail -1)"
+  if grep -q '^UPLOAD SUCCEEDED' <<< "$upload_log" && ! grep -q 'UPLOAD FAILED' <<< "$upload_log" && [[ -n "$delivery" ]]; then
+    printf '%s\n' "$delivery" > "$out/delivery-uuid.txt"
+    echo "::warning title=altool exited non-zero after delivering::altool logged UPLOAD SUCCEEDED (delivery $delivery) but exited non-zero; App Store Connect's processing state decides (gatefold#337)."
+    # altool has already waited on processing (up to an hour), so the poll gets 15 minutes, which keeps its own
+    # verdict inside the job's 90-minute limit.
+    poll_checks=30
+  elif grep -q 'ENTITY_ERROR\.ATTRIBUTE\.INVALID\.DUPLICATE' <<< "$upload_log" \
+    && grep -qE "previousBundleVersion\"?[[:space:]]*[:=][[:space:]]*\"?$build\"?([^0-9]|\$)" <<< "$upload_log"; then
+    asc_get --path /v1/builds --query "filter[app]=$app_id" --query "filter[version]=$build" \
+      --query "filter[preReleaseVersion.version]=$version" --query limit=5 > "$out/asc-build-existing.json" \
+      || fail "upload failed: build $build is a duplicate, and App Store Connect could not be asked for it"
+    listed="$(jq -r '.result.data | length' "$out/asc-build-existing.json")"
+    if [[ "$listed" == 0 ]]; then
+      fail "upload failed: App Store Connect already has an upload of build $build but lists no $version ($build); publish with a higher build_number"
+    fi
+    if ! uploaded_in_earlier_attempt "$(jq -r '.result.data[0].attributes.uploadedDate // empty' "$out/asc-build-existing.json")"; then
+      fail "upload failed: App Store Connect already lists $version ($build), uploaded by another run; publish with a higher build_number"
+    fi
+    echo "::warning title=build $build was already uploaded::A previous attempt of this run uploaded $version ($build); App Store Connect's processing state decides (gatefold#337)."
+  else
+    fail "upload failed"
+  fi
+fi
 date -u +%FT%TZ > "$out/uploaded-at.txt"
 
-# 4. Wait for processing (up to an hour).
+# 4. Wait for processing (up to an hour, or 15 minutes after altool's own wait).
 build_id=""
-for attempt in $(seq 1 120); do
+for attempt in $(seq 1 "$poll_checks"); do
   asc_get --path /v1/builds --query "filter[app]=$app_id" --query "filter[version]=$build" \
     --query "filter[preReleaseVersion.version]=$version" --query limit=5 > "$out/asc-build-poll.json" || true
   state="$(jq -r '[.result.data[]?.attributes.processingState] | unique | join(",")' "$out/asc-build-poll.json" 2>/dev/null || true)"
   build_id="$(jq -r '.result.data[]? | select(.attributes.processingState == "VALID") | .id' "$out/asc-build-poll.json" 2>/dev/null | head -1)"
   [[ -n "$build_id" ]] && break
   [[ "$state" == *FAILED* || "$state" == *INVALID* ]] && fail "App Store Connect processing ended $state"
-  echo "build $build not processed yet (state=${state:-not listed}, check $attempt/120)"
+  echo "build $build not processed yet (state=${state:-not listed}, check $attempt/$poll_checks)"
   sleep 30
 done
-[[ -n "$build_id" ]] || fail "build $build was not processed within an hour"
+[[ -n "$build_id" ]] || fail "build $build was not processed within $((poll_checks / 2)) minutes of polling"
 date -u +%FT%TZ > "$out/processed-at.txt"
 echo "Build $build is processed ($build_id)"
 
