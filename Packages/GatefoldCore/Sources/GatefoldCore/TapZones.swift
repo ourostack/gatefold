@@ -9,13 +9,15 @@ import Foundation
 /// back (build 20 on the Duo).
 public enum TapZones {
     public static let share: CGFloat = 0.25
-    /// The widest a turn zone gets: a margin a thumb finds, not the text people tap to wake the
-    /// controls (an iPad's landscape spread gave 344 pt, the outer half of each page's text).
+    /// The widest a single page's turn zone gets: a margin a thumb finds, not the text people tap to
+    /// wake the controls (a quarter of the whole iPad spread gave 344 pt, the outer half of each page's text).
     public static let widest: CGFloat = 88
 
-    /// How far in from each side of the view a tap turns the page.
+    /// How far in from each side of the view a tap turns the page. A spread's page keeps its whole outer
+    /// quarter, with no cap: capped at 88 pt, the iPad spread's zone was its 69 pt margin and 19 pt of text,
+    /// so taps at 7% and 93% of its width woke the controls instead of turning (gatefold#304).
     public static func edge(viewWidth: CGFloat, spread: Bool) -> CGFloat {
-        min(widest, (spread ? viewWidth / 2 : viewWidth) * share)
+        spread ? viewWidth / 2 * share : min(widest, viewWidth * share)
     }
 }
 
