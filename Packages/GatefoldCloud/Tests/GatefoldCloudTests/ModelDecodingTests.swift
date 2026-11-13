@@ -51,6 +51,14 @@ struct ModelDecodingTests {
         #expect(info.book.bytes == 440131)
     }
 
+    @Test func decodesTheFileInfoPositionUpdatedInMilliseconds() throws {
+        let info = try WireDecoder.fileInfo(Fixture.data("fileops-info-milliseconds.json"))
+        let position = try #require(info.position)
+        #expect(position.updated == Date(timeIntervalSince1970: 1_763_054_791))
+        #expect(position.cfi == "epubcfi(/6/8!/4/2/4/1:0)")
+        #expect(position.totalProgression == 0.05)
+    }
+
     @Test func decodesTheUploadResponseWithItsOddTypes() throws {
         let book = try WireDecoder.uploadResponse(Fixture.data("upload-response.json"))
         #expect(book.fastHash == "56f8619536655be4a1541a40c5702d32")
@@ -102,6 +110,13 @@ struct ModelDecodingTests {
         #expect(PBDate.parse("1793484031") == Date(timeIntervalSince1970: 1793484031))
         #expect(PBDate.parse("") == nil)
         #expect(PBDate.parse("soon") == nil)
+    }
+
+    @Test func interpretsNumericDatesInSecondsOrMilliseconds() {
+        #expect(Loose.number(1_763_054_791).date == Date(timeIntervalSince1970: 1_763_054_791))
+        #expect(Loose.number(100_000_000_000).date == Date(timeIntervalSince1970: 100_000_000_000))
+        #expect(Loose.number(100_000_000_001).date == Date(timeIntervalSince1970: 100_000_000.001))
+        #expect(Loose.number(1_763_054_791_250).date == Date(timeIntervalSince1970: 1_763_054_791.25))
     }
 }
 
