@@ -48,7 +48,7 @@ struct ModelDecodingTests {
         #expect(position.totalProgression == 0.05)
         #expect(position.updated == utc("2026-10-31T21:59:16Z"))
         #expect(position.source == .pocketBookNative)
-        #expect(info.book.bytes == 440131)
+        #expect(info.book?.bytes == 440131)
     }
 
     @Test func decodesTheUploadResponseWithItsOddTypes() throws {
