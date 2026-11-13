@@ -863,6 +863,11 @@ private struct SyncStatusLine: View {
                         .disabled(app.library.isRefreshing)
                         .accessibilityIdentifier("library.syncRetry")
                 }
+            } else if !app.library.placesReachEReader, app.account != nil {
+                // Never "In step" over a place the e-reader didn't get.
+                Label(LibraryStore.placesNotSentLine, systemImage: "exclamationmark.icloud")
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("library.placesNotSent")
             } else if let health {
                 // Relative times tick over on their own ("just now" becomes "1 min ago").
                 TimelineView(.periodic(from: .now, by: 30)) { context in

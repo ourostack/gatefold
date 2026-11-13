@@ -313,6 +313,39 @@ struct PositionSyncTests {
         }
     }
 
+    /// Since November 2026 PocketBook answers position writes for records from before its change with 422 "position: File not found."
+    /// (seen live 2026-11-13). The app must hear that the place didn't reach the e-reader: never a
+    /// silent drop under an "In step with your e-reader" line.
+    @Test func aPlaceTheCloudRefusesIsAnnouncedNotLostInSilence() async throws {
+        let h = Harness()
+        await h.transport.on("GET", "/fileops/info", remote("2026-10-31T21:00:00Z"))
+        await h.transport.on("POST", "/books/read-position", .json(#"{"error_code":0,"error_msg":"position: File not found."}"#, status: 422))
+        let cloud = h.cloud()
+        let stream = cloud.changes()
+        await cloud.push(position, for: CloudBook(fastHash: frankenstein))
+        await cloud.flushOutbox()
+        var refused: String?
+        for await change in stream {
+            if case let .positionRefused(hash) = change { refused = hash; break }
+        }
+        #expect(refused == frankenstein)
+    }
+
+    @Test func aPlaceThatLandsIsAnnouncedSent() async throws {
+        let h = Harness()
+        await h.transport.on("GET", "/fileops/info", remote("2026-10-31T21:00:00Z"))
+        await h.transport.on("POST", "/books/read-position", .ok)
+        let cloud = h.cloud()
+        let stream = cloud.changes()
+        await cloud.push(position, for: CloudBook(fastHash: frankenstein))
+        await cloud.flushOutbox()
+        var sent: String?
+        for await change in stream {
+            if case let .positionSent(hash) = change { sent = hash; break }
+        }
+        #expect(sent == frankenstein)
+    }
+
     /// The Cloud's shape since November 2026: `/fileops/info/` carries the position only when asked
     /// with `include_metadata=true` (seen live 2026-11-13). Without it Gatefold never saw the InkPad's place.
     func eReaderPlaceOnlyWithMetadata(_ transport: ScriptedTransport, _ updated: String, cfi: String) async {

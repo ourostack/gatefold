@@ -49,6 +49,7 @@ iPad Pro 13-inch|PlaceUndoUITests/testATouchOnTheScrubberNeverJumps	158	# p95 of
 iPad Pro 13-inch|PlaceUndoUITests/testBackToAChapterStillLoadingWaitsForItAndTakesHimBack	262	# p95 of 82, slowest 288
 iPad Pro 13-inch|PositionUITests/testEveryPostureKeepsThePlace	323	# p95 of 100, slowest 374
 iPad Pro 13-inch|QuickLeaveUITests/testTurnsThenAQuickLeaveReopenOnTheLastTurnsPage	117	# p95 of 2, slowest 117
+iPad Pro 13-inch|QuickLeaveUITests/testALeaveUnderTheReopensCoverAfterTheWatchdogKeepsHisPlace	200	# one CI pass so far, 152 s (run 43465939101); 200 until CI has timed more (gatefold#366)
 iPad Pro 13-inch|ReopenAfterControlsUITests/testAReturnAfterTheControlsAndNumbersShowsTheSameWords1	467	# p95 of 68, slowest 669
 iPad Pro 13-inch|ReopenAfterControlsUITests/testAReturnAfterTheControlsAndNumbersShowsTheSameWords2	433	# p95 of 65, slowest 495
 iPad Pro 13-inch|ReopenAfterControlsUITests/testAReturnAfterTheControlsAndNumbersShowsTheSameWords3	384	# p95 of 66, slowest 631
@@ -96,6 +97,7 @@ iPhone Duo|PositionUITests/testFontChangeKeepsThePlace	190	# p95 of 113, slowest
 iPhone Duo|PositionUITests/testRotationKeepsThePlace	116	# p95 of 106, slowest 151
 iPhone Duo|PositionUITests/testTabletopDeckTurnsAndResizes	259	# p95 of 112, slowest 444
 iPhone Duo|QuickLeaveUITests/testTurnsThenAQuickLeaveReopenOnTheLastTurnsPage	115	# p95 of 2, slowest 115
+iPhone Duo|QuickLeaveUITests/testALeaveUnderTheReopensCoverAfterTheWatchdogKeepsHisPlace	10	# skipped: iPad only (gatefold#366)
 iPhone Duo|ReviewerChecksUITests/testEveryReopenReturnsTheSameWords	895	# p95 of 103, slowest 1362
 iPhone Duo|ReviewerChecksUITests/testPageNumbersAreOnOrOffInEveryBook	1075	# p95 of 97, slowest 1160
 iPhone Duo|ReviewerChecksUITests/testTheDefaultSpreadIsAsFullAsAppleBooks	1	# p95 of 104, slowest 4

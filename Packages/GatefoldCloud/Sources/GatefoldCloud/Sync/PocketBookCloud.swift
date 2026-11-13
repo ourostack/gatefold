@@ -256,7 +256,7 @@ public actor PocketBookCloud: SyncService {
 
     private func freshDownloadLink(for book: CloudBook) async throws -> URL? {
         let (data, _) = try await session.send(Self.fileInfo(book.fastHash))
-        return try WireDecoder.fileInfo(data).book.downloadURL
+        return try WireDecoder.fileInfo(data).book?.downloadURL
     }
 
     public func upload(fileAt url: URL) async throws -> CloudBook {
@@ -504,6 +504,7 @@ public actor PocketBookCloud: SyncService {
                 let outcome = try await send(item)
                 guard generation == accountGeneration else { return }
                 guard let i = state.items.firstIndex(where: { $0.id == item.id }) else { continue }
+                if case .position = item.operation, case .done = outcome { broadcaster.emit(.positionSent(fastHash: item.fastHash)) }
                 switch outcome {
                 case .finished:
                     state.items.remove(at: i)
@@ -532,10 +533,14 @@ public actor PocketBookCloud: SyncService {
                     index = i
                 case .drop:
                     state.items.remove(at: i)
+                    if case .position = item.operation, (error as? CloudError) != .notFound {
+                        broadcaster.emit(.positionRefused(fastHash: item.fastHash))
+                    }
                 case .retry(let retryAfter):
                     state.items[i].attempts += 1
                     if state.items[i].attempts >= Self.maxAttempts, !(error as? CloudError).map(\.isTransient).orFalse, !newerArrived {
                         state.items.remove(at: i)
+                        if case .position = item.operation { broadcaster.emit(.positionRefused(fastHash: item.fastHash)) }
                         break
                     }
                     state.items[i].notBefore = now().addingTimeInterval(max(retryAfter ?? 0, backoff(attempt: state.items[i].attempts)))

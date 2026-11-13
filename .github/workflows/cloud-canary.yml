@@ -1,0 +1,99 @@
+name: Cloud canary
+
+# PocketBook Cloud is unofficial and changes without notice (November 2026 broke downloads, the
+# e-reader's place and fresh sign-in at once, and only Ari's phone noticed). Every 6 hours this signs in
+# to agent test account 1 once and checks the basics Gatefold needs (gatefold#372). It is not a
+# required check, so the cloud's outages never block a merge. scripts/cloud-canary.py judges the run:
+# a failed step opens or comments on the one `cloud-drift` issue; a 429 at sign-in is inconclusive (a
+# yellow summary, no issue; a `canary-lockout` issue only after 24 h of it). On red the issue carries
+# every refused exchange and how each answer's shape differs from the unit-test fixtures.
+on:
+  schedule:
+    - cron: "17 */6 * * *"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "scripts/cloud-canary.py"
+      - ".github/workflows/cloud-canary.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  # The verdict logic, on every change to it. Linux, seconds, never signs in.
+  selftest:
+    name: Canary verdicts (selftest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+      - run: python3 -I scripts/cloud-canary.py --selftest
+
+  canary:
+    name: PocketBook Cloud basics
+    if: github.repository == 'ourostack/gatefold' && github.event_name != 'pull_request'
+    needs: selftest
+    runs-on: xcode-27
+    timeout-minutes: 30
+    # Never two at once: two sign-ins close together count against the cloud's per-account login limit. Never on
+    # a pull request (its `if`), so it takes no PR lane; scripts/ci-lanes.py exempts it while that `if` holds.
+    concurrency:
+      group: cloud-canary-live
+      queue: max
+    permissions:
+      contents: read
+      actions: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v5
+
+      # The lockout clock (since when sign-in has been rate-limited) from the last run that kept one.
+      - name: Previous state
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/prev"
+          for id in $(gh run list -R "$GITHUB_REPOSITORY" --workflow cloud-canary.yml --status completed -L 20 \
+              --json databaseId,event -q '.[] | select(.event != "pull_request") | .databaseId'); do
+            gh run download "$id" -R "$GITHUB_REPOSITORY" -n canary-state -D "$RUNNER_TEMP/prev" 2>/dev/null && break
+          done
+          ls "$RUNNER_TEMP/prev"
+
+      - name: Check the cloud (one sign-in)
+        id: canary
+        working-directory: Packages/GatefoldCloud
+        env:
+          GATEFOLD_LIVE_CANARY: "1"
+          GATEFOLD_LIVE_CAPTURE: ${{ runner.temp }}/capture
+          GATEFOLD_LIVE_EMAIL: ${{ secrets.GATEFOLD_LIVE_EMAIL }}
+          GATEFOLD_LIVE_PASSWORD: ${{ secrets.GATEFOLD_LIVE_PASSWORD }}
+        run: |
+          set -o pipefail
+          test -n "$GATEFOLD_LIVE_EMAIL" && test -n "$GATEFOLD_LIVE_PASSWORD" || { echo "::error::GATEFOLD_LIVE_EMAIL / GATEFOLD_LIVE_PASSWORD secrets are not set"; exit 1; }
+          swift test --filter LiveCanaryTests 2>&1 | tee "$RUNNER_TEMP/canary.log"
+
+      - name: Verdict and report
+        if: success() || failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 -I scripts/cloud-canary.py report --log "$RUNNER_TEMP/canary.log" --outcome "${{ steps.canary.outcome }}" \
+            --state-in "$RUNNER_TEMP/prev/state.json" --state-out "$RUNNER_TEMP/state.json" --capture "$RUNNER_TEMP/capture"
+
+      # What the cloud said, redacted (RecordingTransport); the cloud-drift issue points here.
+      - name: Keep the capture
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: canary-capture
+          path: ${{ runner.temp }}/capture
+          retention-days: 30
+          if-no-files-found: ignore
+
+      - name: Keep state for the next run
+        if: success() || failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: canary-state
+          path: ${{ runner.temp }}/state.json
+          retention-days: 14

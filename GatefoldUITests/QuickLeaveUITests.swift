@@ -89,4 +89,55 @@ final class QuickLeaveUITests: XCTestCase {
         print("QUICKLEAVE reopened \(shown)")
         XCTAssertTrue(landed, "the reopen is on \(shown), not the page of his last turn (\(last)); opened at \(opened)")
     }
+
+    /// He leaves while a reopen's cover is still held for his place (gatefold#310), after the 12 s reflow watchdog
+    /// has shown the page beneath it as it is: he never saw that page, so the reopen after keeps his saved place
+    /// (gatefold#366). On the iPad's side the reopen begins a rotation's reflow, whose restore waits on the page's
+    /// scripts, held here for 800 looks (at least 40 s): the watchdog fires at 12 s, inside the cover's 900-look hold.
+    func testALeaveUnderTheReopensCoverAfterTheWatchdogKeepsHisPlace() throws {
+        try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .pad, "the reopen's rotation reflow is the iPad's")
+        XCUIDevice.shared.orientation = .landscapeLeft
+        addTeardownBlock { @MainActor in XCUIDevice.shared.orientation = .portrait }
+        // His place, saved bare as a quick leave keeps it: a place with no words, so the stalled reopen opens on its
+        // file's first page, a page he never chose.
+        app.launchArguments = base + ["-GatefoldReset", "YES", "-GatefoldDownloadAll", "YES", "-GatefoldHoldTurnWrites", "YES",
+                                      "-GatefoldOpenBook", "gutenberg-pride-and-prejudice", "-GatefoldGoTo", "0.31"]
+        app.relaunch()
+        XCTAssertTrue(el("reader.page").waitForExistence(timeout: 120), "the book opened")
+        XCTAssertTrue(reads(1200) { (el("reader.pageReady").value as? String) == "1" }, "the page never became ready for a turn")
+        for turn in 1...3 {
+            let before = shown
+            el("reader.page").coordinate(withNormalizedOffset: CGVector(dx: 0.97, dy: 0.5)).tap()
+            XCTAssertTrue(reads(75) { let now = shown; return !now.isEmpty && now != before },
+                          "turn \(turn) never reached its page (still \(before))")
+        }
+        leave()
+        app.launchArguments = base + ["-GatefoldReopenOnChapterStart", "YES", "-GatefoldStallOpenScripts", "800"]
+        app.relaunch()
+        XCTAssertTrue(el("reader.page").waitForExistence(timeout: 120), "the book reopened")
+        let saved = (el("reader.savedPlace").value as? String) ?? ""
+        XCTAssertFalse(saved.isEmpty, "the reopen had a saved place")
+        let watchdog = el("reader.shownUnsettled")
+        XCTAssertTrue(reads(600) { ((watchdog.value as? String).flatMap(Int.init) ?? 0) > 0 },
+                      "the watchdog never showed the page under the reopen's cover")
+        // The case itself: the cover still up as the watchdog fires. A cover already lifted is another case.
+        XCTAssertEqual(el("reader.pageReady").value as? String, "0", "the cover lifted before the watchdog fired")
+        leave()
+        app.launchArguments = base
+        app.relaunch()
+        XCTAssertTrue(el("reader.page").waitForExistence(timeout: 120), "the book reopened again")
+        let kept = (el("reader.savedPlace").value as? String) ?? ""
+        print("QUICKLEAVE under the cover: saved \(saved) kept \(kept)")
+        XCTAssertEqual(kept, saved, "a leave under the reopen's cover kept a page he never saw")
+    }
+
+    /// Home, then iOS ends Gatefold: no wait for any write.
+    private func leave() {
+        XCUIDevice.shared.press(.home)
+        // A Duo simulator up for a day can miss the Home press (ReopenLandingUITests).
+        if !app.wait(for: .runningBackground, timeout: 3) {
+            XCUIApplication(bundleIdentifier: "com.apple.springboard").activate()
+        }
+        app.quit()
+    }
 }
