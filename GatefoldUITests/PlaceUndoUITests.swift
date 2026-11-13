@@ -126,19 +126,6 @@ final class PlaceUndoUITests: XCTestCase {
                       "a tap in the middle brings up the controls")
     }
 
-    /// After a swipe the list may still be scrolling, and asking a row whether it is hittable then can fail
-    /// the test outright ("activation point invalid": main 42855033645, gatefold#196). So ask once its
-    /// frame holds still for two reads in a row, or it isn't there.
-    private func holdsStill(_ e: XCUIElement) {
-        var last = CGRect.null
-        _ = readsUntil(reads: 30) {
-            guard e.exists else { return true }
-            let now = e.frame
-            defer { last = now }
-            return now == last
-        }
-    }
-
     private func contentsJump(to chapter: String) {
         showChrome()
         app.buttons["reader.contents"].tap()
@@ -146,14 +133,9 @@ final class PlaceUndoUITests: XCTestCase {
         // The list opens centred on the current chapter, so the first rows are not built yet.
         XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label BEGINSWITH[c] %@", "Chapter")).firstMatch.waitForExistence(timeout: 10),
                       "the contents list opens")
-        for _ in 0..<20 where !hung {
-            holdsStill(row)
-            if row.exists && row.isHittable { break }
-            app.swipeUp(velocity: .slow)
-        }
-        holdsStill(row)
-        XCTAssertTrue(row.exists && row.isHittable, "the contents list \(chapter)")
-        row.tap()
+        // Asking a row whether it is hittable fails the test outright when the list has built it off screen
+        // ("activation point invalid": main 42855033645, gatefold#196, #98), so `ContentsRow` reads its frame.
+        XCTAssertTrue(ContentsRow.tap(row, in: app).ok, "the contents list \(chapter)")
     }
 
     /// A Contents jump, then the controls gone: "Back" is on the page, and one tap on it is his page again.
@@ -165,6 +147,7 @@ final class PlaceUndoUITests: XCTestCase {
         XCTAssertNotEqual(opening(jump.words), opening(first), "the jump moved the page")
         XCTAssertTrue(jump.ok, "the jump's veil lifts")
         let jumped = jump.words
+        XCTAssertTrue(keptAtChapterXL(), "the jump didn't keep the chapter he chose")
         // A jump made from the controls leaves them up, perhaps still fading in: once they are, a tap in
         // the middle puts them down.
         let contents = app.buttons["reader.contents"]
@@ -220,10 +203,12 @@ final class PlaceUndoUITests: XCTestCase {
         // Sampled until the held load ends: how long the veil stayed, for the log (it may let go at its limit).
         // A trip that stops sending leaves it held: 400 samples, past the 25 sends' 50 s of reads.
         var samples = 0, bare = 0
-        print("BACKHELD sendsLeftAtStart=\(held.value as? String ?? "?")")
+        // Read from a snapshot: the held load can end between `exists` and a plain `value`, which then fails (#213).
+        func sendsLeftNow() -> String? { (try? held.snapshot())?.value as? String }
+        print("BACKHELD sendsLeftAtStart=\(sendsLeftNow() ?? "?")")
         var sendsLeft = "?"
         while held.exists, samples < 400 {
-            sendsLeft = held.value as? String ?? sendsLeft
+            sendsLeft = sendsLeftNow() ?? sendsLeft
             samples += 1
             if !veil.exists, held.exists { bare += 1 }
             RunLoop.current.run(until: Date().addingTimeInterval(0.3))
@@ -233,7 +218,24 @@ final class PlaceUndoUITests: XCTestCase {
         XCTAssertTrue(veil.waitForNonExistence(timeout: 30), "Back's veil lifted once the chapter had loaded")
         let returned = waitForWords(changingFrom: jumped, timeout: 30)
         XCTAssertEqual(opening(returned), opening(first), "Back did not return to his page")
-        XCTAssertNotEqual(back.label, "Couldn't go back. Try again")
+        // The button may have gone by now (#213): a gone button shows no failure either.
+        XCTAssertNotEqual((try? back.snapshot())?.label, "Couldn't go back. Try again")
+    }
+
+    /// A Contents jump whose chapter load never ends: the veil lets go at its limit (about 30 s), his
+    /// page stays on screen and answers his taps; the screen is never frozen behind it (gatefold#173).
+    func testAContentsJumpThatNeverLoadsLetsTheVeilGo() {
+        let first = openFresh(["-GatefoldHangLinkJumps", "1"])
+        let veil = el("reader.veil")
+        contentsJump(to: "Chapter XL")
+        XCTAssertTrue(veil.waitForExistence(timeout: 10), "the jump put up no veil")
+        // The veil's limit is 150 beats of 200 ms; well past it, it must have let go.
+        XCTAssertTrue(veil.waitForNonExistence(timeout: 90), "the veil froze the screen past its limit")
+        let shown = waitForWords()
+        XCTAssertEqual(opening(shown), opening(first), "the jump that never came back moved the page")
+        // His taps reach the page again: one brings the controls up.
+        if !app.buttons["reader.contents"].exists { el("reader.page").coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap() }
+        XCTAssertTrue(app.buttons["reader.contents"].waitForExistence(timeout: 10), "a tap on the page after the veil let go brought no controls")
     }
 
     /// A touch resting on the scrubber, and a short wobble on it, never move the page.
@@ -350,6 +352,7 @@ final class PlaceUndoUITests: XCTestCase {
         contentsJump(to: "Chapter XL")
         _ = waitForWords(changingFrom: first, timeout: 30)
         XCTAssertTrue(el("reader.veil").waitForNonExistence(timeout: 60), "the veil lifts")
+        XCTAssertTrue(keptAtChapterXL(), "the jump didn't keep the chapter he chose")
         if app.buttons["reader.contents"].exists { el("reader.page").coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap() }
         XCTAssertTrue(app.buttons["reader.contents"].waitForNonExistence(timeout: 5), "the controls are hidden")
         let start = settledWords()
@@ -390,6 +393,9 @@ final class PlaceUndoUITests: XCTestCase {
         XCTAssertTrue(contents.exists, "the tap under the veil was swallowed (the controls it would have put down are up)")
         let chosen = settledWords()
         XCTAssertNotEqual(opening(chosen), opening(first))
+        // Judged against the entry he chose: Chapter XL starts 0.80 into its file, and a landing on the
+        // file's first page (an earlier chapter) was kept as his place (gatefold#166, #254).
+        XCTAssertTrue(keptAtChapterXL(), "the tapped jump didn't keep the chapter he chose")
         // The same jump again, untouched, from his first page: the page it lands on is where he chose.
         app.buttons["reader.back"].tap()
         let back = landed(from: chosen, reads: 1200)
@@ -401,6 +407,22 @@ final class PlaceUndoUITests: XCTestCase {
         let untouched = landed(from: back.words, reads: 1200)
         print("UNDO untouched jump: veil up after \(again.reads) reads, landed after \(untouched.reads) reads")
         XCTAssertTrue(untouched.ok, "the untouched jump's veil lifts")
-        XCTAssertEqual(opening(settledWords()), opening(chosen), "a tap during the jump moved the page off where he chose")
+        // The untouched jump is judged first on its own: on #254 it, not the tapped one, stopped on its
+        // file's first page.
+        XCTAssertTrue(keptAtChapterXL(), "the untouched jump didn't keep the chapter he chose")
+        XCTAssertEqual(opening(settledWords()), opening(chosen), "the tapped and the untouched jump to the same chapter landed on different pages")
+    }
+
+    /// The place a move of his last kept is Chapter XL's page, in reads: in file h-9, whose anchor for it
+    /// is 0.80 of the way into the file's text (the file's start is an earlier chapter), on the page holding
+    /// it, which starts within a page before. The app's probe gives a file name and a number, never words.
+    private func keptAtChapterXL(reads: Int = 40) -> Bool {
+        let probe = el("reader.savedPlace")
+        for _ in 0..<reads {
+            let parts = ((probe.value as? String) ?? "").split(separator: "@")
+            if parts.count == 2, parts[0].contains("-h-9."), let p = Double(parts[1]), abs(p - 0.79) < 0.08 { return true }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        }
+        return false
     }
 }

@@ -8,6 +8,19 @@ struct ReaderScreen: View {
 
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// Opaque at the top to clear at the foot, drawn once by Core Graphics (which doesn't dither), so a
+    /// pushed page's fade is the same pixels every time.
+    private static let footFade: UIImage = {
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        format.opaque = false
+        format.preferredRange = .standard  // 8-bit everywhere, never a wide or float bitmap
+        return UIGraphicsImageRenderer(size: CGSize(width: 1, height: 256), format: format).image { context in
+            let colors = [UIColor.black.cgColor, UIColor.black.withAlphaComponent(0).cgColor] as CFArray
+            guard let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: colors, locations: [0, 1]) else { return }
+            context.cgContext.drawLinearGradient(gradient, start: CGPoint(x: 0, y: 0.5), end: CGPoint(x: 0, y: 255.5), options: [])
+        }
+    }()
     @State private var hinge: HingeState = .none
     @State private var showAppearance = LaunchOptions.sheet == "appearance" || LaunchOptions.sheet == "customize"
     @State private var showContents = LaunchOptions.sheet == "contents"
@@ -77,12 +90,15 @@ struct ReaderScreen: View {
                     .animation(reduceMotion ? .easeOut(duration: 0.2) : .spring(duration: 0.25), value: lifted)
                     .offset(y: push)
                     .mask {
-                        let h = max(proxy.size.height, 1)
-                        LinearGradient(stops: [.init(color: .black, location: 0),
-                                               .init(color: .black, location: push > 0 ? max(0, (h - 44) / h) : 1),
-                                               .init(color: push > 0 ? .clear : .black, location: 1)],
-                                       startPoint: .top, endPoint: .bottom)
-                            .frame(width: proxy.size.width, height: proxy.size.height)
+                        // A pushed page fades out over its last 44 pt. A bitmap, not a LinearGradient: with the
+                        // gradient, the faded line came out up to 2 levels apart between two launches, as even
+                        // noise, which looks like dithering (gatefold#319).
+                        VStack(spacing: 0) {
+                            Color.black
+                            Image(uiImage: Self.footFade).resizable()
+                                .frame(height: push > 0 ? 44 : 0)
+                        }
+                        .frame(width: proxy.size.width, height: proxy.size.height)
                     }
                     .animation(reduceMotion ? .easeOut(duration: 0.2) : .spring(duration: 0.4, bounce: 0.1), value: push)
 
@@ -233,6 +249,8 @@ struct ReaderScreen: View {
         .sheet(isPresented: $showSearch) {
             SearchSheet(model: model)
         }
+        // A jump still on its way with no veil over the page gives way to him opening Contents (gatefold#254).
+        .onChange(of: showContents) { _, shown in if shown { model.contentsOpened() } }
         .sheet(isPresented: $showContents) {
             ContentsSheet(model: model)
         }
@@ -360,6 +378,13 @@ struct ReaderScreen: View {
                 .accessibilityIdentifier("reader.pageCount")
                 .accessibilityValue(model.screenPages?.total.map(String.init) ?? "")
                 .allowsHitTesting(false)
+            // The layout that count is of, so a test waits for the new layout's total after a rotation (#210).
+            Text("page count layout")
+                .font(.system(size: 1))
+                .opacity(0.01)
+                .accessibilityIdentifier("reader.pageCountLayout")
+                .accessibilityValue(model.screenPages?.layout.key ?? "")
+                .allowsHitTesting(false)
             Text("number delay")
                 .font(.system(size: 1))
                 .opacity(0.01)
@@ -377,6 +402,12 @@ struct ReaderScreen: View {
                 .opacity(0.01)
                 .accessibilityIdentifier("reader.countingShown")
                 .accessibilityValue(model.countingShownProbe ? "1" : "0")
+                .allowsHitTesting(false)
+            Text("slot blank")
+                .font(.system(size: 1))
+                .opacity(0.01)
+                .accessibilityIdentifier("reader.slotBlankFrames")
+                .accessibilityValue(String(model.slotBlankProbe))
                 .allowsHitTesting(false)
             Text("ready")
                 .font(.system(size: 1))
@@ -401,6 +432,24 @@ struct ReaderScreen: View {
                 .opacity(0.01)
                 .accessibilityIdentifier("reader.savedWords")
                 .accessibilityValue(model.savedWordsProbe)
+                .allowsHitTesting(false)
+            Text("saved place")
+                .font(.system(size: 1))
+                .opacity(0.01)
+                .accessibilityIdentifier("reader.savedPlace")
+                .accessibilityValue(model.savedPlaceProbe)
+                .allowsHitTesting(false)
+            Text(model.aheadCountProbe)
+                .font(.system(size: 1))
+                .opacity(0.01)
+                .accessibilityIdentifier("reader.aheadCount")
+                .accessibilityLabel(model.aheadCountProbe)
+                .allowsHitTesting(false)
+            Text("shown place")
+                .font(.system(size: 1))
+                .opacity(0.01)
+                .accessibilityIdentifier("reader.shownPlace")
+                .accessibilityValue(model.shownPlaceProbe)
                 .allowsHitTesting(false)
             Text(model.anchorCheck)
                 .font(.system(size: 1))
@@ -518,7 +567,10 @@ struct ReaderScreen: View {
     @ViewBuilder
     private func pageNumbers(pages: [CGRect], hidden: Bool, shown: Bool) -> some View {
         let band = model.textBand.bottom
-        if model.preferences.showsPageNumbers, let numbers = model.screenNumbers, numbers.count == pages.count {
+        // Numbers for a different count of pages (the page reflowed into a spread or out of one, and its numbers
+        // aren't asked for yet) don't fit these pages: the slot says it's counting until they do, never blank (gatefold#262).
+        let fitting = model.screenNumbers.flatMap { $0.count == pages.count ? $0 : nil }
+        if model.preferences.showsPageNumbers, let numbers = fitting {
             ZStack(alignment: .topLeading) {
                 ForEach(Array(pages.enumerated()), id: \.offset) { i, r in
                     if let n = numbers[i] {
@@ -534,7 +586,7 @@ struct ReaderScreen: View {
             .opacity(hidden || !model.pageReady ? 0 : 1)
             .animation(.easeOut(duration: 0.25), value: hidden)
             .allowsHitTesting(false)
-        } else if model.preferences.showsPageNumbers, model.countingPages, let first = pages.first, let last = pages.last {
+        } else if model.preferences.showsPageNumbers, model.awaitingNumber, let first = pages.first, let last = pages.last {
             // Where the number will be, in its face and grey, a little fainter: one line under the
             // page (or centred under the spread). Drawn over the band, so the words never move.
             let r = first.union(last)
@@ -554,6 +606,17 @@ struct ReaderScreen: View {
                 .onChange(of: shown, initial: true) { _, shown in
                     if LaunchOptions.isUITest, shown { model.countingShownProbe = true }
                 }
+        } else if LaunchOptions.isUITest, model.preferences.showsPageNumbers, model.screenLayout != nil {
+            #if DEBUG
+            // UI tests: the slot drawn with neither in it. Counted each time it is drawn so on a page he can see.
+            Color.clear
+                .frame(width: 1, height: 1)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+                .onChange(of: shown, initial: true) { _, shown in
+                    if shown { model.slotBlankProbe += 1 }
+                }
+            #endif
         }
     }
 

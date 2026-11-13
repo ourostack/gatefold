@@ -86,15 +86,36 @@ enum LaunchOptions {
     static var isUITest: Bool { defaults.bool(forKey: "GatefoldUITest") }
     static var resetState: Bool { defaults.bool(forKey: "GatefoldReset") }
     static var skipWelcome: Bool { defaults.bool(forKey: "GatefoldSkipWelcome") }
-    /// Measure a cold open: no book is opened ahead of the tap.
+    /// Measure a cold open: no book is opened ahead of the tap and WebKit isn't started early. Also the
+    /// shelf's screenshot, whose CI simulator stopped answering under the hidden pages' WebKit (gatefold#150).
     static var noWarm: Bool { defaults.bool(forKey: "GatefoldNoWarm") }
     /// Films only: the spread's pages stay unpainted for this many seconds as the unfold swings, as on
     /// a busy device, to show the old page holding until they paint.
     /// Tests only: every reflow's restore hangs after laying out, as a cold iPad's could; the page must still show.
     static var stallReflow: Bool { defaults.bool(forKey: "GatefoldStallReflow") }
+    /// Tests only: the first reflow after his first move waits 120 s for its page to answer its first script, as
+    /// CI's landscape spread did while its chapter loaded (gatefold#94, #133); every restore of it waits.
+    static var slowRestorePage: Bool { isUITest && defaults.bool(forKey: "GatefoldSlowRestorePage") }
+    /// Tests only, with `slowRestorePage`: the page shown unsettled is noted as Readium names it and never by
+    /// its words, as on a device whose page scripts wait on the stalled install too (gatefold#133).
+    static var shownPageWithoutWords: Bool { isUITest && defaults.bool(forKey: "GatefoldShownPageWithoutWords") }
+    /// Tests only, with `shownPageWithoutWords`: the page shown unsettled is noted at the place his last write
+    /// kept, as when Readium reports no new location while the restore stalls (CI 43075159905, gatefold#133);
+    /// otherwise the runner's layout decides whether it is that place or the boundary before it.
+    static var shownPageAtHisPlace: Bool { shownPageWithoutWords && defaults.bool(forKey: "GatefoldShownPageAtHisPlace") }
+    /// Tests only: a book opened on a place with no words opens on its chapter's start, as a reopen whose
+    /// stalled restore settled there did on CI (gatefold#250); the saved place itself is unchanged.
+    static var reopenOnChapterStart: Bool { isUITest && defaults.bool(forKey: "GatefoldReopenOnChapterStart") }
     /// Debug only: a jump's chapter counts as still loading (Readium's spinner up) for this many looks,
     /// so a test can hold the load open as a slow device does and watch the veil (#38).
     static var holdChapterLoadLooks: Int? { defaults.object(forKey: "GatefoldHoldChapterLoad") == nil ? nil : defaults.integer(forKey: "GatefoldHoldChapterLoad") }
+    /// UI tests only: a jump of his to a place (the scrubber) is never sent to the page, as a chapter that
+    /// never finishes loading: Readium never reports it, and he leaves on the page before (gatefold#279).
+    static var holdJumpSends: Bool { isUITest && defaults.bool(forKey: "GatefoldHoldJumpSends") }
+    /// UI tests only: a turn's place write never lands (it holds after reading his words, before it maps its
+    /// position), as on a device that suspends or ends Gatefold a moment after he leaves, before the write it
+    /// had under way lands (gatefold#301). Other writes (the launch jump's) land as ever.
+    static var holdTurnWrites: Bool { isUITest && defaults.bool(forKey: "GatefoldHoldTurnWrites") }
     /// Debug only: Back's first this many sends are taken at their chapter's start, the chapter still
     /// loading meanwhile, as a web view still loading takes a jump (gatefold#170). Counted in sends, not
     /// looks, so a Back that stops sending stays short. Armed once per launch, by its first Back.
@@ -121,6 +142,24 @@ enum LaunchOptions {
         defaults.object(forKey: "GatefoldCounters") == nil ? nil : defaults.integer(forKey: "GatefoldCounters")
         #else
         nil
+        #endif
+    }
+    /// UI tests: a Contents jump never comes back, a chapter load that never ends (gatefold#173).
+    static var hangLinkJumps: Bool {
+        #if DEBUG
+        defaults.bool(forKey: "GatefoldHangLinkJumps")
+        #else
+        false
+        #endif
+    }
+    /// Tests only: the first page counts as still loading, however long he takes, until Catch up is taken, so a
+    /// tap over the opening cover is judged while the page loads (gatefold#277; a hold in looks is spent by
+    /// every wait that reads it, and ran out before a slow runner's tap).
+    static var holdOpeningLoadUntilCatchUp: Bool {
+        #if DEBUG
+        isUITest && defaults.bool(forKey: "GatefoldHoldOpeningLoadUntilCatchUp")
+        #else
+        false
         #endif
     }
     /// Tests only: the first page counts as still loading for this many looks, so the opening cover

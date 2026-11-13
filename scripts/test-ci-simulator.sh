@@ -143,7 +143,7 @@ else echo "FAIL no labels file"; fails=$((fails + 1)); fi
 # The wait path's fresh device: boot-sim.sh hangs. Its whole process group is ended at the timeout (not only its
 # bash, which left its children running), and the timeout reported is the one that applied. With less left than one
 # boot attempt, no fresh device is tried, and it says so.
-# gone <pid>: the process has exited. A zombie counts as exited: in the core job's container PID 1 is Actions'
+# gone <pid>: the process has exited. A zombie counts as exited: in a container such as swift:6.2 PID 1 is Actions'
 # `tail -f /dev/null`, which never reaps, so a killed orphan stays a zombie and `kill -0` still finds it (job
 # 129026427008). Reads /proc where there is one (Linux, with no procps), else ps (macOS).
 gone() {
@@ -228,7 +228,7 @@ printf '#!/usr/bin/env bash\nexit 0\n' > "$real/bin/xcodebuild"
 chmod +x "$real/bin/"*
 # real_case <name> <hanging bootstatus calls> <devices that never boot> <expected UDID> <expected log text> \
 #   <text the log must not have> [a line the fake's call log must have]. $FAKE_LIST_HANGS: device listings that hang.
-# Under /bin/bash, macOS's 3.2, unless $BOOT_SIM_BASH names another (the core job's container has bash 5).
+# Under /bin/bash, macOS's 3.2, unless $BOOT_SIM_BASH names another (Linux's bash 5 in the job `CI scripts, offline`).
 real_case() {
   local d="$real/$(echo "$1" | tr -c 'a-zA-Z0-9\n' -)"; mkdir -p "$d/fake"
   local began got code took; began=$(date +%s)

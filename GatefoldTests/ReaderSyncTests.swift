@@ -33,6 +33,12 @@ final class ScriptedPage: ReaderPage {
     var reportsBeforeReturn = false
     private var held: [CheckedContinuation<Void, Never>] = []
     func releaseJumps() { let h = held; held = []; h.forEach { $0.resume() } }
+    /// How many jumps (and link jumps) are held now.
+    var heldJumps: Int { held.count }
+    /// Lets only the oldest, or the newest, held jump come back. Two continuations resumed back to back
+    /// have no promised order on the main actor: a test that needs one jump back first releases it alone.
+    func releaseOldestJump() { if !held.isEmpty { held.removeFirst().resume() } }
+    func releaseNewestJump() { if !held.isEmpty { held.removeLast().resume() } }
 
     /// Jumps a loading web view takes at its file's first page, dropping the place inside it (Readium on
     /// CI's iPad: Back to a page mid-chapter opened the chapter's start, 8c5f294).
@@ -77,7 +83,50 @@ final class ScriptedPage: ReaderPage {
     /// Readium reports where a jump took it on its own (off: a test sends the reports itself, in order).
     var reportsOnGo = true
 
-    func go(to link: ReadiumShared.Link) async {}
+    /// Counts each chapter at the columns this gives when asked (nil: never counts, as before), so the
+    /// reader's screen pages are known.
+    var countsColumns: ((String) -> Int)?
+    func countPages(_ hrefs: [String], record: @escaping @MainActor (String, Int) -> Void, finished: @escaping @MainActor () -> Void) {
+        guard let columns = countsColumns else { return }
+        hrefs.forEach { record($0, columns($0)) }
+        finished()
+    }
+
+
+    /// Where a jump to a contents link opens, as Readium does on a web view still laying out: its file's
+    /// first page, reported there, the fragment inside the file dropped (gatefold#166). Nil: the link isn't
+    /// followed.
+    var linkOpens: Locator?
+    /// Where each fragment of the file on screen starts, once the file is laid out.
+    var fragmentAt: [String: Double] = [:]
+
+    /// Link jumps sent, and how many to refuse first (a web view still loading never reaches the file).
+    private(set) var linkJumps = 0
+    var linkRefusals = 0
+    /// Link jumps that never come back until released (a chapter's load that hangs), apart from
+    /// `holdsJumps` so tests that hold locator jumps keep their link jumps free.
+    var holdsLinkJumps = false
+    func go(to link: ReadiumShared.Link) async {
+        linkJumps += 1
+        if holdsLinkJumps { await withCheckedContinuation { held.append($0) } }
+        if linkRefusals > 0 { linkRefusals -= 1; return }
+        guard let opens = linkOpens else { return }
+        currentLocation = opens
+        visibleText = "the file's first page"
+        if let model, reportsJumps, reportsOnGo { Task { await model.locationDidChange(opens) } }
+    }
+
+    /// The file is laid out and has no element for the fragment (a broken contents anchor).
+    var fragmentAbsent = false
+    /// Reads answered before `fragmentAt`, one each: a layout still settling (its columns not final).
+    var fragmentFirstReads: [Double] = []
+    private(set) var fragmentReads = 0
+    func progression(ofFragment id: String) async -> Double? {
+        fragmentReads += 1
+        if fragmentAbsent { return -1 }
+        if !fragmentFirstReads.isEmpty { return fragmentFirstReads.removeFirst() }
+        return fragmentAt[id]
+    }
 
     /// The place loading behind the page (`prepareStandby`), and every one swapped in.
     private(set) var standby: Locator?
@@ -121,9 +170,16 @@ final class ScriptedPage: ReaderPage {
 
     /// The chapter each landing settle's words resolved to, as the host's moves look them up.
     private(set) var landingSettles: [String?] = []
+    /// Whether each landing settle was still wanted when it began; the host's settle gives up when not.
+    private(set) var landingWanted: [Bool] = []
     func settleLanding(_ anchor: ReadingAnchor, stillWanted: @escaping @MainActor () -> Bool) async {
         landingSettles.append(model?.locator(for: anchor)?.href.string)
+        landingWanted.append(stillWanted())
     }
+
+    /// Reflows the host ended because a standby swap retired the page they were laying out.
+    private(set) var reflowsEndedBySwap = 0
+    func endReflowForSwap() { reflowsEndedBySwap += 1 }
 
     /// A capture a stalled reflow cuts short: no first words to be had.
     var withholdAnchor = false
@@ -143,8 +199,15 @@ final class ScriptedPage: ReaderPage {
     var holdNextAnchor = false
     private var heldAnchor: CheckedContinuation<Void, Never>?
     /// A read is parked in `holdNextAnchor`.
-    var isHoldingAnchor: Bool { heldAnchor != nil }
-    func releaseAnchor() { heldAnchor?.resume(); heldAnchor = nil }
+    /// Every read waits until `releaseAnchor()`, while set: a web view that answers nothing.
+    var holdsAnchors = false
+    private var heldAnchors: [CheckedContinuation<Void, Never>] = []
+    var isHoldingAnchor: Bool { heldAnchor != nil || !heldAnchors.isEmpty }
+    func releaseAnchor() {
+        heldAnchor?.resume(); heldAnchor = nil
+        let held = heldAnchors; heldAnchors = []
+        held.forEach { $0.resume() }
+    }
 
     func currentAnchor() async -> (ReadingAnchor, Locator)? {
         anchorReads += 1
@@ -153,6 +216,8 @@ final class ScriptedPage: ReaderPage {
         if holdNextAnchor {
             holdNextAnchor = false
             await withCheckedContinuation { heldAnchor = $0 }
+        } else if holdsAnchors {
+            await withCheckedContinuation { heldAnchors.append($0) }
         }
         if anchorDelay > .zero {
             let before = anchorQueue, delay = anchorDelay
@@ -217,7 +282,8 @@ final class ScriptedPage: ReaderPage {
     /// own fetch: a book on a shelf kept from an earlier listing, opened before the next one returns.
     static func make(remote: @MainActor (Publication, PositionMapper) async throws -> ReadingPosition?,
                      book change: (inout LibraryBook) -> Void = { _ in },
-                     startAt: Double = 0, listed: Bool = true) async throws -> Fixture {
+                     startAt: Double = 0, listed: Bool = true,
+                     jumpBeat: (() async -> Void)? = nil) async throws -> Fixture {
         let sync = StubSync()
         let app = AppModel(sync: sync, libraryRoot: URL.temporaryDirectory.appending(path: "reader-sync-\(UUID().uuidString)"))
         let publication = try await publication()
@@ -239,7 +305,9 @@ final class ScriptedPage: ReaderPage {
             start = found.copy(locations: { $0.totalProgression = startAt })
         }
         let page = ScriptedPage(at: start)
-        let model = ReaderModel(book: book, publication: publication, app: app, page: page)
+        let model = ReaderModel(book: book, publication: publication, app: app, page: page, jumpBeat: jumpBeat)
+        // An empty store of its own, so no counts from an earlier run on this Mac reach the test.
+        model.pageStore = ScreenPageStore(directory: URL.temporaryDirectory.appending(path: "screen-pages-\(UUID().uuidString)"))
         page.model = model
         return Fixture(model: model, page: page, app: app, sync: sync, publication: publication, mapper: mapper)
     }
@@ -649,8 +717,36 @@ final class ScriptedPage: ReaderPage {
         await f.model.acceptSuggestion()
         #expect(f.page.promoted == [waiting])
         #expect(f.page.jumps.isEmpty, "no fresh jump: the page was already there")
+        #expect(f.page.reflowsEndedBySwap == 0, "no reflow was open to end")
         let aim = try #require(target?.parsedCFI)
         #expect(await f.sent().last?.parsedCFI.map { $0.isSameLocation(as: aim) } == true)
+    }
+
+    /// A reflow still restarting when he taps the catch-up (CI's cold iPad, gatefold#261): the swap puts
+    /// in a page laid out at the new size and retires the one the reflow was laying out, so that reflow can
+    /// never settle. Left open, it made the landing give up its settle and its words, and the place kept
+    /// was Readium's boundary, which reopened on another page.
+    @Test func aCatchUpSwappedInDuringAReflowEndsThatReflowAndSettlesItsWords() async throws {
+        let opened = Date().addingTimeInterval(-600)
+        let f = try await Self.make(remote: { pub, mapper in
+            try await Self.inkPadPlace(pub, mapper, index: 12, percent: 40)
+        }, book: { $0.totalProgression = 0.05; $0.lastOpened = opened }, startAt: 0.05)
+        await f.model.load()
+        let waiting = try #require(f.page.standby)
+        // A stand-in for the landed page's first words, never a book's.
+        f.page.anchorText = "stand-in-words-of-the-landed-page"
+        f.model.keeper.reflowWillBegin(.rotation, move: f.model.hisMoves)
+        f.model.reflowDidBegin()
+        await f.model.acceptSuggestion()
+        #expect(f.page.promoted == [waiting])
+        #expect(f.model.keeper.reflowing == nil, "the reflow on the retired page ended with the swap")
+        #expect(f.page.reflowsEndedBySwap == 1)
+        #expect(f.page.landingWanted == [true], "the landing settled its words instead of giving way to a reflow that could not end")
+        // The place kept is his first words on the landed page (the landing's `fresh`), not Readium's boundary.
+        let here = try #require(f.page.currentLocation)
+        #expect(f.model.keeper.anchor?.text == "stand-in-words-of-the-landed-page", "his first words on the landed page were taken")
+        #expect(f.model.keeper.anchor?.href == here.href.string)
+        f.model.close()
     }
 
     @Test func carryingOnHereLetsTheWaitingPageGo() async throws {
@@ -730,7 +826,7 @@ final class ScriptedPage: ReaderPage {
         #expect(!(await f.sent()).isEmpty, "the book opens on the place it was left at")
         let title = f.model.slip?.title
         #expect(title?.hasPrefix("Right where you left off") == true, "got \(title ?? "no slip")")
-        #expect(title?.contains("InkPad") == false)
+        #expect(title?.contains("e-reader") == false)
     }
 
     @Test func aRemotePlaceArrivingWhileTheOpeningSettleRunsWinsAndIsNotPulledBack() async throws {

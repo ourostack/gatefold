@@ -43,6 +43,39 @@ final class PageNumberUITests: XCTestCase {
         return shown
     }
 
+    /// Reads a reopen's numbers wait while the opening cover is up (`reader.pageReady` 0) and the kept counts come in:
+    /// 1200, at least 0.3 s apart, as ReopenAfterControls (#315). A stalled reopen on CI's starved iPad showed its page
+    /// 52 s after the place read (run 43280151381), past the old 40 s settle, which then read other numbers (#323).
+    private static let reopenReads = 1200
+    /// Reads the reopen's numbers must repeat unchanged once the page is ready: 9 gaps of at least 0.3 s, no less than
+    /// the old 2.5 s.
+    private static let quietReads = 9
+
+    /// The reopen's numbers once the reader reports its page ready and they have held for `quietReads` reads. Judged in
+    /// reads and the reader's own ready report, never seconds (#94, #323). The hang guard (`HangGuard`) only catches a hang.
+    private func reopenedNumbers() -> [Int] {
+        let ready = app.descendants(matching: .any)["reader.pageReady"]
+        let guardEnds = Date().addingTimeInterval(HangGuard.seconds(reads: Self.reopenReads))
+        var shown: [Int] = [], same = 0, readyAt: Int?
+        for read in 1...Self.reopenReads {
+            let now = numbers
+            if now == shown { same += 1 } else { shown = now; same = 0 }
+            // The quiet reads count only from the ready report: the numbers under the cover can be an earlier guess.
+            if readyAt == nil, (ready.value as? String) == "1" { readyAt = read; same = 0 }
+            if readyAt != nil, !shown.isEmpty, same >= Self.quietReads {
+                print("REOPEN round 1: numbers ready at read \(readyAt ?? -1), numbers settled at read \(read)")
+                return shown
+            }
+            if Date() > guardEnds {
+                XCTFail("hang: the reopen's numbers ran \(read) reads without settling")
+                return shown
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+        }
+        print("REOPEN round 1: numbers not settled after \(Self.reopenReads) reads (ready \(readyAt.map(String.init) ?? "never"))")
+        return shown
+    }
+
     private func turnForward() {
         app.descendants(matching: .any)["reader.page"].coordinate(withNormalizedOffset: CGVector(dx: 0.97, dy: 0.5)).tap()
     }
@@ -113,7 +146,7 @@ final class PageNumberUITests: XCTestCase {
         app.launchArguments = common
         app.relaunch()
         // Kept counts number the reopened page without counting again.
-        XCTAssertEqual(settledNumbers(timeout: 40, quiet: 2.5), shown, "the reopen's numbers")
+        XCTAssertEqual(reopenedNumbers(), shown, "the reopen's numbers")
     }
 
     /// The share of the text area's pixels (the middle 80% of the screen's height, clear of the

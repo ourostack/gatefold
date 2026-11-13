@@ -85,6 +85,20 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: bot.ouro.gatefold.uitests
         GENERATE_INFOPLIST_FILE: YES
+        # Installs `LogMirrorOff` before any test (GatefoldUITests/LogMirrorOff.swift, gatefold#28).
+        INFOPLIST_KEY_NSPrincipalClass: GatefoldUITestsPrincipal
+        TEST_TARGET_NAME: Gatefold
+  # The App Store screenshots' scenes (screenshots/spec.json). Its own scheme, so App's build and shards never see it.
+  GatefoldListingShots:
+    type: bundle.ui-testing
+    platform: iOS
+    sources: [GatefoldListingShots]
+    dependencies:
+      - target: Gatefold
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: bot.ouro.gatefold.listingshots
+        GENERATE_INFOPLIST_FILE: YES
         TEST_TARGET_NAME: Gatefold
 schemes:
   Gatefold:
@@ -103,3 +117,14 @@ schemes:
         - name: GatefoldUITests
     archive:
       config: Release
+  # Release only (.github/workflows/screenshots.yml).
+  GatefoldListingShots:
+    build:
+      targets:
+        Gatefold: all
+        GatefoldListingShots: [test]
+    test:
+      config: Debug
+      gatherCoverageData: false
+      targets:
+        - name: GatefoldListingShots

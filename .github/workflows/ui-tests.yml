@@ -1,8 +1,9 @@
 name: UI test shard
 
-# One shard of App's UI tests, called by app.yml. The job starts with the run, not after `build`: it boots its new
-# simulator while `Build for testing` builds, waits for that build's artifact (named by commit and Xcode version), and
-# runs this shard's tests with test-without-building (gatefold#39). The shards of one required check report through
+# One shard of App's UI tests, called by app.yml. The job starts with the run (or, capped, when a slot frees;
+# gatefold#243), not after `build`: it boots its new simulator (alongside `Build for testing`, when it starts with the
+# run), waits for that build's artifact (named by commit and Xcode version), and runs this shard's tests with
+# test-without-building (gatefold#39). The shards of one required check report through
 # that check's gate job in app.yml. scripts/ci-shards.py checks the lists in app.yml: every listed test exists, and
 # none runs in two shards of a tier.
 
@@ -55,10 +56,15 @@ on:
           90 s floor. A new simulator is at least as cold as an erased one (gatefold#150, #167), so there is no erase.
         type: boolean
         default: false
+      lane:
+        description: The pull-request lane, 1 to 18, that this shard waits in (gatefold#286; see "macOS lanes" in app.yml)
+        type: number
+        required: true
       timeout:
         description: >-
-          The job's limit in minutes: 12 of setup (the boot and the wait for the build), twice its tests' slowest
-          passing times, and 12 for the logs after the tests (gatefold#141)
+          The job's limit in minutes: 30 of setup (the simulator wait step's own limit; gatefold#198), twice its
+          tests' slowest passing times (the test step's budget, however long the boot took), and 12 for the logs
+          after the tests (gatefold#141)
         type: number
         required: true
 
@@ -77,6 +83,14 @@ jobs:
     name: Tests
     if: ${{ inputs.full != 'false' || (inputs.pr_tests != 'none' && contains(format(' {0} ', inputs.fired), format(' {0} ', inputs.pr_when))) }}
     runs-on: xcode-27
+    # PR lane (gatefold#286): each caller's matrix entry names one of 18 shard lanes (`lane`); see "macOS lanes" at the
+    # top of app.yml. Never cancel-in-progress.
+    concurrency:
+      group: >-
+        ${{ github.event_name == 'pull_request'
+        && format('gatefold-macos-pr-lane-shard-{0}', inputs.lane)
+        || format('ui-tests-{0}-{1}-{2}', github.run_id, github.run_attempt, inputs.shard) }}
+      queue: max
     timeout-minutes: ${{ inputs.timeout }}
     steps:
       - name: Note when the job began, so each test step can stop in time to upload its logs (gatefold#126)
@@ -151,8 +165,10 @@ jobs:
         uses: ./.github/actions/time-left
         with:
           limit: ${{ inputs.timeout }}
+          boot: "30" # the simulator wait step's timeout-minutes, above
       - name: This shard's tests
-        # Ends 12 min before the job's limit: a job cut off at its limit skips every later step and uploads nothing.
+        # Gets its tests' budget however long the boot took (gatefold#198), and ends at least 12 min before the job's
+        # limit: a job cut off at its limit skips every later step and uploads nothing.
         timeout-minutes: ${{ fromJSON(steps.left.outputs.minutes) }}
         env:
           STEP_UNTIL: ${{ steps.left.outputs.until }}
