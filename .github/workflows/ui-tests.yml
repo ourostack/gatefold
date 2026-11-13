@@ -168,8 +168,9 @@ jobs:
           limit: ${{ inputs.timeout }}
           boot: "30" # the simulator wait step's timeout-minutes, above
       - name: This shard's tests
-        # Gets its tests' budget however long the boot took (gatefold#198), and ends at least 12 min before the job's
-        # limit: a job cut off at its limit skips every later step and uploads nothing.
+        # Gets its tests' whole budget whenever setup ended within `boot` minutes (gatefold#198, #353), then 2 min for
+        # ci-within to stop them, and ends at least 10 min before the job's limit: a job cut off at its limit skips
+        # every later step and uploads nothing.
         timeout-minutes: ${{ fromJSON(steps.left.outputs.minutes) }}
         env:
           STEP_UNTIL: ${{ steps.left.outputs.until }}
