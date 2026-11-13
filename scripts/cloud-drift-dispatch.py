@@ -13,7 +13,10 @@ issue when PocketBook Cloud changes under us. Each pass of this:
    - when Copilot has finished (its title loses "[WIP]"), approves its workflow runs that wait for
      approval (runs a bot's pushes start wait for a person), labels it `cloud-drift-fix`, which starts
      the live gate (cloud-fix-gate.yml), and marks it ready for review;
-   - when the gate passes (`live-canary-passed`), turns on auto-merge. Normal CI and the gate merge
+   - first, when it touches anything outside SCOPE (the cloud package, the canary script and
+     changelog.d), labels it `needs-human` with the list: nothing of it runs or merges on its own;
+   - when the gate passes (`live-canary-passed`), turns on auto-merge, for at most one drift fix per
+     WINDOW_HOURS. Normal CI and the gate merge
      it, and main's green gate ships it to TestFlight;
    - when CI or the gate fails, tells Copilot what failed (a comment that mentions @copilot), at
      most MAX_TRIES times, then labels the pull request `needs-human`;
@@ -25,6 +28,7 @@ would never publish the fix. Every action is idempotent, so a pass can run any t
 """
 import json
 import os
+from datetime import datetime, timedelta, timezone
 import subprocess
 import sys
 
@@ -33,6 +37,12 @@ DRIFT, FIXING, FIX, PASSED, HUMAN = "cloud-drift", "agent-fixing", "cloud-drift-
 GATE = "Live cloud canary"
 COPILOT = {"Copilot", "copilot-swe-agent", "app/copilot-swe-agent", "copilot-swe-agent[bot]"}
 MAX_TRIES = 3
+# An automatic fix may touch only the cloud package (its code, tests and fixtures), the canary script
+# and its own changelog fragment. Anything else (app UI, workflows, CI scripts, project files, this
+# script, the gate) goes to a person: an automatic fix must never rewrite CI or the gate itself.
+SCOPE = ("Packages/GatefoldCloud/", "scripts/cloud-canary.py", "changelog.d/")
+# At most one auto-merged drift fix per window, so a bad loop can't ship a string of builds.
+WINDOW_HOURS = 6
 MARK = "<!-- cloud-drift-dispatch:"
 
 INSTRUCTIONS = """\
@@ -47,6 +57,9 @@ replacing the old shape, and note anything the app now does without through `Clo
   new shape, and a test that fails without your fix (see `ToleranceTests.swift`).
 - Add a changelog fragment in `changelog.d/` (see `changelog.d/README.md`).
 - Say `Fixes #{issue}` in the pull request body.
+- Change only `Packages/GatefoldCloud/`, `scripts/cloud-canary.py` and `changelog.d/`. A pull request
+  that touches anything else (the app, workflows, CI scripts, project files) won't run or merge on its
+  own; it waits for a person.
 - The package needs Swift on macOS; if you can't build it here, CI builds it on macOS. Read its
   failures in the pull request's checks.
 
@@ -71,15 +84,22 @@ def names(items):
     return {i["name"] for i in items or []}
 
 
-def plan(issues, prs, facts):
+def outside(files):
+    return sorted(f for f in files if not any(f == s or (s.endswith("/") and f.startswith(s)) for s in SCOPE))
+
+
+def plan(issues, prs, facts, recent=0):
     """The actions for one pass, as (verb, number, detail) tuples. Pure, for the selftest.
 
     issues: open cloud-drift issues (number, labels, assignees). prs: open pull requests by Copilot
     (number, title, isDraft, headRefOid, labels, body, closingIssuesReferences, autoMergeRequest).
     facts[pr number]: {"waiting": [run ids awaiting approval], "gate": (state, description) or None,
-    "failed": [names of failed checks other than the gate], "marks": [markers already posted]}.
+    "failed": [names of failed checks other than the gate], "marks": [markers already posted],
+    "files": [paths the pull request changes]}. recent: drift fixes auto-merged, or set to, in the
+    last WINDOW_HOURS.
     """
     acts = []
+    merges = recent
     drift = {i["number"] for i in issues}
     linked = set()
     for pr in prs:
@@ -94,6 +114,13 @@ def plan(issues, prs, facts):
         marks = f.get("marks", [])
         if HUMAN in labels or pr["title"].startswith("[WIP]"):
             continue  # while Copilot works, its pushes' runs wait: no macOS runners for half-done code
+        files = f.get("files")
+        if files is None:
+            continue  # can't tell what it touches: nothing runs, nothing merges
+        if outside(files):
+            # Before its runs are approved: a changed workflow must never run with the repository's secrets.
+            acts.append(("out-of-scope", n, outside(files)))
+            continue
         for run in f.get("waiting", []):
             acts.append(("approve-run", n, run))
         if FIX not in labels:
@@ -119,7 +146,10 @@ def plan(issues, prs, facts):
         elif state == "error" and f"rerun {sha}" not in marks:
             acts.append(("rerun-gate", n, sha))
         elif state == "success" and PASSED in labels and not pr.get("autoMergeRequest"):
+            if merges >= 1:
+                continue  # waits for the window; a later pass merges it
             acts.append(("auto-merge", n, None))
+            merges += 1
     for i in issues:
         n = i["number"]
         if n in linked or HUMAN in names(i.get("labels")) or FIXING in names(i.get("labels")):
@@ -149,8 +179,14 @@ def gather():
         failed = sorted({r["name"] for r in runs if r["conclusion"] in ("failure", "timed_out")})
         comments = ghj("pr", "view", str(p["number"]), "-R", REPO, "--json", "comments", "-q", "[.comments[].body]") or []
         marks = [c.split(MARK, 1)[1].split("-->", 1)[0].strip() for c in comments if MARK in c]
-        facts[p["number"]] = {"waiting": waiting, "gate": gate, "failed": failed, "marks": marks}
-    return issues, prs, facts
+        files = ghj("pr", "view", str(p["number"]), "-R", REPO, "--json", "files", "-q", "[.files[].path]")
+        facts[p["number"]] = {"waiting": waiting, "gate": gate, "failed": failed, "marks": marks, "files": files}
+    since = datetime.now(timezone.utc) - timedelta(hours=WINDOW_HOURS)
+    merged = ghj("pr", "list", "-R", REPO, "--state", "merged", "--label", FIX, "--limit", "20",
+                 "--json", "mergedAt", "-q", "[.[].mergedAt]") or []
+    recent = sum(1 for t in merged if datetime.fromisoformat(t.replace("Z", "+00:00")) > since)
+    recent += sum(1 for p in prs if p.get("autoMergeRequest") and FIX in names(p.get("labels")))
+    return issues, prs, facts, recent
 
 
 LABELS = {FIXING: ("1D76DB", "Copilot's coding agent is fixing this cloud-drift issue (cloud-drift-dispatch.py)"),
@@ -190,6 +226,13 @@ def do(act):
         gh("workflow", "run", "cloud-fix-gate.yml", "-R", REPO, "--ref", "main", "-f", f"pr={n}")
         gh("pr", "comment", str(n), "-R", REPO, "--body",
            f"The live canary was inconclusive (the cloud's login limit); running it again.\n\n{MARK} rerun {detail} -->")
+    elif verb == "out-of-scope":
+        label("pr", n, HUMAN)
+        listed = "\n".join(f"- `{x}`" for x in detail)
+        gh("pr", "comment", str(n), "-R", REPO, "--body",
+           "This touches files outside what an automatic cloud fix may change (`Packages/GatefoldCloud/`, "
+           f"`scripts/cloud-canary.py`, `changelog.d/`), so it won't run or merge on its own and needs a person:\n\n"
+           f"{listed}\n\n{MARK} out-of-scope -->")
     elif verb == "give-up":
         label("pr", n, HUMAN)
         gh("pr", "comment", str(n), "-R", REPO, "--body",
@@ -197,8 +240,8 @@ def do(act):
 
 
 def tick(argv):
-    issues, prs, facts = gather()
-    acts = plan(issues, prs, facts)
+    issues, prs, facts, recent = gather()
+    acts = plan(issues, prs, facts, recent)
     for a in acts:
         print("would" if "--dry-run" in argv else "doing", *a[:2], a[2] if a[0] != "retry" else a[2][1][:120])
         if "--dry-run" not in argv:
@@ -212,35 +255,60 @@ def tick(argv):
 
 
 def selftest():
+    ok_files = ["Packages/GatefoldCloud/Sources/GatefoldCloud/Models/Wire.swift",
+                "Packages/GatefoldCloud/Tests/GatefoldCloudTests/Fixtures/position-ms.json",
+                "changelog.d/the-time-in-milliseconds.md", "scripts/cloud-canary.py"]
+    real_plan = globals()["plan"]
+
+    def plan_(issues, prs, facts, recent=0):  # every finished PR below touches only ok_files unless it says
+        facts = {k: dict({"files": ok_files}, **v) for k, v in facts.items()}
+        for p in prs:
+            facts.setdefault(p["number"], {"files": ok_files})
+        return real_plan(issues, prs, facts, recent)
     L = lambda *ns: [{"name": x} for x in ns]
     issue = {"number": 50, "labels": L(DRIFT), "assignees": []}
-    assert plan([issue], [], {}) == [("assign", 50, None)]
-    assert plan([dict(issue, labels=L(DRIFT, FIXING))], [], {}) == []
-    assert plan([dict(issue, assignees=[{"login": "Copilot"}])], [], {}) == []
+    assert plan_([issue], [], {}) == [("assign", 50, None)]
+    assert plan_([dict(issue, labels=L(DRIFT, FIXING))], [], {}) == []
+    assert plan_([dict(issue, assignees=[{"login": "Copilot"}])], [], {}) == []
     wip = {"number": 60, "title": "[WIP] Tolerate the new shape", "isDraft": True, "headRefOid": "a1",
            "labels": [], "body": "Fixes #50", "closingIssuesReferences": [], "autoMergeRequest": None}
     # Still working: nothing, not even its waiting runs; the issue is not handed out again.
-    assert plan([issue], [wip], {60: {"waiting": [7]}}) == []
+    assert plan_([issue], [wip], {60: {"waiting": [7]}}) == []
     done = dict(wip, title="Tolerate the new shape")
-    assert plan([issue], [done], {}) == [("label", 60, FIX), ("ready", 60, None)]
+    assert plan_([issue], [done], {}) == [("label", 60, FIX), ("ready", 60, None)]
     gated = dict(done, isDraft=False, labels=L(FIX))
-    assert plan([issue], [gated], {60: {"gate": ("pending", "")}}) == []
-    assert plan([issue], [dict(gated, labels=L(FIX, PASSED))], {60: {"gate": ("success", "ok")}}) == [("auto-merge", 60, None)]
-    assert plan([issue], [dict(gated, labels=L(FIX, PASSED), autoMergeRequest={"x": 1})], {60: {"gate": ("success", "ok")}}) == []
+    assert plan_([issue], [gated], {60: {"gate": ("pending", "")}}) == []
+    assert plan_([issue], [dict(gated, labels=L(FIX, PASSED))], {60: {"gate": ("success", "ok")}}) == [("auto-merge", 60, None)]
+    assert plan_([issue], [dict(gated, labels=L(FIX, PASSED), autoMergeRequest={"x": 1})], {60: {"gate": ("success", "ok")}}) == []
     # A failure goes back to Copilot once per head, then to a person after MAX_TRIES.
-    acts = plan([issue], [gated], {60: {"gate": ("failure", "Live canary failed: download"), "failed": ["Package tests"]}})
+    acts = plan_([issue], [gated], {60: {"gate": ("failure", "Live canary failed: download"), "failed": ["Package tests"]}})
     assert acts[0][0] == "retry" and acts[0][2][0] == "a1" and "Package tests" in acts[0][2][1] and "download" in acts[0][2][1], acts
-    assert plan([issue], [gated], {60: {"gate": ("failure", "x"), "marks": ["retry a1"]}}) == []
+    assert plan_([issue], [gated], {60: {"gate": ("failure", "x"), "marks": ["retry a1"]}}) == []
     tried = ["retry a", "retry b", "retry c"]
-    assert plan([issue], [gated], {60: {"gate": ("failure", "x"), "marks": tried}}) == [("give-up", 60, None)]
-    assert plan([issue], [gated], {60: {"gate": ("failure", "x"), "marks": tried + ["gave-up"]}}) == []
-    assert plan([issue], [dict(gated, labels=L(FIX, HUMAN))], {60: {"gate": ("failure", "x")}}) == []
+    assert plan_([issue], [gated], {60: {"gate": ("failure", "x"), "marks": tried}}) == [("give-up", 60, None)]
+    assert plan_([issue], [gated], {60: {"gate": ("failure", "x"), "marks": tried + ["gave-up"]}}) == []
+    assert plan_([issue], [dict(gated, labels=L(FIX, HUMAN))], {60: {"gate": ("failure", "x")}}) == []
     # Inconclusive (429): run the gate again, once per head.
-    assert plan([issue], [gated], {60: {"gate": ("error", "Inconclusive")}}) == [("rerun-gate", 60, "a1")]
-    assert plan([issue], [gated], {60: {"gate": ("error", "x"), "marks": ["rerun a1"]}}) == []
+    assert plan_([issue], [gated], {60: {"gate": ("error", "Inconclusive")}}) == [("rerun-gate", 60, "a1")]
+    assert plan_([issue], [gated], {60: {"gate": ("error", "x"), "marks": ["rerun a1"]}}) == []
     # A Copilot pull request for something else is left alone; the link can be GitHub's closing reference.
-    assert plan([], [dict(done, body="Fixes #9")], {}) == []
-    assert plan([issue], [dict(done, body="", closingIssuesReferences=[{"number": 50}])], {})[0] == ("label", 60, FIX)
+    assert plan_([], [dict(done, body="Fixes #9")], {}) == []
+    assert plan_([issue], [dict(done, body="", closingIssuesReferences=[{"number": 50}])], {})[0] == ("label", 60, FIX)
+    # Scope: anything outside the cloud package, the canary script and changelog.d goes to a person,
+    # before its runs are approved, and never auto-merges.
+    for path in (".github/workflows/cloud-fix-gate.yml", "scripts/ci-lanes.py", "scripts/cloud-drift-dispatch.py",
+                 "Gatefold/Reader/ReaderView.swift", "project.yml", "Packages/GatefoldCore/Sources/X.swift",
+                 "Packages/GatefoldCloudX/a.swift", "scripts/cloud-canary.py.bak"):
+        acts = plan_([issue], [dict(gated, labels=L(FIX, PASSED))],
+                    {60: {"waiting": [7], "gate": ("success", "ok"), "files": ok_files + [path]}})
+        assert acts == [("out-of-scope", 60, [path])], (path, acts)
+    assert real_plan([issue], [done], {60: {}}) == [], "files unknown: nothing runs"
+    # One auto-merged drift fix per window: none while one merged or is set to merge recently, one per pass.
+    passed = dict(gated, labels=L(FIX, PASSED))
+    assert plan_([issue], [passed], {60: {"gate": ("success", "ok")}}, recent=1) == []
+    two = plan_([issue, dict(issue, number=51)], [passed, dict(passed, number=61, body="Fixes #51")],
+               {60: {"gate": ("success", "ok")}, 61: {"gate": ("success", "ok")}})
+    assert [a for a in two if a[0] == "auto-merge"] == [("auto-merge", 60, None)], two
     assert "Fixes #50" in INSTRUCTIONS.replace("{issue}", "50")
     print("cloud-drift-dispatch selftest ok")
     return 0
