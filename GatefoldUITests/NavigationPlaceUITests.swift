@@ -457,7 +457,19 @@ final class NavigationPlaceUITests: XCTestCase {
     /// reports, so a reopen shows where he scrolled to, not where the scroll began. Every wait is a
     /// count of reads of the page, never seconds (#171).
     func testScrolledAfterTheLaunchReflowThenLeftKeepsWhereHeScrolled() {
-        var first = openFresh()
+        scrollAfterTheLaunchReflowThenLeave()
+    }
+
+    /// The same, with the first launch's reflows stalled behind their cover (`-GatefoldStallReflow`; the reopen isn't),
+    /// so the switch to Scroll settles only after the 12 s watchdog shows its page and starts it again, as on CI's slow
+    /// iPad. The words probe holds still meanwhile, and a swipe then lands on a page that can't move: swiping once the
+    /// words held still, without waiting for the reflow to settle, failed "the scroll moved the words" (gatefold#342).
+    func testScrolledAfterAStalledSwitchToScrollKeepsWhereHeScrolled() {
+        scrollAfterTheLaunchReflowThenLeave(["-GatefoldStallReflow", "YES"])
+    }
+
+    private func scrollAfterTheLaunchReflowThenLeave(_ extra: [String] = []) {
+        var first = openFresh(extra)
         // A fresh install offers the Cloud's place and never lands on it (#46): the book opens on its
         // cover, which has no words to scroll through. He takes the offer, as he would.
         if first.isEmpty { first = takeTheCloudsOffer() }
