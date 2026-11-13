@@ -18,6 +18,7 @@ iPad Pro 13-inch|FineTuneTapUITests/testEveryTapFlipsPagesLeftLandscape	328	# p9
 iPad Pro 13-inch|FineTuneTapUITests/testEveryTapFlipsPagesLeftPortrait	233	# p95 of 109, slowest 423
 iPad Pro 13-inch|FineTuneTapUITests/testEveryTapFlipsPositionLabelLandscape	285	# p95 of 107, slowest 350
 iPad Pro 13-inch|FineTuneTapUITests/testEveryTapFlipsPositionLabelPortrait	234	# p95 of 104, slowest 415
+iPad Pro 13-inch|MarginTapUITests/testEveryMarginTapOnAFreshSpreadTurns	288	# slowest of 5 (main and #322, 2026-11-12)
 iPad Pro 13-inch|NavigationPlaceUITests/testAContentsJumpKeepsThePlace	291	# p95 of 135, slowest 327
 iPad Pro 13-inch|NavigationPlaceUITests/testAJumpFromAPageStillLoadingStartsAtOnce	435	# p95 of 95, slowest 598
 iPad Pro 13-inch|NavigationPlaceUITests/testAJumpsVeilHoldsWhileTheChapterLoads	244	# p95 of 103, slowest 279
@@ -63,6 +64,7 @@ iPad Pro 13-inch|RotationRepro/testRotateThenLeaveWhileTheRestoreWaitsOnItsPageW
 iPad Pro 13-inch|RotationRepro/testRotateThenLeaveWithoutItsWordsAndReopenOnTheChapterStart	519	# p95 of 36, slowest 563
 iPad Pro 13-inch|RotationRepro/testRotateThenLeaveWithoutTurning	570	# p95 of 101, slowest 709
 iPad Pro 13-inch|RotationRepro/testRotateThenLeaveWithoutTurningAfterStalledReflows	562	# p95 of 93, slowest 664
+iPad Pro 13-inch|SingleColumnUITests/testAOnePageScreenStaysOneColumnThroughTheReviewSteps	240	# estimate (#307's 240; one pass, 201)
 iPad Pro 13-inch|SpreadTurnSettleUITests/testSpreadTurnsLandWithoutSliding	203	# p95 of 118, slowest 251
 iPad Pro 13-inch|WindowFitUITests/testOnItsSide	158	# p95 of 113, slowest 180
 iPad Pro 13-inch|WindowFitUITests/testUpright	152	# p95 of 113, slowest 284
@@ -90,3 +92,4 @@ iPhone Duo|ReviewerChecksUITests/testEveryReopenReturnsTheSameWords	895	# p95 of
 iPhone Duo|ReviewerChecksUITests/testPageNumbersAreOnOrOffInEveryBook	1075	# p95 of 97, slowest 1160
 iPhone Duo|ReviewerChecksUITests/testTheDefaultSpreadIsAsFullAsAppleBooks	1	# p95 of 104, slowest 4
 iPhone Duo|ReviewerChecksUITests/testTheLastPagesNumberIsTheCount	254	# p95 of 100, slowest 299
+iPhone Duo|SingleColumnUITests/testAOnePageScreenStaysOneColumnThroughTheReviewSteps	240	# estimate (#307's 240; one pass, 236)

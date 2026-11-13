@@ -1516,6 +1516,15 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         }
     }
 
+    /// UI tests: the web view's own count of the text columns on screen (`ReaderJS.columns`).
+    func columnMeasure() async -> String? {
+        return await Self.onSpread {
+            let navigator = self.navigator // the one on screen now, on each try
+            _ = try await navigator.answer(ReaderJS.install)
+            return try await navigator.answer(ReaderJS.columns) as? String
+        }
+    }
+
     /// What's on screen now, with its start and end from the web view's own columns rather than Readium's last
     /// report, which lags a layout (gatefold#58); as `visibleRange` when the columns can't be read in its chapter.
     func liveVisibleRange() async -> VisibleRange? {
@@ -1650,7 +1659,11 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         let width = navigator.view.bounds.width
         // While a jump's veil is up the page beneath is on its way somewhere: a tap then would turn
         // from wherever the jump has got to, and the place he chose is lost.
-        guard veil == nil, !jumpStarting else { return true }
+        guard veil == nil, !jumpStarting else {
+            // Logged, so a tap that does nothing still leaves a trace (gatefold#304's swallowed taps).
+            readerLog.notice("tap: under a jump's veil at x \(Int(point.x), privacy: .public) of \(Int(width), privacy: .public); no turn, no controls")
+            return true
+        }
         let edge = TapZones.edge(viewWidth: width, spread: model.layout.columns == .two)
         let zone = point.x < edge ? "back" : point.x > width - edge ? "forward" : "middle"
         readerLog.notice("tap: \(zone, privacy: .public) at x \(Int(point.x), privacy: .public) of \(Int(width), privacy: .public), controls \(self.model.chromeVisible, privacy: .public)")
