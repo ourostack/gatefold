@@ -34,10 +34,11 @@ jobs:
     needs: selftest
     runs-on: xcode-27
     timeout-minutes: 30
-    # Never two at once: two sign-ins close together count against the cloud's per-account login limit.
+    # Never two at once: two sign-ins close together count against the cloud's per-account login limit. Never on
+    # a pull request (its `if`), so it takes no PR lane; scripts/ci-lanes.py exempts it while that `if` holds.
     concurrency:
-      group: cloud-canary
-      cancel-in-progress: false
+      group: cloud-canary-live
+      queue: max
     permissions:
       contents: read
       actions: read
