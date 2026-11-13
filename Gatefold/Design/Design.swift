@@ -84,6 +84,12 @@ enum LaunchOptions {
     private static var defaults: UserDefaults { .standard }
 
     static var isUITest: Bool { defaults.bool(forKey: "GatefoldUITest") }
+    /// UI tests only: the hidden posture switches at the page's top centre. Only a test that walks the
+    /// postures asks for them: anywhere else a tap in the page's top margin (a review driver's, gatefold#303)
+    /// landed on the spread switch and laid a one-page screen out as two columns for the rest of the open.
+    static var postureSwitches: Bool { isUITest && defaults.bool(forKey: "GatefoldPostureSwitches") }
+    /// UI tests only: `reader.columns` reports the web view's own count of the text columns on screen.
+    static var columnsProbe: Bool { isUITest && defaults.bool(forKey: "GatefoldColumnsProbe") }
     static var resetState: Bool { defaults.bool(forKey: "GatefoldReset") }
     static var skipWelcome: Bool { defaults.bool(forKey: "GatefoldSkipWelcome") }
     /// Measure a cold open: no book is opened ahead of the tap and WebKit isn't started early. Also the
