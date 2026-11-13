@@ -1,0 +1,132 @@
+name: Cloud fix gate
+
+# A cloud fix must work against the real cloud before it merges (gatefold#372). A pull request
+# labelled `cloud-drift-fix` (a coding agent's fix for a cloud-drift issue) gets the live canary run
+# on its own head: the commit status `Live cloud canary`, a comment when it fails, and the label
+# `live-canary-passed` when it passes. The agent that opened the fix turns on auto-merge only after
+# that label, so the fix merges on normal CI plus the live canary, and main's green gate ships it to
+# TestFlight. A new push drops the label and runs the gate again.
+#
+# The live run happens in a dispatched run, never in a pull_request run: it takes no PR lane
+# (scripts/ci-lanes.py exempts it while its `if` holds), and it waits in the canary's own group, so it
+# never signs in alongside a scheduled canary. Only pull requests from this repository are run, since
+# the run has the test account's secrets.
+on:
+  pull_request:
+    types: [labeled, synchronize, reopened]
+    paths:
+      - "Packages/GatefoldCloud/**"
+      - "scripts/cloud-fix-gate.py"
+      - ".github/workflows/cloud-fix-gate.yml"
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: Pull request number to gate
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  selftest:
+    name: Cloud fix gate (selftest)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+      - run: python3 -I scripts/cloud-fix-gate.py --selftest
+
+  request:
+    name: Ask for the live gate
+    if: >-
+      github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'cloud-drift-fix')
+      && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: write
+      statuses: write
+      pull-requests: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PR: ${{ github.event.pull_request.number }}
+      SHA: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - name: Pending, and dispatch the live run
+        run: |
+          set -euo pipefail
+          gh pr edit "$PR" -R "$GITHUB_REPOSITORY" --remove-label live-canary-passed 2>/dev/null || true
+          gh api "repos/$GITHUB_REPOSITORY/statuses/$SHA" -f state=pending -f context="Live cloud canary" \
+            -f description="Waiting for the live canary on this code" >/dev/null
+          gh workflow run cloud-fix-gate.yml -R "$GITHUB_REPOSITORY" --ref main -f pr="$PR"
+
+  live:
+    name: Live canary on the fix
+    if: github.event_name != 'pull_request'
+    runs-on: xcode-27
+    timeout-minutes: 30
+    concurrency:
+      group: cloud-canary-live
+      queue: max
+    permissions:
+      contents: read
+      statuses: write
+      pull-requests: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PR: ${{ inputs.pr }}
+    steps:
+      - name: The pull request's head (this repository only)
+        id: pr
+        run: |
+          set -euo pipefail
+          read -r sha repo labels < <(gh pr view "$PR" -R "$GITHUB_REPOSITORY" \
+            --json headRefOid,headRepository,headRepositoryOwner,labels \
+            -q '[.headRefOid, (.headRepositoryOwner.login + "/" + .headRepository.name), ([.labels[].name] | join(","))] | @tsv')
+          [ "$repo" = "$GITHUB_REPOSITORY" ] || { echo "::error::#$PR is from $repo; the gate runs only this repository's branches"; exit 1; }
+          case ",$labels," in *,cloud-drift-fix,*) ;; *) echo "::error::#$PR is not labelled cloud-drift-fix"; exit 1 ;; esac
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+      # The verdict comes from main's copy of the gate, never the pull request's.
+      - uses: actions/checkout@v5
+      - run: cp scripts/cloud-fix-gate.py "$RUNNER_TEMP/cloud-fix-gate.py"
+
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ steps.pr.outputs.sha }}
+
+      - name: Live canary (one sign-in)
+        id: canary
+        working-directory: Packages/GatefoldCloud
+        env:
+          GATEFOLD_LIVE_CANARY: "1"
+          GATEFOLD_LIVE_EMAIL: ${{ secrets.GATEFOLD_LIVE_EMAIL }}
+          GATEFOLD_LIVE_PASSWORD: ${{ secrets.GATEFOLD_LIVE_PASSWORD }}
+        run: |
+          set +e
+          swift test --filter LiveCanaryTests > "$RUNNER_TEMP/canary.log" 2>&1
+          echo "exit=$?" >> "$GITHUB_OUTPUT"
+          grep -E 'CANARY |Test run with' "$RUNNER_TEMP/canary.log" || true
+
+      - name: Status, label and comment
+        if: always() && steps.pr.outputs.sha != ''
+        env:
+          SHA: ${{ steps.pr.outputs.sha }}
+          EXIT: ${{ steps.canary.outputs.exit || '1' }}
+        run: |
+          set -euo pipefail
+          IFS=$'\t' read -r state text < <(python3 -I "$RUNNER_TEMP/cloud-fix-gate.py" verdict --exit "$EXIT" --log "$RUNNER_TEMP/canary.log")
+          run="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          gh api "repos/$GITHUB_REPOSITORY/statuses/$SHA" -f state="$state" -f context="Live cloud canary" \
+            -f description="$text" -f target_url="$run" >/dev/null
+          echo "### $state: $text" >> "$GITHUB_STEP_SUMMARY"
+          head=$(gh pr view "$PR" -R "$GITHUB_REPOSITORY" --json headRefOid -q .headRefOid)
+          if [ "$state" = success ] && [ "$head" = "$SHA" ]; then
+            gh label create live-canary-passed -R "$GITHUB_REPOSITORY" --color 0E8A16 \
+              --description "The live cloud canary passed on this pull request's head (cloud-fix-gate.yml)" 2>/dev/null || true
+            gh pr edit "$PR" -R "$GITHUB_REPOSITORY" --add-label live-canary-passed
+          elif [ "$state" != success ]; then
+            gh pr comment "$PR" -R "$GITHUB_REPOSITORY" --body "Live cloud canary on ${SHA:0:7}: **$state**. $text ($run)"
+          fi

@@ -338,7 +338,7 @@ jobs:
               NavigationPlaceUITests/testReadInPortraitRotatedThenLeftKeepsHisFirstWords NavigationPlaceUITests/testWithPageNumbersOnReadInPortraitRotatedThenLeftKeepsHisFirstWords NavigationPlaceUITests/testAJumpFromAPageStillLoadingStartsAtOnce NavigationPlaceUITests/testAContentsJumpKeepsThePlace NavigationPlaceUITests/testScrolledAfterTheLaunchReflowThenLeftKeepsWhereHeScrolled NavigationPlaceUITests/testScrolledAfterAStalledSwitchToScrollKeepsWhereHeScrolled NavigationPlaceUITests/testOpenedFromTheShelfThenLeftTwiceWithoutATurnKeepsThePlace NavigationPlaceUITests/testTheOpeningCoverLetsTheControlsThrough
             pr_tests: none
             cold: false
-            timeout: 87 # 30 + 2 x 20.0 + 5 + 12
+            timeout: 94 # 30 + 2 x 23.4 + 5 + 12
             lane: 15
           - shard: ipad-rotate-contents
             # Rotation, on this job's new iPad: 204
@@ -717,7 +717,7 @@ jobs:
               PositionUITests/testTabletopDeckTurnsAndResizes PositionUITests/testFontChangeKeepsThePlace
             pr_tests: none
             cold: false
-            timeout: 64 # 30 + 2 x 8.3 + 5 + 12
+            timeout: 64 # 30 + 2 x 8.4 + 5 + 12
             lane: 10
           - shard: duo-pagenumber
             # A page a turn, and a reopen keeps the numbers: 295

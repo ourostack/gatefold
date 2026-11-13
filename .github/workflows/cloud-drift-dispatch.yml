@@ -1,0 +1,22 @@
+name: Cloud drift dispatch
+
+# The handoff of cloud-drift issues to Copilot's coding agent (scripts/cloud-drift-dispatch.py,
+# gatefold#372) runs as a person every 10 minutes, outside Actions: only a person can assign Copilot,
+# and a merge made with GITHUB_TOKEN would not start main's workflows. This checks its decisions offline.
+on:
+  pull_request:
+    paths:
+      - "scripts/cloud-drift-dispatch.py"
+      - ".github/workflows/cloud-drift-dispatch.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  selftest:
+    name: Cloud drift dispatch (selftest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+      - run: python3 -I scripts/cloud-drift-dispatch.py --selftest

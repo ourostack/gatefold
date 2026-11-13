@@ -61,6 +61,12 @@ struct LiveCanaryTests {
             check("position write: lands", landed, "the write did not land (read back \(back.map { PBDate.string($0.updated) } ?? "nothing"))",
                   known: true)
         }
+        listTolerated()
+    }
+
+    /// What the app tolerated this run (CloudDrift): nothing broke, but the cloud changed, so it's listed.
+    private func listTolerated() {
+        for note in CloudDrift.shared.notes { Live.log("CANARY tolerated: \(note)") }
     }
 
     private func step<T>(_ name: String, _ body: () async throws -> T) async throws -> T {

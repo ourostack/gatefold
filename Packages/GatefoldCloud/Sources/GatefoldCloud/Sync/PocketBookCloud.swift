@@ -256,7 +256,7 @@ public actor PocketBookCloud: SyncService {
 
     private func freshDownloadLink(for book: CloudBook) async throws -> URL? {
         let (data, _) = try await session.send(Self.fileInfo(book.fastHash))
-        return try WireDecoder.fileInfo(data).book.downloadURL
+        return try WireDecoder.fileInfo(data).book?.downloadURL
     }
 
     public func upload(fileAt url: URL) async throws -> CloudBook {
