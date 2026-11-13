@@ -816,6 +816,8 @@ final class ReaderModel {
     /// Looks (one every 50 ms) the cover waits for a reopen's own place to be put on screen: 900, about 45 s.
     /// Past it the page shows as it is and a place with his words is offered, as before (gatefold#310).
     static let openPlaceLooks = 900
+    /// This reader's bound, `openPlaceLooks` unless a test sets a shorter one to reach the fallback past it.
+    @ObservationIgnored var openPlaceBound = ReaderModel.openPlaceLooks
     /// The reader opened on a saved place (his, or the Cloud's), not a book's first open.
     @ObservationIgnored private var openedOnSavedPlace = false
     /// The open's saved place is still to be put on screen: its settle on his words, or the restore of a reflow
@@ -834,7 +836,7 @@ final class ReaderModel {
     private func holdForOpenPlace() async {
         guard openPlaceOwed, app.reopenQueuedTurn == nil else { return }
         var looks = 0
-        while openPlaceOwed, app.reopenQueuedTurn == nil, looks < Self.openPlaceLooks { looks += 1; try? await Task.sleep(for: .milliseconds(50)) }
+        while openPlaceOwed, app.reopenQueuedTurn == nil, looks < openPlaceBound { looks += 1; try? await Task.sleep(for: .milliseconds(50)) }
         let why = app.reopenQueuedTurn != nil ? "a turn asked of the picture" : (openPlaceOwed ? "still owed; shown as it is" : "placed")
         readerLog.notice("open: the cover held \(looks, privacy: .public) looks for the reopen's place (\(why, privacy: .public))")
     }
