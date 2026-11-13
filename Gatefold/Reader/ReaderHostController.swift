@@ -544,9 +544,10 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     private enum Counted { case counted, unsettled, unanswered }
 
     /// The looks (50 ms each, longer on a starved runner) a counter's go or look may go without an answer, and without
-    /// its web views' loading moving, before it counts as one that stopped answering: about 60 s on a fast runner,
-    /// well inside the 300 s or more (600 reads) a test gives a count once the page is ready.
-    private static let counterAnswerLooks = 1200
+    /// its web views' loading moving, before it counts as one that stopped answering: about 120 s on a fast runner,
+    /// inside the 300 s or more (600 reads) a test gives a count once the page is ready. At 60 s, CI's starved iPad
+    /// replaced three counters still waiting on their first chapters (run 43497327071); each swap is another load.
+    private static let counterAnswerLooks = 2400
 
     /// Lays `link` out in `counting` and records its columns once two looks 150 ms apart agree (a web
     /// view still laying out, or still loading a font, reads short). Unsettled if the looks never agreed, and
