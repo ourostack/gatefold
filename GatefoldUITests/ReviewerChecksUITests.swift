@@ -330,6 +330,16 @@ final class ReviewerChecksUITests: XCTestCase {
         if last.count == 2 { XCTAssertEqual(last[1], last[0] + 1, "the last spread's numbers are consecutive") }
     }
 
+    /// A counter that stops hearing back from its chapter never holds the count for good: the book is still counted
+    /// (gatefold#378, where Emma at the larger size was never counted on CI's starved iPad).
+    func testACounterThatNeverHearsBackStillCounts() {
+        app.launchArguments = base + ["-GatefoldReset", "YES", "-GatefoldDownloadAll", "YES",
+                                      "-GatefoldOpenBook", "gutenberg-alice-in-wonderland", "-GatefoldStallCounterChapter", "3"]
+        app.launch()
+        XCTAssertTrue(opened("alice"), "the book opened")
+        XCTAssertNotNil(counted("alice"), "the book was counted though one counter never heard back")
+    }
+
     // MARK: Reader-wide toggles
 
     /// Page Numbers is his setting, not a book's: off by default, on in one book is on in the next (a

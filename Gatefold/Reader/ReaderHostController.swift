@@ -430,6 +430,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             return
         }
         let links = hrefs.compactMap { href in publication.readingOrder.first { $0.url().removingFragment().string == href } }
+        CounterStall.arm(publication)
         // A chapter's cost is its web view loading (about 3 s each, one after another, in build 17), not
         // its measuring: several counters behind the page take chapters from one queue at once.
         let workers = (0..<min(LaunchOptions.counters ?? Self.counters, links.count)).compactMap { _ in
@@ -527,6 +528,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         for _ in 0..<40 where !Task.isCancelled {
             try? await Task.sleep(for: .milliseconds(150))
             let lookStart = ContinuousClock.now
+            await CounterStall.hold(href, in: counting)
             let look = await geometry(of: counting, columns: columns)
             readerLog.debug("pages: look \(href, privacy: .public) took \(ReaderModel.ms(since: lookStart), privacy: .public) ms")
             guard let (here, geometry) = look, here == href, geometry.columns > 0 else { continue }
@@ -3043,6 +3045,31 @@ enum OpenScriptStall {
 
     static func wait() async {
         while looksLeft > 0 { try? await Task.sleep(for: .milliseconds(50)) }
+    }
+}
+
+/// Tests only (`-GatefoldStallCounterChapter`): one chapter's counter never hears back from its first look, as a
+/// counter on CI's starved iPad stopped answering mid-count (gatefold#378). Once per launch: the look answers
+/// again only once that counter has been taken out of the reader, as Readium resumes a cleared page's scripts.
+@MainActor
+enum CounterStall {
+    private static var stalled: String?
+    private static var armed = false
+
+    /// Names the chapter, the first time a count starts.
+    static func arm(_ publication: Publication) {
+        guard !armed, let index = LaunchOptions.stallCounterChapter, publication.readingOrder.indices.contains(index) else { return }
+        armed = true
+        stalled = publication.readingOrder[index].url().removingFragment().string
+    }
+
+    /// Holds `href`'s look if it is the stalled chapter, until `counting` leaves the reader.
+    static func hold(_ href: String, in counting: EPUBNavigatorViewController) async {
+        guard let chapter = stalled, chapter == href else { return }
+        stalled = nil
+        readerLog.notice("pages: \(href, privacy: .public)'s counter hears nothing back, for the test (GatefoldStallCounterChapter)")
+        while counting.parent != nil { try? await Task.sleep(for: .milliseconds(50)) }
+        readerLog.notice("pages: \(href, privacy: .public)'s stalled counter left the reader (GatefoldStallCounterChapter)")
     }
 }
 
