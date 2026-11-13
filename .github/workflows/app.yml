@@ -3,8 +3,9 @@ name: App
 # Two tiers (gatefold#39, #198). A pull request runs the build, the unit tests, GatefoldCore and at most five UI shards,
 # picked by the paths it touches: an iPad and a Duo smoke on every app change, and the place and taps guards when it
 # touches that code (`changes` output `fired`; the lists are the Gatefold agent's). Every push to main runs the full UI
-# suite and is never cancelled; a red main is fixed as AGENTS.md says ("CI"). Each new simulator's first boot holds the
-# runner's load at 500 to 760 for about 15 min (#198), so fewer shards per pull request is the lever, not more.
+# suite, in batches (a started run is never cancelled; gatefold#246); a red main is fixed as AGENTS.md says ("CI").
+# Each new simulator's first boot holds the runner's load at 500 to 760 for about 15 min (#198), so fewer shards per
+# pull request is the lever, not more.
 #
 # Build once: `build` makes the app and its tests for the simulator (build-for-testing) and uploads them, named by
 # commit and Xcode version; no simulator job compiles the app again (gatefold#39: each job spent 10 to 16 min building).
@@ -30,10 +31,15 @@ on:
       - "**/*.md"
   workflow_dispatch:
 
-# A newer push to a pull request cancels its older run. Pushes to main keep one group per commit and are never
-# cancelled.
+# A newer push to a pull request cancels its older run. Pushes to main share one group: a started run is never
+# cancelled, and at most one more waits, the newest, which replaces any older waiting push (gatefold#246). Its run tests
+# every merge since the last one, so each main commit is tested in a complete run that includes it, though not
+# necessarily its own; `Merges this run covers` lists the merges since the last green main. A manual run and a re-run keep a group of their own, so a
+# re-run never replaces the waiting push. TestFlight is its own workflow, outside this group.
 concurrency:
-  group: app-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  group: >-
+    app-${{ github.event_name == 'pull_request' && github.ref
+    || github.event_name == 'push' && github.run_attempt == 1 && 'main' || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # macOS lanes (gatefold#286). The Ouro Labs enterprise has 50 macOS slots, shared by every org in it (spoonjoy too).
@@ -336,7 +342,8 @@ jobs:
             timeout: 54 # 30 + 2 x 5.7 + 12
             lane: 11
           - shard: ipad-rotate-midturn
-            # Rotation: 182 + 160, then on main the rotate-then-leave repro, 545, after the mid-turn tests as #167 runs
+            # Rotation: 182 + 160, the cold turn on its side and back (#302: 229 + 205 in probe 43288337838), then on
+            # main the rotate-then-leave repro, 545, after the mid-turn tests as #167 runs
             # it. On today's main the repro passes with #176's fix taken out in every order tried (#193), so never give
             # it a shard of its own until #193 is fixed. On a pull request only the mid-turn tests run, unless it
             # touches the reader's place code.
@@ -350,7 +357,7 @@ jobs:
             # On a pull request: Place kept through a jump and a rotation (#130), on place changes (359 s).
             pr_when: place-jumps
             cold: true
-            timeout: 79 # 30 + 2 x 18.1 + 12
+            timeout: 93 # 30 + 2 x 25.4 + 12
             lane: 6
           - shard: ipad-rotate-stalled
             # Main only: 470 (#266's probe 43110085155, the slowest of 3 passes)
@@ -1019,3 +1026,43 @@ jobs:
           if [ "$APP" = false ]; then echo "Only Markdown changed; nothing to build."; exit 0; fi
           echo "Release build: $RELEASE; unit tests: $UNIT"
           [ "$RELEASE" = success ] && [ "$UNIT" = success ]
+
+  covers:
+    # On main, which merges this run tests: every commit since the newest main commit that passed App (gatefold#246).
+    # A red run's owner finds the change that turned it red by probing only the failing shard on these, not with a
+    # full run. Reports only; never fails the run.
+    name: Merges this run covers
+    needs: [changes, core, app, ipad-place-gate, ipad-undo-gate, ipad-taps-gate, ipad-reviewer-gate, duo-gate]
+    if: ${{ always() && github.event_name == 'push' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          set +e
+          green=""
+          shas=$(gh api "repos/$REPO/actions/workflows/app.yml/runs?branch=main&event=push&status=success&per_page=50" --jq '.workflow_runs[].head_sha')
+          listed=$?
+          for sha in $shas; do
+            [ "$sha" != "$GITHUB_SHA" ] && git merge-base --is-ancestor "$sha" "$GITHUB_SHA" 2>/dev/null && { green=$sha; break; }
+          done
+          case " $RESULTS " in *" failure "*|*" cancelled "*) verdict=red ;; *) verdict=green ;; esac
+          {
+            if [ -n "$green" ]; then
+              echo "### This App $verdict run covers $(git rev-list --count "$green..$GITHUB_SHA") commit(s) since the last green main, ${green:0:7}"
+              echo
+              git log --format='- %h %s' "$green..$GITHUB_SHA"
+            else
+              [ "$listed" = 0 ] && why="no green main commit among the last 50 green main App runs" || why="could not list App runs"
+              echo "### This App $verdict run: $why, so the range is unknown"
+            fi
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          [ "$verdict" = red ] && echo "::notice title=Merges this run covers::Red main: bisect the commits in this run's summary with a probe of the failing shard only, not a full run."
+          exit 0
