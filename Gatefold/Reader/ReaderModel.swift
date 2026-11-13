@@ -345,13 +345,22 @@ final class ReaderModel {
             return
         }
         do {
-            hostController = try ReaderHostController(
+            let made = try ReaderHostController(
                 model: self,
                 publication: publication,
                 initialLocation: LaunchOptions.reopenOnChapterStart && Self.openingAnchor(from: initial) == nil
                     ? initial?.copy(locations: { $0 = Locator.Locations(progression: 0) }) : initial,
                 preferences: Self.epubPreferences(prefs, theme: prefs.resolvedTheme(systemIsDark: false), columns: .one, viewWidth: layout.pageFrame.width > 0 ? layout.pageFrame.width : 402, language: Self.hyphenationLanguage(publication))
             )
+            // Probe #297 only: a page that opens 100 s late, as a starved runner's did (never merged).
+            if LaunchOptions.isUITest, UserDefaults.standard.bool(forKey: "GatefoldProbe297HoldPage") {
+                Task { @MainActor [weak self] in
+                    try? await Task.sleep(for: .seconds(100))
+                    self?.hostController = made
+                }
+            } else {
+                hostController = made
+            }
         } catch {
             errorMessage = FriendlyError.unreadable.message
         }
