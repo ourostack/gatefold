@@ -1,0 +1,81 @@
+name: Cloud canary
+
+# PocketBook Cloud is unofficial and changes without notice (November 2026 broke downloads, the
+# e-reader's place and fresh sign-in at once, and only Ari's phone noticed). Every 6 hours this signs in
+# to agent test account 1 once and checks the basics Gatefold needs (gatefold#372). It is not a
+# required check, so the cloud's outages never block a merge. On red it opens, or comments on, the one
+# open `cloud-drift` issue with the failing steps; on green after red it says so there.
+on:
+  schedule:
+    - cron: "17 */6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Never two at once: two sign-ins close together count against the cloud's per-account login limit.
+concurrency:
+  group: cloud-canary
+  cancel-in-progress: false
+
+jobs:
+  canary:
+    name: PocketBook Cloud basics
+    if: github.repository == 'ourostack/gatefold'
+    runs-on: xcode-27
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Check the cloud (one sign-in)
+        id: canary
+        working-directory: Packages/GatefoldCloud
+        env:
+          GATEFOLD_LIVE_CANARY: "1"
+          GATEFOLD_LIVE_EMAIL: ${{ secrets.GATEFOLD_LIVE_EMAIL }}
+          GATEFOLD_LIVE_PASSWORD: ${{ secrets.GATEFOLD_LIVE_PASSWORD }}
+        run: |
+          set -o pipefail
+          test -n "$GATEFOLD_LIVE_EMAIL" && test -n "$GATEFOLD_LIVE_PASSWORD" || { echo "::error::GATEFOLD_LIVE_EMAIL / GATEFOLD_LIVE_PASSWORD secrets are not set"; exit 1; }
+          swift test --filter LiveCanaryTests 2>&1 | tee "$RUNNER_TEMP/canary.log"
+
+      - name: Report drift
+        if: failure() || success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OUTCOME: ${{ steps.canary.outcome }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          log="$RUNNER_TEMP/canary.log"
+          touch "$log"
+          # The steps the test logged, with anything that could identify the account or sign a URL removed.
+          steps=$(grep -E 'CANARY |Known issue|recorded an issue' "$log" \
+            | sed -E -e 's/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]+/<email>/g' \
+                     -e 's/(signature|payload|token|access_token|refresh_token|client_secret|password)=[^&" ]+/\1=<redacted>/g' \
+                     -e 's/Bearer [A-Za-z0-9._-]+/Bearer <redacted>/g' \
+            | head -n 60 || true)
+          gh label create cloud-drift -R "$GITHUB_REPOSITORY" --color B60205 \
+            --description "PocketBook Cloud changed under us (the cloud canary went red)" 2>/dev/null || true
+          issue=$(gh issue list -R "$GITHUB_REPOSITORY" --label cloud-drift --state open --json number -q '.[0].number // empty')
+          if [ "$OUTCOME" = "success" ]; then
+            last=""
+            [ -z "$issue" ] || last=$(gh issue view "$issue" -R "$GITHUB_REPOSITORY" --json comments -q '.comments[-1].body // ""')
+            if [ -n "$issue" ] && [[ "$last" != "The cloud canary is green again"* ]]; then
+              gh issue comment "$issue" -R "$GITHUB_REPOSITORY" --body "The cloud canary is green again: $RUN_URL"
+            fi
+            exit 0
+          fi
+          body=$(printf 'The cloud canary went red: %s\n\nSteps:\n```\n%s\n```\n' "$RUN_URL" "${steps:-no step lines; the run failed before the canary test ran (see the log)}")
+          if [ -n "$issue" ]; then
+            gh issue comment "$issue" -R "$GITHUB_REPOSITORY" --body "$body"
+          else
+            gh issue create -R "$GITHUB_REPOSITORY" --label cloud-drift \
+              --title "Cloud drift: the PocketBook Cloud canary is red" \
+              --body "$body
+
+          The canary (\`.github/workflows/cloud-canary.yml\`, gatefold#372) checks sign-in, the library, a download, the e-reader's place and a position write against test account 1. A red run means PocketBook Cloud changed, or is down. Fix the client in \`Packages/GatefoldCloud\`; the canary comments here when it is green again."
+          fi

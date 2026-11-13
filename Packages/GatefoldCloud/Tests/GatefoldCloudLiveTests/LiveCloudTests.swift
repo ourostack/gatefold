@@ -17,7 +17,13 @@ enum Live {
         let password: String
     }
 
+    /// CI (the canary) passes test account 1 as `GATEFOLD_LIVE_EMAIL` and `GATEFOLD_LIVE_PASSWORD`;
+    /// locally they come from the keychain.
     static func account(_ n: Int) throws -> Account {
+        let env = ProcessInfo.processInfo.environment
+        if n == 1, let email = env["GATEFOLD_LIVE_EMAIL"], let password = env["GATEFOLD_LIVE_PASSWORD"], !email.isEmpty, !password.isEmpty {
+            return Account(email: email, password: password)
+        }
         let service = "gatefold-pbcloud-test-\(n)"
         let attributes = try run("/usr/bin/security", ["find-generic-password", "-s", service])
         guard let range = attributes.range(of: #""acct"<blob>="([^"]+)""#, options: .regularExpression) else {
