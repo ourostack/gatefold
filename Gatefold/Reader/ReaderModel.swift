@@ -501,6 +501,8 @@ final class ReaderModel {
     var leafStoodFramesProbe = 0
     /// UI tests: reflows that found their page loaded anew (the chapter thrown away and reloaded; gatefold#302).
     var reflowFreshPagesProbe = 0
+    /// UI tests: counters that stopped answering and were replaced by fresh ones (gatefold#378).
+    var countersReplacedProbe = 0
     /// UI tests: times the 12 s reflow watchdog showed the page as it was, its restore unsettled (gatefold#366).
     var shownUnsettledProbe = 0
     /// UI tests only: the latest reflow's number and how far it has got ("3 reflowing", "3 placed", then

@@ -54,6 +54,7 @@ iPad Pro 13-inch|ReopenAfterControlsUITests/testAReturnAfterTheControlsAndNumber
 iPad Pro 13-inch|ReopenAfterControlsUITests/testAReturnAfterTheControlsAndNumbersShowsTheSameWords3	384	# p95 of 66, slowest 631
 iPad Pro 13-inch|ReopenAfterControlsUITests/testAReturnAfterTheControlsAndNumbersShowsTheSameWords4	400	# p95 of 63, slowest 443
 iPad Pro 13-inch|ReopenAfterControlsUITests/testAReturnAfterTheControlsAndNumbersShowsTheSameWords5	427	# p95 of 66, slowest 509
+iPad Pro 13-inch|ReviewerChecksUITests/testACounterThatNeverHearsBackStillCounts	420	# an estimate (an open, a count and a stalled counter's wait) until CI has timed it
 iPad Pro 13-inch|ReviewerChecksUITests/testEveryReopenReturnsTheSameWords	994	# p95 of 110, slowest 1250
 iPad Pro 13-inch|ReviewerChecksUITests/testPageNumbersAreOnOrOffInEveryBook	1105	# p95 of 101, slowest 1272
 iPad Pro 13-inch|ReviewerChecksUITests/testTheDefaultSpreadIsAsFullAsAppleBooks	137	# p95 of 112, slowest 301
@@ -97,6 +98,7 @@ iPhone Duo|PositionUITests/testRotationKeepsThePlace	116	# p95 of 106, slowest 1
 iPhone Duo|PositionUITests/testTabletopDeckTurnsAndResizes	259	# p95 of 112, slowest 444
 iPhone Duo|QuickLeaveUITests/testTurnsThenAQuickLeaveReopenOnTheLastTurnsPage	115	# p95 of 2, slowest 115
 iPhone Duo|QuickLeaveUITests/testALeaveUnderTheReopensCoverAfterTheWatchdogKeepsHisPlace	10	# skipped: iPad only (gatefold#366)
+iPhone Duo|ReviewerChecksUITests/testACounterThatNeverHearsBackStillCounts	420	# an estimate (an open, a count and a stalled counter's wait) until CI has timed it
 iPhone Duo|ReviewerChecksUITests/testEveryReopenReturnsTheSameWords	895	# p95 of 103, slowest 1362
 iPhone Duo|ReviewerChecksUITests/testPageNumbersAreOnOrOffInEveryBook	1075	# p95 of 97, slowest 1160
 iPhone Duo|ReviewerChecksUITests/testTheDefaultSpreadIsAsFullAsAppleBooks	1	# p95 of 104, slowest 4
