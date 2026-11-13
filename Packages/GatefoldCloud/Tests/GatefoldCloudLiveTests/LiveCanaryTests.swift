@@ -13,12 +13,19 @@ struct LiveCanaryTests {
         let account = try Live.account(1)
         let cloud = Live.cloud()
 
-        // 1. Sign-in: store lookup plus password grant, with the app's own retries.
-        let store = try #require(try await step("sign-in: store lookup") {
-            try await cloud.stores(forEmail: account.email).first { $0.usesPassword }
-        })
-        _ = try await step("sign-in: password grant") {
-            try await cloud.signIn(email: account.email, password: account.password, store: store)
+        // 1. Sign-in: store lookup plus password grant, with the app's own retries. The cloud's login
+        //    limit (429) means this run couldn't check, not that the cloud changed: it's logged as
+        //    INCONCLUSIVE and the run ends here without failing (scripts/cloud-canary.py reports it).
+        do {
+            let store = try #require(try await step("sign-in: store lookup") {
+                try await cloud.stores(forEmail: account.email).first { $0.usesPassword }
+            })
+            _ = try await step("sign-in: password grant") {
+                try await cloud.signIn(email: account.email, password: account.password, store: store)
+            }
+        } catch CloudError.rateLimited(let retryAfter) {
+            Live.log("CANARY INCONCLUSIVE sign-in rate-limited retry-after=\(retryAfter.map { String(Int($0)) } ?? "unknown")")
+            return
         }
 
         // 2. The library lists, and a download matches the listed size (and the MD5 when it is one).
