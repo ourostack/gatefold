@@ -975,7 +975,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         // sees no live page: none is noted, so a leave before it lifts keeps his saved place, not one he never saw
         // (gatefold#366).
         guard model.pageReady, model.reopenPicture == nil else {
-            readerLog.notice("reflow: the page shown unsettled is under the opening cover; not noted")
+            readerLog.notice("reflow: the page shown unsettled is under the opening cover or the reopen picture; not noted")
             return
         }
         let stale = LaunchOptions.shownPageAtHisPlace || LaunchOptions.shownSpanLate

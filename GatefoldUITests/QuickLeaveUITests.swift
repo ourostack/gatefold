@@ -14,7 +14,6 @@ final class QuickLeaveUITests: XCTestCase {
         app = XCUIApplication()
     }
 
-
     private let base = ["-GatefoldUITest", "YES", "-GatefoldFakeCloud", "YES", "-GatefoldSkipWelcome", "YES",
                         "-GatefoldSignedIn", "YES", "-GatefoldAllowReopen", "YES", "-GatefoldNoLatency", "YES"]
 
