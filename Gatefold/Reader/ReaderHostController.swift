@@ -971,9 +971,10 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     /// restore is waiting on), so a leave before the restore ends keeps it (gatefold#133).
     private func noteShownUnsettled() {
         guard let model = weakModel, let named = navigator.currentLocation else { return }
-        // Under the opening cover (a reopen's held for his place, gatefold#310) he sees no page: none is noted, so a
-        // leave before it lifts keeps his saved place, not one he never saw (gatefold#366).
-        guard model.pageReady else {
+        // Under the opening cover (a reopen's held for his place, gatefold#310) or the reopen's picture of his page he
+        // sees no live page: none is noted, so a leave before it lifts keeps his saved place, not one he never saw
+        // (gatefold#366).
+        guard model.pageReady, model.reopenPicture == nil else {
             readerLog.notice("reflow: the page shown unsettled is under the opening cover; not noted")
             return
         }

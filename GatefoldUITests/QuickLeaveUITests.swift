@@ -14,9 +14,6 @@ final class QuickLeaveUITests: XCTestCase {
         app = XCUIApplication()
     }
 
-    override func tearDown() async throws {
-        XCUIDevice.shared.orientation = .portrait
-    }
 
     private let base = ["-GatefoldUITest", "YES", "-GatefoldFakeCloud", "YES", "-GatefoldSkipWelcome", "YES",
                         "-GatefoldSignedIn", "YES", "-GatefoldAllowReopen", "YES", "-GatefoldNoLatency", "YES"]
@@ -101,6 +98,7 @@ final class QuickLeaveUITests: XCTestCase {
     func testALeaveUnderTheReopensCoverAfterTheWatchdogKeepsHisPlace() throws {
         try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .pad, "the reopen's rotation reflow is the iPad's")
         XCUIDevice.shared.orientation = .landscapeLeft
+        addTeardownBlock { @MainActor in XCUIDevice.shared.orientation = .portrait }
         // His place, saved bare as a quick leave keeps it: a place with no words, so the stalled reopen opens on its
         // file's first page, a page he never chose.
         app.launchArguments = base + ["-GatefoldReset", "YES", "-GatefoldDownloadAll", "YES", "-GatefoldHoldTurnWrites", "YES",
