@@ -58,6 +58,7 @@ iPad Pro 13-inch|ReviewerChecksUITests/testTheLastPagesNumberIsTheCount	314	# p9
 iPad Pro 13-inch|RotationMidTransitionUITests/testARestoreThatNeverSettlesStillShowsTheSpread	206	# p95 of 111, slowest 253
 iPad Pro 13-inch|RotationMidTransitionUITests/testTurningDuringAContentsJump	237	# p95 of 112, slowest 291
 iPad Pro 13-inch|RotationMidTransitionUITests/testTurningDuringAPageTurn	250	# p95 of 132, slowest 305
+iPad Pro 13-inch|RotationMidTransitionUITests/testTurnedOnItsSideAndBackHeIsOnHisPage	250	# estimate (new in #324), as its slowest sibling; replace once CI has timed it
 iPad Pro 13-inch|RotationRepro/testRotateThenLeaveWhileTheRestoreWaitsOnHisKeptPlaceWithoutItsWords	436	# p95 of 27, slowest 548
 iPad Pro 13-inch|RotationRepro/testRotateThenLeaveWhileTheRestoreWaitsOnItsPage	587	# p95 of 71, slowest 644
 iPad Pro 13-inch|RotationRepro/testRotateThenLeaveWhileTheRestoreWaitsOnItsPageWithoutItsWords	470	# p95 of 59, slowest 480
@@ -93,3 +94,4 @@ iPhone Duo|ReviewerChecksUITests/testPageNumbersAreOnOrOffInEveryBook	1075	# p95
 iPhone Duo|ReviewerChecksUITests/testTheDefaultSpreadIsAsFullAsAppleBooks	1	# p95 of 104, slowest 4
 iPhone Duo|ReviewerChecksUITests/testTheLastPagesNumberIsTheCount	254	# p95 of 100, slowest 299
 iPhone Duo|SingleColumnUITests/testAOnePageScreenStaysOneColumnThroughTheReviewSteps	240	# estimate (#307's 240; one pass, 236)
+iPad Pro 13-inch|RotationMidTransitionUITests/testAColdTurnOnItsSideOpensAWholeSpreadWithNoStandingLeaf	250	# estimate (new on main), as the slowest RotationMidTransition test; replace once CI has timed it

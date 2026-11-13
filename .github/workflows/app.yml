@@ -353,7 +353,7 @@ jobs:
             # On a pull request: Place kept through a jump and a rotation (#130), on place changes (359 s).
             pr_when: place-jumps
             cold: true
-            timeout: 82 # 30 + 2 x 17.1 + 5 + 12
+            timeout: 98 # 30 + 2 x 25.5 + 5 + 12
             lane: 6
           - shard: ipad-rotate-stalled
             # Main only: 470 (#266's probe 43110085155, the slowest of 3 passes)
