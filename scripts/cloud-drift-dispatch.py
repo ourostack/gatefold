@@ -212,7 +212,8 @@ def do(act):
            "Handed to Copilot's coding agent (`scripts/cloud-drift-dispatch.py`). Its pull request runs "
            "against the real cloud before it merges.")
     elif verb == "approve-run":
-        gh("api", "-X", "POST", f"repos/{REPO}/actions/runs/{detail}/approve", check=False)
+        # The approve endpoint is only for forks' runs (403 for Copilot's); a person's re-run starts it instead.
+        gh("run", "rerun", str(detail), "-R", REPO)
     elif verb == "label":
         label("pr", n, detail)
     elif verb == "ready":
