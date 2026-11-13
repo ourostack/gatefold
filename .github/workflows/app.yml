@@ -34,7 +34,7 @@ on:
 # A newer push to a pull request cancels its older run. Pushes to main share one group: a started run is never
 # cancelled, and at most one more waits, the newest, which replaces any older waiting push (gatefold#246). Its run tests
 # every merge since the last one, so each main commit is tested in a complete run that includes it, though not
-# necessarily its own; `Merges this run covers` lists them. A manual run and a re-run keep a group of their own, so a
+# necessarily its own; `Merges this run covers` lists the merges since the last green main. A manual run and a re-run keep a group of their own, so a
 # re-run never replaces the waiting push. TestFlight is its own workflow, outside this group.
 concurrency:
   group: >-
@@ -1042,12 +1042,12 @@ jobs:
           case " $RESULTS " in *" failure "*|*" cancelled "*) verdict=red ;; *) verdict=green ;; esac
           {
             if [ -n "$green" ]; then
-              echo "### This $verdict run covers $(git rev-list --count "$green..$GITHUB_SHA") commit(s) since the last green main, ${green:0:7}"
+              echo "### This App $verdict run covers $(git rev-list --count "$green..$GITHUB_SHA") commit(s) since the last green main, ${green:0:7}"
               echo
               git log --format='- %h %s' "$green..$GITHUB_SHA"
             else
               [ "$listed" = 0 ] && why="no green main commit among the last 50 green main App runs" || why="could not list App runs"
-              echo "### This $verdict run: $why, so the range is unknown"
+              echo "### This App $verdict run: $why, so the range is unknown"
             fi
           } | tee -a "$GITHUB_STEP_SUMMARY"
           [ "$verdict" = red ] && echo "::notice title=Merges this run covers::Red main: bisect the commits in this run's summary with a probe of the failing shard only, not a full run."
