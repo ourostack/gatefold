@@ -396,9 +396,9 @@ final class NavigationPlaceUITests: XCTestCase {
     private static let stalledReopen = ["-GatefoldReopenOnChapterStart", "YES", "-GatefoldStallOpenScripts", "400"]
 
     /// Reads (at least 0.25 s apart) until the reader reports its page shown: 1200, past the cover's longest hold.
-    private func pageReady(reads: Int = 1200) -> Bool {
+    private func pageReady(reads: Int = 1200, file: StaticString = #filePath, line: UInt = #line) -> Bool {
         let ready = app.descendants(matching: .any)["reader.pageReady"]
-        return readsUntil(reads) { (ready.value as? String) == "1" }
+        return readsUntil(reads, file: file, line: line) { (ready.value as? String) == "1" }
     }
 
     /// Judged in reads, one every 0.25 s, never a timeout in seconds; a hang guard sized from the reads stops a stuck query.
