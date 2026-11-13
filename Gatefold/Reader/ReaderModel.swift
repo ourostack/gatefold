@@ -837,13 +837,23 @@ final class ReaderModel {
         guard openedOnBarePlace != nil, keeper.reflowing == nil, !barePutBackGoing, !pageReady, let page else { return }
         barePutBackGoing = true
         Task { [weak self] in
-            let visible = await page.visibleRange()
+            let first = await page.visibleRange()
             guard let self else { return }
             defer { self.barePutBackGoing = false }
-            guard let visible, !self.pageReady, !self.isClosed, self.keeper.reflowing == nil,
-                  let (_, bare) = self.openPlaceToReapply(visible: visible) else { return }
-            _ = await page.go(to: bare)
-            readerLog.notice("open: the bare place put back under the cover, no reflow having come")
+            guard let first, !self.pageReady, !self.isClosed, self.keeper.reflowing == nil,
+                  let (anchor, bare) = self.openPlaceToReapply(visible: first, underCover: true) else { return }
+            // As the restore's put-back (gatefold#250): a jump made while the book still loads can land short, so
+            // up to 3 tries, each read back; a reflow begun meanwhile takes over, and a page in view is never moved.
+            var landed = false, tries = 0
+            while tries < 3, !landed, !self.pageReady, !self.isClosed, self.keeper.reflowing == nil {
+                tries += 1
+                _ = await page.go(to: bare)
+                try? await Task.sleep(for: .milliseconds(160))
+                landed = await page.visibleRange()?.contains(anchor) == true
+            }
+            // The cover lifts on a loaded page, never a spinner (#38).
+            await self.host?.waitWhileLoading()
+            readerLog.notice("open: the bare place \(landed ? "put back" : "not reached", privacy: .public) under the cover in \(tries, privacy: .public) tries, no reflow having come")
         }
     }
 
@@ -2378,10 +2388,12 @@ final class ReaderModel {
     /// The open's bare place, if a restore should put it back now (gatefold#250): only while no anchor
     /// is held, the restore may still move the page, he hasn't moved since the open, and only once per
     /// open. Nil once he has turned, jumped, tapped a link or Contents, or a restore has landed.
-    func openPlaceToReapply(visible: VisibleRange) -> (ReadingAnchor, Locator)? {
+    /// `underCover`: asked by the cover's own put-back with no reflow going (`putBackBarePlaceUnderCover`), where
+    /// there is no restore to ask whether it may move; the page is not in view, so nothing he sees moves.
+    func openPlaceToReapply(visible: VisibleRange, underCover: Bool = false) -> (ReadingAnchor, Locator)? {
         guard let bare = openedOnBarePlace else { return nil }
         guard keeper.anchor == nil, hisMoves == 0, !touchedSinceLocation, page?.isTurning != true,
-              keeper.restoreMayMove(move: hisMoves), !isClosed else {
+              underCover ? keeper.reflowing == nil && !pageReady : keeper.restoreMayMove(move: hisMoves), !isClosed else {
             openedOnBarePlace = nil
             return nil
         }

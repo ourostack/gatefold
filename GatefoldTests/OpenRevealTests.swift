@@ -310,3 +310,71 @@ final class StarvedOpenPage: ReaderPage {
         return (model, page, app)
     }
 }
+
+/// A reopen on a place with no words that Readium puts on its file's first page, with no reflow to run the
+/// restore that puts such a place back (gatefold#250), and a page that answers no script for a while (#341's
+/// iPad, gatefold#310). There is no host here, so no reflow ever runs.
+@MainActor
+final class BareReopenPage: ReaderPage {
+    var currentLocation: Locator?
+    weak var model: ReaderModel?
+    /// Moves of the page made while it was in view.
+    private(set) var movesInView = 0
+    /// Looks (one per 50 ms) the page's reads are held, as a page that answers no script.
+    let stallLooks: Int
+    private(set) var looksStalled = 0
+
+    init(firstPage: Locator, stallLooks: Int) {
+        currentLocation = firstPage
+        self.stallLooks = stallLooks
+    }
+
+    private var inView: Bool { model.map { $0.pageReady && $0.reopenPicture == nil } ?? false }
+
+    @discardableResult func go(to locator: Locator) async -> Bool {
+        if inView { movesInView += 1 }
+        currentLocation = locator
+        return true
+    }
+
+    func go(to link: ReadiumShared.Link) async {}
+
+    func progression(of quote: String) async -> Double? { nil }
+
+    func currentAnchor() async -> (ReadingAnchor, Locator)? { nil }
+
+    func visibleRange() async -> VisibleRange? {
+        while looksStalled < stallLooks { looksStalled += 1; try? await Task.sleep(for: .milliseconds(50)) }
+        guard let here = currentLocation else { return nil }
+        let start = here.locations.progression ?? 0
+        return VisibleRange(href: here.href.string, start: start, end: min(1, start + 0.03), text: "a page of invented words")
+    }
+}
+
+@MainActor @Suite(.serialized) struct BareReopenTests {
+    /// gatefold#310 on #341's iPad: the cover holds until the bare place is put back beneath it, and lifts there.
+    @Test func aBareReopenWithNoReflowIsPutBackUnderTheCover() async throws {
+        let sync = StubSync()
+        await sync.setLibrary(.success([ReaderSyncTests.frankenstein]))
+        await sync.setRemote(nil)
+        let app = AppModel(sync: sync, libraryRoot: URL.temporaryDirectory.appending(path: "bare-reopen-\(UUID().uuidString)"))
+        await app.library.refresh()
+        let publication = try await ReaderSyncTests.publication()
+        let href = try #require(AnyURL(string: publication.readingOrder[10].url().string))
+        let hisPlace = Locator(href: href, mediaType: .xhtml, locations: .init(progression: 0.6, totalProgression: 0.31))
+        app.library.recordPlace(bookID: ReaderSyncTests.frankenstein.fastHash, locatorJSON: try hisPlace.jsonString() ?? "",
+                                totalProgression: 0.31, progression: 0.6)
+        let book = try #require(app.library.book(ReaderSyncTests.frankenstein.fastHash))
+        let firstPage = Locator(href: href, mediaType: .xhtml, locations: .init(progression: 0, totalProgression: 0.28))
+        let page = BareReopenPage(firstPage: firstPage, stallLooks: 120)
+        let model = ReaderModel(book: book, publication: publication, app: app, page: page)
+        page.model = model
+        await model.load()
+        for _ in 0..<(ReaderModel.openPlaceLooks + 200) where !model.pageReady { try? await Task.sleep(for: .milliseconds(50)) }
+        #expect(model.pageReady, "the page never showed")
+        #expect(page.looksStalled >= 120, "the page answered at once, so the hold was never tested")
+        #expect(page.currentLocation?.locations.progression == 0.6, "the cover lifted on its file's first page, not his place")
+        #expect(page.movesInView == 0, "the page moved \(page.movesInView) times while in view")
+        model.close()
+    }
+}
