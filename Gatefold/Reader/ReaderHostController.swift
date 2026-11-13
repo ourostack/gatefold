@@ -2887,9 +2887,12 @@ private final class CountingInsets: NSObject, EPUBNavigatorDelegate {
 @MainActor
 enum OpenScriptStall {
     private static var looksLeft = 0
+    private static var armed = false
 
+    /// Once per launch: only the first reader's open is stalled, and a second host never restarts the count.
     static func arm() {
-        guard let looks = LaunchOptions.stallOpenScriptsLooks, looks > 0 else { return }
+        guard !armed, let looks = LaunchOptions.stallOpenScriptsLooks, looks > 0 else { return }
+        armed = true
         looksLeft = looks
         readerLog.notice("open: the page's scripts held for \(looks, privacy: .public) looks, for the test (GatefoldStallOpenScripts)")
         Task { @MainActor in

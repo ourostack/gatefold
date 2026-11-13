@@ -796,10 +796,10 @@ final class ReaderModel {
             // showed a blank page and a spinner on a slow device (#38).
             await host?.waitWhileLoading()
             readerLog.notice("open: Readium's loading held \(Date().timeIntervalSince(held), privacy: .public) s (asked \(Date().timeIntervalSince(self.askedAt), privacy: .public) s ago)")
-            revealing = false
-            guard !pageReady, !isClosed else { return }
+            guard !pageReady, !isClosed else { revealing = false; return }
             Task { [weak self] in await self?.host?.logTypography() }
             await holdForOpenPlace()
+            revealing = false
             guard !pageReady, !isClosed else { return }
             readerLog.notice("first page ready after \(Date().timeIntervalSince(self.isWarming ? self.openedAt : self.askedAt), privacy: .public) s\(self.isWarming ? " (behind the shelf)" : "", privacy: .public)")
             showPage()
@@ -830,11 +830,13 @@ final class ReaderModel {
     /// 14 s. Shown then, it was the wrong page, and his place could only be offered or put back under his eyes.
     /// HX ruling: a longer cover beats a wrong page. Build 21's rule (a place found once the page is in view is
     /// offered, never moved to) still holds, but only past this bound. Counted in looks, never seconds.
+    /// A turn he asks of the reopen picture ends the hold, as it ends the picture's own wait in `showPage`.
     private func holdForOpenPlace() async {
-        guard openPlaceOwed else { return }
+        guard openPlaceOwed, app.reopenQueuedTurn == nil else { return }
         var looks = 0
-        while openPlaceOwed, looks < Self.openPlaceLooks { looks += 1; try? await Task.sleep(for: .milliseconds(50)) }
-        readerLog.notice("open: the cover held \(looks, privacy: .public) looks for the reopen's place (\(self.openPlaceOwed ? "still owed; shown as it is" : "placed", privacy: .public))")
+        while openPlaceOwed, app.reopenQueuedTurn == nil, looks < Self.openPlaceLooks { looks += 1; try? await Task.sleep(for: .milliseconds(50)) }
+        let why = app.reopenQueuedTurn != nil ? "a turn asked of the picture" : (openPlaceOwed ? "still owed; shown as it is" : "placed")
+        readerLog.notice("open: the cover held \(looks, privacy: .public) looks for the reopen's place (\(why, privacy: .public))")
     }
     /// How long Catch up, taken over the opening cover, waits for the first page to show, in looks: past
     /// the cover's own worst case (its 11.5 s, `revealLooks`, then a load waited out over up to 1200 looks
