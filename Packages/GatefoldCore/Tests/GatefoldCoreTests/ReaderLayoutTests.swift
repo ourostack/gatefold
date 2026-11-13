@@ -117,6 +117,32 @@ struct ReaderLayoutTests {
         #expect(spread.gutter?.midX == duoInnerWide.width / 2)
     }
 
+    /// A screen that can't hold a spread is one page even when a spread is forced (gatefold#303: the UI
+    /// tests' hidden posture switch, tapped by a review driver's top-centre tap, laid the Duo's 466 pt cover
+    /// screen and a 1032 x 1376 portrait iPad out as two cramped columns until the book was closed).
+    @Test(arguments: [
+        ("Duo cover screen", duoOuter),
+        ("Duo cover screen, status bar up", CGSize(width: 466, height: 616)),
+        ("Duo inner screen, upright", duoInnerTall),
+        ("iPad portrait", CGSize(width: 1032, height: 1376)),
+        ("iPad 11-inch portrait", CGSize(width: 834, height: 1194)),
+        ("phone landscape", CGSize(width: 600, height: 402)),
+    ])
+    func aForcedSpreadOnAOnePageScreenIsOnePage(name: String, size: CGSize) {
+        let layout = ReaderLayoutResolver.resolve(.init(containerSize: size, forced: .spread))
+        #expect(layout.posture == .single, "\(name)")
+        #expect(layout.columns == .one, "\(name)")
+        #expect(layout.gutter == nil, "\(name)")
+    }
+
+    @Test func aForcedSpreadStillWinsWhereASpreadFits() {
+        for size in [duoInnerWide, CGSize(width: 951, height: 669), CGSize(width: 1376, height: 1032), CGSize(width: 1180, height: 820)] {
+            let layout = ReaderLayoutResolver.resolve(.init(containerSize: size, forced: .spread))
+            #expect(layout.posture == .spread, "\(size)")
+            #expect(layout.columns == .two, "\(size)")
+        }
+    }
+
     @Test func aFoldOutsideTheContainerIsIgnored() {
         let fold = FoldRegion(frame: CGRect(x: 2000, y: 0, width: 0, height: 545), isActive: false)
         let layout = ReaderLayoutResolver.resolve(.init(containerSize: duoOuter, division: fold))

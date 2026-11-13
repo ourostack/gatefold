@@ -14,6 +14,7 @@ main|iPad Pro 13-inch|FineTuneTapUITests/testEveryTapFlipsPagesLeftLandscape
 main|iPad Pro 13-inch|FineTuneTapUITests/testEveryTapFlipsPagesLeftPortrait
 main|iPad Pro 13-inch|FineTuneTapUITests/testEveryTapFlipsPositionLabelLandscape
 main|iPad Pro 13-inch|FineTuneTapUITests/testEveryTapFlipsPositionLabelPortrait
+main|iPad Pro 13-inch|MarginTapUITests/testEveryMarginTapOnAFreshSpreadTurns
 main|iPad Pro 13-inch|NavigationPlaceUITests/testAContentsJumpKeepsThePlace
 main|iPad Pro 13-inch|NavigationPlaceUITests/testAJumpFromAPageStillLoadingStartsAtOnce
 main|iPad Pro 13-inch|NavigationPlaceUITests/testAJumpsVeilHoldsWhileTheChapterLoads
@@ -59,6 +60,7 @@ main|iPad Pro 13-inch|RotationRepro/testRotateThenLeaveWhileTheRestoreWaitsOnIts
 main|iPad Pro 13-inch|RotationRepro/testRotateThenLeaveWithoutItsWordsAndReopenOnTheChapterStart
 main|iPad Pro 13-inch|RotationRepro/testRotateThenLeaveWithoutTurning
 main|iPad Pro 13-inch|RotationRepro/testRotateThenLeaveWithoutTurningAfterStalledReflows
+main|iPad Pro 13-inch|SingleColumnUITests/testAOnePageScreenStaysOneColumnThroughTheReviewSteps
 main|iPad Pro 13-inch|SpreadTurnSettleUITests/testSpreadTurnsLandWithoutSliding
 main|iPad Pro 13-inch|WindowFitUITests/testOnItsSide
 main|iPad Pro 13-inch|WindowFitUITests/testUpright
@@ -86,6 +88,7 @@ main|iPhone Duo|ReviewerChecksUITests/testEveryReopenReturnsTheSameWords
 main|iPhone Duo|ReviewerChecksUITests/testPageNumbersAreOnOrOffInEveryBook
 main|iPhone Duo|ReviewerChecksUITests/testTheDefaultSpreadIsAsFullAsAppleBooks
 main|iPhone Duo|ReviewerChecksUITests/testTheLastPagesNumberIsTheCount
+main|iPhone Duo|SingleColumnUITests/testAOnePageScreenStaysOneColumnThroughTheReviewSteps
 pr|iPad Pro 13-inch|FineTuneTapUITests/testAQuickTouchChangesEverySwitchOnce
 pr|iPad Pro 13-inch|FineTuneTapUITests/testATapOnTheRowsNameChangesItsSwitch
 pr|iPad Pro 13-inch|NavigationPlaceUITests/testAContentsJumpKeepsThePlace

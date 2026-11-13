@@ -76,14 +76,29 @@ final class ReviewerChecksUITests: XCTestCase {
         return turned.ok
     }
 
-    private func counted(_ timeout: TimeInterval = 300) -> Int? {
-        let probe = el("reader.pageCount")
-        let up = Date().addingTimeInterval(timeout)
-        while Date() < up {
-            if let v = probe.value as? String, let n = Int(v) { return n }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.5))
-        }
-        return nil
+    /// The book's count, judged in reads and the reader's ready report (`ReaderReads.counted`, gatefold#122): the
+    /// cover's reads while the page isn't ready, then 600 once it is. Never a fixed 300 s, which read a slow open as a
+    /// book never counted.
+    private func counted(_ what: String, file: StaticString = #filePath, line: UInt = #line) -> Int? {
+        ReaderReads.counted(app, what, say: note, file: file, line: line)
+    }
+
+    /// The reader's page is up, in reads (`ReaderReads.opened`, gatefold#122), never a fixed 60 to 120 s: a starved
+    /// runner's fresh launch with every book downloading had not opened its book after 120 s (run 43301488929).
+    private func opened(_ what: String, file: StaticString = #filePath, line: UInt = #line) -> Bool {
+        ReaderReads.opened(app, what, say: note, file: file, line: line) != nil
+    }
+
+    /// The page's words once they have come and held, judged in reads and the reader's ready report
+    /// (`ReaderReads.settle`, #214, #122): an empty page never counts as settled.
+    private func settled(_ what: String, file: StaticString = #filePath, line: UInt = #line) -> String {
+        ReaderReads.settle(app, what, say: note, file: file, line: line).words
+    }
+
+    /// `element` exists within `reads` reads at least 0.2 s apart (the old seconds on a fast runner, five reads a
+    /// second); `HangGuard` only catches a hang.
+    private func appears(_ element: XCUIElement, reads: Int) -> Bool {
+        readsUntil(reads: reads, hangGuard: HangGuard.seconds(reads: reads)) { element.exists }.ok
     }
 
     private var numbers: [Int] {
@@ -100,28 +115,28 @@ final class ReviewerChecksUITests: XCTestCase {
         app.quit()
         app.launchArguments = base
         app.relaunch()
-        XCTAssertTrue(el("reader.page").waitForExistence(timeout: 90), "the book reopened")
-        _ = settle(90)
+        XCTAssertTrue(opened("the reopen"), "the book reopened")
+        _ = settled("the reopen")
         sleep(3)
-        return settle(15)
+        return settled("the reopen, again")
     }
 
     private func openFineTune() {
         let appearance = app.buttons["reader.appearance"]
         for _ in 0..<4 where !appearance.isHittable {
             el("reader.page").coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
-            _ = appearance.waitForExistence(timeout: 3)
+            _ = appears(appearance, reads: 15)
         }
         appearance.tap()
         let fine = app.buttons["appearance.customize"]
-        XCTAssertTrue(fine.waitForExistence(timeout: 10), "Fine-Tune is offered")
+        XCTAssertTrue(appears(fine, reads: 50), "Fine-Tune is offered")
         if !fine.isHittable { el("appearance.panel").swipeUp() }
         fine.tap()
     }
 
     private func pageNumbersSwitch() -> XCUIElement {
         let t = app.switches["appearance.pageNumbers"].firstMatch
-        XCTAssertTrue(t.waitForExistence(timeout: 10), "the Page Numbers switch")
+        XCTAssertTrue(appears(t, reads: 50), "the Page Numbers switch")
         for _ in 0..<4 where !t.isHittable { el("appearance.panel").swipeUp() }
         return t
     }
@@ -170,26 +185,26 @@ final class ReviewerChecksUITests: XCTestCase {
         let close = app.buttons["reader.close"].firstMatch
         for _ in 0..<4 where !(close.exists && close.isHittable) {
             el("reader.page").coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
-            _ = close.waitForExistence(timeout: 3)
+            _ = appears(close, reads: 15)
         }
         close.tap()
-        XCTAssertTrue(el("library.grid").waitForExistence(timeout: 20), "back on the shelf")
+        XCTAssertTrue(appears(el("library.grid"), reads: 100), "back on the shelf")
         sleep(2)
     }
 
     private func openFromShelf(_ id: String) {
         let cover = el("book.\(id)")
-        XCTAssertTrue(el("library.grid").waitForExistence(timeout: 20))
+        XCTAssertTrue(appears(el("library.grid"), reads: 100), "the shelf")
         for _ in 0..<8 where !(cover.exists && cover.isHittable) { el("library.grid").swipeUp(); sleep(1) }
         XCTAssertTrue(cover.exists, "\(id) is on the shelf")
         cover.tap()
-        XCTAssertTrue(el("reader.page").waitForExistence(timeout: 60), "\(id) opened")
-        _ = settle()
+        XCTAssertTrue(opened(id), "\(id) opened")
+        // A first open here shows its start, a cover with no words, until the Cloud's offer is taken: no settle yet.
         sleep(2)
     }
 
     /// The Cloud's place offered on a first open here: take it (the tab brings back an offer that folded).
-    /// The offer is tapped only while it is hittable: it can fold into its tab between a look and the tap (#207).
+    /// The offer can fold into its tab between a look and the tap (#207), so it is tapped where its frame was just read (#236).
     /// Any type, never `app.buttons` (#165). Judged in looks, not seconds (#94): 200 at least 0.3 s apart (the old
     /// 60 s on a fast runner); the 2400 s guard only catches a hang: a look is up to five queries of the app, and a
     /// starved runner has taken 1-2 s a query, so 200 looks can run to about 2000 s. No 600 s hold here, unlike
@@ -197,20 +212,54 @@ final class ReviewerChecksUITests: XCTestCase {
     private func takeTheOffer() {
         let offer = el("banner.jump"), tab = el("banner.tab")
         let start = Date(), hung = start.addingTimeInterval(2400)
-        var looks = 0, taken = false
-        while looks < 200, words.isEmpty {
+        // Read from one snapshot each and tapped at the point, never `isHittable`: asked of an offer mid-fold, it
+        // fails the test (gatefold#236). After an offer tap the page gets 10 looks to answer before another, as
+        // NavigationPlace's offer taps since #171. Taken only once the offer and its tab are both gone (taking it
+        // hides the slip at once): an offer that folded just before its tap leaves the tab, and that tap may have
+        // turned the page instead, which fails below rather than going on from the wrong page.
+        let window = app.frame
+        // Gone means gone on two looks in a row (one read can come back empty on a starved runner), and words seen
+        // while a tap's quiet looks run don't end the look: the slip fades out over 0.35 s after a take.
+        // The offer is tapped as soon as its frame is read, with no other query between, and a tab tap is followed
+        // straight away by a look for the offer it opened (no quiet looks): opened, it folds again 10 s later, and on
+        // a loaded runner two quiet looks outlasted that every time (#238's run 43030197427: 30 tab taps, the offer
+        // seen between them and never tapped), where `element.tap()` on the next look took it (main, 4.7 s after).
+        // That look skips even the words read: a tab just up means an offer to take. An offer still up once a tap's
+        // quiet looks are spent is tapped again (the old loop stopped there and failed).
+        var looks = 0, taps = 0, quiet = 0, gone = 0, taken = false, afterTab = false
+        while looks < 200 {
             if Date() > hung { XCTFail("hang: looking for the Cloud's offer ran \(looks) looks over 2400 s"); return }
             looks += 1
-            if offer.exists, offer.isHittable { offer.tap(); taken = true; break }
-            if tab.exists, tab.isHittable { tab.tap() }
+            let wordsShown = afterTab ? false : !words.isEmpty
+            afterTab = false
+            if wordsShown, taps == 0 { break }
+            let offerAt = HitCheck.frame(of: offer)
+            if quiet == 0, let f = offerAt.flatMap({ HitCheck.usable($0, within: window) }) {
+                HitCheck.tap(f, in: app); taps += 1; quiet = 10; gone = 0
+                RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+                continue
+            }
+            let tabAt = HitCheck.frame(of: tab)
+            gone = taps > 0 && offerAt == nil && tabAt == nil ? gone + 1 : 0
+            if gone >= 2 { taken = true; break }
+            if wordsShown, quiet == 0, gone == 0 { break }
+            if quiet > 0 {
+                quiet -= 1
+            } else if let f = tabAt.flatMap({ HitCheck.usable($0, within: window) }) {
+                HitCheck.tap(f, in: app); afterTab = true
+            }
             RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+        }
+        if taps > 0, !taken {
+            XCTFail("\(taps) taps meant for the Cloud's offer didn't take it in \(looks) looks (its tab is still up, words \(!words.isEmpty))")
+            return
         }
         let secs = String(format: "%.1f", Date().timeIntervalSince(start))
         guard taken else {
             if words.isEmpty { note("no Cloud offer on a page with no words after \(looks) looks in \(secs) s") }
             return
         }
-        note("offer taken after \(looks) looks in \(secs) s")
+        note("offer taken after \(looks) looks (\(taps) taps) in \(secs) s")
         // Its own clock, so a slow look above doesn't spend this loop's guard.
         let shown = Date(), stuck = shown.addingTimeInterval(2400)
         var reads = 0
@@ -221,9 +270,9 @@ final class ReviewerChecksUITests: XCTestCase {
         }
     }
 
-    private func numbersShown(_ timeout: TimeInterval = 120) -> Bool {
-        el("reader.pageNumber").waitForExistence(timeout: timeout)
-    }
+    /// A number is up within 600 reads (the old 120 s on a fast runner). Asked once the book is counted, so the
+    /// number has nothing left to wait on.
+    private func numbersShown() -> Bool { appears(el("reader.pageNumber"), reads: 600) }
 
     // MARK: Reopen returns the same words
 
@@ -263,9 +312,9 @@ final class ReviewerChecksUITests: XCTestCase {
         app.launchArguments = base + ["-GatefoldReset", "YES", "-GatefoldDownloadAll", "YES", "-GatefoldPageFurniture", "YES",
                                       "-GatefoldOpenBook", "gutenberg-pride-and-prejudice", "-GatefoldGoTo", "0.993"]
         app.launch()
-        XCTAssertTrue(el("reader.page").waitForExistence(timeout: 120))
-        guard let count = counted() else { return XCTFail("the book was never counted") }
-        _ = settle()
+        XCTAssertTrue(opened("pride"), "the book opened")
+        guard let count = counted("pride") else { return XCTFail("the book was never counted") }
+        _ = settled("pride")
         XCTAssertTrue(numbersShown(), "a number is up")
         var last = numbers, turns = 0
         note("start numbers=\(last) labels=\(app.descendants(matching: .any).matching(identifier: "reader.pageNumber").allElementsBoundByIndex.map(\.label))")
@@ -290,53 +339,54 @@ final class ReviewerChecksUITests: XCTestCase {
         app.launchArguments = base + ["-GatefoldReset", "YES", "-GatefoldDownloadAll", "YES",
                                       "-GatefoldOpenBook", "gutenberg-emma", "-GatefoldGoTo", "0.2"]
         app.launch()
-        XCTAssertTrue(el("reader.page").waitForExistence(timeout: 120))
-        XCTAssertNotNil(counted(), "the book was counted")
-        _ = settle()
+        XCTAssertTrue(opened("emma"), "the first book opened")
+        XCTAssertNotNil(counted("emma"), "the book was counted")
+        _ = settled("emma")
         // Emma gets a look of its own: one size larger.
         openFineTuneLarger()
-        XCTAssertNotNil(counted(), "counted again at the larger size")
+        XCTAssertNotNil(counted("emma, larger"), "counted again at the larger size")
         XCTAssertTrue(numbersOff(), "off by default")
         backToShelf()
 
         openFromShelf("gutenberg-pride-and-prejudice")
-        XCTAssertNotNil(counted(), "the second book was counted")
+        XCTAssertNotNil(counted("pride"), "the second book was counted")
         // Opened here for the first time, it shows its start (a cover, no words) and offers the Cloud's place.
         takeTheOffer()
-        let before = settle()
+        let before = settled("pride")
         XCTAssertGreaterThan(before.count, 0, "the page has words")
         XCTAssertTrue(numbersOff(), "off by default in a second book")
         setPageNumbers(true)
         XCTAssertTrue(numbersShown(), "on where he turned it on")
-        let after = settle()
+        let after = settled("pride, numbers on")
         note("words with numbers on: \(Self.hash(before)) then \(Self.hash(after)) numbers=\(numbers) chars=\(before.count)")
         XCTAssertGreaterThan(after.count, 0, "the page has words with numbers on")
         XCTAssertEqual(Self.hash(after), Self.hash(before), "turning numbers on moved no words")
         backToShelf()
 
         openFromShelf("gutenberg-emma")
-        _ = counted(120)
+        XCTAssertNotNil(counted("emma, again"), "the first book was counted again")
         XCTAssertTrue(numbersShown(), "on in a book with its own look")
         setPageNumbers(false)
-        XCTAssertTrue(el("reader.pageNumber").waitForNonExistence(timeout: 10), "off where he turned it off")
+        let number = el("reader.pageNumber")
+        XCTAssertTrue(readsUntil(reads: 50, hangGuard: HangGuard.seconds(reads: 50)) { !number.exists }.ok, "off where he turned it off")
         backToShelf()
 
         openFromShelf("gutenberg-alice-in-wonderland")
-        XCTAssertNotNil(counted(), "the third book was counted")
+        XCTAssertNotNil(counted("alice"), "the third book was counted")
         XCTAssertTrue(numbersOff(), "off in a book never opened")
         backToShelf()
 
         openFromShelf("gutenberg-pride-and-prejudice")
-        XCTAssertNotNil(counted(), "the first book was counted on return")
+        XCTAssertNotNil(counted("pride, again"), "the first book was counted on return")
         XCTAssertTrue(numbersOff(), "off in the book where he had turned it on")
-        let again = settle()
+        let again = settled("pride, again")
         note("words back in the first book: \(Self.hash(before)) then \(Self.hash(again))")
         XCTAssertGreaterThan(again.count, 0, "the page has words on return")
         XCTAssertEqual(Self.hash(again), Self.hash(before), "and its words are where they were")
         let back = leaveAndRelaunch()
         note("words after a relaunch: \(Self.hash(back))")
         XCTAssertGreaterThan(back.count, 0, "the page has words after a relaunch")
-        XCTAssertNotNil(counted(), "counted after a relaunch")
+        XCTAssertNotNil(counted("pride, relaunched"), "counted after a relaunch")
         XCTAssertTrue(numbersOff(), "still off after a relaunch")
         XCTAssertEqual(Self.hash(back), Self.hash(before), "on his page after a relaunch")
         if Self.hash(back) != Self.hash(before) {
@@ -349,24 +399,29 @@ final class ReviewerChecksUITests: XCTestCase {
 
     /// Neither a number nor the "Counting pages…" slot: asked only once the book is counted, when a
     /// number would be up if the setting were on.
+    /// Judged over 5 reads at least 0.2 s apart (the old single look after 1 s), every one with neither up.
     private func numbersOff() -> Bool {
-        sleep(1)
-        return !el("reader.pageNumber").exists && !el("reader.pageCounting").exists
+        let number = el("reader.pageNumber"), counting = el("reader.pageCounting")
+        for read in 1...5 {
+            if number.exists || counting.exists { note("numbers up at read \(read) of 5"); return false }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        }
+        return true
     }
 
     private func openFineTuneLarger() {
         let appearance = app.buttons["reader.appearance"]
         for _ in 0..<4 where !appearance.isHittable {
             el("reader.page").coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
-            _ = appearance.waitForExistence(timeout: 3)
+            _ = appears(appearance, reads: 15)
         }
         appearance.tap()
         let larger = app.buttons["appearance.larger"].firstMatch
-        XCTAssertTrue(larger.waitForExistence(timeout: 10), "the size control")
+        XCTAssertTrue(appears(larger, reads: 50), "the size control")
         larger.tap()
         sleep(2)
         closePanel()
-        _ = settle()
+        _ = settled("emma, larger")
     }
 
     // MARK: Density
