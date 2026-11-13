@@ -224,7 +224,10 @@ def do(act):
         gh("pr", "merge", str(n), "-R", REPO, "--auto", "--squash")
     elif verb == "retry":
         sha, what = detail
-        gh("pr", "comment", str(n), "-R", REPO, "--body", f"@copilot {what} Please fix it and push.\n\n{MARK} retry {sha} -->")
+        gh("pr", "comment", str(n), "-R", REPO, "--body",
+           f"@copilot {what} Please fix it and push. Don't re-run failed jobs: if the logs show the failure isn't "
+           f"caused by your change (a runner or simulator fault), reply saying so, with the failing job's link, "
+           f"and push nothing.\n\n{MARK} retry {sha} -->")
     elif verb == "rerun-gate":
         gh("workflow", "run", "cloud-fix-gate.yml", "-R", REPO, "--ref", "main", "-f", f"pr={n}")
         gh("pr", "comment", str(n), "-R", REPO, "--body",
