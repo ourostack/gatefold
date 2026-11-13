@@ -83,12 +83,13 @@ jobs:
     name: Tests
     if: ${{ inputs.full != 'false' || (inputs.pr_tests != 'none' && contains(format(' {0} ', inputs.fired), format(' {0} ', inputs.pr_when))) }}
     runs-on: xcode-27
-    # PR lane (gatefold#286): each caller's matrix entry names one of 18 shard lanes (`lane`); see "macOS lanes" at the
-    # top of app.yml. Never cancel-in-progress.
+    # PR lane (gatefold#286): each caller's matrix entry names one of 18 shard lanes (`lane`), and odd and even pull
+    # requests each get their own set of the 18, so 36 in all; see "macOS lanes" at the top of app.yml. Never
+    # cancel-in-progress.
     concurrency:
       group: >-
         ${{ github.event_name == 'pull_request'
-        && format('gatefold-macos-pr-lane-shard-{0}', inputs.lane)
+        && format('gatefold-macos-pr-lane-shard-{0}-{1}', inputs.lane, (endsWith(format('{0}', github.event.pull_request.number), '1') || endsWith(format('{0}', github.event.pull_request.number), '3') || endsWith(format('{0}', github.event.pull_request.number), '5') || endsWith(format('{0}', github.event.pull_request.number), '7') || endsWith(format('{0}', github.event.pull_request.number), '9')) && '1' || '0')
         || format('ui-tests-{0}-{1}-{2}', github.run_id, github.run_attempt, inputs.shard) }}
       queue: max
     timeout-minutes: ${{ inputs.timeout }}
