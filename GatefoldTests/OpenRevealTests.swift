@@ -189,11 +189,15 @@ final class StarvedOpenPage: ReaderPage {
 }
 
 /// Build 21 on a starved iPad (load about 360): the settle's read took 24 s, the cover's bound forced
-/// the page into view, and 0.5 s later the settle moved it to his words. A page in view stays put; his
-/// place is offered as a Jump instead.
+/// the page into view, and 0.5 s later the settle moved it to his words. Since gatefold#310 the cover holds
+/// past its forced reveal while his place is owed (`openPlaceLooks`); a read that outlasts that hold too
+/// leaves the page in view, where it stays put and his place is offered as a Jump instead.
 @MainActor @Suite(.serialized) struct ForcedRevealTests {
+    /// The hold these tests give the cover past its forced reveal, in looks: short, so the read outlasts it.
+    static let shortHold = 20
+
     @Test func aSettleThatOutlastsTheCoverOffersHisPlaceInsteadOfMovingThePage() async throws {
-        let (model, page, app) = try await open(slowMoveLooks: nil)
+        let (model, page, app) = try await open(slowMoveLooks: nil, hold: Self.shortHold)
         #expect(model.pageReady, "the forced reveal never showed the page")
         #expect(page.looksWaited < 400, "the slow read never saw the forced reveal")
         #expect(page.movesInView == 0, "the settle moved the page \(page.movesInView) times after it was in view")
@@ -215,11 +219,25 @@ final class StarvedOpenPage: ReaderPage {
     /// Taking the offer of his own place goes back to his words with no Back pill: the guessed page he
     /// was shown is not a place to come back to (#49).
     @Test func takingHisOwnPlacePutsUpNoWayBack() async throws {
-        let (model, page, _) = try await open(slowMoveLooks: nil)
+        let (model, page, _) = try await open(slowMoveLooks: nil, hold: Self.shortHold)
         #expect(model.suggestion != nil, "his place was not offered")
         await model.acceptSuggestion()
         #expect(page.showsHisWords, "the Jump didn't reach his words")
         #expect(!model.showJumpBack, "taking his own place put up a way back to the guessed page")
+        model.close()
+    }
+
+    /// gatefold#310: the read outlasts the cover's forced reveal but answers within the hold. The cover stays
+    /// past the forced reveal and lifts on his words: the page never shows the guessed place, never moves in
+    /// view, and nothing is offered, because nothing was missed.
+    @Test func aSettleThatAnswersWithinTheHoldLiftsTheCoverOnHisWords() async throws {
+        let (model, page, _) = try await open(slowMoveLooks: nil, readLooks: 120)
+        for _ in 0..<(ReaderModel.openPlaceLooks + 200) where !model.pageReady { try? await Task.sleep(for: .milliseconds(50)) }
+        #expect(model.pageReady, "the page never showed")
+        #expect(page.looksWaited >= 120, "the read answered before the forced reveal, so the hold was never tested")
+        #expect(page.showsHisWords, "the cover lifted on a page that isn't his")
+        #expect(page.movesInView == 0, "the page moved \(page.movesInView) times while in view")
+        #expect(model.suggestion == nil && model.slip == nil, "his own place was offered instead of shown")
         model.close()
     }
 
@@ -251,7 +269,7 @@ final class StarvedOpenPage: ReaderPage {
     /// His own place on offer, then the InkPad's further place arrives: one offer, the InkPad's, never
     /// two stacked; and Stay leaves no offer of his own behind it.
     @Test func aCloudOfferReplacesHisOwnPlaceRatherThanStackingOnIt() async throws {
-        let (model, _, _) = try await open(slowMoveLooks: nil, then: { sync, publication in
+        let (model, _, _) = try await open(slowMoveLooks: nil, hold: Self.shortHold, then: { sync, publication in
             guard let mapper = await ReaderSyncTests.mapper(publication) else { return }
             let inkPad = try await ReaderSyncTests.inkPadPlace(publication, mapper, index: 20, percent: 60, updated: Date().addingTimeInterval(60))
             await sync.setRemote(inkPad)
@@ -266,7 +284,7 @@ final class StarvedOpenPage: ReaderPage {
         model.close()
     }
 
-    private func open(slowMoveLooks: Int?, readLooks: Int = 400, picture: Bool = false,
+    private func open(slowMoveLooks: Int?, readLooks: Int = 400, picture: Bool = false, hold: Int? = nil,
                       then: (@MainActor (StubSync, Publication) async throws -> Void)? = nil) async throws -> (ReaderModel, StarvedOpenPage, AppModel) {
         let sync = StubSync()
         await sync.setLibrary(.success([ReaderSyncTests.frankenstein]))
@@ -285,9 +303,78 @@ final class StarvedOpenPage: ReaderPage {
                                    slowMoveLooks: slowMoveLooks, readLooks: readLooks)
         let model = ReaderModel(book: book, publication: publication, app: app, page: page)
         page.model = model
+        if let hold { model.openPlaceBound = hold }
         if picture { model.reopenPicture = UIImage() }
         await model.load()
         try await then?(sync, publication)
         return (model, page, app)
+    }
+}
+
+/// A reopen on a place with no words that Readium puts on its file's first page, with no reflow to run the
+/// restore that puts such a place back (gatefold#250), and a page that answers no script for a while (#341's
+/// iPad, gatefold#310). There is no host here, so no reflow ever runs.
+@MainActor
+final class BareReopenPage: ReaderPage {
+    var currentLocation: Locator?
+    weak var model: ReaderModel?
+    /// Moves of the page made while it was in view.
+    private(set) var movesInView = 0
+    /// Looks (one per 50 ms) the page's reads are held, as a page that answers no script.
+    let stallLooks: Int
+    private(set) var looksStalled = 0
+
+    init(firstPage: Locator, stallLooks: Int) {
+        currentLocation = firstPage
+        self.stallLooks = stallLooks
+    }
+
+    private var inView: Bool { model.map { $0.pageReady && $0.reopenPicture == nil } ?? false }
+
+    @discardableResult func go(to locator: Locator) async -> Bool {
+        if inView { movesInView += 1 }
+        currentLocation = locator
+        return true
+    }
+
+    func go(to link: ReadiumShared.Link) async {}
+
+    func progression(of quote: String) async -> Double? { nil }
+
+    func currentAnchor() async -> (ReadingAnchor, Locator)? { nil }
+
+    func visibleRange() async -> VisibleRange? {
+        while looksStalled < stallLooks { looksStalled += 1; try? await Task.sleep(for: .milliseconds(50)) }
+        guard let here = currentLocation else { return nil }
+        let start = here.locations.progression ?? 0
+        return VisibleRange(href: here.href.string, start: start, end: min(1, start + 0.03), text: "a page of invented words")
+    }
+}
+
+@MainActor @Suite(.serialized) struct BareReopenTests {
+    /// gatefold#310 on #341's iPad: the cover holds until the bare place is put back beneath it, and lifts there.
+    @Test func aBareReopenWithNoReflowIsPutBackUnderTheCover() async throws {
+        let sync = StubSync()
+        await sync.setLibrary(.success([ReaderSyncTests.frankenstein]))
+        await sync.setRemote(nil)
+        let app = AppModel(sync: sync, libraryRoot: URL.temporaryDirectory.appending(path: "bare-reopen-\(UUID().uuidString)"))
+        await app.library.refresh()
+        let publication = try await ReaderSyncTests.publication()
+        let href = try #require(AnyURL(string: publication.readingOrder[10].url().string))
+        let hisPlace = Locator(href: href, mediaType: .xhtml, locations: .init(progression: 0.6, totalProgression: 0.31))
+        app.library.recordPlace(bookID: ReaderSyncTests.frankenstein.fastHash, locatorJSON: try hisPlace.jsonString() ?? "",
+                                totalProgression: 0.31, progression: 0.6)
+        let book = try #require(app.library.book(ReaderSyncTests.frankenstein.fastHash))
+        let firstPage = Locator(href: href, mediaType: .xhtml, locations: .init(progression: 0, totalProgression: 0.28))
+        let page = BareReopenPage(firstPage: firstPage, stallLooks: 120)
+        let model = ReaderModel(book: book, publication: publication, app: app, page: page)
+        page.model = model
+        await model.load()
+        for _ in 0..<(ReaderModel.openPlaceLooks + 200) where !model.pageReady { try? await Task.sleep(for: .milliseconds(50)) }
+        #expect(model.pageReady, "the page never showed")
+        #expect(page.looksStalled >= 120, "the page answered at once, so the hold was never tested")
+        #expect(page.currentLocation?.locations.progression == 0.6, "the cover lifted on its file's first page, not his place")
+        #expect(page.movesInView == 0, "the page moved \(page.movesInView) times while in view")
+        model.close()
     }
 }
