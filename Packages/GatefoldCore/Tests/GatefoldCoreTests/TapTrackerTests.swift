@@ -68,4 +68,34 @@ import Testing
         let up = taps.receive(.up, id: 1, at: Self.here)
         #expect(up)
     }
+
+    /// A finger that went down and never moved nor lifted, its page gone: the next lone finger is a tap at once.
+    @Test func aFingerAloneOnTheGlassForgetsOneThatNeverMoved() {
+        var taps = TapTracker<Int>()
+        _ = taps.receive(.down, id: 188, at: CGPoint(x: 708, y: 676))
+        taps.aloneOnTheGlass()
+        #expect(Self.touch(&taps, id: 193))
+        // Its lift, heard late, is no tap.
+        let late = taps.receive(.up, id: 188, at: CGPoint(x: 708, y: 676))
+        #expect(!late)
+    }
+
+    /// A second finger down while the first is still on the glass is no tap, as before.
+    @Test func aSecondFingerOnTheGlassStillMakesTwo() {
+        var taps = TapTracker<Int>()
+        taps.aloneOnTheGlass()
+        _ = taps.receive(.down, id: 1, at: Self.here)
+        _ = taps.receive(.down, id: 2, at: Self.here)
+        let first = taps.receive(.up, id: 1, at: Self.here)
+        let second = taps.receive(.up, id: 2, at: Self.here)
+        #expect(!first && !second)
+    }
+
+    @Test func aTouchWithAKeyHeldIsNoTap() {
+        var taps = TapTracker<Int>()
+        _ = taps.receive(.down, id: 1, at: Self.here, plain: false)
+        let up = taps.receive(.up, id: 1, at: Self.here)
+        #expect(!up)
+        #expect(Self.touch(&taps, id: 2))
+    }
 }

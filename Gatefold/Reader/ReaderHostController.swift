@@ -2801,7 +2801,7 @@ struct ReaderHostView: UIViewControllerRepresentable {
         case .up: .up
         case .cancel: .cancel
         }
-        guard tracker.receive(phase, id: event.pointer.id, at: event.location) else { return false }
+        guard tracker.receive(phase, id: event.pointer.id, at: event.location, plain: event.modifiers == []) else { return false }
         return await onTap(event)
     }
 

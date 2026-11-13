@@ -16,7 +16,8 @@ public struct TapTracker<ID: Hashable> {
 
     private enum State: Equatable {
         case idle
-        case recognizing(id: ID, last: CGPoint)
+        /// `alone`: a finger came down on its own since this one did, so this one's lift may never be heard.
+        case recognizing(id: ID, last: CGPoint, alone: Bool)
         case failed(waiting: Set<ID>)
     }
 
@@ -26,22 +27,29 @@ public struct TapTracker<ID: Hashable> {
 
     public init() {}
 
-    /// True when the touch this event ends is a tap.
-    public mutating func receive(_ phase: Phase, id: ID, at point: CGPoint) -> Bool {
+    /// True when the touch this event ends is a tap. `plain`: no key held with it (a touch with Shift or Command
+    /// held is no tap, as with Readium's).
+    public mutating func receive(_ phase: Phase, id: ID, at point: CGPoint, plain: Bool = true) -> Bool {
         switch (state, phase) {
         case (.idle, .down):
-            state = .recognizing(id: id, last: point)
-        case let (.recognizing(current, _), .down) where current != id:
+            state = plain ? .recognizing(id: id, last: point, alone: false) : .failed(waiting: [id])
+        case let (.recognizing(current, _, true), .down) where current != id:
+            // The finger before it went down and was never heard again: this one starts afresh.
+            state = plain ? .recognizing(id: id, last: point, alone: false) : .failed(waiting: [id])
+        case let (.recognizing(current, _, _), .down) where current != id:
             state = .failed(waiting: [current, id])
-        case let (.recognizing(current, _), .cancel) where current == id:
+        case let (.recognizing(current, _, _), .cancel) where current == id:
             state = .idle
-        case let (.recognizing(current, last), .move):
-            if current != id || abs(last.x - point.x) > Self.slop || abs(last.y - point.y) > Self.slop {
-                state = .failed(waiting: [current, id])
+        case let (.recognizing(current, last, alone), .move):
+            if current != id {
+                // A finger already gone moving is a late report; one still down makes two fingers.
+                if !alone { state = .failed(waiting: [current, id]) }
+            } else if abs(last.x - point.x) > Self.slop || abs(last.y - point.y) > Self.slop {
+                state = .failed(waiting: [current])
             } else {
-                state = .recognizing(id: current, last: point)
+                state = .recognizing(id: current, last: point, alone: alone)
             }
-        case let (.recognizing(current, _), .up) where current == id:
+        case let (.recognizing(current, _, _), .up) where current == id:
             state = .idle
             return true
         case var (.failed(waiting), .down):
@@ -57,9 +65,13 @@ public struct TapTracker<ID: Hashable> {
     }
 
     /// A finger came down with no other on the glass: any finger still waiting to lift is one whose
-    /// page went away under it. A touch already being recognized is left alone, so this may come before
-    /// or after that touch's own report.
+    /// page went away under it. A touch being recognized may be this new finger, its down reported
+    /// first, so it is kept; but a different finger's down next starts afresh instead of failing.
     public mutating func aloneOnTheGlass() {
-        if case .failed = state { state = .idle }
+        switch state {
+        case .failed: state = .idle
+        case let .recognizing(id, last, _): state = .recognizing(id: id, last: last, alone: true)
+        case .idle: break
+        }
     }
 }
