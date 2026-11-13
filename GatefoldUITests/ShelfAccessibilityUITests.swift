@@ -17,19 +17,32 @@ final class ShelfAccessibilityUITests: XCTestCase {
                                "-GatefoldReset", "YES", "-GatefoldDownloadAll", "YES"]
         app.relaunch()
         XCTAssertTrue(app.descendants(matching: .any)["library.grid"].firstMatch.waitForExistence(timeout: 60), "the shelf")
-        // Every book behind the shelf has its page up: 3 (`RootView.warmCount`) on the fake shelf.
+        // Every book behind the shelf has its page up.
         let warm = app.descendants(matching: .any)["library.warmReady"].firstMatch
         var looks = 0
-        while (warm.value as? String) != "3" {
+        while true {
+            let parts = ((warm.value as? String) ?? "").components(separatedBy: " of ").compactMap { Int($0) }
+            if parts.count == 2, parts[1] > 0, parts[0] == parts[1] { break }
             looks += 1
-            XCTAssertLessThan(looks, 600, "3 pages ready behind the shelf; \(warm.value as? String ?? "none") after \(looks) looks")
+            XCTAssertLessThan(looks, 600, "every page ready behind the shelf; \(warm.value as? String ?? "none") after \(looks) looks")
             usleep(300_000)
         }
-        // Then for 20 looks, while their page counters run: the shelf's tree holds no page at all.
+        // Then for 20 looks, while their pages count: the shelf's tree holds no page at all.
         for look in 1...20 {
             let pages = app.webViews.count
             XCTAssertEqual(pages, 0, "look \(look): \(pages) web views reach accessibility behind the shelf")
             usleep(500_000)
+        }
+        // A tapped book's page comes back within reach: VoiceOver reads the open book.
+        let cover = app.descendants(matching: .any)["book.gutenberg-pride-and-prejudice"].firstMatch
+        XCTAssertTrue(cover.waitForExistence(timeout: 60), "the book's cover")
+        cover.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["reader.page"].firstMatch.waitForExistence(timeout: 60), "the book opened")
+        looks = 0
+        while app.webViews.count == 0 {
+            looks += 1
+            XCTAssertLessThan(looks, 200, "the open book's page reaches accessibility; none after \(looks) looks")
+            usleep(300_000)
         }
         app.quit()
     }

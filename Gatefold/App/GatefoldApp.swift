@@ -198,14 +198,14 @@ struct RootView: View {
                 ZStack { ForEach(warm, id: \.bookID) { WarmPage(model: $0) } }
             }
         }
-        // UI tests only: how many books behind the shelf have their page up (ShelfAccessibilityUITests).
+        // UI tests only: how many books behind the shelf have their page up, of how many (ShelfAccessibilityUITests).
         .overlay(alignment: .topLeading) {
             if LaunchOptions.isUITest, reader == nil {
                 Text("warm")
                     .font(.system(size: 1))
                     .opacity(0.01)
                     .accessibilityIdentifier("library.warmReady")
-                    .accessibilityValue("\(warm.filter(\.pageReady).count)")
+                    .accessibilityValue("\(warm.filter(\.pageReady).count) of \(warm.count)")
                     .allowsHitTesting(false)
             }
         }

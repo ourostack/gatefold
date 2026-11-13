@@ -37,7 +37,7 @@ snap() {
 }
 tail -n 0 -F "$log" 2> /dev/null | while IFS= read -r line; do
   case "$line" in
-    *"main: held "*) mark=0; continue ;;
+    *"main: held "* | *"main: watch started"*) mark=0; continue ;;
     *"main: still held after "*) ;;
     *) continue ;;
   esac
