@@ -92,9 +92,24 @@ public actor CloudSession {
         try Self.check(response, data)
         let token = try WireDecoder.token(data, now: now())
 
+        // The token is what signs him in; `/user` only fills in details. If it stops answering in a
+        // shape we know, he is still signed in, under the address he typed.
+        let typed = email.trimmingCharacters(in: .whitespacesAndNewlines)
         let (userData, userResponse) = try await perform(.get("/user"), bearer: token.accessToken)
-        try Self.check(userResponse, userData)
-        var account = try WireDecoder.account(userData, store: store)
+        var account: CloudAccount
+        do {
+            try Self.check(userResponse, userData)
+            account = try WireDecoder.account(userData, store: store, email: typed)
+        } catch CloudError.notFound {
+            CloudDrift.shared.note("/user: 404; signed in without the account's details")
+            account = CloudAccount(email: typed, store: store)
+        } catch is WireError {
+            CloudDrift.shared.note("/user: an answer we can't read; signed in without the account's details")
+            account = CloudAccount(email: typed, store: store)
+        } catch is DecodingError {
+            CloudDrift.shared.note("/user: not JSON; signed in without the account's details")
+            account = CloudAccount(email: typed, store: store)
+        }
         if account.email.isEmpty { account.email = email }
         let session = StoredSession(account: account, token: token)
         generation += 1

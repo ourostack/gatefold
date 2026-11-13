@@ -98,9 +98,12 @@ enum WireDecoder {
         return CloudToken(accessToken: access, refreshToken: j["refresh_token"]?.string, expiresAt: now.addingTimeInterval(lifetime))
     }
 
-    static func account(_ data: Data, store: CloudStore) throws -> CloudAccount {
+    /// `email` is the address he signed in with: the account is his even if `/user` stops naming it.
+    static func account(_ data: Data, store: CloudStore, email typed: String = "") throws -> CloudAccount {
         let j = try loose(data)
-        guard let email = j["email"]?.string ?? j["login"]?.string else { throw WireError.unexpectedShape("user.email") }
+        let named = j["email"]?.string ?? j["login"]?.string
+        if named == nil { CloudDrift.shared.note("/user: no email or login; using the address signed in with") }
+        guard let email = named ?? (typed.isEmpty ? nil : typed) else { throw WireError.unexpectedShape("user.email") }
         return CloudAccount(email: email, store: store, displayName: j["full_name"]?.string,
                             mailInAddress: j["internal_account"]?["email"]?.string,
                             quotaBytes: j["files_size_limit"]?.int, usedBytes: j["files_size"]?.int)
@@ -109,8 +112,12 @@ enum WireDecoder {
     /// One page of `/books`: `listed` counts every entry, `items` only the ones we could read.
     static func booksPage(_ data: Data) throws -> (total: Int, items: [CloudBook], listed: Int) {
         let j = try loose(data)
-        guard let items = j["items"]?.array else { throw WireError.unexpectedShape("books.items") }
-        return (Int(j["total"]?.int ?? Int64(items.count)), items.compactMap(book), items.count)
+        let listed = j["items"]?.array ?? j["data"]?.array ?? j["books"]?.array ?? j.array
+        guard let items = listed else { throw WireError.unexpectedShape("books.items") }
+        if j["items"] == nil { CloudDrift.shared.note("/books: the list is no longer under items") }
+        let books = items.compactMap(book)
+        if books.count < items.count { CloudDrift.shared.note("/books: \(items.count - books.count) of \(items.count) entries have no fast_hash") }
+        return (Int(j["total"]?.int ?? Int64(items.count)), books, items.count)
     }
 
     static func uploadResponse(_ data: Data) throws -> CloudBook {
@@ -118,10 +125,17 @@ enum WireDecoder {
         return b
     }
 
-    static func fileInfo(_ data: Data) throws -> (book: CloudBook, position: ReadingPosition?) {
+    /// The book is optional: an answer that lost its `fast_hash` can still carry the e-reader's place.
+    static func fileInfo(_ data: Data) throws -> (book: CloudBook?, position: ReadingPosition?) {
         let j = try loose(data)
-        guard let b = book(j) else { throw WireError.unexpectedShape("fileops.info") }
-        return (b, b.position)
+        if let b = book(j) { return (b, b.position) }
+        let place = position(j["position"] ?? j["read_position"])
+        guard j["position"] != nil || j["read_position"] != nil || j["download_link"] != nil || j["link"] != nil else {
+            throw WireError.unexpectedShape("fileops.info")
+        }
+        CloudDrift.shared.note("/fileops/info: no fast_hash in the answer")
+        let link = j["link"]?.url ?? j["download_link"]?.url
+        return (link.map { CloudBook(fastHash: "", downloadURL: $0) }, place)
     }
 
     static func book(_ j: Loose) -> CloudBook? {
@@ -159,7 +173,13 @@ enum WireDecoder {
         guard let j else { return nil }
         let pointerPB = j["pointer_pb"]?.string
         let pointer = j["pointer"]?.string
-        guard let updated = j["updated"]?.date, pointerPB != nil || pointer != nil || (j["percent"]?.double ?? 0) > 0 else { return nil }
+        guard pointerPB != nil || pointer != nil || (j["percent"]?.double ?? 0) > 0 else { return nil }
+        // Without its time the place still opens the book where the e-reader left it; it just loses
+        // every comparison with a place made here.
+        let updated = j["updated"]?.date ?? j["updated_at"]?.date ?? {
+            CloudDrift.shared.note("position: no updated time; taken as older than any place made here")
+            return Date.distantPast
+        }()
         let raw = pointerPB ?? pointer
         let cfi = (pointerPB.flatMap(EPUBCFI.init) ?? pointer.flatMap(EPUBCFI.init))?.description
         let percent = j["percent"]?.double ?? j["offs"]?.double ?? 0
