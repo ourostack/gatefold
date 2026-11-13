@@ -252,10 +252,6 @@ jobs:
           REBOOTS=1
           reboots=0
           scenes="spread midnight"  # probe #297
-          # Probe #297: a starved runner, two CPU hogs per core for the whole capture.
-          hogs=""
-          for i in $(seq $(( $(sysctl -n hw.ncpu) * 2 ))); do yes > /dev/null & hogs="$hogs $!"; done
-          echo "probe #297: hogs$hogs"
           mkdir -p "$RUNNER_TEMP/logs"
           for pass in a b; do
             dir="$RUNNER_TEMP/shots/$pass"
@@ -303,7 +299,6 @@ jobs:
             echo "== pass $pass"; cat "$RUNNER_TEMP/logs/watch-$pass.log"
             python3 -I scripts/screenshots/capture.py check --device "$DEVICE" --dir "$dir" || status=1
           done
-          kill $hogs || true
           exit $status
       - name: Same commit, same pixels (the two passes match)
         run: python3 -I scripts/screenshots/capture.py compare "$RUNNER_TEMP/shots/a" "$RUNNER_TEMP/shots/b"
