@@ -34,9 +34,9 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WORKFLOW = os.path.join(ROOT, ".github", "workflows", "app.yml")
 SHARD = os.path.join(ROOT, ".github", "workflows", "ui-tests.yml")
 RESERVE = 12  # the time-left action's default, kept for the logs after the tests
-# Minutes of the test step that no test gets (gatefold#260): ci-within.py stops the run 2 min before the step's end
-# (its GRACE), and xcodebuild takes up to 3 min more to start the first test and end the run (159 s at the 99th
-# percentile of 4008 green test steps, 2026-11-08 to 11-12).
+# Minutes of the budget that no test gets (gatefold#260): xcodebuild takes up to 3 min to start the first test and end
+# the run (159 s at the 99th percentile of 4008 green test steps, 2026-11-08 to 11-12). It once held ci-within.py's
+# 2 min stop (its GRACE) too; since gatefold#353 the time-left action takes that from the reserve, so these 5 leave 2 spare.
 LAUNCH = 5
 TIMES_NAME = "scripts/ci-shards.times"
 TIMES = os.path.join(ROOT, TIMES_NAME)
