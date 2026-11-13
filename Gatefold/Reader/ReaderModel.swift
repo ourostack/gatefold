@@ -3585,12 +3585,17 @@ final class ReaderModel {
     /// For UI tests: the words on screen, as of the last settled page. While the reopen picture covers
     /// the page the screen shows the picture, not the web view laying out under it, so nothing is
     /// reported until the live page takes its place (CI's reviewer check hashed the page under a
-    /// picture that stayed up 24 s on a slow runner, and called a correct reopen a miss).
-    private(set) var visibleTextProbe = ""
+    /// picture that stayed up 24 s on a slow runner, and called a correct reopen a miss). The opening cover is
+    /// the same: the page beneath reports its words while the cover still hides them, so none are reported
+    /// until the page is ready and the cover gone (gatefold#374: a test read words held under a cover kept up
+    /// for its launch jump, judged them settled, and tapped the cover's edge, which brings up the controls).
+    var visibleTextProbe: String { pageReady ? pageWordsProbe : "" }
+    /// The words of the page beneath, whether or not the opening cover still hides them.
+    private var pageWordsProbe = ""
     /// The words of a page shown before its location is reported (a restore that left it unsettled).
     func probeShownPage(_ text: String) {
         guard LaunchOptions.isUITest, reopenPicture == nil, !isClosed else { return }
-        visibleTextProbe = String(text.prefix(2400))
+        pageWordsProbe = String(text.prefix(2400))
     }
 
     /// For UI tests: the words of the place his last move saved, so a test can tell a word's tail the
@@ -3615,7 +3620,7 @@ final class ReaderModel {
     private var columnsLook = 0
 
     private func refreshBookmarkState(_ visible: VisibleRange?) {
-        if LaunchOptions.isUITest, reopenPicture == nil, let text = visible?.text { visibleTextProbe = String(text.prefix(2400)) }
+        if LaunchOptions.isUITest, reopenPicture == nil, let text = visible?.text { pageWordsProbe = String(text.prefix(2400)) }
         if LaunchOptions.columnsProbe, reopenPicture == nil, visible != nil {
             columnsLook += 1
             let look = columnsLook
