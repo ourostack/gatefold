@@ -233,6 +233,46 @@ final class NavigationPlaceUITests: XCTestCase {
         XCTAssertTrue(shelf.exists, "Close on the opening cover goes back to the shelf")
     }
 
+    /// The words a test reads are the words he sees: none while the opening cover is up, though the page beneath
+    /// has laid out (gatefold#374). The reviewers' spread check, on its side with a launch jump, read the page's
+    /// words from under a cover held for that jump (the open's rotation reflow didn't settle, and its 12 s watchdog
+    /// read the page beneath), judged them settled, and tapped the cover's edge: that brought the controls up, as a
+    /// tap on the cover does (#104), and its next tap took them down, so neither turned the page. Here the first
+    /// page's load is held for 600 looks (`-GatefoldHoldOpeningLoad`), so the cover stays up for the launch jump
+    /// after the page beneath has reported its words. Each read under the cover must find no words; once it lifts,
+    /// the words come. Judged in reads, never seconds.
+    func testNoWordsAreReadUnderTheOpeningCover() {
+        app.launchArguments = common + ["-GatefoldHoldOpeningLoad", "600", "-GatefoldReset", "YES", "-GatefoldDownloadAll", "YES",
+                                        "-GatefoldOpenBook", "gutenberg-pride-and-prejudice", "-GatefoldGoTo", "0.31"]
+        app.launch()
+        let cover = app.descendants(matching: .any)["reader.opening"]
+        let beneath = app.descendants(matching: .any)["reader.wordsBeneath"]
+        XCTAssertNotNil(ReaderReads.opened(app, "the jump's open", say: { print("PLACEHOLDER \($0)") }), "the reader's page is up")
+        var coveredReads = 0, wordsUnderCover = 0, beneathReads = 0
+        for _ in 1...ReaderReads.coverReads {
+            // The words first: read after the cover, they could be the uncovered page's.
+            let words = visibleText
+            guard cover.exists else { break }
+            coveredReads += 1
+            // The page beneath has words to leak: without them a read under the cover proves nothing.
+            if !((beneath.value as? String) ?? "").isEmpty { beneathReads += 1 }
+            if !words.isEmpty {
+                wordsUnderCover += 1
+                print("PLACEHOLDER words under the cover at read \(coveredReads): \(words.count) characters")
+                break
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+        }
+        print("PLACEHOLDER the cover was up for \(coveredReads) reads; words beneath it on \(beneathReads); words read under it on \(wordsUnderCover)")
+        XCTAssertGreaterThan(coveredReads, 0, "the opening cover was up while the jump went on")
+        XCTAssertGreaterThan(beneathReads, 0, "the page beneath the cover had words that could have been read")
+        XCTAssertEqual(wordsUnderCover, 0, "no words are read under the opening cover")
+        guard wordsUnderCover == 0 else { return }
+        XCTAssertFalse(cover.exists, "the opening cover lifted within \(ReaderReads.coverReads) reads")
+        XCTAssertFalse(ReaderReads.settle(app, "the page once the cover lifted", say: { print("PLACEHOLDER \($0)") }).words.isEmpty,
+                       "the words come once the cover has lifted")
+    }
+
     /// The Cloud's offer, shown while the first page is still loading behind the opening cover, takes
     /// his tap: Catch up was drawn beneath the cover, which took the tap as a call for the controls, so
     /// the offer was never taken and the book stayed on its wordless cover (#46 at c8d3084, CI's iPad:
