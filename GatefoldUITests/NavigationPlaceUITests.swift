@@ -477,9 +477,19 @@ final class NavigationPlaceUITests: XCTestCase {
         let his = opening(visibleText)
         XCTAssertFalse(his.isEmpty)
 
+        // The layout counted before the rotation, read until there is one (a fresh install, `-GatefoldReset`,
+        // keeps no counts, so every layout after it is counted behind the page).
+        var portraitLayout = pageCountLayout
+        for _ in 0..<40 where portraitLayout.isEmpty {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+            portraitLayout = pageCountLayout
+        }
+        XCTAssertFalse(portraitLayout.isEmpty, "the portrait page has a layout to count")
         XCUIDevice.shared.orientation = .landscapeLeft
-        // He stays a while on the new spread: long enough for the page count to finish behind it.
-        sleep(45)
+        // He stays on the new spread until its page count has finished behind it, then until its words hold
+        // still: counted in reads, never a fixed wait (gatefold#210, which a 45 s sleep let run out first).
+        XCTAssertTrue(spreadCounted(after: portraitLayout), "the spread's page count finished")
+        _ = steadyWords()
         XCTAssertTrue(flat(visibleText).contains(his), "the spread shows his first words")
         let spread = opening(visibleText)
         for round in 1...3 {
@@ -552,6 +562,26 @@ final class NavigationPlaceUITests: XCTestCase {
         XCTAssertTrue(flat(back).contains(words), "reopened where he scrolled to")
     }
 
+    private var pageCount: String { (app.descendants(matching: .any)["reader.pageCount"].value as? String) ?? "" }
+    private var pageCountLayout: String { (app.descendants(matching: .any)["reader.pageCountLayout"].value as? String) ?? "" }
+
+    /// After a rotation, true once the two-column spread (a layout other than `old`, the one counted before
+    /// it) has its whole total. The layout is read on both sides of the total, so a total read across a layout swap never
+    /// counts: a portrait count still finishing during the reflow is the old layout's (#210's review).
+    /// Bounded by reads; a whole count of a book on a slow iPad runner takes about 50 s (#94's probes),
+    /// which 1200 reads a quarter second apart cover.
+    private func spreadCounted(after old: String, reads limit: Int = 1200) -> Bool {
+        for read in 0..<limit {
+            let before = pageCountLayout, total = pageCount, after = pageCountLayout
+            if before.contains("-c2-"), before != old, before == after, !total.isEmpty {
+                print("ROTATION spread counted after \(read) reads")
+                return true
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        }
+        return false
+    }
+
     private var savedWords: String { (app.descendants(matching: .any)["reader.savedWords"].value as? String) ?? "" }
 
     /// The page's words once the same non-empty words have been read `hold` times in a row. The bound
@@ -578,8 +608,7 @@ final class NavigationPlaceUITests: XCTestCase {
     /// Where to tap `element`, read from its frame. Never `isHittable`: asked of an offer in the middle of
     /// folding, XCTest fails the test ("Activation point invalid", #171's probe 42966309493).
     private func tappable(_ element: XCUIElement) -> CGRect? {
-        let f = element.frame
-        return f.isEmpty || f.width < 1 || f.height < 1 || !app.frame.contains(CGPoint(x: f.midX, y: f.midY)) ? nil : f
+        HitCheck.frame(of: element).flatMap { HitCheck.usable($0, within: app.frame) }
     }
 
     private func takeTheCloudsOffer() -> String {

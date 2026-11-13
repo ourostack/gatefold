@@ -299,8 +299,10 @@ import Testing
         f.page.linkOpens = fileStart
         f.page.fragmentAt = [:]
         f.page.loadingChapter = true
-        // The load comes in only after more beats than the flat budget has reads.
-        let loadsAt = JumpLanding.reads + 20
+        // The load comes in only after the landing has made more reads than the flat budget has. The veil's
+        // own watch beats through the same closure until it lets go (`JumpLanding.reads` beats), so the
+        // landing's share is counted past both.
+        let loadsAt = 2 * JumpLanding.reads + 20
         beats.act = { beat in
             if beat == loadsAt {
                 f.page.loadingChapter = false
@@ -318,6 +320,195 @@ import Testing
         let kept = try #require(saved(f).flatMap { try? Locator(jsonString: $0) }, "no place kept")
         #expect((kept.locations.progression ?? 0) > 0.5, "the place kept is the file's start, not the chapter he chose")
         f.model.close()
+    }
+
+    /// He leaves while a contents jump is still on its way (its chapter loading): the place kept is the
+    /// chapter he chose, at the entry's placed total progression, never the place before the jump and
+    /// never its file's first page (gatefold#259). Gone inactive, the jump goes on, and where it lands is
+    /// the place once it does, also when it lands while the target is still being written ("inactive,
+    /// landing at once"), and when the leave's write is held just before it is kept until after the landing
+    /// ("inactive, landing before the leave's write returns": the held write once stood over the landed
+    /// page). Judged in beats: he leaves on the second, the chapter's place comes later.
+    @Test(arguments: ["close", "inactive", "inactive, landing at once", "inactive, landing before the leave's write returns"]) func aContentsJumpLeftOnItsWayKeepsTheChapterHeChose(_ how: String) async throws {
+        final class Beats { var count = 0; var act: (@MainActor (Int) -> Void)? }
+        let beats = Beats()
+        let f = try await S.make(remote: { _, _ in nil }, startAt: 0.05, jumpBeat: { @MainActor in
+            beats.count += 1
+            beats.act?(beats.count)
+            await Task.yield()
+        })
+        await f.model.load()
+        await f.model.locationDidChange(try #require(f.page.currentLocation))
+        let entry = try #require(f.model.toc.last(where: { $0.progression > 0.3 && $0.link.url().fragment != nil }))
+        let fragment = try #require(entry.link.url().fragment)
+        nonisolated(unsafe) let publication = f.publication
+        let opened = try #require(await publication.locate(entry.link))
+        let fileStart = opened.copy(locations: { $0.fragments = []; $0.progression = 0 }, text: { $0 = Locator.Text() })
+        // The open's own reflow (the iPad turned on its side) has ended, leaving the page marked as the
+        // layout's: the leave's write must still keep the chapter (CI run 43218442143 dropped it).
+        f.model.keeper.reflowWillBegin(.rotation)
+        f.model.reflowDidBegin()
+        f.model.reflowDidFinish(visible: await f.page.visibleRange())
+        // The restore's own end, as the host reports it: until then every report but a leave is the
+        // reflow's, and the landing's write was dropped with them (CI run 43233772897).
+        f.model.keeper.restoreDidComplete()
+        for _ in 0..<20 { await Task.yield() }
+        f.page.linkOpens = fileStart
+        f.page.fragmentAt = [:]
+        f.page.loadingChapter = true
+        if how == "inactive, landing at once" {
+            // The chapter comes in once the target is written, and the jump lands before the leave is done:
+            // the leave's last step then finds a landing it didn't write.
+            f.model.afterLeaveWrite = { @MainActor in
+                f.model.afterLeaveWrite = nil
+                f.page.loadingChapter = false
+                f.page.fragmentAt[fragment] = 0.6
+                for _ in 0..<400 where (f.page.currentLocation?.locations.progression ?? 0) < 0.5 { await Task.yield() }
+                for _ in 0..<50 { await Task.yield() }
+            }
+        }
+        final class Kept { var onLeaving: String?; var leave: Task<Void, Never>?; var heldBefore: Int?; var leaveDone = false; var gateOpen = false; var parkedWrite: CheckedContinuation<Void, Never>? }
+        let kept = Kept()
+        if how == "inactive" {
+            // Readium's boundary a beat after the landing (#82), reported while the landing reads his words:
+            // never written over them.
+            f.model.beforeLandingWrite = { @MainActor in
+                f.model.beforeLandingWrite = nil
+                kept.heldBefore = f.model.reportsHeldByAClaim
+                Task { await f.model.locationDidChange(fileStart) }
+            }
+        }
+        for _ in 0..<20 { await Task.yield() }
+        let before = saved(f)
+        beats.act = { beat in
+            if beat == 2 {
+                if how == "close" { f.model.close() } else if let owed = f.model.owedPlaceOnLeaving() {
+                    f.model.keepShownPageNow(owed)
+                    // The page answers the leave's read only after the landing.
+                    if how.hasPrefix("inactive, landing before") {
+                        // The leave's write, if it makes one, is held just before it is kept, until after the
+                        // landing: the landing's own write goes through.
+                        f.model.placeWriteWait = { @MainActor in
+                            guard !kept.gateOpen, !kept.leaveDone, kept.parkedWrite == nil else { return }
+                            await withCheckedContinuation { kept.parkedWrite = $0 }
+                        }
+                    }
+                    kept.leave = Task { await f.model.keepOwedPlace(owed); kept.leaveDone = true }
+                }
+            }
+            // A leave that made no write leaves nothing to hold: the gate opens before the landing.
+            if beat >= 3, kept.leaveDone || beat >= 29, kept.parkedWrite == nil { kept.gateOpen = true }
+            // The first place written after he left is the leave's own: the chapter's place comes later.
+            if kept.onLeaving == nil, saved(f) != before { kept.onLeaving = saved(f) }
+            if beat == 30, how != "inactive, landing at once" {
+                f.page.loadingChapter = false
+                f.page.fragmentAt[fragment] = 0.6
+            }
+        }
+
+        await f.model.go(to: entry)
+        if how.hasPrefix("inactive, landing before") {
+            // The landing is the first place written after the target, wherever the page settled on (the stub
+            // lands on the page holding the chapter's 0.6, not on 0.6 itself: CI run 43245326863).
+            for _ in 0..<400 where kept.onLeaving == nil || saved(f) == kept.onLeaving { await Task.yield() }
+            let landedJSON = try #require(saved(f), "no place kept")
+            let landed = try #require(try? Locator(jsonString: landedJSON), "no place kept")
+            // The target and the landing must differ, or the target standing over the landing passes unseen.
+            let leftAt = try #require(kept.onLeaving.flatMap { try? Locator(jsonString: $0) }, "leaving kept no place")
+            try #require(abs((leftAt.locations.progression ?? -1) - (landed.locations.progression ?? -1)) > 0.01, "the target is the landed place itself")
+            #expect(landed.locations.progression == f.page.currentLocation?.locations.progression && (landed.locations.progression ?? 0) > 0.5,
+                    "the jump that went on after he left didn't keep where it landed")
+            #expect(kept.leaveDone || kept.parkedWrite != nil, "the leave neither ended nor reached its write")
+            // Now the leave's write, if it was held, goes on.
+            kept.gateOpen = true
+            kept.parkedWrite?.resume()
+            kept.parkedWrite = nil
+            await kept.leave?.value
+            for _ in 0..<50 { await Task.yield() }
+            let final = try #require(saved(f).flatMap { try? Locator(jsonString: $0) }, "no place kept")
+            #expect(saved(f) == landedJSON, "the leave's write, held past the landing, stood over the page the jump landed on (at \(final.locations.progression ?? -1))")
+            f.model.close()
+            return
+        }
+        await kept.leave?.value
+        for _ in 0..<200 where saved(f) == before { await Task.yield() }
+
+        if how == "inactive, landing at once" {
+            for _ in 0..<200 where (saved(f).flatMap { try? Locator(jsonString: $0) }?.locations.progression ?? 0) < 0.5 { await Task.yield() }
+            for _ in 0..<50 { await Task.yield() }
+            let landed = try #require(saved(f).flatMap { try? Locator(jsonString: $0) }, "no place kept")
+            #expect((landed.locations.progression ?? 0) > 0.5, "the target written as he left stood over the page the jump landed on")
+            f.model.close()
+            return
+        }
+        let leftAt = try #require((how == "close" ? saved(f) : kept.onLeaving).flatMap { try? Locator(jsonString: $0) }, "leaving kept no place")
+        #expect((how == "close" ? saved(f) : kept.onLeaving) != before, "leaving kept the place from before the jump (\(how))")
+        #expect(ContentsIndex.sameResource(leftAt.href.string, fileStart.href.string), "the place kept on leaving is in another file (\(how))")
+        #expect(abs((leftAt.locations.totalProgression ?? -1) - entry.progression) < 0.001, "the place kept on leaving is not the entry's place (\(how))")
+        #expect((leftAt.locations.progression ?? 0) > 0.01, "the place kept on leaving is the file's first page (\(how))")
+        if how == "inactive" {
+            for _ in 0..<200 where (saved(f).flatMap { try? Locator(jsonString: $0) }?.locations.progression ?? 0) < 0.5 { await Task.yield() }
+            let landed = try #require(saved(f).flatMap { try? Locator(jsonString: $0) }, "no place kept")
+            for _ in 0..<50 { await Task.yield() }
+            let final = try #require(saved(f).flatMap { try? Locator(jsonString: $0) }, "no place kept")
+            #expect((landed.locations.progression ?? 0) > 0.5, "the jump that went on after he left didn't keep where it landed")
+            #expect((final.locations.progression ?? 0) > 0.5, "a boundary report during the landing's write was kept over it")
+            let heldBefore = try #require(kept.heldBefore, "the landing never started its write")
+            // At least the boundary report: the stub page's own report of the landing (sent from its go) may
+            // arrive inside the write too, and is held the same way.
+            #expect(f.model.reportsHeldByAClaim >= heldBefore + 1, "the boundary report during the landing's write wasn't held by its claim (\(f.model.reportsHeldByAClaim - heldBefore) held)")
+            f.model.close()
+        }
+    }
+
+    /// He leaves while the chapter still loads and the web view answers no reads (CI run 43222781890: the
+    /// leave's write waited on the page, the app was suspended and quit, and nothing was kept). The chapter
+    /// he chose is kept before any read returns (gatefold#259). Judged with the read parked, never released
+    /// until the end: the app quit first.
+    @Test func aContentsJumpLeftWhileThePageAnswersNoReadsIsKeptAtOnce() async throws {
+        final class Beats { var count = 0; var act: (@MainActor (Int) -> Void)? }
+        let beats = Beats()
+        let f = try await S.make(remote: { _, _ in nil }, startAt: 0.05, jumpBeat: { @MainActor in
+            beats.count += 1
+            beats.act?(beats.count)
+            await Task.yield()
+        })
+        await f.model.load()
+        await f.model.locationDidChange(try #require(f.page.currentLocation))
+        let entry = try #require(f.model.toc.last(where: { $0.progression > 0.3 && $0.link.url().fragment != nil }))
+        nonisolated(unsafe) let publication = f.publication
+        let opened = try #require(await publication.locate(entry.link))
+        let fileStart = opened.copy(locations: { $0.fragments = []; $0.progression = 0 }, text: { $0 = Locator.Text() })
+        f.page.linkOpens = fileStart
+        f.page.fragmentAt = [:]
+        f.page.loadingChapter = true
+        for _ in 0..<20 { await Task.yield() }
+        let before = saved(f)
+        final class Left { var leave: Task<Void, Never>?; var done = false }
+        let left = Left()
+        beats.act = { beat in
+            guard beat == 2 else { return }
+            // From now the web view answers no read of the page, however many are asked.
+            f.page.holdsAnchors = true
+            guard let owed = f.model.owedPlaceOnLeaving() else { return }
+            f.model.keepShownPageNow(owed)
+            left.leave = Task { await f.model.keepOwedPlace(owed); left.done = true }
+            // The app is suspended and quits here: the jump goes no further.
+            f.model.close()
+        }
+
+        // Not awaited: with no read answered, the jump itself never gets to its end until the page answers.
+        let jump = Task { await f.model.go(to: entry) }
+        for _ in 0..<2000 where !left.done && beats.count < 2 + 200 { await Task.yield() }
+
+        let kept = try #require(saved(f).flatMap { try? Locator(jsonString: $0) }, "nothing kept while the page answered no reads")
+        #expect(saved(f) != before, "the place from before the jump stands while the page answers no reads")
+        #expect(abs((kept.locations.totalProgression ?? -1) - entry.progression) < 0.001, "the place kept is not the chapter he chose")
+        f.page.holdsAnchors = false
+        f.page.releaseAnchor()
+        f.model.close()
+        await left.leave?.value
+        await jump.value
     }
 
     /// A contents anchor the file doesn't have: Readium's landing stands at once, without waiting out
@@ -658,6 +849,557 @@ import Testing
         f.model.close()
     }
 
+    /// Any veiled jump, not only Back, under a chapter load that never ends: at the veil's limit
+    /// (`JumpLanding.reads` beats) the veil lets go and the chapter shows its own loading, and the jump
+    /// still lands when the load comes in (gatefold#173: a Contents jump held the screen 43 s and more).
+    @Test func aJumpPastTheVeilsLimitLetsTheVeilGoAndStillLands() async throws {
+        let f = try await S.make(remote: { _, _ in nil }, startAt: 0.05, jumpBeat: { await Task.yield() })
+        await f.model.load()
+        await f.model.locationDidChange(try #require(f.page.currentLocation))
+        f.page.holdsJumps = true
+        f.page.loadingChapter = true
+        let jump = Task { await f.model.go(toProgression: 0.7, rememberBack: true) }
+        await Self.settle { f.model.jumpsPastTheVeil == 1 }
+        #expect(f.model.jumpsPastTheVeil == 1, "the veil held the screen past its limit")
+        // The load comes in.
+        f.page.loadingChapter = false
+        f.page.holdsJumps = false
+        f.page.releaseJumps()
+        await jump.value
+        await Self.settle { abs((Self.kept(f) ?? -1) - 0.7) < 0.03 }
+        #expect(abs((f.page.currentLocation?.locations.totalProgression ?? -1) - 0.7) < 0.03, "the jump never landed")
+        #expect(abs((Self.kept(f) ?? -1) - 0.7) < 0.03, "the place kept isn't where the jump landed")
+        #expect(f.model.showJumpBack, "the jump has no way back")
+        f.model.close()
+    }
+
+    /// A Contents jump into a chapter's fragment takes its step before its veil (columns land it inside
+    /// the file): under a load that never ends, its veil lets go at the limit too, and the jump still
+    /// lands on the chapter when the load comes in (gatefold#173; CI on #195 after main's #269).
+    @Test func aContentsJumpIntoAChaptersFragmentPastTheVeilsLimitLetsTheVeilGo() async throws {
+        let f = try await S.make(remote: { _, _ in nil }, startAt: 0.05, jumpBeat: { await Task.yield() })
+        await f.model.load()
+        await f.model.locationDidChange(try #require(f.page.currentLocation))
+        let entry = try #require(f.model.toc.last(where: { $0.progression > 0.3 && $0.link.url().fragment != nil }))
+        let fragment = try #require(entry.link.url().fragment)
+        nonisolated(unsafe) let publication = f.publication
+        let opened = try #require(await publication.locate(entry.link))
+        f.page.linkOpens = opened.copy(locations: { $0.fragments = []; $0.progression = 0 }, text: { $0 = Locator.Text() })
+        f.page.fragmentAt[fragment] = 0.6
+        f.page.holdsLinkJumps = true
+        f.page.loadingChapter = true
+        let jump = Task { await f.model.go(to: entry) }
+        await Self.settle { f.model.jumpsPastTheVeil == 1 }
+        #expect(f.model.jumpsPastTheVeil == 1, "the Contents jump's veil held the screen past its limit")
+        f.page.loadingChapter = false
+        f.page.holdsLinkJumps = false
+        f.page.releaseJumps()
+        await jump.value
+        await Self.settle { (f.page.currentLocation?.locations.progression ?? 0) > 0.5 }
+        #expect((f.page.currentLocation?.locations.progression ?? 0) > 0.5, "the jump never landed on the chapter he chose")
+        f.model.close()
+    }
+
+    /// A turn or a swipe of his while a jump is still on its way past the veil's limit ends it quietly:
+    /// when the hung jump comes back at last, his page stands and is the place kept, and no way back
+    /// is offered for a jump he never saw land (gatefold#173).
+    /// "tap, then swipe": a report with no touch (the layout one the controls bring) comes first, so the
+    /// swipe has no jump of ours since that report; it still ends the jump (gatefold#173 re-review).
+    @Test(arguments: ["turn", "swipe", "tap, then swipe"]) func aMoveWhileAJumpIsPastTheVeilsLimitEndsItQuietly(how: String) async throws {
+        let f = try await S.make(remote: { _, _ in nil }, startAt: 0.05, jumpBeat: { await Task.yield() })
+        await f.model.load()
+        await f.model.locationDidChange(try #require(f.page.currentLocation))
+        f.page.holdsJumps = true
+        f.page.loadingChapter = true
+        let jump = Task { await f.model.go(toProgression: 0.7, rememberBack: true) }
+        await Self.settle { f.model.jumpsPastTheVeil == 1 }
+        #expect(f.model.jumpsPastTheVeil == 1, "the jump wasn't still on its way past the veil's limit")
+        // He moves on meanwhile: Readium moves itself and tells the reader. A tap first reports the page
+        // he is still on (it moves nothing).
+        let next = try #require(await S.locate(f.publication, 0.06))
+        if how == "tap, then swipe" {
+            f.model.controlsTapped(visible: true)
+            await f.model.locationDidChange(try #require(f.page.currentLocation))
+        }
+        f.page.currentLocation = next
+        if how == "turn" {
+            f.model.userTurnedPage()
+        } else {
+            f.model.noteInteraction()
+            await f.model.locationDidChange(next)
+        }
+        await Self.settle { abs((Self.kept(f) ?? -1) - (next.locations.totalProgression ?? 0)) < 0.001 }
+        // The hung jump comes back at last: his page stands.
+        f.page.loadingChapter = false
+        f.page.holdsJumps = false
+        f.page.pageStartsBefore = 0
+        f.page.releaseJumps()
+        await jump.value
+        await Self.settle { abs((f.page.currentLocation?.locations.totalProgression ?? -1) - (next.locations.totalProgression ?? 0)) < 0.00001 }
+        #expect(abs((f.page.currentLocation?.locations.totalProgression ?? -1) - (next.locations.totalProgression ?? 0)) < 0.00001, "the late jump moved the page off his \(how)")
+        #expect(abs((Self.kept(f) ?? -1) - (next.locations.totalProgression ?? 0)) < 0.001, "the place kept isn't his \(how)")
+        #expect(!f.model.showJumpBack, "a way back is offered for a jump he never saw land")
+        f.model.close()
+    }
+
+    /// A slow catch-up to the Cloud's place (a percent, so the landing's own percent step runs inside its
+    /// veil) that outlives the veil, with no move of his, counts once and is not put back: it is where the
+    /// page belongs (gatefold#173 review).
+    @Test func aSlowLandingOfOursPastTheVeilIsNotPutBack() async throws {
+        let f = try await S.make(remote: { _, _ in ReadingPosition(cfi: nil, totalProgression: 0.7, updated: Date(), source: .pocketBookNative) },
+                                 book: { $0.totalProgression = 0.05; $0.lastOpened = Date().addingTimeInterval(-600) },
+                                 startAt: 0.05, jumpBeat: { await Task.yield() })
+        await f.model.load()
+        await f.model.locationDidChange(try #require(f.page.currentLocation))
+        await f.model.checkRemote()
+        try #require(f.model.suggestion != nil, "the Cloud's place is offered")
+        // The first page shown, as the host's reveal does (no host here). This only bounds the reveal: it
+        // never kept these catch-ups from going (the loaded standby did, below).
+        f.model.forceReady()
+        for _ in 0..<1_000 where !f.model.pageReady { try? await Task.sleep(for: .milliseconds(10)) }
+        try #require(f.model.pageReady, "the first page never showed")
+        // The Cloud place's page loading behind this one never loads either: the host drops it 1.5 s
+        // after the tap and jumps the plain way. Left in place, the catch-up swaps it in, sends no jump
+        // and never meets the hung load (every run of these tests before this line).
+        f.page.dropStandby()
+        f.page.holdsJumps = true
+        f.page.loadingChapter = true
+        let taking = Task { await f.model.acceptSuggestion() }
+        await Self.settle { f.model.jumpsPastTheVeil >= 1 }
+        #expect(f.model.jumpsPastTheVeil == 1, "the catch-up wasn't on its way past the veil's limit (jumps sent \(f.page.jumps.count), page ready \(f.model.pageReady))")
+        f.page.loadingChapter = false
+        f.page.holdsJumps = false
+        f.page.releaseJumps()
+        await taking.value
+        #expect(f.model.jumpsPastTheVeil == 1, "one catch-up counted \(f.model.jumpsPastTheVeil) times past the veil")
+        #expect(f.model.jumpsPutBack == 0, "a landing nobody overtook was put back")
+        #expect(abs((f.page.currentLocation?.locations.totalProgression ?? -1) - 0.7) < 0.03, "the landing didn't stand")
+        f.model.close()
+    }
+
+    /// A touch that went nowhere while a catch-up is past its veil (no tap, no swipe) leaves the landing's
+    /// own report looking touched. Readium reporting the landed page before the jump returns is still the
+    /// landing's, not a swipe of his: nothing is put back and its way back is offered (gatefold#173 re-review).
+    /// "exact, two steps": the jump first names its file's first page (Readium on a loading web view), then
+    /// the place; both reports are the landing's.
+    /// `counted`: the book's screen pages are counted, as on a real iPad once the count is done, so the
+    /// screen page decides what is the landing's own page; else Readium's positions do.
+    @Test(arguments: ["percent", "exact, two steps"], [false, true]) func aStrayTouchPastTheVeilLeavesTheCatchUpItsOwnReport(place: String, counted: Bool) async throws {
+        let f = try await S.make(remote: { pub, mapper in
+            place == "percent" ? ReadingPosition(cfi: nil, totalProgression: 0.7, updated: Date(), source: .pocketBookNative)
+                : try await S.inkPadPlace(pub, mapper, index: 12, percent: 40)
+        }, book: { $0.totalProgression = 0.05; $0.lastOpened = Date().addingTimeInterval(-600) },
+           startAt: 0.05, jumpBeat: { await Task.yield() })
+        defer { f.model.close() }
+        // Before the open loads its counts.
+        if counted { try await Self.countsLikeADevice(f) }
+        await f.model.load()
+        await f.model.locationDidChange(try #require(f.page.currentLocation))
+        await f.model.checkRemote()
+        try #require(f.model.suggestion != nil, "the Cloud's place is offered")
+        f.model.forceReady()
+        for _ in 0..<1_000 where !f.model.pageReady { try? await Task.sleep(for: .milliseconds(10)) }
+        try #require(f.model.pageReady, "the first page never showed")
+        if counted { try await Self.countScreens(f) }
+        f.page.dropStandby()
+        f.page.reportsBeforeReturn = true
+        // Readium reports the start of the page it lands on: here, the place itself.
+        f.page.pageStartsBefore = 0
+        if place != "percent" { f.page.dropsPlaceInFile = 1 }
+        f.page.holdsJumps = true
+        f.page.loadingChapter = true
+        let taking = Task { await f.model.acceptSuggestion() }
+        await Self.settle { f.model.jumpsPastTheVeil >= 1 }
+        try #require(f.model.jumpsPastTheVeil == 1, "the catch-up wasn't on its way past the veil's limit")
+        // A touch that began and went nowhere: no tap clears it, no swipe reports it.
+        f.model.noteInteraction()
+        f.page.loadingChapter = false
+        f.page.holdsJumps = false
+        f.page.releaseJumps()
+        await taking.value
+        let aim = try #require(f.page.jumps.last?.locations.totalProgression, "the catch-up sent no jump")
+        await Self.settle { abs((Self.kept(f) ?? -1) - aim) < 0.03 }
+        #expect(f.model.jumpsPutBack == 0, "the catch-up's own report was taken for a swipe of his and the page put back (\(place))")
+        #expect(abs((f.page.currentLocation?.locations.totalProgression ?? -1) - aim) < 0.03, "the catch-up didn't stand (\(place))")
+        #expect(abs((Self.kept(f) ?? -1) - aim) < 0.03, "the place kept isn't the catch-up's: \(Self.kept(f) ?? -1) (\(place))")
+        #expect(f.model.showJumpBack, "the catch-up landed but offers no way back (\(place))")
+    }
+
+    /// The common catch-up: the Cloud's place three pages on in the file he is reading. Past its veil, a
+    /// swipe of his one page on is his move, not the landing's own report: his page stands and is kept,
+    /// and no way back is offered (gatefold#173 re-review: a bound in fractions of the book swallowed it).
+    @Test(arguments: [false, true]) func aSwipeAPageOnPastACatchUpThreePagesAheadIsHis(counted: Bool) async throws {
+        let start = try await Self.midFileStart(evenCount: counted)
+        let f = try await S.make(remote: { pub, mapper in
+            nonisolated(unsafe) let p = pub
+            let positions = try await p.positions().get()
+            let k = try #require(positions.firstIndex { ($0.locations.totalProgression ?? 0) > start })
+            let aim = positions[k + 2]
+            let made = try #require(await mapper.position(for: BookLocation(href: aim.href.string, progression: aim.locations.progression ?? 0), at: Date()))
+            return ReadingPosition(cfi: try #require(made.cfi), pointer: "pbr:/external##" + (made.cfi ?? ""),
+                                   totalProgression: aim.locations.totalProgression ?? 0, updated: Date(), source: .pocketBookNative)
+        }, book: { $0.totalProgression = start; $0.lastOpened = Date().addingTimeInterval(-600) },
+           startAt: start, jumpBeat: { await Task.yield() })
+        defer { f.model.close() }
+        // Before the open loads its counts.
+        if counted { try await Self.countsLikeADevice(f) }
+        await f.model.load()
+        await f.model.locationDidChange(try #require(f.page.currentLocation))
+        await f.model.checkRemote()
+        try #require(f.model.suggestion != nil, "the Cloud's place is offered")
+        nonisolated(unsafe) let p = f.publication
+        let positions = try await p.positions().get()
+        let here = try #require(f.page.currentLocation)
+        let at = try #require(positions.lastIndex { ($0.locations.totalProgression ?? 0) <= (here.locations.totalProgression ?? 0) })
+        let next = positions[at + 1]
+        let aim = positions[at + 3]
+        try #require(next.href == here.href && aim.href == here.href, "his page, the next and the Cloud's aren't one file")
+        // At two positions a column, an even count keeps his next page and the Cloud's a whole column apart.
+        if counted { try #require(positions.filter { $0.href == here.href }.count % 2 == 0, "an odd count can put his next page on the Cloud's") }
+        f.model.forceReady()
+        for _ in 0..<1_000 where !f.model.pageReady { try? await Task.sleep(for: .milliseconds(10)) }
+        try #require(f.model.pageReady, "the first page never showed")
+        if counted { try await Self.countScreens(f) }
+        f.page.dropStandby()
+        f.page.holdsJumps = true
+        f.page.loadingChapter = true
+        let taking = Task { await f.model.acceptSuggestion() }
+        await Self.settle { f.model.jumpsPastTheVeil >= 1 }
+        try #require(f.model.jumpsPastTheVeil == 1, "the catch-up wasn't on its way past the veil's limit")
+        // He swipes a page on: Readium moves itself and tells the reader.
+        f.page.currentLocation = next
+        f.model.noteInteraction()
+        await f.model.locationDidChange(next)
+        f.page.loadingChapter = false
+        f.page.holdsJumps = false
+        f.page.pageStartsBefore = 0
+        f.page.releaseJumps()
+        await taking.value
+        let mine = next.locations.totalProgression ?? 0
+        await Self.settle { abs((f.page.currentLocation?.locations.totalProgression ?? -1) - mine) < 0.00001 }
+        #expect(abs((f.page.currentLocation?.locations.totalProgression ?? -1) - mine) < 0.00001, "the late catch-up moved the page off his swipe")
+        #expect(abs((Self.kept(f) ?? -1) - mine) < 0.001, "the place kept isn't his swipe: \(Self.kept(f) ?? -1), his \(mine), the Cloud's \(aim.locations.totalProgression ?? -1)")
+        #expect(!f.model.showJumpBack, "a way back is offered for a catch-up he never saw land")
+    }
+
+    /// The same past a file's end: the Cloud's place a few pages into the next chapter, and his swipe from
+    /// this file's last page onto the next file's first page. That first page is not the landing's first
+    /// step (a jump names its file's first page first): his page before it was the file just before, so
+    /// the swipe is his (gatefold#173 re-review).
+    @Test func aSwipeOntoTheNextChapterPastACatchUpThereIsHis() async throws {
+        let f = try await S.make(remote: { pub, mapper in
+            nonisolated(unsafe) let p = pub
+            let positions = try await p.positions().get()
+            let j = try #require(positions.indices.first { $0 > 0 && $0 + 2 < positions.count && (positions[$0].locations.totalProgression ?? 0) > 0.05 && positions[$0].href != positions[$0 - 1].href && positions[$0 + 2].href == positions[$0].href })
+            let aim = positions[j + 2]
+            let made = try #require(await mapper.position(for: BookLocation(href: aim.href.string, progression: aim.locations.progression ?? 0), at: Date()))
+            return ReadingPosition(cfi: try #require(made.cfi), pointer: "pbr:/external##" + (made.cfi ?? ""),
+                                   totalProgression: aim.locations.totalProgression ?? 0, updated: Date(), source: .pocketBookNative)
+        }, book: { $0.totalProgression = 0.05; $0.lastOpened = Date().addingTimeInterval(-600) },
+           startAt: 0.05, jumpBeat: { await Task.yield() })
+        defer { f.model.close() }
+        await f.model.load()
+        await f.model.locationDidChange(try #require(f.page.currentLocation))
+        nonisolated(unsafe) let p = f.publication
+        let positions = try await p.positions().get()
+        let j = try #require(positions.indices.first { $0 > 0 && $0 + 2 < positions.count && (positions[$0].locations.totalProgression ?? 0) > 0.05 && positions[$0].href != positions[$0 - 1].href && positions[$0 + 2].href == positions[$0].href })
+        let last = positions[j - 1], first = positions[j]
+        try #require((first.locations.progression ?? 1) == 0 && positions[j + 2].href == first.href, "the next file's first page and the Cloud's place aren't one file")
+        // He has read on to this file's last page.
+        f.page.currentLocation = last
+        f.model.noteInteraction()
+        await f.model.locationDidChange(last)
+        await f.model.checkRemote()
+        try #require(f.model.suggestion != nil, "the Cloud's place is offered")
+        f.model.forceReady()
+        for _ in 0..<1_000 where !f.model.pageReady { try? await Task.sleep(for: .milliseconds(10)) }
+        try #require(f.model.pageReady, "the first page never showed")
+        f.page.dropStandby()
+        f.page.holdsJumps = true
+        f.page.loadingChapter = true
+        let taking = Task { await f.model.acceptSuggestion() }
+        await Self.settle { f.model.jumpsPastTheVeil >= 1 }
+        try #require(f.model.jumpsPastTheVeil == 1, "the catch-up wasn't on its way past the veil's limit")
+        // He swipes on, onto the next chapter's first page.
+        f.page.currentLocation = first
+        f.model.noteInteraction()
+        await f.model.locationDidChange(first)
+        f.page.loadingChapter = false
+        f.page.holdsJumps = false
+        f.page.pageStartsBefore = 0
+        f.page.releaseJumps()
+        await taking.value
+        let mine = first.locations.totalProgression ?? 0
+        await Self.settle { abs((f.page.currentLocation?.locations.totalProgression ?? -1) - mine) < 0.00001 }
+        #expect(abs((f.page.currentLocation?.locations.totalProgression ?? -1) - mine) < 0.00001, "the late catch-up moved the page off his swipe onto the next chapter")
+        #expect(abs((Self.kept(f) ?? -1) - mine) < 0.001, "the place kept isn't his swipe: \(Self.kept(f) ?? -1), his \(mine)")
+        #expect(!f.model.showJumpBack, "a way back is offered for a catch-up he never saw land")
+    }
+
+    /// A catch-up overtaken by a turn or a swipe of his while it is past the veil's limit offers no way
+    /// back (he never saw it land) and writes nothing of the Cloud's when it comes back late: no Cloud
+    /// place kept, no Cloud scale noted (gatefold#173 re-review). A swipe counts no move, so the landing
+    /// must give way to his steps too. The Cloud's place as a percent and as exact words.
+    @Test(arguments: ["percent", "exact"], ["turn", "swipe"]) func aCatchUpEndedQuietlyOffersNoWayBack(place: String, how: String) async throws {
+        let f = try await S.make(remote: { pub, mapper in
+            place == "percent" ? ReadingPosition(cfi: nil, totalProgression: 0.7, updated: Date(), source: .pocketBookNative)
+                : try await S.inkPadPlace(pub, mapper, index: 12, percent: 40)
+        }, book: { $0.totalProgression = 0.05; $0.lastOpened = Date().addingTimeInterval(-600) },
+           startAt: 0.05, jumpBeat: { await Task.yield() })
+        await f.model.load()
+        await f.model.locationDidChange(try #require(f.page.currentLocation))
+        await f.model.checkRemote()
+        try #require(f.model.suggestion != nil, "the Cloud's place is offered")
+        // The first page shown, as the host's reveal does (no host here). This only bounds the reveal: it
+        // never kept these catch-ups from going (the loaded standby did, below).
+        f.model.forceReady()
+        for _ in 0..<1_000 where !f.model.pageReady { try? await Task.sleep(for: .milliseconds(10)) }
+        try #require(f.model.pageReady, "the first page never showed")
+        // The Cloud place's page loading behind this one never loads either: the host drops it 1.5 s
+        // after the tap and jumps the plain way. Left in place, the catch-up swaps it in, sends no jump
+        // and never meets the hung load (every run of these tests before this line).
+        f.page.dropStandby()
+        f.page.holdsJumps = true
+        f.page.loadingChapter = true
+        let taking = Task { await f.model.acceptSuggestion() }
+        await Self.settle { f.model.jumpsPastTheVeil >= 1 }
+        #expect(f.model.jumpsPastTheVeil == 1, "the catch-up wasn't on its way past the veil's limit (jumps sent \(f.page.jumps.count), page ready \(f.model.pageReady))")
+        let next = try #require(await S.locate(f.publication, 0.06))
+        f.page.currentLocation = next
+        if how == "turn" {
+            f.model.userTurnedPage()
+        } else {
+            f.model.noteInteraction()
+            await f.model.locationDidChange(next)
+        }
+        await Self.settle { abs((Self.kept(f) ?? -1) - (next.locations.totalProgression ?? 0)) < 0.001 }
+        f.page.loadingChapter = false
+        f.page.holdsJumps = false
+        f.page.pageStartsBefore = 0
+        f.page.releaseJumps()
+        await taking.value
+        #expect(f.app.library.book(bookID)?.cloudScale == nil, "the late catch-up noted the Cloud's scale over his \(how)")
+        await Self.settle { abs((f.page.currentLocation?.locations.totalProgression ?? -1) - (next.locations.totalProgression ?? 0)) < 0.00001 }
+        #expect(abs((Self.kept(f) ?? -1) - (next.locations.totalProgression ?? 0)) < 0.001, "the place kept isn't his turn")
+        #expect(!f.model.showJumpBack, "a way back is offered for a catch-up he never saw land (\(how))")
+        f.model.close()
+    }
+
+    /// A jump of his made while another is still on its way past the veil's limit gets a limit of its
+    /// own: a second load that never ends doesn't hold the screen either (gatefold#173 re-review).
+    /// `reportsFirst`: Readium reports each jump's page before the jump returns, so the first jump's late
+    /// report comes before anything knows it was overtaken.
+    @Test(arguments: [false, true]) func aSecondJumpWhileOneIsPastTheVeilsLimitHasItsOwnLimit(reportsFirst: Bool) async throws {
+        let f = try await S.make(remote: { _, _ in nil }, startAt: 0.05, jumpBeat: { await Task.yield() })
+        await f.model.load()
+        await f.model.locationDidChange(try #require(f.page.currentLocation))
+        f.page.reportsBeforeReturn = reportsFirst
+        f.page.holdsJumps = true
+        f.page.loadingChapter = true
+        let first = Task { await f.model.go(toProgression: 0.7, rememberBack: true) }
+        await Self.settle { f.model.jumpsPastTheVeil == 1 }
+        #expect(f.model.jumpsPastTheVeil == 1, "the first jump wasn't past the veil's limit")
+        let second = Task { await f.model.go(toProgression: 0.5, rememberBack: true) }
+        await Self.settle { f.model.jumpsPastTheVeil == 2 }
+        #expect(f.model.jumpsPastTheVeil == 2, "the second hung jump held the screen with no limit")
+        f.page.loadingChapter = false
+        f.page.holdsJumps = false
+        f.page.releaseJumps()
+        await first.value
+        await second.value
+        // The newer jump's page stands and is kept; the first, overtaken, leaves no way back of its own.
+        await Self.settle { abs((Self.kept(f) ?? -1) - 0.5) < 0.03 }
+        #expect(abs((f.page.currentLocation?.locations.totalProgression ?? -1) - 0.5) < 0.03, "the second jump's page didn't stand")
+        #expect(abs((Self.kept(f) ?? -1) - 0.5) < 0.03, "the place kept isn't the second jump's")
+        #expect(f.model.showJumpBack && abs((f.model.backLocator?.locations.totalProgression ?? -1) - 0.05) < 0.03,
+                "the way back isn't to the page he left")
+        f.model.close()
+    }
+
+    /// Readium reports each jump's page before it returns, and the overtaken first jump's report is slow
+    /// to write: the newest jump, back past its veil, keeps its page, and the slow write yields to it.
+    @Test func aSlowLateReportWriteYieldsToTheNewestJumpPastTheVeil() async throws {
+        let f = try await S.make(remote: { _, _ in nil }, startAt: 0.05, jumpBeat: { await Task.yield() })
+        await f.model.load()
+        await f.model.locationDidChange(try #require(f.page.currentLocation))
+        f.page.reportsBeforeReturn = true
+        f.page.holdsJumps = true
+        f.page.loadingChapter = true
+        let first = Task { await f.model.go(toProgression: 0.7, rememberBack: true) }
+        await Self.settle { f.model.jumpsPastTheVeil == 1 }
+        let second = Task { await f.model.go(toProgression: 0.5, rememberBack: true) }
+        await Self.settle { f.model.jumpsPastTheVeil == 2 }
+        try #require(f.model.jumpsPastTheVeil == 2, "the jumps weren't both past the veil's limit")
+        // The next write (the first jump's late report) is held before it maps its position. It keeps its
+        // own report (0.7): nothing contests it yet, and the page can't be measured, so it never takes the
+        // second jump's page as the one on screen. Only the write order can stop it.
+        f.page.pageUnmeasured = true
+        final class Gate { var armed = true; var calls = 0; var held: CheckedContinuation<Void, Never>? }
+        let gate = Gate()
+        defer { gate.held?.resume(); f.model.close() }
+        f.model.placeWriteWait = {
+            gate.calls += 1
+            guard gate.armed else { return }
+            gate.armed = false
+            await withCheckedContinuation { gate.held = $0 }
+        }
+        f.page.loadingChapter = false
+        f.page.holdsJumps = false
+        // Only the first jump's load comes in, so the write held is its late report's: the second is still
+        // out. Released together, either can resume first (the newest first is the next test's order).
+        try #require(f.page.heldJumps == 2, "both jumps weren't still out (\(f.page.heldJumps) held)")
+        f.page.releaseOldestJump()
+        for _ in 0..<10_000 where gate.held == nil { await Task.yield() }
+        try #require(gate.held != nil, "the late report's write was never on its way")
+        try #require(gate.calls == 1 && f.page.heldJumps == 1, "the held write isn't the late report's (\(gate.calls) writes, \(f.page.heldJumps) jumps out)")
+        f.page.releaseJumps()
+        // Bounded, never awaited: if the held write were the newest jump's own, waiting on it would hang.
+        await Self.settle { abs((Self.kept(f) ?? -1) - 0.5) < 0.03 }
+        let keptBeforeRelease = Self.kept(f) ?? -1
+        // A later report's write follows and keeps the second jump's page again, so the end state alone
+        // can't tell whether the late write landed: the next write waits at the gate while the late one runs.
+        // Through the gate so far: the late write (held) and the second jump's own write (its keep above).
+        // A third would be the later report's, gone by unheld: it could put 0.5 back before the look below.
+        try #require(gate.calls == 2, "a later write passed the gate before it was re-armed (\(gate.calls) writes)")
+        gate.armed = true
+        gate.held?.resume()
+        gate.held = nil
+        for _ in 0..<10_000 where gate.held == nil { await Task.yield() }
+        await Self.settle { abs((Self.kept(f) ?? -1) - 0.5) >= 0.03 }
+        let keptAfterLateWrite = Self.kept(f) ?? -1
+        gate.armed = false
+        gate.held?.resume()
+        gate.held = nil
+        #expect(abs(keptAfterLateWrite - 0.5) < 0.03, "the slow late write kept \(keptAfterLateWrite) over the second jump before any later write")
+        await second.value
+        await first.value
+        #expect(abs(keptBeforeRelease - 0.5) < 0.03, "the newest jump's keep didn't land while the late write was held: \(keptBeforeRelease)")
+        await Self.settle { abs((Self.kept(f) ?? -1) - 0.5) >= 0.03 }
+        #expect(abs((f.page.currentLocation?.locations.totalProgression ?? -1) - 0.5) < 0.03, "the second jump's page didn't stand")
+        #expect(abs((Self.kept(f) ?? -1) - 0.5) < 0.03, "the slow late write kept \(Self.kept(f) ?? -1) over the second jump")
+    }
+
+    /// The same two jumps, the newest one's load back first: its report's write is slow, and the overtaken
+    /// jump lands meanwhile, before the newest is back. The newest jump, back onto that late page, sends its
+    /// own again and that is kept (at bc8243d the late page stood and was kept as his place). `late` 0.5003:
+    /// the overtaken jump lands on the newest one's page, which is his as it is, and nothing is sent again.
+    @Test(arguments: [0.7, 0.5003]) func aLateLandingWhileTheNewestJumpsWriteIsSlowGoesBackToTheNewestPage(late: Double) async throws {
+        let f = try await S.make(remote: { _, _ in nil }, startAt: 0.05, jumpBeat: { await Task.yield() })
+        await f.model.load()
+        await f.model.locationDidChange(try #require(f.page.currentLocation))
+        f.page.reportsBeforeReturn = true
+        f.page.holdsJumps = true
+        f.page.loadingChapter = true
+        let first = Task { await f.model.go(toProgression: late, rememberBack: true) }
+        await Self.settle { f.model.jumpsPastTheVeil == 1 }
+        let second = Task { await f.model.go(toProgression: 0.5, rememberBack: true) }
+        await Self.settle { f.model.jumpsPastTheVeil == 2 }
+        try #require(f.model.jumpsPastTheVeil == 2, "the jumps weren't both past the veil's limit")
+        final class Gate { var armed = true; var calls = 0; var held: CheckedContinuation<Void, Never>? }
+        let gate = Gate()
+        defer { gate.held?.resume(); f.model.close() }
+        f.model.placeWriteWait = {
+            gate.calls += 1
+            guard gate.armed else { return }
+            gate.armed = false
+            await withCheckedContinuation { gate.held = $0 }
+        }
+        f.page.loadingChapter = false
+        f.page.holdsJumps = false
+        try #require(f.page.heldJumps == 2, "both jumps weren't still out (\(f.page.heldJumps) held)")
+        // The newest jump's load comes in alone: its report's write is the one held.
+        f.page.releaseNewestJump()
+        for _ in 0..<10_000 where gate.held == nil { await Task.yield() }
+        try #require(gate.held != nil && gate.calls == 1 && f.page.heldJumps == 1, "the newest jump's report's write was never held (\(gate.calls) writes, \(f.page.heldJumps) jumps out)")
+        // The overtaken jump lands while that write is held, the newest jump not yet back: it is done before
+        // the newest one returns, and its late page is on screen.
+        f.page.releaseJumps()
+        await first.value
+        try #require(gate.held != nil && gate.calls == 1, "the newest jump's write wasn't still held when the overtaken one was done (\(gate.calls) writes)")
+        try #require(abs((f.page.currentLocation?.locations.totalProgression ?? -1) - late) < 0.001, "the overtaken jump's late page isn't on screen")
+        let putBackBefore = f.model.jumpsPutBack
+        gate.held?.resume()
+        gate.held = nil
+        await second.value
+        #expect(f.model.jumpsPutBack == putBackBefore + (late > 0.6 ? 1 : 0), "the newest jump's own page was sent again \(f.model.jumpsPutBack - putBackBefore) times")
+        #expect(abs((f.page.currentLocation?.locations.totalProgression ?? -1) - 0.5) < 0.03, "the overtaken jump's late page stood over the newest jump's")
+        #expect(abs((Self.kept(f) ?? -1) - 0.5) < 0.03, "the place kept isn't the newest jump's: \(Self.kept(f) ?? -1)")
+    }
+
+    /// Three jumps past the veil's limit, the oldest one's late report written slowly while the newest is
+    /// still out, and the middle one back before the newest: the newest jump's page stands and is kept,
+    /// never the oldest's late report (gatefold#195 review).
+    @Test func threeJumpsPastTheVeilKeepTheNewestOverAnOldLateReport() async throws {
+        let f = try await S.make(remote: { _, _ in nil }, startAt: 0.05, jumpBeat: { await Task.yield() })
+        await f.model.load()
+        await f.model.locationDidChange(try #require(f.page.currentLocation))
+        f.page.reportsBeforeReturn = true
+        f.page.holdsJumps = true
+        f.page.loadingChapter = true
+        let a = Task { await f.model.go(toProgression: 0.7, rememberBack: true) }
+        await Self.settle { f.model.jumpsPastTheVeil == 1 }
+        let b = Task { await f.model.go(toProgression: 0.3, rememberBack: true) }
+        await Self.settle { f.model.jumpsPastTheVeil == 2 }
+        let c = Task { await f.model.go(toProgression: 0.5, rememberBack: true) }
+        await Self.settle { f.model.jumpsPastTheVeil == 3 }
+        try #require(f.model.jumpsPastTheVeil == 3 && f.page.heldJumps == 3, "the jumps weren't all past the veil's limit")
+        final class Gate { var armed = true; var calls = 0; var held: CheckedContinuation<Void, Never>? }
+        let gate = Gate()
+        defer { gate.held?.resume(); f.model.close() }
+        f.model.placeWriteWait = {
+            gate.calls += 1
+            guard gate.armed else { return }
+            gate.armed = false
+            await withCheckedContinuation { gate.held = $0 }
+        }
+        f.page.loadingChapter = false
+        f.page.holdsJumps = false
+        // The oldest jump's load comes in: its late report's write is held.
+        f.page.releaseOldestJump()
+        for _ in 0..<10_000 where gate.held == nil { await Task.yield() }
+        try #require(gate.held != nil && gate.calls == 1 && f.page.heldJumps == 2, "the oldest jump's late write wasn't held (\(gate.calls) writes)")
+        // The middle one comes back while the newest is still out.
+        f.page.releaseOldestJump()
+        await b.value
+        try #require(f.page.heldJumps == 1, "the newest jump wasn't still out")
+        f.page.releaseJumps()
+        await c.value
+        gate.held?.resume()
+        gate.held = nil
+        await a.value
+        #expect(abs((f.page.currentLocation?.locations.totalProgression ?? -1) - 0.5) < 0.03, "the newest jump's page didn't stand")
+        #expect(abs((Self.kept(f) ?? -1) - 0.5) < 0.03, "the place kept isn't the newest jump's: \(Self.kept(f) ?? -1)")
+    }
+
+    /// A bookmark's jump ended quietly by a move of his offers no way back, as any other jump
+    /// (gatefold#173 re-review).
+    @Test func aBookmarkJumpEndedQuietlyOffersNoWayBack() async throws {
+        let f = try await S.make(remote: { _, _ in nil }, startAt: 0.05, jumpBeat: { await Task.yield() })
+        await f.model.load()
+        await f.model.locationDidChange(try #require(f.page.currentLocation))
+        let mark = try JSONDecoder().decode(Bookmark.self, from: Data("""
+            {"id":"\(UUID().uuidString)","anchor":{"href":"x","progression":0.5},"title":"t","totalProgression":0.7,"created":0}
+            """.utf8))
+        f.page.holdsJumps = true
+        f.page.loadingChapter = true
+        let jump = Task { await f.model.go(to: mark) }
+        await Self.settle { f.model.jumpsPastTheVeil == 1 }
+        #expect(f.model.jumpsPastTheVeil == 1, "the bookmark's jump wasn't past the veil's limit")
+        let next = try #require(await S.locate(f.publication, 0.06))
+        f.page.currentLocation = next
+        f.model.userTurnedPage()
+        await Self.settle { abs((Self.kept(f) ?? -1) - (next.locations.totalProgression ?? 0)) < 0.001 }
+        f.page.loadingChapter = false
+        f.page.holdsJumps = false
+        f.page.pageStartsBefore = 0
+        f.page.releaseJumps()
+        await jump.value
+        await Self.settle { abs((f.page.currentLocation?.locations.totalProgression ?? -1) - (next.locations.totalProgression ?? 0)) < 0.00001 }
+        #expect(abs((Self.kept(f) ?? -1) - (next.locations.totalProgression ?? 0)) < 0.001, "the place kept isn't his turn")
+        #expect(!f.model.showJumpBack, "a way back is offered for a bookmark jump he never saw land")
+        f.model.close()
+    }
+
     /// A Back that does give up (a load that died: no load under way, or one that never ends, or a jump
     /// that comes back but never shows his page) says so on the pill and leaves it up, pointing at his
     /// page, so one more tap tries again; it never just stops (gatefold#170).
@@ -928,6 +1670,38 @@ import Testing
     /// The place kept for the book, as a total progression.
     private static func kept(_ f: S.Fixture) -> Double? {
         f.app.library.book(S.frankenstein.fastHash)?.locatorJSON.flatMap { try? Locator(jsonString: $0) }?.locations.totalProgression
+    }
+
+    /// A screen page holding two of Readium's positions, as on a device (one to two each), counted into a
+    /// store of this reader's own: counts saved to the shared one would reach every other fixture.
+    /// A place past the book's first pages with three more positions after it in its own file, so his next
+    /// page and a Cloud place three on are one file: 0.05 sits near a file's end in this book. `evenCount`:
+    /// a file of an even number of positions (two to a column when counted).
+    private static func midFileStart(evenCount: Bool) async throws -> Double {
+        nonisolated(unsafe) let p = try await S.publication()
+        let positions = try await p.positions().get()
+        let counts = Dictionary(grouping: positions, by: { $0.href.string }).mapValues(\.count)
+        let i = try #require(positions.indices.first { i in
+            i > 0 && i + 3 < positions.count && (positions[i].locations.totalProgression ?? 0) > 0.05
+                && positions[i - 1].href == positions[i].href && positions[i + 3].href == positions[i].href
+                && (!evenCount || (counts[positions[i].href.string] ?? 1) % 2 == 0)
+        }, "no file with room for his page, the next and the Cloud's")
+        return try #require(positions[i].locations.totalProgression)
+    }
+
+    private static func countsLikeADevice(_ f: ReaderSyncTests.Fixture) async throws {
+        nonisolated(unsafe) let p = f.publication
+        let positions = try await p.positions().get()
+        let perFile = Dictionary(grouping: positions, by: { $0.href.string }).mapValues { max(1, $0.count / 2) }
+        f.page.countsColumns = { perFile[$0] ?? 1 }
+    }
+
+    /// The book's screen pages counted (the page counts each chapter at once): waited on in reads.
+    private static func countScreens(_ f: ReaderSyncTests.Fixture) async throws {
+        for _ in 0..<500 where f.model.screenPages?.isComplete != true { try? await Task.sleep(for: .milliseconds(10)) }
+        try #require(f.model.screenPages?.isComplete == true, "the screen pages were never counted")
+        let here = try #require(f.page.currentLocation?.locations.totalProgression)
+        try #require(f.model.screenPage(atTotal: here) != nil, "no screen page for his page")
     }
 
     /// Work that runs on its own tasks (a turn's write, a late Back's report) lands in its own time: wait
