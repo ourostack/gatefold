@@ -1971,7 +1971,7 @@ final class ReaderModel {
         if !placeOwed {
             // Named once, here, before the close counts its move: the write, the inactive write and the
             // reopen picture's tag all carry the same place (`withKeptWords`).
-            leavingOnShownPage = shownOnLeaving.map(withKeptWords)
+            leavingOnShownPage = shownOnLeavingReadNow().map(withKeptWords)
             return leavingOnShownPage
         }
         // A contents jump still on its way whose chapter has no place yet (an entry never placed inside its
@@ -2244,13 +2244,30 @@ final class ReaderModel {
 
     /// The page the 12 s watchdog showed him while the restore under it hadn't settled, and `moves` then.
     /// Until that restore ends or he moves, that page is the one he sees (gatefold#133).
-    @ObservationIgnored private var shownUnsettled: (locator: Locator, move: Int)?
+    @ObservationIgnored private var shownUnsettled: (locator: Locator, move: Int, measured: Bool)?
     /// Leaving on that page: `keepOwedPlace` keeps it though no move is owed. Set as he leaves, before
     /// `close()` counts its own move.
     @ObservationIgnored private var leavingOnShownPage: Locator?
     private var shownOnLeaving: Locator? {
         guard let shown = shownUnsettled, shown.move == moves, keeper.reflowing != nil, !touchedSinceLocation else { return nil }
         return shown.locator
+    }
+
+    /// `shownOnLeaving`, read from the screen now when the watchdog's note couldn't be: that note is then
+    /// Readium's name for the page, which under a stalled restore can still be the page before the
+    /// rotation, his kept place, and so took his words to a spread that doesn't start with them
+    /// (gatefold#346, CI 43321734349 and 43370826599). The span is native, so it answers while the page's
+    /// scripts wait on the restore. Unread now too, Readium's name stands, as before.
+    private func shownOnLeavingReadNow() -> Locator? {
+        guard let shown = shownOnLeaving, let note = shownUnsettled, !note.measured, shown.text.highlight == nil else { return shownOnLeaving }
+        guard let span = page?.spanOnScreenNow(of: shown) else {
+            readerLog.notice("reflow: the page shown unsettled, unread at the watchdog, is still unread as he leaves; Readium's name stands")
+            return shown
+        }
+        let here = pageOnScreen(shown, span)
+        shownUnsettled = (here, note.move, true)
+        readerLog.notice("reflow: the page shown unsettled, unread at the watchdog, read from the screen as he leaves at \(here.locations.totalProgression ?? -1, privacy: .public)")
+        return here
     }
 
     /// `moves` when the page a stalled restore left him was written while the book stayed open.
@@ -2266,11 +2283,12 @@ final class ReaderModel {
         if let note { guard let shown = shownUnsettled, shown.move == moves, note == shownNotes else { return nil } }
         else { shownNotes += 1 }
         var here = here
-        if note == nil, let onScreen, here.text.highlight == nil { here = pageOnScreen(here, onScreen) }
+        var measured = false
+        if note == nil, let onScreen, here.text.highlight == nil { here = pageOnScreen(here, onScreen); measured = true }
         // The words come paired with Readium's location, the very name a note from the screen distrusts:
         // only the words are taken, on the note's own place (gatefold#276).
-        if note != nil, let shown = shownUnsettled { here = shown.locator.copy(text: { $0 = here.text }) }
-        shownUnsettled = (here, moves)
+        if note != nil, let shown = shownUnsettled { here = shown.locator.copy(text: { $0 = here.text }); measured = shown.measured }
+        shownUnsettled = (here, moves, measured)
         readerLog.notice("reflow: the page shown unsettled is at \(here.locations.totalProgression ?? -1, privacy: .public)")
         return shownNotes
     }

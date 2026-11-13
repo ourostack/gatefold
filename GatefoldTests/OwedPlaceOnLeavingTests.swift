@@ -241,7 +241,7 @@ import Testing
 
     /// A model opened, read on with one turn (kept with stand-in words), then rotated with the restore
     /// stalled: the shared start of gatefold#276's tests.
-    private func stalledAfterATurn(_ name: String) async throws
+    private func stalledAfterATurn(_ name: String, page onPage: ((TwoStepJumpPage) -> Void)? = nil) async throws
         -> (model: ReaderModel, read: Locator, his: String, saved: () -> Locator?) {
         let sync = StubSync()
         await sync.setLibrary(.success([ReaderSyncTests.frankenstein]))
@@ -254,6 +254,7 @@ import Testing
         let opening = Locator(href: try #require(AnyURL(string: first)), mediaType: .xhtml,
                               locations: .init(progression: 0, totalProgression: 0))
         let page = TwoStepJumpPage(at: opening, readsToLand: 1)
+        onPage?(page)
         let model = ReaderModel(book: book, publication: publication, app: app, page: page)
         page.model = model
         await model.load()
@@ -320,6 +321,65 @@ import Testing
         let left = try #require(saved(), "leaving kept no place")
         #expect(left.locations.progression == p)
         #expect(left.text.highlight == his, "leaving his own page, read from the screen, dropped his words")
+    }
+
+    /// gatefold#346 (CI 43321734349 and 43370826599): at the watchdog the screen's span couldn't be read, and
+    /// Readium still named the page from before the rotation, his kept place. Left so, that stale name took
+    /// his words, and the chapter-start reopen opened on his portrait page, not the spread he saw. Read from
+    /// the screen as he leaves, the page on screen is kept, without words that don't start it.
+    @Test func leavingAPageNamedStaleWithItsSpanUnreadKeepsThePageOnScreenReadAsHeLeaves() async throws {
+        var stub: TwoStepJumpPage?
+        let (model, read, his, saved) = try await stalledAfterATurn("shown-late") { stub = $0 }
+        let page = try #require(stub)
+        let p = try #require(read.locations.progression)
+        try #require(p > 0.02 && p < 0.96, "his page sits far enough into its file for a spread around it")
+        // His kept page's start sits inside the spread on screen, not at its start.
+        let screen = (p - 0.02)...(p + 0.04)
+        try #require(model.reflowShownUnsettled(read.copy(text: { $0 = Locator.Text() })) != nil)
+        page.spanNow = screen
+        model.close()
+        let left = try #require(saved(), "leaving kept no place")
+        let at = try #require(left.locations.progression)
+        #expect(at > screen.lowerBound && at < screen.upperBound,
+                "kept at in-file \(at), not on the page on screen (\(screen.lowerBound)..\(screen.upperBound))")
+        #expect(at != p, "kept at Readium's stale name, his kept place, not the page on screen")
+        #expect(left.text.highlight != his, "the stale name took his words to a page that doesn't start with them")
+    }
+
+    /// The app going inactive, then the book closed: the first leave reads the screen, and the second keeps
+    /// that same place, never reading it again nor giving it his words.
+    @Test func aSecondLeaveKeepsThePlaceTheFirstReadFromTheScreen() async throws {
+        var stub: TwoStepJumpPage?
+        let (model, read, his, saved) = try await stalledAfterATurn("shown-late-twice") { stub = $0 }
+        let page = try #require(stub)
+        let p = try #require(read.locations.progression)
+        try #require(p > 0.02 && p < 0.96, "his page sits far enough into its file for a spread around it")
+        try #require(model.reflowShownUnsettled(read.copy(text: { $0 = Locator.Text() })) != nil)
+        let screen = (p - 0.02)...(p + 0.04)
+        page.spanNow = screen
+        let first = try #require(model.owedPlaceOnLeaving(), "the inactive leave owed no place")
+        model.keepShownPageNow(first)
+        page.spanNow = (p + 0.1)...min(1, p + 0.16)
+        model.close()
+        let left = try #require(saved(), "leaving kept no place")
+        #expect(left.locations.progression == first.locations.progression,
+                "the close kept \(left.locations.progression ?? -1), not the place the first leave read (\(first.locations.progression ?? -1))")
+        #expect(left.text.highlight != his, "the second leave gave the page his words")
+    }
+
+    /// The span read as he leaves starts at his kept place: it is his kept page after all, and his words
+    /// stay with it (gatefold#133).
+    @Test func leavingAPageNamedAtHisPlaceWithItsSpanReadAsHeLeavesKeepsHisWords() async throws {
+        var stub: TwoStepJumpPage?
+        let (model, read, his, saved) = try await stalledAfterATurn("shown-late-his") { stub = $0 }
+        let page = try #require(stub)
+        let p = try #require(read.locations.progression)
+        try #require(model.reflowShownUnsettled(read.copy(text: { $0 = Locator.Text() })) != nil)
+        page.spanNow = p...min(1, p + 0.04)
+        model.close()
+        let left = try #require(saved(), "leaving kept no place")
+        #expect(left.locations.progression == p)
+        #expect(left.text.highlight == his, "leaving his own page, read as he left, dropped his words")
     }
 }
 

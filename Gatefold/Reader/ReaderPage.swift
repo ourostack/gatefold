@@ -48,6 +48,9 @@ protocol ReaderPage: AnyObject {
     func endReflowForSwap()
     /// UI tests: the web view's own count of the text columns on screen (`ReaderJS.columns`).
     func columnMeasure() async -> String?
+    /// The span of `named`'s chapter on screen, read natively (the web view's scroll position), so it
+    /// answers while the page's scripts wait on a stalled restore; nil when it can't be read (gatefold#346).
+    func spanOnScreenNow(of named: Locator) -> ClosedRange<Double>?
 }
 
 extension ReaderPage {
@@ -66,4 +69,5 @@ extension ReaderPage {
     func stopCounting() {}
     func endReflowForSwap() {}
     func columnMeasure() async -> String? { nil }
+    func spanOnScreenNow(of named: Locator) -> ClosedRange<Double>? { nil }
 }

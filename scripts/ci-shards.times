@@ -64,6 +64,8 @@ iPad Pro 13-inch|RotationMidTransitionUITests/testTurnedOnItsSideAndBackHeIsOnHi
 iPad Pro 13-inch|RotationRepro/testRotateThenLeaveWhileTheRestoreWaitsOnHisKeptPlaceWithoutItsWords	436	# p95 of 27, slowest 548
 iPad Pro 13-inch|RotationRepro/testRotateThenLeaveWhileTheRestoreWaitsOnItsPage	587	# p95 of 71, slowest 644
 iPad Pro 13-inch|RotationRepro/testRotateThenLeaveWhileTheRestoreWaitsOnItsPageWithoutItsWords	470	# p95 of 59, slowest 480
+iPad Pro 13-inch|RotationRepro/testRotateThenLeaveWhileTheRestoreWaitsWithItsSpanReadLate	480	# estimate (gatefold#346): its sibling's 480, and 407 in probe 43381449883
+iPad Pro 13-inch|RotationRepro/testRotateThenLeaveWithItsSpanReadLateAndReopenOnTheChapterStart	519	# estimate (gatefold#346): its sibling's 519, and 259 in probe 43381449883
 iPad Pro 13-inch|RotationRepro/testRotateThenLeaveWithoutItsWordsAndReopenOnTheChapterStart	519	# p95 of 36, slowest 563
 iPad Pro 13-inch|RotationRepro/testRotateThenLeaveWithoutTurning	570	# p95 of 101, slowest 709
 iPad Pro 13-inch|RotationRepro/testRotateThenLeaveWithoutTurningAfterStalledReflows	562	# p95 of 93, slowest 664
