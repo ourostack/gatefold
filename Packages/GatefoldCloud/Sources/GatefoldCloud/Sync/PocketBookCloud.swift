@@ -67,7 +67,7 @@ public actor PocketBookCloud: SyncService {
         self.jitter = jitter
         self.sleep = sleep
         self.session = CloudSession(transport: transport, credentials: credentials ?? WebBundleCredentials(transport: transport),
-                                    tokenStore: tokenStore, base: base, now: now)
+                                    tokenStore: tokenStore, base: base, now: now, sleep: sleep)
         let fm = FileManager.default
         let dir = configuration.storageDirectory
         for sub in ["Books", "Partial"] {
@@ -214,7 +214,7 @@ public actor PocketBookCloud: SyncService {
         let destination = booksDirectory.appendingPathComponent("\(book.fastHash).\(ext.isEmpty ? "epub" : ext)")
         let fm = FileManager.default
         if fm.fileExists(atPath: destination.path) {
-            if try await Self.matches(destination, md5: book.md5Base64) { return destination }
+            if try await Self.matches(destination, book) { return destination }
             try? fm.removeItem(at: destination)
         }
 
@@ -242,12 +242,12 @@ public actor PocketBookCloud: SyncService {
             }
             do {
                 try CloudSession.check(response, Data())
-                if let expected = book.md5Base64, try await Self.md5OffActor(partial) != expected { throw CloudError.checksumMismatch }
+                if try await !Self.matches(partial, book) { throw CloudError.checksumMismatch }
                 try fm.moveItem(at: partial, to: destination)
             } catch {
                 try? fm.removeItem(at: partial)
                 // Another download of the same book may have finished first.
-                if fm.fileExists(atPath: destination.path), (try? await Self.matches(destination, md5: book.md5Base64)) == true { return destination }
+                if fm.fileExists(atPath: destination.path), (try? await Self.matches(destination, book)) == true { return destination }
                 throw error
             }
             return destination
@@ -255,7 +255,7 @@ public actor PocketBookCloud: SyncService {
     }
 
     private func freshDownloadLink(for book: CloudBook) async throws -> URL? {
-        let (data, _) = try await session.send(.get("/fileops/info/", query: ["fast_hash": book.fastHash]))
+        let (data, _) = try await session.send(Self.fileInfo(book.fastHash))
         return try WireDecoder.fileInfo(data).book.downloadURL
     }
 
@@ -319,10 +319,13 @@ public actor PocketBookCloud: SyncService {
         broadcaster.emit(.outbox(pending: state.items.count))
     }
 
-    /// True when `file` has the expected md5, or when the Cloud gave none to check against.
-    static func matches(_ file: URL, md5: String?) async throws -> Bool {
-        guard let md5 else { return true }
-        return try await md5OffActor(file) == md5
+    /// True when `file` has the book's MD5. When the Cloud gave no real MD5, its listed size is the
+    /// check; with neither, any file passes.
+    static func matches(_ file: URL, _ book: CloudBook) async throws -> Bool {
+        if let md5 = book.verifiableMD5 { return try await md5OffActor(file) == md5 }
+        guard book.bytes > 0 else { return true }
+        let size = try FileManager.default.attributesOfItem(atPath: file.path)[.size] as? NSNumber
+        return size?.int64Value == book.bytes
     }
 
     /// Hashes off the actor so a large book does not stall the outbox.
@@ -340,8 +343,14 @@ public actor PocketBookCloud: SyncService {
 
     // MARK: Positions
 
+    /// One book's file record with its reading position. Since November 2026 the Cloud leaves the
+    /// position out unless asked with `include_metadata=true` (seen live 2026-11-13).
+    static func fileInfo(_ fastHash: String) -> Endpoint {
+        .get("/fileops/info/", query: ["fast_hash": fastHash, "include_metadata": "true"])
+    }
+
     public func remotePosition(for book: CloudBook) async throws -> ReadingPosition? {
-        let (data, _) = try await session.send(.get("/fileops/info/", query: ["fast_hash": book.fastHash]))
+        let (data, _) = try await session.send(Self.fileInfo(book.fastHash))
         let email = await session.account?.email
         return try WireDecoder.fileInfo(data).position.map { markOwn($0, fastHash: book.fastHash, account: email) }
     }
@@ -646,7 +655,7 @@ public actor PocketBookCloud: SyncService {
     /// The Cloud stamps a position with its arrival time and keeps the last one to arrive, so a
     /// queued write must not overwrite a newer one from another device. Read first, then write.
     private func sendPosition(_ position: ReadingPosition, fastHash: String) async throws -> Outcome {
-        let (data, _) = try await session.send(.get("/fileops/info/", query: ["fast_hash": fastHash]))
+        let (data, _) = try await session.send(Self.fileInfo(fastHash))
         let email = await session.account?.email
         if let remote = try WireDecoder.fileInfo(data).position.map({ markOwn($0, fastHash: fastHash, account: email) }), remote.source != .gatefold {
             let ours = await session.serverTime(position.updated)

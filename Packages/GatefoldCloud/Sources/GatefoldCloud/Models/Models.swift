@@ -54,6 +54,12 @@ public struct CloudBook: Sendable, Codable, Hashable, Identifiable {
     public var bytes: Int64
     /// Base64 of the full-file MD5. Can be nil on the server.
     public var md5Base64: String?
+    /// `md5Base64` when it really is an MD5 (16 bytes). Since November 2026 the Cloud's `md5_hash`
+    /// is often the base64 of the fast_hash string (32 bytes), which no file matches.
+    public var verifiableMD5: String? {
+        guard let md5Base64, let digest = Data(base64Encoded: md5Base64), digest.count == 16 else { return nil }
+        return md5Base64
+    }
     public var createdAt: Date?
     public var modifiedAt: Date?
     public var readStatus: String?
