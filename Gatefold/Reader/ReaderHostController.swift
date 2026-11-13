@@ -971,6 +971,12 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     /// restore is waiting on), so a leave before the restore ends keeps it (gatefold#133).
     private func noteShownUnsettled() {
         guard let model = weakModel, let named = navigator.currentLocation else { return }
+        // Under the opening cover (a reopen's held for his place, gatefold#310) he sees no page: none is noted, so a
+        // leave before it lifts keeps his saved place, not one he never saw (gatefold#366).
+        guard model.pageReady else {
+            readerLog.notice("reflow: the page shown unsettled is under the opening cover; not noted")
+            return
+        }
         let stale = LaunchOptions.shownPageAtHisPlace || LaunchOptions.shownSpanLate
         let here = stale ? (model.keptPlace.map { $0.copy(text: { $0 = Locator.Text() }) } ?? named) : named
         // Read from the screen, never Readium (whose reports wait on the stalled page), unless a test hook names the place.
