@@ -9,9 +9,8 @@ extension XCUIApplication {
     /// call. A crash is not hidden by this: CI fails a run that leaves a Gatefold crash report (scripts/ci-crashes.sh).
     ///
     /// The error is allowed only once the app is in fact gone. A terminate that fails while the app still runs is
-    /// a real failure: allowed, it ended the test there as a pass (an expected failure still stops a test that
-    /// doesn't continue after failure), and the app left running made XCTest restart its runner with exit 75 at the
-    /// next test (gatefold#161).
+    /// a real failure. Allowing it stopped the test right there and the test passed, with the app still running,
+    /// and each time on CI the runner then exited with code 75 (gatefold#161).
     func quit(timeout: TimeInterval = 30) {
         if state != .notRunning {
             let options = XCTExpectedFailure.Options()
