@@ -476,7 +476,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
                             // Its counter stopped answering (gatefold#378: the count waited on it for good, and the
                             // book never had numbers): the chapter is counted again, and this counter is replaced.
                             guard !Task.isCancelled, let self else { return }
-                            queue.retry(link)
+                            queue.retry(link, unanswered: true)
                             guard let fresh = try? Self.makeNavigator(publication: self.publication, at: nil, preferences: self.preferences) else { return }
                             readerLog.notice("pages: a counter stopped answering in \(link.url().removingFragment().string, privacy: .public); a fresh one takes its place")
                             self.place(fresh, insets)
@@ -484,6 +484,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
                             Self.stopLoading(counting.view)
                             Self.retire(counting)
                             counting = fresh
+                            if LaunchOptions.isUITest { self.weakModel?.countersReplacedProbe += 1 }
                         }
                     }
                 }
@@ -523,12 +524,16 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         var counted = 0
         init(_ links: [ReadiumShared.Link]) { self.links = links[...] }
         private var tries: [String: Int] = [:]
+        private var unanswered: [String: Int] = [:]
         func next() -> ReadiumShared.Link? { links.popFirst() }
-        func retry(_ link: ReadiumShared.Link) {
+        /// A chapter that never settled gets two more tries; one whose counter stopped answering gets two more on
+        /// fresh counters, apart from those, so a starved runner's slow answers never cost a settled chapter's tries.
+        func retry(_ link: ReadiumShared.Link, unanswered stopped: Bool = false) {
             let href = link.url().removingFragment().string
-            tries[href, default: 0] += 1
+            let n: Int
+            if stopped { unanswered[href, default: 0] += 1; n = unanswered[href]! } else { tries[href, default: 0] += 1; n = tries[href]! }
             // At the front: the chapters are counted in reading order, and each number waits on those before it.
-            if tries[href]! <= 2 { links.insert(link, at: links.startIndex) } else { readerLog.notice("pages: \(href, privacy: .public) never settled") }
+            if n <= 2 { links.insert(link, at: links.startIndex) } else { readerLog.notice("pages: \(href, privacy: .public) never \(stopped ? "answered" : "settled", privacy: .public)") }
         }
     }
 
@@ -538,8 +543,9 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     /// How a chapter's count ended.
     private enum Counted { case counted, unsettled, unanswered }
 
-    /// The looks (50 ms each, longer on a starved runner) a counter's go or look may take before it counts as one
-    /// that stopped answering: well past the slowest look CI has shown, and short of the 600 reads a test gives a count.
+    /// The looks (50 ms each, longer on a starved runner) a counter's go or look may go without an answer, and without
+    /// its web views' loading moving, before it counts as one that stopped answering: about 60 s on a fast runner,
+    /// well inside the 300 s or more (600 reads) a test gives a count once the page is ready.
     private static let counterAnswerLooks = 1200
 
     /// Lays `link` out in `counting` and records its columns once two looks 150 ms apart agree (a web
@@ -550,10 +556,11 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         // A counter made a moment ago can refuse a go while its first chapter is still loading: ask again
         // in place, since every number after this chapter waits for it.
         let go: @MainActor @Sendable () async -> Bool = { await counting.go(to: link, options: .init(animated: false)) }
-        guard var went = await answered(within: counterAnswerLooks, go) else { return .unanswered }
+        let loading: @MainActor () -> Double = { loadProgress(counting.view) }
+        guard var went = await answered(within: counterAnswerLooks, moving: loading, go) else { return .unanswered }
         for _ in 0..<20 where !went && !Task.isCancelled {
             try? await Task.sleep(for: .milliseconds(150))
-            guard let again = await answered(within: counterAnswerLooks, go) else { return .unanswered }
+            guard let again = await answered(within: counterAnswerLooks, moving: loading, go) else { return .unanswered }
             went = again
         }
         let href = link.url().removingFragment().string
@@ -562,7 +569,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         for _ in 0..<40 where !Task.isCancelled {
             try? await Task.sleep(for: .milliseconds(150))
             let lookStart = ContinuousClock.now
-            guard let look = await answered(within: counterAnswerLooks, {
+            guard let look = await answered(within: counterAnswerLooks, moving: loading, {
                 await CounterStall.hold(href, in: counting)
                 return await geometry(of: counting, columns: columns)
             }) else { return .unanswered }
@@ -574,16 +581,22 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         return .unsettled
     }
 
-    /// `body`'s answer, or nil once `looks` looks of 50 ms pass without one, or the wait is cancelled. `body` is not
-    /// awaited past that: a web view's script or load whose page stopped answering never comes back, and the
-    /// count waited on it for good (gatefold#378). Readium resumes it once its counter leaves the reader.
-    private static func answered<T: Sendable>(within looks: Int, _ body: @escaping @MainActor @Sendable () async -> T) async -> T? {
+    /// `body`'s answer, or nil once `looks` looks of 50 ms pass without one while `moving` holds still (a load
+    /// still moving starts the looks again), or the wait is cancelled. `body` is not awaited past that: a web view's
+    /// script or load whose page stopped answering never came back, and the count waited on it for good
+    /// (gatefold#378). Readium resumes a wait for a page's load once its counter leaves the reader, but not a script
+    /// already sent to a web view that never answers: that body, and the counter it holds, stay until WebKit calls back.
+    private static func answered<T: Sendable>(within looks: Int, moving: @escaping @MainActor () -> Double,
+                                              _ body: @escaping @MainActor @Sendable () async -> T) async -> T? {
         let once = AnswerOnce<T>()
         let work = Task { @MainActor in once.resume(await body()) }
         let watch = Task { @MainActor in
-            for _ in 0..<looks {
+            var left = looks, seen = moving()
+            while left > 0 {
                 try? await Task.sleep(for: .milliseconds(50))
                 if once.answered || Task.isCancelled { return }
+                let now = moving()
+                if now != seen { seen = now; left = looks } else { left -= 1 }
             }
             once.resume(nil)
         }
@@ -595,6 +608,11 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         watch.cancel()
         if !once.bodyAnswered { work.cancel() }
         return answer
+    }
+
+    /// How far a counter's web views have loaded, summed: it moves while a chapter is still coming in.
+    private static func loadProgress(_ view: UIView) -> Double {
+        ((view as? WKWebView)?.estimatedProgress ?? 0) + view.subviews.reduce(0) { $0 + loadProgress($1) }
     }
 
     /// Takes a counter's web views off the network before it leaves (`stopCounters`).
