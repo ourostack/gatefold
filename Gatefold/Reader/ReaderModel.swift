@@ -327,10 +327,14 @@ final class ReaderModel {
         readerLog.notice("place read [r\(self.readerNumber, privacy: .public)]: \(book.id, privacy: .public) opening on \(initial.map(Self.placeTag) ?? "none", privacy: .public)")
         // UI tests: the place read carries his words or not (a reopen of a bare progression lands on a boundary).
         if LaunchOptions.isUITest { self.savedWordsProbe = initial?.text.highlight.map(ReaderJS.normalize) ?? "" }
+        // UI tests: a reopen holds the place it read as kept until a move of his writes another; empty, a
+        // reopen that never moved could not be judged against the place it showed.
+        if LaunchOptions.isUITest { self.savedPlaceProbe = initial.map(Self.probeTag) ?? "" }
         // His saved words are the place from the first frame. A reflow can start before the page has
         // shown any words (an iPad relaunched in landscape lays out in portrait first, then rotates);
         // with nothing held, the spread stayed where Readium's re-layout guessed: two spreads early,
         // on the chapter opening before his (the build 15 review's page 98).
+        openedOnSavedPlace = initial != nil
         if let anchor = Self.openingAnchor(from: initial) {
             keeper = AnchorKeeper(anchor: anchor)
             anchorLocator = initial
@@ -800,9 +804,11 @@ final class ReaderModel {
             // showed a blank page and a spinner on a slow device (#38).
             await host?.waitWhileLoading()
             readerLog.notice("open: Readium's loading held \(Date().timeIntervalSince(held), privacy: .public) s (asked \(Date().timeIntervalSince(self.askedAt), privacy: .public) s ago)")
+            guard !pageReady, !isClosed else { revealing = false; return }
+            Task { [weak self] in await self?.host?.logTypography() }
+            await holdForOpenPlace()
             revealing = false
             guard !pageReady, !isClosed else { return }
-            Task { [weak self] in await self?.host?.logTypography() }
             readerLog.notice("first page ready after \(Date().timeIntervalSince(self.isWarming ? self.openedAt : self.askedAt), privacy: .public) s\(self.isWarming ? " (behind the shelf)" : "", privacy: .public)")
             showPage()
         }
@@ -815,6 +821,64 @@ final class ReaderModel {
     /// anyway: 60, about 3 s. The settle itself is bounded at 4 rounds of two page reads; this only
     /// bounds a page whose reads never come back.
     static let revealLooks = 60
+    /// Looks (one every 50 ms) the cover waits for a reopen's own place to be put on screen: 900, about 45 s.
+    /// Past it the page shows as it is and a place with his words is offered, as before (gatefold#310).
+    static let openPlaceLooks = 900
+    /// This reader's bound, `openPlaceLooks` unless a test sets a shorter one to reach the fallback past it.
+    @ObservationIgnored var openPlaceBound = ReaderModel.openPlaceLooks
+    /// The reader opened on a saved place (his, or the Cloud's), not a book's first open.
+    @ObservationIgnored private var openedOnSavedPlace = false
+    /// The open's saved place is still to be put on screen: its settle on his words, or the restore of a reflow
+    /// begun as it opened, hasn't landed, and he hasn't moved.
+    private var openPlaceOwed: Bool {
+        guard openedOnSavedPlace, hisMoves == 0, !touchedSinceLocation, !isClosed else { return false }
+        return openSettling || openSettleGoing || keeper.reflowing != nil || barePutBackGoing
+    }
+    /// The cover's own put-back of a bare place is under way (`putBackBarePlaceUnderCover`).
+    @ObservationIgnored private var barePutBackGoing = false
+
+    /// A place with no words is put back only by a reflow's restore (gatefold#250), and a reopen may run none:
+    /// on #341's iPad the page opened on its file's first page, no reflow came, and it showed there. So while the
+    /// cover holds, with no reflow going, the page is read and, if his place is off screen, moved to it, once.
+    /// Never once the page is in view: then a place found late is not moved to.
+    private func putBackBarePlaceUnderCover() {
+        guard openedOnBarePlace != nil, keeper.reflowing == nil, !barePutBackGoing, !pageReady, let page else { return }
+        barePutBackGoing = true
+        Task { [weak self] in
+            let first = await page.visibleRange()
+            guard let self else { return }
+            defer { self.barePutBackGoing = false }
+            guard let first, !self.pageReady, !self.isClosed, self.keeper.reflowing == nil,
+                  let (anchor, bare) = self.openPlaceToReapply(visible: first, underCover: true) else { return }
+            // As the restore's put-back (gatefold#250): a jump made while the book still loads can land short, so
+            // up to 3 tries, each read back; a reflow begun meanwhile takes over, and a page in view is never moved.
+            var landed = false, tries = 0
+            while tries < 3, !landed, !self.pageReady, !self.isClosed, self.keeper.reflowing == nil {
+                tries += 1
+                _ = await page.go(to: bare)
+                try? await Task.sleep(for: .milliseconds(160))
+                landed = await page.visibleRange()?.contains(anchor) == true
+            }
+            // The cover lifts on a loaded page, never a spinner (#38).
+            await self.host?.waitWhileLoading()
+            readerLog.notice("open: the bare place \(landed ? "put back" : "not reached", privacy: .public) under the cover in \(tries, privacy: .public) tries, no reflow having come")
+        }
+    }
+
+    /// The cover stays while a reopen's place is still owed (gatefold#310). On CI's starved iPad, Readium put a
+    /// reopen on its file's first page while the chapter loaded, and the page then answered no script for over
+    /// 14 s. Shown then, it was the wrong page, and his place could only be offered or put back under his eyes.
+    /// HX ruling: a longer cover beats a wrong page. Build 21's rule (a place found once the page is in view is
+    /// offered, never moved to) still holds, but only past this bound. Counted in looks, never seconds.
+    /// A turn he asks of the reopen picture ends the hold, as it ends the picture's own wait in `showPage`.
+    private func holdForOpenPlace() async {
+        putBackBarePlaceUnderCover()
+        guard openPlaceOwed, app.reopenQueuedTurn == nil else { return }
+        var looks = 0
+        while openPlaceOwed, app.reopenQueuedTurn == nil, looks < openPlaceBound { looks += 1; try? await Task.sleep(for: .milliseconds(50)) }
+        let why = app.reopenQueuedTurn != nil ? "a turn asked of the picture" : (openPlaceOwed ? "still owed; shown as it is" : "placed")
+        readerLog.notice("open: the cover held \(looks, privacy: .public) looks for the reopen's place (\(why, privacy: .public))")
+    }
     /// How long Catch up, taken over the opening cover, waits for the first page to show, in looks: past
     /// the cover's own worst case (its 11.5 s, `revealLooks`, then a load waited out over up to 1200 looks
     /// that each take longer than 50 ms), so on a starved host it never lands into a page still loading.
@@ -954,6 +1018,7 @@ final class ReaderModel {
                 }
                 await host?.waitWhileLoading()
             }
+            await holdForOpenPlace()
             guard !pageReady, !isClosed else { return }
             readerLog.notice("first page forced ready after \(Date().timeIntervalSince(self.openedAt), privacy: .public) s")
             showPage()
@@ -2410,10 +2475,12 @@ final class ReaderModel {
     /// The open's bare place, if a restore should put it back now (gatefold#250): only while no anchor
     /// is held, the restore may still move the page, he hasn't moved since the open, and only once per
     /// open. Nil once he has turned, jumped, tapped a link or Contents, or a restore has landed.
-    func openPlaceToReapply(visible: VisibleRange) -> (ReadingAnchor, Locator)? {
+    /// `underCover`: asked by the cover's own put-back with no reflow going (`putBackBarePlaceUnderCover`), where
+    /// there is no restore to ask whether it may move; the page is not in view, so nothing he sees moves.
+    func openPlaceToReapply(visible: VisibleRange, underCover: Bool = false) -> (ReadingAnchor, Locator)? {
         guard let bare = openedOnBarePlace else { return nil }
         guard keeper.anchor == nil, hisMoves == 0, !touchedSinceLocation, page?.isTurning != true,
-              keeper.restoreMayMove(move: hisMoves), !isClosed else {
+              underCover ? keeper.reflowing == nil && !pageReady : keeper.restoreMayMove(move: hisMoves), !isClosed else {
             openedOnBarePlace = nil
             return nil
         }
@@ -3529,7 +3596,8 @@ final class ReaderModel {
     /// For UI tests: the words of the place his last move saved, so a test can tell a word's tail the
     /// place skipped (`ReaderJS.anchor`) from a page that skipped his place (`ReopenMatch`).
     private(set) var savedWordsProbe = ""
-    /// UI tests: the file and the progression in it of the place last written by a move of his (no words).
+    /// UI tests: the file and the progression in it of the place last written by a move of his (no words), or
+    /// the place the reader opened on until one is.
     private(set) var savedPlaceProbe = ""
     /// UI tests: the same for the page Readium last reported, written or not.
     private(set) var shownPlaceProbe = ""

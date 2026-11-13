@@ -337,6 +337,66 @@ final class NavigationPlaceUITests: XCTestCase {
         XCTAssertNotEqual(opening(back), opening(first), "after a scrubber jump left while its chapter loaded, the reopen is on the jump's page, not the opening one")
     }
 
+    /// A Contents jump left while its chapter still loads keeps the chapter he chose: never the place
+    /// from before the jump, never its file's first page (gatefold#259). The reopen's saved place and page
+    /// are judged against the same jump made again, unheld, to its end: same file, near the same place.
+    func testAContentsJumpLeftWhileItsChapterLoadsKeepsTheChapter() {
+        _ = openFresh(["-GatefoldHoldChapterLoad", "400"])
+        let before = (app.descendants(matching: .any)["reader.savedPlace"].value as? String) ?? ""
+        showChrome()
+        contentsTap("Chapter XL")
+        XCTAssertTrue(readsUntil(40) { self.app.descendants(matching: .any)["reader.loadingHeld"].exists }, "the chapter's load is held open")
+        // He leaves while it is still on its way. The reopen meets CI's starved iPad (gatefold#310): Readium puts it
+        // on its file's first page, and the page answers no script past the cover's own bound.
+        relaunchExtra = Self.stalledReopen
+        leaveAndRelaunch()
+        // Judged by places, not words: the place from before the jump is the book's opening, its cover
+        // page, which has none, so a reopen there (main's, the red) shows no words to wait for.
+        XCTAssertTrue(readsUntil(240) { self.app.descendants(matching: .any)["reader.page"].exists }, "the book reopened")
+        // Judged as the cover lifts: the first page he sees is the place kept, not one put right later.
+        XCTAssertTrue(pageReady(), "the reopened page showed")
+        XCTAssertTrue(keptWhatIsShown(reads: 4), "the reopen shows the place it kept")
+        let reopened = tag(app.descendants(matching: .any)["reader.savedPlace"])
+        // Past the opening (the chapter's place), the page must show words: a blank page there is a reopen bug.
+        if let r = reopened, "\(r.0)@\(String(format: "%.5f", r.1))" != before, !r.0.hasPrefix("wrap") {
+            XCTAssertFalse(waitForWords().isEmpty, "the reopen on the chapter's place shows words")
+        }
+        // The same jump, to its end: where the chapter he chose is.
+        showChrome()
+        contentsTap("Chapter XL")
+        let veil = app.descendants(matching: .any)["reader.veil"]
+        _ = readsUntil(4) { veil.exists }
+        XCTAssertTrue(readsUntil(240) { !veil.exists }, "the jump landed")
+        XCTAssertTrue(keptWhatIsShown(), "the jump kept the page shown")
+        let chapter = tag(app.descendants(matching: .any)["reader.savedPlace"])
+        print("CONTENTSLEFT before \(before) reopened \(reopened.map { "\($0.0)@\($0.1)" } ?? "none") chapter \(chapter.map { "\($0.0)@\($0.1)" } ?? "none")")
+        XCTAssertNotNil(reopened, "the reopen kept a place")
+        XCTAssertNotEqual(reopened.map { "\($0.0)@\(String(format: "%.5f", $0.1))" }, before, "the reopen is not the place from before the jump")
+        XCTAssertEqual(reopened?.0, chapter?.0, "the reopen is in the chapter's file")
+        XCTAssertGreaterThan(chapter?.1 ?? 0, 0.1, "the chapter starts partway through its file, so its file's first page is another place")
+        XCTAssertGreaterThan(reopened?.1 ?? 0, 0.01, "the reopen is its file's first page")
+        XCTAssertLessThan(abs((reopened?.1 ?? -9) - (chapter?.1 ?? 9)), 0.1, "the reopen is at the chapter he chose, not its file's first page")
+    }
+
+    private func contentsTap(_ title: String) {
+        app.buttons["reader.contents"].tap()
+        // Exactly this chapter: Contents shows the title tidied ("Chapter XL", its full stop dropped by
+        // `Headings.tidy`), alone or followed by its page number, and "Chapter XL" also starts XLI to XLIX.
+        let row = app.buttons.matching(NSPredicate(format: "label ==[c] %@ OR label BEGINSWITH[c] %@ OR label BEGINSWITH[c] %@", title, title + ",", title + " ")).firstMatch
+        // Contents opens scrolled to the chapter he is in, so any chapter row shows it opened.
+        let anyChapter = app.buttons.matching(NSPredicate(format: "label BEGINSWITH[c] %@", "Chapter ")).firstMatch
+        XCTAssertTrue(readsUntil(40) { anyChapter.exists }, "the contents opened")
+        // Brought into view by frame reads and held drags, never `isHittable` or a fling (gatefold#98): Chapter XL is
+        // further down than XXX, so it gets twice the drags; opened on it, it is tapped where it is.
+        XCTAssertTrue(ContentsRow.tap(row, in: app, reads: 160, drags: 40).ok, "the contents list \(title)")
+    }
+
+    private func tag(_ e: XCUIElement) -> (String, Double)? {
+        let parts = ((e.value as? String) ?? "").split(separator: "@")
+        guard parts.count == 2, let p = Double(parts[1]) else { return nil }
+        return (String(parts[0]), p)
+    }
+
     private func turn(forward: Bool) {
         app.descendants(matching: .any)["reader.page"].coordinate(withNormalizedOffset: CGVector(dx: forward ? 0.97 : 0.03, dy: 0.5)).tap()
     }
@@ -353,6 +413,27 @@ final class NavigationPlaceUITests: XCTestCase {
     }
 
     private var relaunchExtra: [String] = []
+    /// A reopen as CI's starved iPad met it (run 43291536110, gatefold#310): on its file's first page, and no script
+    /// answered for 400 looks (at least 20 s), past the cover's own 11.5 s.
+    private static let stalledReopen = ["-GatefoldReopenOnChapterStart", "YES", "-GatefoldStallOpenScripts", "400"]
+
+    /// Reads (at least 0.25 s apart) until the reader reports its page shown: 1200, past the cover's longest hold.
+    private func pageReady(reads: Int = 1200, file: StaticString = #filePath, line: UInt = #line) -> Bool {
+        let ready = app.descendants(matching: .any)["reader.pageReady"]
+        return readsUntil(reads, file: file, line: line) { (ready.value as? String) == "1" }
+    }
+
+    /// Judged in reads, one every 0.25 s, never a timeout in seconds; a hang guard sized from the reads stops a stuck query.
+    /// A hang fails on its own, with its read count and the caller's line, so a red says which it was (`HangGuard`).
+    private func readsUntil(_ reads: Int, file: StaticString = #filePath, line: UInt = #line, _ done: () -> Bool) -> Bool {
+        let hung = Date().addingTimeInterval(HangGuard.seconds(reads: reads))
+        for read in 0..<reads {
+            if done() { return true }
+            if Date() > hung { XCTFail("hang guard: stuck at read \(read) of \(reads)", file: file, line: line); return false }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        }
+        return done()
+    }
 
     /// The review's path on the iPad spread: his place is saved (a turn there and back), he closes the
     /// book, opens it from the shelf, and leaves twice without turning. Build 17 reopened chapter X,

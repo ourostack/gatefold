@@ -81,6 +81,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         self.preferences = preferences
         navigator = try Self.makeNavigator(publication: publication, at: initialLocation, preferences: preferences)
         super.init(nibName: nil, bundle: nil)
+        OpenScriptStall.arm()
         navigator.delegate = self
     }
 
@@ -3018,6 +3019,33 @@ private final class CountingInsets: NSObject, EPUBNavigatorDelegate {
     func navigator(_ navigator: Navigator, presentError error: NavigatorError) {}
 }
 
+/// Tests only (`-GatefoldStallOpenScripts`): the page answers none of the app's scripts for a number of looks after the
+/// reader opens, the way CI's starved iPad left a reopen's restore waiting (gatefold#310).
+@MainActor
+enum OpenScriptStall {
+    private static var looksLeft = 0
+    private static var armed = false
+
+    /// Once per launch: only the first reader's open is stalled, and a second host never restarts the count.
+    static func arm() {
+        guard !armed, let looks = LaunchOptions.stallOpenScriptsLooks, looks > 0 else { return }
+        armed = true
+        looksLeft = looks
+        readerLog.notice("open: the page's scripts held for \(looks, privacy: .public) looks, for the test (GatefoldStallOpenScripts)")
+        Task { @MainActor in
+            while looksLeft > 0 {
+                try? await Task.sleep(for: .milliseconds(50))
+                looksLeft -= 1
+            }
+            readerLog.notice("open: the page's scripts answer again (GatefoldStallOpenScripts)")
+        }
+    }
+
+    static func wait() async {
+        while looksLeft > 0 { try? await Task.sleep(for: .milliseconds(50)) }
+    }
+}
+
 /// A script found no spread to run on, or its spread was replaced while it waited (gatefold#109).
 struct SpreadChanged: Error {}
 
@@ -3025,6 +3053,7 @@ extension EPUBNavigatorViewController {
     /// A script's answer on the spread on screen, nil if it ran and failed there. Throws `SpreadChanged`
     /// when it never ran: Readium's `spreadNotLoaded`, for no spread yet or one cleared while it waited.
     func answer(_ script: String) async throws -> Any? {
+        await OpenScriptStall.wait()
         switch await evaluateJavaScript(script) {
         case let .success(value):
             return value

@@ -119,6 +119,32 @@ struct FileTests {
         #expect(left.isEmpty)
     }
 
+    /// Since November 2026 the Cloud's `md5_hash` is the base64 of the book's fast_hash string, not
+    /// an MD5 of its bytes (seen live 2026-11-13; desk evidence/p0-basics-20261113). Every download
+    /// failed its check against it, so no book could be opened.
+    @Test func downloadsWhenTheCloudsHashIsNotAnMD5() async throws {
+        let h = Harness()
+        let bytes = Data(repeating: 7, count: 5000)
+        await h.transport.on("GET", "signature-download", .data(bytes))
+        let notAnMD5 = Data(frankenstein.utf8).base64EncodedString()
+        let b = try WireDecoder.book(WireDecoder.loose(Data(book(md5: notAnMD5).utf8)))!
+        let url = try await h.cloud().download(b)
+        #expect(try Data(contentsOf: url) == bytes)
+        _ = try await h.cloud().download(b)
+        #expect(await h.transport.requests("GET", "signature-download").count == 1, "the local copy is reused")
+    }
+
+    /// With no MD5 to check, the size the Cloud lists still catches a download cut short.
+    @Test func withoutAnMD5AShortDownloadIsStillRejected() async throws {
+        let h = Harness()
+        await h.transport.on("GET", "signature-download", .data(Data(repeating: 7, count: 4000)))
+        let notAnMD5 = Data(frankenstein.utf8).base64EncodedString()
+        let b = try WireDecoder.book(WireDecoder.loose(Data(book(md5: notAnMD5).utf8)))!
+        await #expect(throws: CloudError.checksumMismatch) { _ = try await h.cloud().download(b) }
+        let left = try FileManager.default.contentsOfDirectory(atPath: h.directory.appendingPathComponent("Books").path)
+        #expect(left.isEmpty)
+    }
+
     @Test func refetchesAnExpiredSignedLink() async throws {
         let h = Harness()
         let bytes = Data(repeating: 3, count: 5000)
@@ -287,7 +313,7 @@ struct PositionSyncTests {
         }
     }
 
-    /// Since November 2026 PocketBook answers every position write with 422 "position: File not found."
+    /// Since November 2026 PocketBook answers position writes for records from before its change with 422 "position: File not found."
     /// (seen live 2026-11-13). The app must hear that the place didn't reach the e-reader: never a
     /// silent drop under an "In step with your e-reader" line.
     @Test func aPlaceTheCloudRefusesIsAnnouncedNotLostInSilence() async throws {
@@ -318,6 +344,30 @@ struct PositionSyncTests {
             if case let .positionSent(hash) = change { sent = hash; break }
         }
         #expect(sent == frankenstein)
+    }
+
+    /// The Cloud's shape since November 2026: `/fileops/info/` carries the position only when asked
+    /// with `include_metadata=true` (seen live 2026-11-13). Without it Gatefold never saw the InkPad's place.
+    func eReaderPlaceOnlyWithMetadata(_ transport: ScriptedTransport, _ updated: String, cfi: String) async {
+        await transport.on("GET", "/fileops/info", .json(#"{"fast_hash":"\#(frankenstein)","name":"x","md5_hash":"x"}"#))
+        await transport.on("GET", "include_metadata=true", remote(updated, cfi: cfi))
+    }
+
+    @Test func readsTheEReadersPlaceThatComesOnlyWithMetadata() async throws {
+        let h = Harness()
+        await eReaderPlaceOnlyWithMetadata(h.transport, "2026-11-12T23:40:00Z", cfi: "epubcfi(/6/30!/4/2/1:0)")
+        let remote = try #require(try await h.cloud().remotePosition(for: CloudBook(fastHash: frankenstein)))
+        #expect(remote.cfi == "epubcfi(/6/30!/4/2/1:0)")
+        #expect(remote.source != .gatefold)
+    }
+
+    @Test func aNewerEReaderPlaceThatComesOnlyWithMetadataIsNotOverwritten() async throws {
+        let h = Harness()
+        await eReaderPlaceOnlyWithMetadata(h.transport, "2026-10-31T21:59:50Z", cfi: "epubcfi(/6/30!/4/2/1:0)")
+        let cloud = h.cloud()
+        await cloud.push(position, for: CloudBook(fastHash: frankenstein))
+        await cloud.flushOutbox()
+        #expect(await h.transport.requests("POST", "/books/read-position").isEmpty, "the InkPad's newer place stands")
     }
 
     @Test func comparesTimesOnTheServersClock() async throws {

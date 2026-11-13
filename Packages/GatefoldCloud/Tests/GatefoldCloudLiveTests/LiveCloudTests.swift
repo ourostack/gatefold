@@ -119,7 +119,12 @@ struct LiveCloudTests {
         #expect(book.coverURL != nil)
         let file = try await cloud.download(book)
         #expect(FileManager.default.fileExists(atPath: file.path))
-        #expect(try PocketBookCloud.md5Base64(of: file) == book.md5Base64)
+        // Since November 2026 `md5_hash` is often not an MD5 (it's the base64 of the fast_hash); check
+        // it only when it is one, and the size always.
+        if let md5 = book.verifiableMD5 { #expect(try PocketBookCloud.md5Base64(of: file) == md5) }
+        let size = try FileManager.default.attributesOfItem(atPath: file.path)[.size] as? NSNumber
+        #expect(size?.int64Value == book.bytes)
+        Live.log("downloaded: \(file.lastPathComponent) bytes=\(size?.int64Value ?? -1) verifiableMD5=\(book.verifiableMD5 != nil)")
     }
 
     /// Cross-client (a): what PocketBook's web reader (or whoever wrote last) left, resolved in the EPUB.

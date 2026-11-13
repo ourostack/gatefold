@@ -109,6 +109,12 @@ enum LaunchOptions {
     /// kept, as when Readium reports no new location while the restore stalls (CI 43075159905, gatefold#133);
     /// otherwise the runner's layout decides whether it is that place or the boundary before it.
     static var shownPageAtHisPlace: Bool { shownPageWithoutWords && defaults.bool(forKey: "GatefoldShownPageAtHisPlace") }
+    /// Tests only: the page answers none of the app's scripts for this many looks (50 ms each) after the reader
+    /// opens, as CI's starved iPad did for over 14 s after a reopen's chapter loaded (run 43291536110, gatefold#310).
+    static var stallOpenScriptsLooks: Int? {
+        guard isUITest, defaults.object(forKey: "GatefoldStallOpenScripts") != nil else { return nil }
+        return defaults.integer(forKey: "GatefoldStallOpenScripts")
+    }
     /// Tests only, with `shownPageWithoutWords`: at the watchdog the page's span on screen goes unread and Readium
     /// still names the page from before the rotation, his kept place, as on CI's runs 43321734349 and 43370826599
     /// (gatefold#346); unlike `shownPageAtHisPlace`, the screen can be read again as he leaves.
