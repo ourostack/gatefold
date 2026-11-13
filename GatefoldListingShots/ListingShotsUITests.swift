@@ -59,7 +59,12 @@ final class ListingShotsUITests: XCTestCase {
             // Judged in reads and the reader's own ready report, never seconds (gatefold#297): on a starved runner the
             // same scene's page took from 11 s to past 90 s to open (run 43319078326), and a wall-time wait failed it
             // with the check one read from ready. Each change of the label is logged with its read, never page text.
-            let (reads, label) = ReaderReads.reads(app, readyID, as: wanted, id, say: { print("ListingShots reads: \($0)") })
+            // The probe is found by its identifier alone (the spec's `type` narrows only the library's query below).
+            // 300 reads while the page isn't ready, not the shared 1200: each scene has two tries and the step about 45 min
+            // (screenshots.yml), and a read here took about 1.6 s on a slow page (#297's probe: ready at read 70, 115 s
+            // after launch). That is four times the slowest page seen, and at least 90 s on the fastest runner.
+            let (reads, label) = ReaderReads.reads(app, readyID, as: wanted, id, cover: 300,
+                                                   say: { print("ListingShots reads: \($0)") })
             guard reads != nil else {
                 XCTFail("\(id): \(readyID) never read as ready; it reads \(label.map { "\"\($0)\"" } ?? "nothing")"); return
             }
