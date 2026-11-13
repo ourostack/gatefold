@@ -14,6 +14,7 @@ main|iPad Pro 13-inch|FineTuneTapUITests/testEveryTapFlipsPagesLeftLandscape
 main|iPad Pro 13-inch|FineTuneTapUITests/testEveryTapFlipsPagesLeftPortrait
 main|iPad Pro 13-inch|FineTuneTapUITests/testEveryTapFlipsPositionLabelLandscape
 main|iPad Pro 13-inch|FineTuneTapUITests/testEveryTapFlipsPositionLabelPortrait
+main|iPad Pro 13-inch|MarginTapUITests/testEveryMarginTapOnAFreshSpreadTurns
 main|iPad Pro 13-inch|NavigationPlaceUITests/testAContentsJumpKeepsThePlace
 main|iPad Pro 13-inch|NavigationPlaceUITests/testAJumpFromAPageStillLoadingStartsAtOnce
 main|iPad Pro 13-inch|NavigationPlaceUITests/testAJumpsVeilHoldsWhileTheChapterLoads
