@@ -39,12 +39,15 @@ concurrency:
 # On 2026-11-12 gatefold's pull requests held 48 of them with 270 more queued, and spoonjoy got 2. So on a pull request
 # every macOS job but Build for testing waits in a shared lane, a job-level `concurrency` group with `queue: max`: a
 # lane runs one job at a time across every open pull request, first come first served, and never cancels one.
-#   - UI test shards: 18 lanes, `lane` in each matrix entry, balanced by timeout; ui-tests.yml waits in it.
+#   - UI test shards: 18 lanes, `lane` in each matrix entry, balanced by timeout; ui-tests.yml waits in it. Odd and
+#     even pull requests (last digit) each get their own 18, so 36 shard lanes in all.
 #   - Release build and Unit tests: 3 lanes each, by the pull request number's last digit.
 #   - Duo tour, the cloud package, and the screenshots' build and shots: 1 lane each.
-# That is 28 lanes, a hard cap, plus one Build for testing per pull request being pushed (not laned: the shards and
-# Unit tests wait for its artifact inside their own jobs), so about 36 runners with 8 pushed at once, within the 38 of
-# the enterprise's 50 that ourostack's pull requests may use (12 stay for main, merge queues and spoonjoy).
+# That is 46 lanes, a hard cap, plus one Build for testing per pull request being pushed (not laned: the shards and
+# Unit tests wait for its artifact inside their own jobs). Since 2026-11-13 spoonjoy is outside the enterprise, so
+# ourostack has all 50 slots and main still gets its share through the hosted queue; with 28 lanes 12 open pull
+# requests left about 27 Macs idle. If spoonjoy rejoins, go back to one shard set (SHARD_SETS and BUDGET in
+# scripts/ci-lanes.py).
 # Main and dispatch runs are never laned: each job's group there is its own (run id, attempt, shard).
 # A newer push still cancels its pull request's older run, including its jobs waiting in a lane. A lane job's
 # timeout counts from when it starts, so waiting in a lane doesn't spend it; a shard holding a lane while it waits

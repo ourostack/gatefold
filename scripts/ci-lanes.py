@@ -22,12 +22,13 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WORKFLOWS = os.path.join(ROOT, ".github", "workflows")
 SHARD_LANES = 18
-# Lanes in all, a hard cap on laned jobs: the 18 shard lanes, 3 each for Release build and Unit tests, 1 each for Duo
-# tour, the cloud package and the two screenshot jobs. Builds for testing aren't laned (see EXEMPT): one runs per pull
-# request being pushed, so with about 8 pushed at once gatefold's pull requests hold about 36 macOS runners, a soft
-# figure, within the 38 of the enterprise's 50 that ourostack's pull requests may use (12 stay for main, merge queues
-# and spoonjoy).
-BUDGET = 28
+# Odd and even pull requests each get their own set of the shard lanes (the last-digit parity in ui-tests.yml's group).
+SHARD_SETS = 2
+# Lanes in all, a hard cap on laned jobs: the 36 shard lanes (18 for each parity), 3 each for Release build and Unit
+# tests, 1 each for Duo tour, the cloud package and the two screenshot jobs. Builds for testing aren't laned (see
+# EXEMPT): one runs per pull request being pushed. Raised from 28 on 2026-11-13 while spoonjoy is outside the
+# enterprise, so ourostack has all 50 of its macOS slots; if spoonjoy rejoins, set SHARD_SETS back to 1 and BUDGET to 28.
+BUDGET = 46
 EXEMPT = {
     # The shards and Unit tests wait for this run's build inside their own jobs, so a laned build would spend their
     # setup budget. One runs per pull request being pushed.
@@ -109,9 +110,18 @@ def lane(pr):
     m = re.fullmatch(r"'gatefold-macos-pr-lane-([a-z0-9-]+)-0'", pr)
     if m:
         return m.group(1), 1
-    m = re.fullmatch(r"format\('gatefold-macos-pr-lane-shard-\{0\}', inputs\.lane\)", pr)
+    m = re.fullmatch(r"format\('gatefold-macos-pr-lane-shard-\{0\}-\{1\}', inputs\.lane, (.+)\)", pr)
     if m:
-        return "shard", SHARD_LANES
+        rest, picked = m.group(1), {"0"}
+        while True:
+            link = LINK.match(rest)
+            if not link:
+                break
+            picked.add(link.groups()[-1])
+            rest = rest[link.end():]
+        if rest != "'0'" or len(picked) != SHARD_SETS:
+            return None, f"the shard lane's {{1}} must be the last-digit chain picking {SHARD_SETS} sets, ending || '0'"
+        return "shard", SHARD_LANES * SHARD_SETS
     m = re.fullmatch(r"format\('gatefold-macos-pr-lane-([a-z0-9-]+)-\{0\}', (.+)\)", pr)
     if not m:
         return None, "the pull-request branch must be a lane name: 'gatefold-macos-pr-lane-<name>-0', or a format of one"
@@ -228,7 +238,7 @@ jobs:
     concurrency:
       group: >-
         ${{ github.event_name == 'pull_request'
-        && format('gatefold-macos-pr-lane-shard-{0}', inputs.lane)
+        && format('gatefold-macos-pr-lane-shard-{0}-{1}', inputs.lane, (endsWith(format('{0}', github.event.pull_request.number), '1') || endsWith(format('{0}', github.event.pull_request.number), '3') || endsWith(format('{0}', github.event.pull_request.number), '5') || endsWith(format('{0}', github.event.pull_request.number), '7') || endsWith(format('{0}', github.event.pull_request.number), '9')) && '1' || '0')
         || format('ui-tests-{0}-{1}-{2}', github.run_id, github.run_attempt, inputs.shard) }}
       queue: max
 """
@@ -277,6 +287,7 @@ def selftest():
         "condition in a step": ({**good, "real-unfold.yml": "jobs:\n  real-unfold:\n    if: always()\n    runs-on: xcode-27\n    steps:\n      - if: github.event_name != 'pull_request'\n"}, "exempt only while"),
         "testflight inline on": ({**good, "testflight.yml": "on: [workflow_run, pull_request]\njobs:\n  publish:\n    runs-on: xcode-27\n"}, "testflight.yml runs on pull requests"),
         "exempt build": ({**good, "app.yml": GOOD_JOB + "  build:\n    runs-on: xcode-27\n" + GOOD_CALLER}, None),
+        "one shard set": ({**good, "ui-tests.yml": re.sub(r"format\('gatefold-macos-pr-lane-shard-\{0\}-\{1\}', inputs\.lane, .*\)\n", "format('gatefold-macos-pr-lane-shard-{0}-{1}', inputs.lane, '0')\n", GOOD_UI)}, "shard lane's {1}"),
         "linux": ({**good, "app.yml": GOOD_JOB + "  core:\n    runs-on: ubuntu-latest\n" + GOOD_CALLER}, None),
     }
     failed = 0
