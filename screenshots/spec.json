@@ -104,7 +104,9 @@
         "-GatefoldGoTo",
         "0.47",
         "-GatefoldTheme",
-        "daylight"
+        "daylight",
+        "-GatefoldProbe297HoldPage",
+        "YES"
       ],
       "ready": {
         "id": "reader.anchorCheck",
@@ -165,7 +167,7 @@
       ],
       "ready": {
         "id": "library.syncHealth",
-        "label_contains": "In step with your e-reader · just now",
+        "label_contains": "In step with your e-reader \u00b7 just now",
         "type": "any"
       },
       "bg": "paper",
@@ -214,7 +216,9 @@
         "-GatefoldGoTo",
         "0.62",
         "-GatefoldTheme",
-        "midnight"
+        "midnight",
+        "-GatefoldProbe297HoldPage",
+        "YES"
       ],
       "ready": {
         "id": "reader.anchorCheck",
