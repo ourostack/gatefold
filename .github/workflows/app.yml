@@ -514,14 +514,15 @@ jobs:
             timeout: 66 # 30 + 2 x 9.1 + 5 + 12
             lane: 10
           - shard: ipad-taps-rest
-            # The catch-all for new Fine-Tune tests: 183, and margin taps on a fresh spread (gatefold#304; no pass on main yet)
+            # The catch-all for new Fine-Tune tests: 183, margin taps on a fresh spread (gatefold#304), and taps after
+            # swipes on a book opened from the shelf (gatefold#321; no pass on main yet)
             tests: >-
-              FineTuneTapUITests MarginTapUITests
+              FineTuneTapUITests MarginTapUITests SwallowedTapUITests
             skip: >-
               FineTuneTapUITests/testAQuickTouchChangesEverySwitchOnce FineTuneTapUITests/testATapOnTheRowsNameChangesItsSwitch FineTuneTapUITests/testEveryTapFlipsJustifyPortrait FineTuneTapUITests/testEveryTapFlipsPageNumbersPortrait FineTuneTapUITests/testEveryTapFlipsPositionLabelPortrait FineTuneTapUITests/testEveryTapFlipsPagesLeftPortrait FineTuneTapUITests/testEveryTapFlipsJustifyLandscape FineTuneTapUITests/testEveryTapFlipsPageNumbersLandscape FineTuneTapUITests/testEveryTapFlipsPositionLabelLandscape FineTuneTapUITests/testEveryTapFlipsPagesLeftLandscape
             pr_tests: none
             cold: false
-            timeout: 65 # 30 + 2 x 8.7 + 5 + 12
+            timeout: 75 # 30 + 2 x 13.6 + 5 + 12
             lane: 2
           - shard: ipad-taps-furniture
             # 130 + 129 + 86
@@ -634,14 +635,15 @@ jobs:
             timeout: 68 # 30 + 2 x 10.4 + 5 + 12
             lane: 8
           - shard: ipad-reviewer-rest
-            # Main only, the catch-all for new reviewer checks: 842 + 88, and about 240 for one column on a portrait page (#303)
+            # Main only, the catch-all for new reviewer checks: 842 + 88, about 240 for one column on a portrait page (#303),
+            # and about 90 for the pages behind the shelf staying out of accessibility (#357)
             tests: >-
-              ReviewerChecksUITests SingleColumnUITests
+              ReviewerChecksUITests SingleColumnUITests ShelfAccessibilityUITests
             skip: >-
               ReviewerChecksUITests/testTheLastPagesNumberIsTheCount ReviewerChecksUITests/testPageNumbersAreOnOrOffInEveryBook
             pr_tests: none
             cold: false
-            timeout: 93 # 30 + 2 x 22.9 + 5 + 12
+            timeout: 96 # 30 + 2 x 24.4 + 5 + 12
             lane: 2
     uses: ./.github/workflows/ui-tests.yml
     with:

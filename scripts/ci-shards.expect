@@ -66,8 +66,10 @@ main|iPad Pro 13-inch|RotationRepro/testRotateThenLeaveWithoutItsWordsAndReopenO
 main|iPad Pro 13-inch|RotationRepro/testRotateThenLeaveWithItsSpanReadLateAndReopenOnTheChapterStart
 main|iPad Pro 13-inch|RotationRepro/testRotateThenLeaveWithoutTurning
 main|iPad Pro 13-inch|RotationRepro/testRotateThenLeaveWithoutTurningAfterStalledReflows
+main|iPad Pro 13-inch|ShelfAccessibilityUITests/testNoPageBehindTheShelfReachesAccessibility
 main|iPad Pro 13-inch|SingleColumnUITests/testAOnePageScreenStaysOneColumnThroughTheReviewSteps
 main|iPad Pro 13-inch|SpreadTurnSettleUITests/testSpreadTurnsLandWithoutSliding
+main|iPad Pro 13-inch|SwallowedTapUITests/testTapsAfterSwipesAndAJumpAreAnswered
 main|iPad Pro 13-inch|WindowFitUITests/testOnItsSide
 main|iPad Pro 13-inch|WindowFitUITests/testUpright
 main|iPhone Duo|FineTuneTapUITests/testAQuickTouchChangesEverySwitchOnce

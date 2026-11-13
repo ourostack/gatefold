@@ -457,9 +457,10 @@ final class NavigationPlaceUITests: XCTestCase {
         let cover = app.descendants(matching: .any)["book.gutenberg-pride-and-prejudice"].firstMatch
         XCTAssertTrue(cover.waitForExistence(timeout: 15), "back on the shelf")
         sleep(2)
-        app.quit()
-        app.launchArguments = common
-        app.relaunch()
+        // He leaves from the shelf for the Home Screen, as in the rounds below. Terminating the app in front
+        // while it warms books behind the shelf failed outright on CI after 73 to 148 s, and left it running
+        // past the test (gatefold#161); his place was written at his last turn.
+        leaveAndRelaunch()
         XCTAssertTrue(cover.waitForExistence(timeout: 30), "the shelf after a relaunch")
         cover.tap()
         _ = waitForWords()

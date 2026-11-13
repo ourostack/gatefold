@@ -7,11 +7,15 @@ extension XCUIApplication {
     /// that is already gone records "Failed to terminate" though nothing in the app went wrong. So this terminates
     /// only an app still running, and allows that one error if the system ends the app between the check and the
     /// call. A crash is not hidden by this: CI fails a run that leaves a Gatefold crash report (scripts/ci-crashes.sh).
+    ///
+    /// The error is allowed only once the app is in fact gone. A terminate that fails while the app still runs is
+    /// a real failure. Allowing it stopped the test right there and the test passed, with the app still running,
+    /// and each time on CI the runner then exited with code 75 (gatefold#161).
     func quit(timeout: TimeInterval = 30) {
         if state != .notRunning {
             let options = XCTExpectedFailure.Options()
             options.isStrict = false
-            options.issueMatcher = { $0.compactDescription.contains("Failed to terminate") }
+            options.issueMatcher = { [self] in $0.compactDescription.contains("Failed to terminate") && state == .notRunning }
             XCTExpectFailure("the system may have ended the app first (gatefold#76)", options: options) {
                 terminate()
             }
