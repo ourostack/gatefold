@@ -587,8 +587,13 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     /// so it answers while the page's scripts wait on a stalled restore (gatefold#276). Nil unless the web
     /// view most on screen holds that very chapter, paginated left to right.
     private func spanOnScreen(of named: Locator) -> ClosedRange<Double>? {
+        // Each way it goes unread is logged: a leave that keeps Readium's name instead says why (gatefold#346).
+        func unread(_ why: String) -> ClosedRange<Double>? {
+            readerLog.notice("reflow: the page's span on screen unread: \(why, privacy: .public)")
+            return nil
+        }
         guard let host = navigator.view, navigator.settings.readingProgression == .ltr,
-              !navigator.settings.verticalText else { return nil }
+              !navigator.settings.verticalText else { return unread("not a left-to-right paginated page") }
         var best: (web: WKWebView, area: CGFloat)?
         func walk(_ v: UIView) {
             if let web = v as? WKWebView {
@@ -600,16 +605,26 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             v.subviews.forEach(walk)
         }
         walk(host)
-        guard let web = best?.web, let file = web.url?.lastPathComponent, !file.isEmpty,
+        guard let web = best?.web else { return unread("no web view on screen") }
+        guard let file = web.url?.lastPathComponent, !file.isEmpty,
               (named.href.string.components(separatedBy: "#").first ?? "").removingPercentEncoding?
-                .split(separator: "/").last.map(String.init) == file else { return nil }
+                .split(separator: "/").last.map(String.init) == file else {
+            return unread("the web view most on screen holds \(web.url?.lastPathComponent ?? "no file"), not the chapter named")
+        }
         let scroll = web.scrollView
         let total = scroll.contentSize.width, view = scroll.bounds.width
         let offset = scroll.contentOffset.x + scroll.adjustedContentInset.left
-        guard total > 0, view > 0, total >= view else { return nil }
+        guard total > 0, view > 0, total >= view else { return unread("not laid out (content \(total) wide, view \(view))") }
         let first = max(0, min(1, offset / total))
         let last = max(first, min(1, (offset + view) / total))
         return last > first ? Double(first)...Double(last) : nil
+    }
+
+    /// `spanOnScreen`, for a leave whose watchdog note couldn't read it (gatefold#346). Unread under
+    /// `LaunchOptions.shownPageAtHisPlace`, which stands for a page never read from the screen at all; not under
+    /// `shownSpanLate`, whose span goes unread only at the watchdog.
+    func spanOnScreenNow(of named: Locator) -> ClosedRange<Double>? {
+        LaunchOptions.shownPageAtHisPlace ? nil : spanOnScreen(of: named)
     }
 
     private static func firstWebView(in view: UIView) -> WKWebView? {
@@ -937,9 +952,10 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     /// restore is waiting on), so a leave before the restore ends keeps it (gatefold#133).
     private func noteShownUnsettled() {
         guard let model = weakModel, let named = navigator.currentLocation else { return }
-        let here = LaunchOptions.shownPageAtHisPlace ? (model.keptPlace.map { $0.copy(text: { $0 = Locator.Text() }) } ?? named) : named
-        // Read from the screen, never Readium (whose reports wait on the stalled page), unless the test hook names the place.
-        let note = model.reflowShownUnsettled(here, onScreen: LaunchOptions.shownPageAtHisPlace ? nil : spanOnScreen(of: named))
+        let stale = LaunchOptions.shownPageAtHisPlace || LaunchOptions.shownSpanLate
+        let here = stale ? (model.keptPlace.map { $0.copy(text: { $0 = Locator.Text() }) } ?? named) : named
+        // Read from the screen, never Readium (whose reports wait on the stalled page), unless a test hook names the place.
+        let note = model.reflowShownUnsettled(here, onScreen: stale ? nil : spanOnScreen(of: named))
         guard note != nil, !LaunchOptions.shownPageWithoutWords else { return }
         // The watchdog starts the restore again right after this: the model takes the words only while
         // this very note stands (a settle, a new reflow or a newer note drops it).

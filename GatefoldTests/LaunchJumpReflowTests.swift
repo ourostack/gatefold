@@ -20,6 +20,9 @@ final class TwoStepJumpPage: ReaderPage {
     var midFlight: (@MainActor () async -> Void)?
     /// Off: the page shows the place, but Readium's own report stays on the file start, never catching up.
     var readiumCatchesUp = true
+    /// The chapter's span the screen shows, read natively (`spanOnScreenNow`); nil when it can't be read.
+    var spanNow: ClosedRange<Double>?
+    func spanOnScreenNow(of named: Locator) -> ClosedRange<Double>? { spanNow }
     /// The page on screen, when Readium names another.
     private var shown: Locator?
     private var target: Locator?

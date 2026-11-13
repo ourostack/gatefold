@@ -109,6 +109,10 @@ enum LaunchOptions {
     /// kept, as when Readium reports no new location while the restore stalls (CI 43075159905, gatefold#133);
     /// otherwise the runner's layout decides whether it is that place or the boundary before it.
     static var shownPageAtHisPlace: Bool { shownPageWithoutWords && defaults.bool(forKey: "GatefoldShownPageAtHisPlace") }
+    /// Tests only, with `shownPageWithoutWords`: at the watchdog the page's span on screen goes unread and Readium
+    /// still names the page from before the rotation, his kept place, as on CI's runs 43321734349 and 43370826599
+    /// (gatefold#346); unlike `shownPageAtHisPlace`, the screen can be read again as he leaves.
+    static var shownSpanLate: Bool { shownPageWithoutWords && defaults.bool(forKey: "GatefoldShownSpanLate") }
     /// Tests only: a book opened on a place with no words opens on its chapter's start, as a reopen whose
     /// stalled restore settled there did on CI (gatefold#250); the saved place itself is unchanged.
     static var reopenOnChapterStart: Bool { isUITest && defaults.bool(forKey: "GatefoldReopenOnChapterStart") }
