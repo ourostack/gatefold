@@ -2,6 +2,7 @@
 
     python3 -I scripts/ci-shards.py check [--list] [--expect FILE]
     python3 -I scripts/ci-shards.py write
+    python3 -I scripts/ci-shards.py smoke DEVICE [CLASS ...]
     python3 -I scripts/ci-shards.py --selftest
 
 Each shard job in app.yml (one that calls ui-tests.yml) lists `tests`, `skip` and `pr_tests` per matrix entry, under
@@ -11,12 +12,17 @@ main and full-list pull requests) this fails when
   - a skipped test is not in its shard's `tests`, or runs in no other shard on that device on main,
   - a shard has no `tests` list (an empty list would run the whole suite), or a PR list with no `pr_when`,
   - one test runs in two shards on the same device in the same tier,
-  - a shard's `timeout` is under its comment's `<setup> + 2 x <slowest> + 12` rounded up, with <setup> the `boot` that
-    ui-tests.yml gives the time-left action: the test step's budget is the limit less those two (gatefold#198).
+  - a shard's `timeout` is under `<setup> + 2 x <slowest> + 5 + 12` rounded up, or its comment doesn't show that sum:
+    <setup> is the `boot` ui-tests.yml gives the time-left action (gatefold#198), <slowest> the minutes its tests'
+    slowest passes add up to in scripts/ci-shards.times, for whichever of its two lists (main or PR) runs longer, and
+    5 the test step's minutes no test gets (LAUNCH below; gatefold#260),
+  - a test that a shard runs has no slowest pass in scripts/ci-shards.times, or a line there names no test CI runs.
 --list prints every "tier|device|test" with its shard. --expect FILE fails unless that set equals the file's (the first
 word of each line; blank lines and lines starting with # ignored). CI checks against scripts/ci-shards.expect, so a
 test leaves CI only by a visible edit there: after adding or removing a test, `write` rewrites the file from the shards
 (keeping its comment header), and the diff shows what changed.
+`smoke` prints the job limit for DEVICE's smoke shard when a pull request also runs the UI test classes it edits there:
+the same formula over the smoke PR list and those classes (the changes job passes it on; gatefold#260).
 Reads only; no dependencies beyond python3. It runs in the job `CI scripts, offline`, which `GatefoldCore tests` (a
 required check) stands for (gatefold#241).
 """
@@ -28,6 +34,12 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WORKFLOW = os.path.join(ROOT, ".github", "workflows", "app.yml")
 SHARD = os.path.join(ROOT, ".github", "workflows", "ui-tests.yml")
 RESERVE = 12  # the time-left action's default, kept for the logs after the tests
+# Minutes of the test step that no test gets (gatefold#260): ci-within.py stops the run 2 min before the step's end
+# (its GRACE), and xcodebuild takes up to 3 min more to start the first test and end the run (159 s at the 99th
+# percentile of 4008 green test steps, 2026-11-08 to 11-12).
+LAUNCH = 5
+TIMES_NAME = "scripts/ci-shards.times"
+TIMES = os.path.join(ROOT, TIMES_NAME)
 SOURCES = os.path.join(ROOT, "GatefoldUITests")
 TIERS = ("pr", "main")
 EXPECT = os.path.join(ROOT, "scripts", "ci-shards.expect")
@@ -148,8 +160,9 @@ def expand(entries, tests, problems, where):
     return names
 
 
-def plan(text, tests):
-    """(problems, {(tier, device, test): [shard, ...]})"""
+def plan(text, tests, lists=None):
+    """(problems, {(tier, device, test): [shard, ...]}). Given a list, `lists` also gets each shard's
+    (job, device, entry, {tier: tests})."""
     problems, runs, seen, skips = [], {}, set(), []
     for job, device, s in shards(text):
         name = s.get("shard", "?")
@@ -174,6 +187,8 @@ def plan(text, tests):
             on_pr = expand(pr, tests, problems, where + " pr_tests")
             if not s.get("pr_when", "").strip():
                 problems.append(f"{where}: has pr_tests but no pr_when, so it never runs on a pull request")
+        if lists is not None:
+            lists.append((job, device, s, {"pr": on_pr, "main": full}))
         for tier, chosen in (("pr", on_pr), ("main", full)):
             for t in chosen:
                 runs.setdefault((tier, device, t), []).append(name)
@@ -193,34 +208,117 @@ def boot_of(shard_text):
     return int(m.group(1)) if m else None
 
 
-def limit_problems(text, boot):
-    """A shard whose `timeout` is under `boot + 2 x slowest + 12` rounded up, as its comment shows (gatefold#198)."""
+def read_times(path):
+    with open(path, encoding="utf-8") as f:
+        return read_times_text(f.read())
+
+
+def read_times_text(text):
+    """({"device|Class/test": seconds}, problems) from the times file: `device|Class/test<TAB>seconds`, then notes."""
+    times, problems = {}, []
+    for n, line in enumerate(text.splitlines(), 1):
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        cols = line.split("\t")
+        if len(cols) < 2 or not re.fullmatch(r"\d+", cols[1].strip()) or "|" not in cols[0]:
+            problems.append(f"line {n} should read `device|Class/test<TAB>seconds`: {line.strip()}")
+            continue
+        if cols[0].strip() in times:
+            problems.append(f"line {n}: {cols[0].strip()} is listed twice")
+        times[cols[0].strip()] = int(cols[1])
+    return times, problems
+
+
+def tenths_up(seconds):
+    """Seconds as minutes, rounded up to a tenth."""
+    return -(-seconds // 6) / 10
+
+
+def minutes_for(seconds, boot):
+    """(job limit, its formula) for tests whose slowest passes add up to `seconds`."""
+    slowest = tenths_up(seconds)
+    return boot + -(-int(round(2 * slowest * 10)) // 10) + LAUNCH + RESERVE, f"{boot} + 2 x {slowest:.1f} + {LAUNCH} + {RESERVE}"
+
+
+def limit_problems(lists, boot, times):
+    """Each shard's `timeout` against `boot + 2 x <slowest> + LAUNCH + 12`, its comment showing the sum, with <slowest> the
+    sum of its tests' slowest passes in the times file for the tier that runs longer (gatefold#198, gatefold#260). A
+    limit may sit a minute over its need, no more: a hang should fail as soon as a green run can't still be running."""
     if boot is None:
         return ["ui-tests.yml gives the time-left action no `boot`, so no shard's tests' budget can be checked"]
-    out = []
-    for job, _, s in shards(text):
+    out, missing, used = [], set(), set()
+    for job, device, s, tiers in lists:
         where = f"{job} shard {s.get('shard', '?')}"
+        sums, unknown = {}, set()
+        for tier, chosen in tiers.items():
+            keys = {f"{device}|{t}" for t in chosen}
+            used |= keys
+            unknown |= keys - set(times)
+            sums[tier] = sum(times.get(k, 0) for k in keys)
+        missing |= unknown
+        if unknown:
+            continue  # its sum isn't known yet; the missing lines below say what to add, then rerun for this shard
+        tier = max(sums, key=lambda k: (sums[k], k == "main"))
+        need, want = minutes_for(sums[tier], boot)
         note = s.get("#timeout", "")
-        m = re.fullmatch(r"(\d+) \+ 2 x (\d+(?:\.\d+)?) \+ (\d+)", note)
-        want = f"`timeout: N # {boot} + 2 x <slowest> + {RESERVE}`"
-        if not m or int(m.group(1)) != boot or int(m.group(3)) != RESERVE:
-            out.append(f"{where}: its timeout should read {want}, the boot's {boot} min, twice its tests' slowest "
-                       f"passes and {RESERVE} for the logs; it reads {s.get('timeout', '?')} # {note or '(no formula)'}")
-            continue
-        slowest = float(m.group(2))
-        need = boot + RESERVE + -(-int(round(2 * slowest * 10)) // 10)
-        if not s.get("timeout", "").isdigit() or int(s["timeout"]) < need:
-            out.append(f"{where}: timeout {s.get('timeout')} should be at least {need} ({note}, rounded up), or its "
-                       "tests get less than twice their slowest passes")
+        timeout = int(s["timeout"]) if s.get("timeout", "").isdigit() else None
+        if re.sub(r"\s+", " ", note.strip()) != want or timeout is None or not need <= timeout <= need + 1:
+            out.append(f"{where}: its timeout should read `{need} # {want}`: {boot} for setup, twice its {tier} list's "
+                       f"slowest passes ({sums[tier]} s in {TIMES_NAME}), {LAUNCH} for the test run's start and its stop's "
+                       f"grace, {RESERVE} for the logs; it reads {s.get('timeout', '?')} # {note or '(no formula)'}")
+    for k in sorted(missing):
+        out.append(f"{k} has no slowest pass in {TIMES_NAME}, so its shard's limit can't be checked: add a line "
+                   f"`{k}<TAB><seconds>`, its slowest passing time in CI (an estimate until CI has run it), then rerun "
+                   "this check for its shard's timeout line")
+    for k in sorted(set(times) - used):
+        out.append(f"{k} is in {TIMES_NAME}, but no shard runs it: remove its line")
     return out
+
+
+# A test the times file doesn't have on this device (a new class, or one main runs only on the other device): the
+# other device's time, else this.
+UNKNOWN_SECONDS = 600
+
+
+def smoke_limit(text, tests, times, boot, device, classes):
+    """The job limit for `device`'s smoke shard when it also runs `classes` (a pull request that edits them)."""
+    lists = []
+    plan(text, tests, lists)
+    chosen = set()
+    for _, d, s, tiers in lists:
+        if d == device and s.get("pr_when") == "smoke":
+            chosen |= tiers["pr"]
+    for c in classes:
+        chosen |= {f"{c}/{t}" for t in tests.get(c, [])}
+
+    def seconds(t):
+        if f"{device}|{t}" in times:
+            return times[f"{device}|{t}"]
+        return max((v for k, v in times.items() if k.split("|", 1)[1] == t), default=UNKNOWN_SECONDS)
+    return minutes_for(sum(seconds(t) for t in chosen), boot)
+
+
+def smoke(args):
+    """`smoke DEVICE [CLASS ...]`: print the smoke shard's job limit in minutes, then its formula."""
+    with open(WORKFLOW, encoding="utf-8") as f:
+        text = f.read()
+    with open(SHARD, encoding="utf-8") as f:
+        boot = boot_of(f.read())
+    need, want = smoke_limit(text, read_tests(SOURCES), read_times(TIMES)[0], boot, args[0], args[1:])
+    print(need)
+    print(f"{need} # {want}", file=sys.stderr)
+    return 0
 
 
 def check(args):
     with open(WORKFLOW, encoding="utf-8") as f:
         text = f.read()
-    problems, runs = plan(text, read_tests(SOURCES))
+    lists = []
+    problems, runs = plan(text, read_tests(SOURCES), lists)
+    times, bad = read_times(TIMES)
+    problems += [f"{TIMES_NAME} {p}" for p in bad]
     with open(SHARD, encoding="utf-8") as f:
-        problems += limit_problems(text, boot_of(f.read()))
+        problems += limit_problems(lists, boot_of(f.read()), times)
     listed = []
     if "--list" in args:
         for (tier, device, t), names in sorted(runs.items()):
@@ -413,22 +511,84 @@ jobs:
     assert "main|d|A/added runs in CI but isn't in scripts/ci-shards.expect" in new and WRITE in new, new
     assert "main|d|A/gone is in scripts/ci-shards.expect, but no shard runs it" in gone and WRITE in gone, gone
     assert expect_problems({"x"}, {"x"}) == []
-    # The limit: the boot's minutes, twice the slowest rounded up, and the reserve (gatefold#198).
+    # The limit: the boot's minutes, twice the slowest passes rounded up, the run's start and stop, and the reserve
+    # (gatefold#198), the slowest summed from the times file over the tier that runs longer (gatefold#260).
     assert boot_of('      - uses: ./.github/actions/time-left\n        with:\n          boot: "30" # x\n') == 30
     assert boot_of("no boot here") is None
-    def limits(timeout):
-        return limit_problems(wf(f"""          - shard: s1
+    ipad = "iPad Pro 13-inch|"
+    times = {ipad + "AUITests/testOne": 120, ipad + "AUITests/testTwo": 228, ipad + "BUITests/testThree": 300}
+
+    def limits(timeout, entry="            tests: AUITests\n", known=times):
+        lists = []
+        problems = plan(wf(f"""          - shard: s1
+{entry}            timeout: {timeout}
+            cold: false
+          - shard: s2
+            tests: BUITests
+            timeout: {need(5.0)} # 30 + 2 x 5.0 + {LAUNCH} + 12
+            cold: false"""), tests, lists)[0]
+        assert problems == [], problems
+        return limit_problems(lists, 30, known)
+
+    def need(slowest):
+        return 30 + -(-int(round(2 * slowest * 10)) // 10) + LAUNCH + 12
+
+    # 120 + 228 s is 5.8 min, twice that 11.6, rounded up to 12.
+    ok = f"{need(5.8)} # 30 + 2 x 5.8 + {LAUNCH} + 12"
+    assert need(5.8) == 54 + LAUNCH and limits(ok) == [], limits(ok)
+    assert limits(f"{need(5.8) + 1} # 30 + 2 x 5.8 + {LAUNCH} + 12") == []  # a minute over, as some shards kept
+    short = limits(f"{need(5.8) - 1} # 30 + 2 x 5.8 + {LAUNCH} + 12")
+    assert any(f"should read `{need(5.8)} #" in p for p in short), short
+    # A sum that isn't the times file's, an old formula, or none: each names the line to write.
+    for wrong in (f"{need(5.8)} # 30 + 2 x 4.8 + {LAUNCH} + 12", "54 # 30 + 2 x 5.8 + 12", "54"):
+        got = limits(wrong)
+        assert any(f"should read `{need(5.8)} # 30 + 2 x 5.8 + {LAUNCH} + 12`" in p for p in got), (wrong, got)
+    # A PR list that runs longer than the full list sizes the limit (gatefold#260: ipad-undo-edge's 4.8 min of main
+    # tests, but 339 s of PR tests): here testTwo's 228 s, 3.8 min, against testOne's 2.0.
+    heavy = ("            tests: AUITests/testOne\n            pr_tests: AUITests/testTwo\n            pr_when: g\n")
+    got = limits(f"{need(2.0)} # 30 + 2 x 2.0 + {LAUNCH} + 12", heavy)
+    assert any("twice its pr list's slowest passes (228 s" in p for p in got), got
+    assert limits(f"{need(3.8)} # 30 + 2 x 3.8 + {LAUNCH} + 12", heavy) == []
+    # A catch-all grows with its class: a test the times file doesn't know, or one it knows that no shard runs, fails.
+    unknown = limits(ok, known={k: v for k, v in times.items() if not k.endswith("testTwo")})
+    assert any("AUITests/testTwo has no slowest pass" in p for p in unknown), unknown
+    stale = limits(ok, known=dict(times, **{ipad + "AUITests/testGone": 60}))
+    assert any("AUITests/testGone is in scripts/ci-shards.times, but no shard runs it" in p for p in stale), stale
+    assert read_times_text("iPad|A/t\t60\tnote\n# c\n\nbad line\n") == ({"iPad|A/t": 60}, ["line 4 should read "
+                                                                                     "`device|Class/test<TAB>seconds`: bad line"])
+    over = limits(f"{need(5.8) + 2} # 30 + 2 x 5.8 + {LAUNCH} + 12")  # more than a minute over: a hang waits longer
+    assert any(f"should read `{need(5.8)} #" in p for p in over), over
+    # Rounding up to a tenth: 120 + 229 s is 5.817 min, so 5.9.
+    assert limits(f"{need(5.9)} # 30 + 2 x 5.9 + {LAUNCH} + 12", known=dict(times, **{ipad + "AUITests/testTwo": 229})) == []
+    # A skipped test is out of its shard's sum: the sums are over plan()'s lists, its `tests` less its `skip`.
+    lists = []
+    plan(wf("""          - shard: s1
             tests: AUITests
-            timeout: {timeout}
-            cold: false"""), 30)
-    assert limits("54 # 30 + 2 x 5.8 + 12") == [], limits("54 # 30 + 2 x 5.8 + 12")
-    assert limits("42 # 30 + 2 x 0.0 + 12") == []
-    assert limits("54 # 30 + 2 x 5.95 + 12") == []  # 11.9 -> 12
-    assert limits("55 # 30 + 2 x 5.8 + 12") == []  # a minute over, as some shards kept
-    assert any("at least 54" in p for p in limits("53 # 30 + 2 x 5.8 + 12")), limits("53 # 30 + 2 x 5.8 + 12")
-    assert any("should read" in p for p in limits("36 # 12 + 2 x 5.8 + 12")), limits("36 # 12 + 2 x 5.8 + 12")
-    assert any("no formula" in p for p in limits("54")), limits("54")
-    assert limit_problems(wf(""), None) != []
+            skip: AUITests/testTwo
+          - shard: s2
+            tests: AUITests/testTwo BUITests"""), tests, lists)
+    assert lists[0][3]["main"] == {"AUITests/testOne"}, lists
+    # A tie between the lists names the main list.
+    tie = "            tests: AUITests/testOne\n            pr_tests: AUITests/testOne\n            pr_when: g\n"
+    got = limits("1 # x", tie)
+    assert any("twice its main list's slowest passes (120 s" in p for p in got), got
+    # A shard with a test the times file lacks isn't sized until it has the line, so the fix takes one round.
+    assert not any("s1: its timeout" in p for p in unknown), unknown
+    assert any("listed twice" in p for p in read_times_text("d|A/t\t1\nd|A/t\t2\n")[1])
+    # The smoke shard with edited classes: its PR list plus every test of each class, a time from the other device
+    # when this one has none, else UNKNOWN_SECONDS.
+    smokewf = wf(f"""          - shard: s1
+            tests: AUITests/testOne
+            pr_tests: BUITests/testThree
+            pr_when: smoke
+            timeout: 1
+            cold: false""")
+    duo = dict(times, **{"iPhone Duo|AUITests/testTwo": 60})
+    assert smoke_limit(smokewf, tests, times, 30, "iPad Pro 13-inch", [])[0] == need(5.0)
+    assert smoke_limit(smokewf, tests, times, 30, "iPad Pro 13-inch", ["AUITests"])[0] == need(10.8)  # 300+120+228
+    unseen = dict(tests, CUITests=["testNew"])
+    assert smoke_limit(smokewf, unseen, duo, 30, "iPad Pro 13-inch", ["CUITests"])[0] == need(15.0)  # 300 + 600
+    assert limit_problems([], None, {}) != []
     print("ci-shards selftest: ok")
     return 0
 
@@ -441,5 +601,7 @@ if __name__ == "__main__":
         sys.exit(check(args[1:]))
     if args[:1] == ["write"]:
         sys.exit(write())
+    if args[:1] == ["smoke"] and len(args) >= 2:
+        sys.exit(smoke(args[1:]))
     print(__doc__, file=sys.stderr)
     sys.exit(2)
