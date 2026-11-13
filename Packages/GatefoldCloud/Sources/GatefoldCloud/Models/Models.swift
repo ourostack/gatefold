@@ -341,6 +341,10 @@ public enum CloudChange: Sendable, Hashable {
     /// A queued annotation reached the Cloud; carries its server `uuid`. Update the app's copy with it.
     case annotationSaved(fastHash: String, CloudAnnotation)
     case outbox(pending: Int)
+    /// The Cloud turned a queued position away and it was dropped: the e-reader won't get this place.
+    case positionRefused(fastHash: String)
+    /// A queued position reached the Cloud (or lost fairly to a newer one from another client).
+    case positionSent(fastHash: String)
     case signedIn(CloudAccount)
     case signedOut
     /// The refresh token stopped working; the user must sign in again.

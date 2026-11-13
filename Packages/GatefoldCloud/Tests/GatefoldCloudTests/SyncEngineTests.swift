@@ -287,6 +287,39 @@ struct PositionSyncTests {
         }
     }
 
+    /// Since November 2026 PocketBook answers every position write with 422 "position: File not found."
+    /// (seen live 2026-11-13). The app must hear that the place didn't reach the e-reader: never a
+    /// silent drop under an "In step with your e-reader" line.
+    @Test func aPlaceTheCloudRefusesIsAnnouncedNotLostInSilence() async throws {
+        let h = Harness()
+        await h.transport.on("GET", "/fileops/info", remote("2026-10-31T21:00:00Z"))
+        await h.transport.on("POST", "/books/read-position", .json(#"{"error_code":0,"error_msg":"position: File not found."}"#, status: 422))
+        let cloud = h.cloud()
+        let stream = cloud.changes()
+        await cloud.push(position, for: CloudBook(fastHash: frankenstein))
+        await cloud.flushOutbox()
+        var refused: String?
+        for await change in stream {
+            if case let .positionRefused(hash) = change { refused = hash; break }
+        }
+        #expect(refused == frankenstein)
+    }
+
+    @Test func aPlaceThatLandsIsAnnouncedSent() async throws {
+        let h = Harness()
+        await h.transport.on("GET", "/fileops/info", remote("2026-10-31T21:00:00Z"))
+        await h.transport.on("POST", "/books/read-position", .ok)
+        let cloud = h.cloud()
+        let stream = cloud.changes()
+        await cloud.push(position, for: CloudBook(fastHash: frankenstein))
+        await cloud.flushOutbox()
+        var sent: String?
+        for await change in stream {
+            if case let .positionSent(hash) = change { sent = hash; break }
+        }
+        #expect(sent == frankenstein)
+    }
+
     @Test func comparesTimesOnTheServersClock() async throws {
         // Device clock runs 60 s fast: our 21:59:30 is really 21:58:30, older than the remote 21:59:00.
         let h = Harness(clock: TestClock(utc("2026-10-31T22:01:00Z")))

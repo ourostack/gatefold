@@ -240,6 +240,10 @@ final class AppModel {
         case .authenticationRequired:
             // Keep the shelf and the account's name; the library offers to sign in again.
             needsReconnect = account?.email ?? needsReconnect ?? ""
+        case let .positionRefused(fastHash):
+            library.placeRefused(fastHash)
+        case let .positionSent(fastHash):
+            library.placeSent(fastHash)
         case .annotations, .annotationSaved, .outbox:
             break
         }
