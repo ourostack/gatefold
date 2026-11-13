@@ -20,12 +20,14 @@ iPad Pro 13-inch|FineTuneTapUITests/testEveryTapFlipsPositionLabelLandscape	285	
 iPad Pro 13-inch|FineTuneTapUITests/testEveryTapFlipsPositionLabelPortrait	234	# p95 of 104, slowest 415
 iPad Pro 13-inch|MarginTapUITests/testEveryMarginTapOnAFreshSpreadTurns	288	# slowest of 5 (main and #322, 2026-11-12)
 iPad Pro 13-inch|NavigationPlaceUITests/testAContentsJumpKeepsThePlace	291	# p95 of 135, slowest 327
+iPad Pro 13-inch|NavigationPlaceUITests/testAContentsJumpLeftWhileItsChapterLoadsKeepsTheChapter	200	# slowest of 3 CI passes on #341 (171, 174, 200 s), an estimate until CI has timed more
 iPad Pro 13-inch|NavigationPlaceUITests/testAJumpFromAPageStillLoadingStartsAtOnce	435	# p95 of 95, slowest 598
 iPad Pro 13-inch|NavigationPlaceUITests/testAJumpsVeilHoldsWhileTheChapterLoads	244	# p95 of 103, slowest 279
 iPad Pro 13-inch|NavigationPlaceUITests/testAScrubberJumpKeepsThePlace	224	# p95 of 98, slowest 252
 iPad Pro 13-inch|NavigationPlaceUITests/testAScrubberJumpLeftWhileItsChapterLoadsKeepsItsTarget	239	# p95 of 19, slowest 239
 iPad Pro 13-inch|NavigationPlaceUITests/testOpenedFromTheShelfThenLeftTwiceWithoutATurnKeepsThePlace	362	# p95 of 149, slowest 435
 iPad Pro 13-inch|NavigationPlaceUITests/testReadInPortraitRotatedThenLeftKeepsHisFirstWords	482	# p95 of 106, slowest 570
+iPad Pro 13-inch|NavigationPlaceUITests/testScrolledAfterAStalledSwitchToScrollKeepsWhereHeScrolled	280	# slowest of 2 CI passes on #349 (265, 280 s), an estimate until CI has timed more
 iPad Pro 13-inch|NavigationPlaceUITests/testScrolledAfterTheLaunchReflowThenLeftKeepsWhereHeScrolled	359	# p95 of 105, slowest 464
 iPad Pro 13-inch|NavigationPlaceUITests/testTheCloudsOfferOverTheOpeningCoverTakesHisTap	175	# p95 of 128, slowest 204
 iPad Pro 13-inch|NavigationPlaceUITests/testTheOpeningCoverLetsTheControlsThrough	71	# p95 of 106, slowest 147
