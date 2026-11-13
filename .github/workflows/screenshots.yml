@@ -23,6 +23,8 @@ on:
   pull_request:
     paths:
       - "GatefoldListingShots/**"
+      - "GatefoldUITests/ReaderReads.swift"  # compiled into GatefoldListingShots (project.yml)
+      - "GatefoldUITests/HangGuard.swift"
       - "screenshots/**"
       - "scripts/screenshots/**"
       - ".github/workflows/screenshots.yml"
@@ -236,9 +238,13 @@ jobs:
         timeout-minutes: ${{ matrix.device == 'ipad' && 45 || 40 }}
         env:
           CAPTURE_FORCE_HANG: ${{ inputs.force_hang }}
+          STEP_MINUTES: ${{ matrix.device == 'ipad' && 45 || 40 }}  # the step's timeout-minutes above
         run: |
           # The step's default shell is bash -e; a failed try must reach the retry, not end the step.
           set +e -uo pipefail
+          # A reader scene's wait is judged in reads (ReaderReads.reads, gatefold#297); its hang guard fires before the
+          # step's end (HangGuard), so a stuck try fails with its reads instead of the step being killed (gatefold#126).
+          export TEST_RUNNER_GATEFOLD_STEP_UNTIL=$(( $(date +%s) + STEP_MINUTES * 60 ))
           status=0
           # A try whose watcher found the simulator stopped answering (<scene>.<try>.stuck, gatefold#150) gets the
           # device rebooted and one replacement try, at most REBOOTS times a job. Every scene is still shot twice.

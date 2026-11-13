@@ -31,7 +31,10 @@ enum ReaderReads {
     /// `pageReady` (`ReaderModel.showPage`), and the words probe and the count are both held while it is up, so the
     /// ready allowances start only once it is gone.
     private static func ready(_ app: XCUIApplication) -> Bool {
-        (el(app, "reader.pageReady").value as? String) == "1" && !el(app, "reader.reopenPicture").exists
+        // Checked for existence first: before the reader is up there is no probe, and reading a missing element's value
+        // fails the test (ReaderReads.reads reads it from the launch on, while the shelf is still up, gatefold#297).
+        let page = el(app, "reader.pageReady")
+        return page.exists && (page.value as? String) == "1" && !el(app, "reader.reopenPicture").exists
     }
 
     /// The reader's page is up (`reader.page`, there once the reader has laid out its first frame), and the reads it
@@ -119,16 +122,16 @@ enum ReaderReads {
     }
 
     /// Element `id` is there and its label passes `wanted` (any label when nil), and the reads it took, or nil with the
-    /// label it last read: judged in reads and the reader's own ready report, never seconds (#297). Up to `coverReads`
-    /// while the page isn't ready, then `readyReads` once it is: a probe still wrong that long after the page is ready
+    /// label it last read: judged in reads and the reader's own ready report, never seconds (#297). Up to `cover` reads
+    /// (`coverReads` unless the caller has less room) while the page isn't ready, then `readyReads` once it is: a probe still wrong that long after the page is ready
     /// is the app's, not the runner's. `say` notes each change of the label or the ready report, with its read, so a
     /// red tells a late page from a check that settled elsewhere. Only for probes whose labels carry no book text.
     static func reads(_ app: XCUIApplication, _ id: String, as wanted: ((String) -> Bool)?, _ what: String,
-                      say: (String) -> Void, file: StaticString = #filePath, line: UInt = #line) -> (reads: Int?, label: String?) {
+                      cover: Int = coverReads, say: (String) -> Void, file: StaticString = #filePath, line: UInt = #line) -> (reads: Int?, label: String?) {
         let probe = el(app, id)
-        let guardEnds = Date().addingTimeInterval(HangGuard.seconds(reads: coverReads + readyReads))
+        let guardEnds = Date().addingTimeInterval(HangGuard.seconds(reads: cover + readyReads))
         var readyAt: Int?, last: String?, lastReady = false, noted = false
-        for read in 1...(coverReads + readyReads) {
+        for read in 1...(cover + readyReads) {
             let label: String? = probe.exists ? probe.label : nil
             let isReady = ready(app)
             if readyAt == nil, isReady { readyAt = read }
@@ -144,8 +147,8 @@ enum ReaderReads {
                 say("\(what) not as wanted: the page was ready at read \(readyAt) and \(readyReads) reads later still was not")
                 return (nil, label)
             }
-            if readyAt == nil, read >= coverReads {
-                say("\(what) not as wanted: the page was never ready in \(coverReads) reads")
+            if readyAt == nil, read >= cover {
+                say("\(what) not as wanted: the page was never ready in \(cover) reads")
                 return (nil, label)
             }
             if Date() > guardEnds {
