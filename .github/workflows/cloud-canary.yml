@@ -5,7 +5,8 @@ name: Cloud canary
 # to agent test account 1 once and checks the basics Gatefold needs (gatefold#372). It is not a
 # required check, so the cloud's outages never block a merge. scripts/cloud-canary.py judges the run:
 # a failed step opens or comments on the one `cloud-drift` issue; a 429 at sign-in is inconclusive (a
-# yellow summary, no issue; a `canary-lockout` issue only after 24 h of it).
+# yellow summary, no issue; a `canary-lockout` issue only after 24 h of it). On red the issue carries
+# every refused exchange and how each answer's shape differs from the unit-test fixtures.
 on:
   schedule:
     - cron: "17 */6 * * *"
@@ -63,6 +64,7 @@ jobs:
         working-directory: Packages/GatefoldCloud
         env:
           GATEFOLD_LIVE_CANARY: "1"
+          GATEFOLD_LIVE_CAPTURE: ${{ runner.temp }}/capture
           GATEFOLD_LIVE_EMAIL: ${{ secrets.GATEFOLD_LIVE_EMAIL }}
           GATEFOLD_LIVE_PASSWORD: ${{ secrets.GATEFOLD_LIVE_PASSWORD }}
         run: |
@@ -76,7 +78,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           python3 -I scripts/cloud-canary.py report --log "$RUNNER_TEMP/canary.log" --outcome "${{ steps.canary.outcome }}" \
-            --state-in "$RUNNER_TEMP/prev/state.json" --state-out "$RUNNER_TEMP/state.json"
+            --state-in "$RUNNER_TEMP/prev/state.json" --state-out "$RUNNER_TEMP/state.json" --capture "$RUNNER_TEMP/capture"
+
+      # What the cloud said, redacted (RecordingTransport); the cloud-drift issue points here.
+      - name: Keep the capture
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: canary-capture
+          path: ${{ runner.temp }}/capture
+          retention-days: 30
+          if-no-files-found: ignore
 
       - name: Keep state for the next run
         if: success() || failure()

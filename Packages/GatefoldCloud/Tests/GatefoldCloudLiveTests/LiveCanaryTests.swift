@@ -58,7 +58,8 @@ struct LiveCanaryTests {
         let back = try? await cloud.remotePosition(for: book)
         let landed = back.map { abs($0.updated.timeIntervalSince(written.updated)) < 5 } ?? false
         withKnownIssue("gatefold#371: the cloud refuses position writes for pre-change records") {
-            check("position write: lands", landed, "the write did not land (read back \(back.map { PBDate.string($0.updated) } ?? "nothing"))")
+            check("position write: lands", landed, "the write did not land (read back \(back.map { PBDate.string($0.updated) } ?? "nothing"))",
+                  known: true)
         }
     }
 
@@ -73,8 +74,10 @@ struct LiveCanaryTests {
         }
     }
 
-    private func check(_ name: String, _ ok: Bool, _ detail: String) {
-        Live.log("CANARY \(name) \(ok ? "ok" : "FAILED: \(detail)")")
+    /// `known`: inside a `withKnownIssue`, a failure is expected and logged KNOWN, never FAILED, so the
+    /// verdict (scripts/cloud-canary.py) doesn't take it for drift.
+    private func check(_ name: String, _ ok: Bool, _ detail: String, known: Bool = false) {
+        Live.log("CANARY \(name) \(ok ? "ok" : known ? "KNOWN: \(detail)" : "FAILED: \(detail)")")
         #expect(ok, "\(name): \(detail)")
     }
 }
