@@ -824,7 +824,27 @@ final class ReaderModel {
     /// begun as it opened, hasn't landed, and he hasn't moved.
     private var openPlaceOwed: Bool {
         guard openedOnSavedPlace, hisMoves == 0, !touchedSinceLocation, !isClosed else { return false }
-        return openSettling || openSettleGoing || keeper.reflowing != nil
+        return openSettling || openSettleGoing || keeper.reflowing != nil || barePutBackGoing
+    }
+    /// The cover's own put-back of a bare place is under way (`putBackBarePlaceUnderCover`).
+    @ObservationIgnored private var barePutBackGoing = false
+
+    /// A place with no words is put back only by a reflow's restore (gatefold#250), and a reopen may run none:
+    /// on #341's iPad the page opened on its file's first page, no reflow came, and it showed there. So while the
+    /// cover holds, with no reflow going, the page is read and, if his place is off screen, moved to it, once.
+    /// Never once the page is in view: then a place found late is not moved to.
+    private func putBackBarePlaceUnderCover() {
+        guard openedOnBarePlace != nil, keeper.reflowing == nil, !barePutBackGoing, !pageReady, let page else { return }
+        barePutBackGoing = true
+        Task { [weak self] in
+            let visible = await page.visibleRange()
+            guard let self else { return }
+            defer { self.barePutBackGoing = false }
+            guard let visible, !self.pageReady, !self.isClosed, self.keeper.reflowing == nil,
+                  let (_, bare) = self.openPlaceToReapply(visible: visible) else { return }
+            _ = await page.go(to: bare)
+            readerLog.notice("open: the bare place put back under the cover, no reflow having come")
+        }
     }
 
     /// The cover stays while a reopen's place is still owed (gatefold#310). On CI's starved iPad, Readium put a
@@ -834,6 +854,7 @@ final class ReaderModel {
     /// offered, never moved to) still holds, but only past this bound. Counted in looks, never seconds.
     /// A turn he asks of the reopen picture ends the hold, as it ends the picture's own wait in `showPage`.
     private func holdForOpenPlace() async {
+        putBackBarePlaceUnderCover()
         guard openPlaceOwed, app.reopenQueuedTurn == nil else { return }
         var looks = 0
         while openPlaceOwed, app.reopenQueuedTurn == nil, looks < openPlaceBound { looks += 1; try? await Task.sleep(for: .milliseconds(50)) }
