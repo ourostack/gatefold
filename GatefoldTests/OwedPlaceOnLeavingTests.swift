@@ -488,14 +488,26 @@ final class UnreportedJumpPage: ReaderPage {
 actor LeaveGate {
     private var isOpen = false
     private var waiting: [CheckedContinuation<Void, Never>] = []
+    private var watching: [CheckedContinuation<Void, Never>] = []
     var waiters: Int { waiting.count }
     func wait() async {
         if isOpen { return }
-        await withCheckedContinuation { waiting.append($0) }
+        await withCheckedContinuation {
+            waiting.append($0)
+            watching.forEach { $0.resume() }
+            watching = []
+        }
+    }
+    /// Returns once a write is waiting here: the event itself (gatefold#350).
+    func arrival() async {
+        if !waiting.isEmpty { return }
+        await withCheckedContinuation { watching.append($0) }
     }
     func open() {
         isOpen = true
         waiting.forEach { $0.resume() }
         waiting = []
+        watching.forEach { $0.resume() }
+        watching = []
     }
 }
