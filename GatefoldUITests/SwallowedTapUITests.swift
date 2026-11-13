@@ -28,6 +28,44 @@ final class SwallowedTapUITests: XCTestCase {
         XCTAssertTrue(readsUntil(reads: Self.reads, "the page is ready") { (probe.value as? String) == "1" }.ok, "the page is ready")
         let close = app.buttons["reader.close"].firstMatch
         func screen(_ x: CGFloat, _ y: CGFloat) -> XCUICoordinate { app.coordinate(withNormalizedOffset: CGVector(dx: x, dy: y)) }
+        let report = el("reader.turnPlacement")
+        func landed() -> Int {
+            let words = report.label.split(separator: " ")
+            return words.first == "landed" && words.count > 1 ? Int(words[1]) ?? 0 : 0
+        }
+        func at(_ x: CGFloat, _ y: CGFloat) -> XCUICoordinate { screen(x, y) }
+
+        let slip = el("banner"), tab = el("banner.tab")
+        var answered = 0, asked = 0
+        func round(_ name: String, edge: Bool = true) {
+            print("SWALLOWED \(name): Cloud slip \(slip.exists ? "up" : "down"), tab \(tab.exists ? "up" : "down")")
+            // Taps on the middle of the page: each must bring the controls up, and a second tap take them down.
+            let taps: [(CGFloat, CGFloat)] = [(0.5, 0.5), (0.3, 0.5), (0.7, 0.5), (0.5, 0.25), (0.5, 0.75)]
+            for (i, (x, y)) in taps.enumerated() {
+                asked += 1
+                at(x, y).tap()
+                let up = readsUntil(reads: Self.answerReads, "\(name): tap \(i + 1) brings the controls") { close.exists }
+                print("SWALLOWED \(name): tap \(i + 1) at \(x),\(y): controls=\(up.ok) after \(up.reads) reads")
+                guard up.ok else { continue }
+                answered += 1
+                at(0.5, 0.5).tap()
+                XCTAssertTrue(readsUntil(reads: Self.reads, "the controls go") { !close.exists }.ok, "\(name): the controls go after tap \(i + 1)")
+            }
+            // An edge tap turns: on the page's own edge (the portrait iPad's page is narrower than the window).
+            guard edge else { return }
+            asked += 1
+            let before = landed()
+            page.coordinate(withNormalizedOffset: CGVector(dx: 0.97, dy: 0.5)).tap()
+            let turned = readsUntil(reads: Self.answerReads, "\(name): the edge tap turns") { landed() > before || close.exists }
+            if landed() > before { answered += 1 }
+            if close.exists { at(0.5, 0.5).tap(); _ = readsUntil(reads: Self.reads, "the controls go") { !close.exists } }
+            print("SWALLOWED \(name): edge tap turned=\(landed() > before) after \(turned.reads) reads")
+        }
+        // The Cloud's offer slides out over the cover a few seconds after it opens: taps with it up (#304's third
+        // bullet). Middle taps only, so the swipes below still leave the cover.
+        XCTAssertTrue(readsUntil(reads: Self.reads, "the Cloud's offer is up") { slip.exists }.ok, "the Cloud's offer is up")
+        round("with the Cloud slip up", edge: false)
+
         // The spazz run's look round Your Page: the controls, Your Page, Fine-Tune, and a tap above the panel to put it away.
         screen(0.5, 0.5).tap()
         XCTAssertTrue(readsUntil(reads: Self.reads, "the controls come up") { close.exists }.ok, "the controls come up")
@@ -44,13 +82,6 @@ final class SwallowedTapUITests: XCTestCase {
         }
         if close.exists { screen(0.5, 0.5).tap(); _ = readsUntil(reads: Self.reads, "the controls go") { !close.exists } }
 
-        let report = el("reader.turnPlacement")
-        func landed() -> Int {
-            let words = report.label.split(separator: " ")
-            return words.first == "landed" && words.count > 1 ? Int(words[1]) ?? 0 : 0
-        }
-        func at(_ x: CGFloat, _ y: CGFloat) -> XCUICoordinate { screen(x, y) }
-
         // The spazz run's first round: four quick swipes on, one back, each waited for in counted turns.
         for (i, forward) in [true, true, true, true, false].enumerated() {
             let before = landed()
@@ -59,31 +90,6 @@ final class SwallowedTapUITests: XCTestCase {
             print("SWALLOWED swipe \(i + 1) turned=\(turned.ok) after \(turned.reads) reads (landed \(landed()))")
             // The first swipe leaves the cover for the first chapter: that is the swipe whose finger was never heard lifting.
             if i == 0 { XCTAssertTrue(turned.ok, "swipe 1 turns into the first chapter") }
-        }
-        let slip = el("banner"), tab = el("banner.tab")
-        var answered = 0, asked = 0
-        func round(_ name: String) {
-            print("SWALLOWED \(name): Cloud slip \(slip.exists ? "up" : "down"), tab \(tab.exists ? "up" : "down")")
-            // Taps on the middle of the page: each must bring the controls up, and a second tap take them down.
-            let taps: [(CGFloat, CGFloat)] = [(0.5, 0.5), (0.3, 0.5), (0.7, 0.5), (0.5, 0.25), (0.5, 0.75)]
-            for (i, (x, y)) in taps.enumerated() {
-                asked += 1
-                at(x, y).tap()
-                let up = readsUntil(reads: Self.answerReads, "\(name): tap \(i + 1) brings the controls") { close.exists }
-                print("SWALLOWED \(name): tap \(i + 1) at \(x),\(y): controls=\(up.ok) after \(up.reads) reads")
-                guard up.ok else { continue }
-                answered += 1
-                at(0.5, 0.5).tap()
-                XCTAssertTrue(readsUntil(reads: Self.reads, "the controls go") { !close.exists }.ok, "\(name): the controls go after tap \(i + 1)")
-            }
-            // An edge tap turns: on the page's own edge (the portrait iPad's page is narrower than the window).
-            asked += 1
-            let before = landed()
-            page.coordinate(withNormalizedOffset: CGVector(dx: 0.97, dy: 0.5)).tap()
-            let turned = readsUntil(reads: Self.answerReads, "\(name): the edge tap turns") { landed() > before || close.exists }
-            if landed() > before { answered += 1 }
-            if close.exists { at(0.5, 0.5).tap(); _ = readsUntil(reads: Self.reads, "the controls go") { !close.exists } }
-            print("SWALLOWED \(name): edge tap turned=\(landed() > before) after \(turned.reads) reads")
         }
         round("after the swipes")
 
