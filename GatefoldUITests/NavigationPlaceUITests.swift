@@ -54,10 +54,11 @@ final class NavigationPlaceUITests: XCTestCase {
         XCTAssertTrue(app.buttons["reader.contents"].waitForExistence(timeout: 5))
     }
 
-    /// Leaves without a turn and comes back: the reopen shows `words`.
+    /// Leaves without a turn and comes back: the reopen shows the page he left, and that page is not `words`.
+    /// The page left and the reopen are each read once their words hold still (`ReaderReads.settle`), in reads,
+    /// never a sleep (gatefold#309).
     private func leaveAndReturn(expecting words: String, _ how: String) {
-        sleep(2)
-        let settled = visibleText
+        let settled = ReaderReads.settle(app, "the \(how)'s page") { print("REPRO jump \($0)") }.words
         XCUIDevice.shared.press(.home)
         if !app.wait(for: .runningBackground, timeout: 3) {
             XCUIApplication(bundleIdentifier: "com.apple.springboard").activate()
@@ -66,9 +67,8 @@ final class NavigationPlaceUITests: XCTestCase {
         app.quit()
         app.launchArguments = common
         app.relaunch()
-        _ = waitForWords()
-        sleep(4)
-        XCTAssertEqual(opening(visibleText), opening(settled), "after a \(how) and no turn, the reopen is on the page he jumped to")
+        let back = ReaderReads.settle(app, "the reopen after a \(how)") { print("REPRO jump \($0)") }.words
+        XCTAssertEqual(opening(back), opening(settled), "after a \(how) and no turn, the reopen is on the page he jumped to")
         XCTAssertNotEqual(opening(settled), opening(words), "the \(how) moved the page")
     }
 
@@ -81,7 +81,9 @@ final class NavigationPlaceUITests: XCTestCase {
         XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label CONTAINS[c] %@", "Chapter I")).firstMatch.waitForExistence(timeout: 10),
                       "the contents opened")
         XCTAssertTrue(ContentsRow.tap(row, in: app).ok, "the contents list chapter XXX")
-        _ = waitForWords(changingFrom: first, timeout: 20)
+        let moved = readsUntilMoved(from: first)
+        print("REPRO jump contents: moved \(moved.ok) after \(moved.reads) reads\(moved.hung ? " (hang guard)" : "")")
+        XCTAssertTrue(moved.ok, "the contents jump never moved the page in \(moved.reads) reads\(moved.hung ? " (hang guard)" : "")")
         XCTAssertTrue(keptWhatIsShown(), "the jump kept a place other than the page shown")
         leaveAndReturn(expecting: first, "contents jump")
     }
@@ -281,16 +283,39 @@ final class NavigationPlaceUITests: XCTestCase {
         // A deliberate drag along the bar: a tap on it never jumps (PlaceUndoUITests).
         let from = scrubber.coordinate(withNormalizedOffset: CGVector(dx: 0.1, dy: 0.5))
         from.press(forDuration: 0.1, thenDragTo: scrubber.coordinate(withNormalizedOffset: CGVector(dx: 0.62, dy: 0.5)))
-        _ = waitForWords(changingFrom: first, timeout: 20)
+        // The jump's landing, in reads, never seconds: on CI's iPad its chapter can load for over 25 s, and the old
+        // 20 s wait and 2 s sleep read the page before the jump as the page it settled on (gatefold#309, run
+        // 43277705735: still on its way 25 s after the drag, at a load average of 528).
+        let moved = readsUntilMoved(from: first)
+        print("REPRO jump scrubber: moved \(moved.ok) after \(moved.reads) reads\(moved.hung ? " (hang guard)" : "")")
+        XCTAssertTrue(moved.ok, "the scrubber jump never moved the page in \(moved.reads) reads\(moved.hung ? " (hang guard)" : "")")
         leaveAndReturn(expecting: first, "scrubber jump")
+    }
+
+    /// Reads, at least 0.3 s apart, until the jump has landed: its veil down and the page showing words other than
+    /// `first`'s (a page the jump passes on its way, its file's first, shows under the veil). Up to
+    /// `ReaderReads.coverReads`, as long as a jump's chapter may take to load on a starved runner. `HangGuard` ends it
+    /// only on a hang.
+    private func readsUntilMoved(from first: String) -> (ok: Bool, reads: Int, hung: Bool) {
+        let veil = app.descendants(matching: .any)["reader.veil"]
+        let guardEnds = Date().addingTimeInterval(HangGuard.seconds(reads: ReaderReads.coverReads))
+        for read in 1...ReaderReads.coverReads {
+            let now = visibleText
+            if !now.isEmpty, opening(now) != opening(first), !veil.exists { return (true, read, false) }
+            if Date() > guardEnds { return (false, read, true) }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+        }
+        return (false, ReaderReads.coverReads, false)
     }
 
     /// The same jump left while its chapter still loads (`-GatefoldHoldJumpSends`: the jump never reaches
     /// the page, so Readium never reports it, as on a slow runner's iPad): nothing was written, and the
     /// reopen came back at the book's start (gatefold#279). The reopen is on the jump's page, never the
-    /// opening one.
+    /// opening one. The leave's ordinary write is held for good (`-GatefoldHoldLeaveWrites`), as the
+    /// loading chapter held its read of the page until iOS ended Gatefold (gatefold#309): only what
+    /// leaving writes at once counts.
     func testAScrubberJumpLeftWhileItsChapterLoadsKeepsItsTarget() {
-        let first = openFresh(["-GatefoldHoldJumpSends", "YES"])
+        let first = openFresh(["-GatefoldHoldJumpSends", "YES", "-GatefoldHoldLeaveWrites", "YES"])
         showChrome()
         let scrubber = app.descendants(matching: .any)["reader.scrubber"]
         XCTAssertTrue(scrubber.waitForExistence(timeout: 5))
@@ -307,10 +332,9 @@ final class NavigationPlaceUITests: XCTestCase {
         app.quit()
         app.launchArguments = common
         app.relaunch()
-        let back = waitForWords()
-        sleep(4)
+        let back = ReaderReads.settle(app, "the reopen after a scrubber jump left on its way") { print("REPRO jump \($0)") }.words
         XCTAssertFalse(back.isEmpty, "the reopen shows words")
-        XCTAssertNotEqual(opening(visibleText), opening(first), "after a scrubber jump left while its chapter loaded, the reopen is on the jump's page, not the opening one")
+        XCTAssertNotEqual(opening(back), opening(first), "after a scrubber jump left while its chapter loaded, the reopen is on the jump's page, not the opening one")
     }
 
     /// A Contents jump left while its chapter still loads keeps the chapter he chose: never the place
@@ -514,7 +538,19 @@ final class NavigationPlaceUITests: XCTestCase {
     /// reports, so a reopen shows where he scrolled to, not where the scroll began. Every wait is a
     /// count of reads of the page, never seconds (#171).
     func testScrolledAfterTheLaunchReflowThenLeftKeepsWhereHeScrolled() {
-        var first = openFresh()
+        scrollAfterTheLaunchReflowThenLeave()
+    }
+
+    /// The same, with the first launch's reflows stalled behind their cover (`-GatefoldStallReflow`; the reopen isn't),
+    /// so the switch to Scroll settles only after the 12 s watchdog shows its page and starts it again, as on CI's slow
+    /// iPad. The words probe holds still meanwhile, and a swipe then lands on a page that can't move: swiping once the
+    /// words held still, without waiting for the reflow to settle, failed "the scroll moved the words" (gatefold#342).
+    func testScrolledAfterAStalledSwitchToScrollKeepsWhereHeScrolled() {
+        scrollAfterTheLaunchReflowThenLeave(["-GatefoldStallReflow", "YES"])
+    }
+
+    private func scrollAfterTheLaunchReflowThenLeave(_ extra: [String] = []) {
+        var first = openFresh(extra)
         // A fresh install offers the Cloud's place and never lands on it (#46): the book opens on its
         // cover, which has no words to scroll through. He takes the offer, as he would.
         if first.isEmpty { first = takeTheCloudsOffer() }
@@ -535,10 +571,16 @@ final class NavigationPlaceUITests: XCTestCase {
         turnStyle.tap()
         let scroll = app.buttons["Scroll"].firstMatch
         XCTAssertTrue(scroll.waitForExistence(timeout: 5), "the page turn menu offers Scroll")
+        let reflowBefore = ReaderReads.reflowNumber(app)
         scroll.tap()
         let close = app.buttons["appearance.close"].exists ? app.buttons["appearance.close"] : app.buttons["appearance.back"]
         if close.exists { close.tap() } else { app.descendants(matching: .any)["reader.page"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.2)).tap() }
-        // The switch to Scroll reflows the book: he swipes once the page has held still (the old 4 s).
+        // The switch to Scroll reflows the book: he swipes once its reflow has settled and the page has held still.
+        // Settled, not only still: on CI's slow iPad the reflow ran past the 12 s watchdog, which showed the page and
+        // started it again while the Scroll layout loaded under Readium's spinner. The words probe held still only
+        // because nothing reported, and six swipes on the loading page moved nothing (gatefold#342).
+        XCTAssertNotNil(ReaderReads.reflowSettled(app, since: reflowBefore, "the switch to Scroll") { print("SCROLL \($0)") },
+                        "the switch to Scroll's reflow (newer than \(reflowBefore)) settled")
         let before = steadyWords()
         let page = app.descendants(matching: .any)["reader.page"]
         let savedBefore = savedWords

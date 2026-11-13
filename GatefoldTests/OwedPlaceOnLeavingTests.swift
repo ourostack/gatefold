@@ -409,6 +409,32 @@ final class UnreportedJumpPage: ReaderPage {
         model.close()
     }
 
+    /// gatefold#309: the leave's ordinary write reads the page first, and the chapter still loading held that
+    /// read until iOS had ended Gatefold: the target was logged as kept and never written. It is written as he
+    /// leaves, in leaving's own turn, before any wait (the write's wait held for good here).
+    @Test func goingInactiveOnAScrubberJumpStillLoadingWritesItsTargetBeforeAnyWait() async throws {
+        let (app, model, page) = try await open("scrub-leave-at-once")
+        await model.go(toProgression: 0.43, rememberBack: true)
+        let target = try #require(page.sent.last, "the jump went out")
+        model.placeWriteWait = { await LeaveGate().wait() }
+        let owed = try #require(model.owedPlaceOnLeaving(), "leaving owed no place")
+        model.keepShownPageNow(owed)
+        let saved = try #require(savedPlace(app), "leaving wrote nothing before its wait")
+        #expect(saved.href.string == target.href.string)
+        #expect(saved.locations.progression == target.locations.progression)
+    }
+
+    @Test func closingOnAScrubberJumpStillLoadingWritesItsTargetBeforeAnyWait() async throws {
+        let (app, model, page) = try await open("scrub-close-at-once")
+        await model.go(toProgression: 0.43, rememberBack: true)
+        let target = try #require(page.sent.last, "the jump went out")
+        model.placeWriteWait = { await LeaveGate().wait() }
+        model.close()
+        let saved = try #require(savedPlace(app), "the close wrote nothing before its wait")
+        #expect(saved.href.string == target.href.string)
+        #expect(saved.locations.progression == target.locations.progression)
+    }
+
     /// The same inactive leave, with the jump's own report arriving while the leave still writes its
     /// target (held in its wait): the report is his page and its words, never dropped as already kept,
     /// and the target written after it never replaces them.
@@ -462,14 +488,26 @@ final class UnreportedJumpPage: ReaderPage {
 actor LeaveGate {
     private var isOpen = false
     private var waiting: [CheckedContinuation<Void, Never>] = []
+    private var watching: [CheckedContinuation<Void, Never>] = []
     var waiters: Int { waiting.count }
     func wait() async {
         if isOpen { return }
-        await withCheckedContinuation { waiting.append($0) }
+        await withCheckedContinuation {
+            waiting.append($0)
+            watching.forEach { $0.resume() }
+            watching = []
+        }
+    }
+    /// Returns once a write is waiting here: the event itself (gatefold#350).
+    func arrival() async {
+        if !waiting.isEmpty { return }
+        await withCheckedContinuation { watching.append($0) }
     }
     func open() {
         isOpen = true
         waiting.forEach { $0.resume() }
         waiting = []
+        watching.forEach { $0.resume() }
+        watching = []
     }
 }

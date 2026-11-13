@@ -94,7 +94,10 @@ public enum ReaderLayoutResolver {
         }
         let shadow = spineShadow(for: input.hinge)
 
-        switch input.forced ?? posture(bounds: bounds, fold: fold, hinge: input.hinge) {
+        // A forced spread only where a spread fits: on a portrait or narrow screen (the Duo's cover screen, a
+        // portrait iPad) two pages are columns too narrow to read, a layout no reader reaches (gatefold#303).
+        let forced = input.forced == .spread && !fitsSpread(bounds) ? .single : input.forced
+        switch forced ?? posture(bounds: bounds, fold: fold, hinge: input.hinge) {
         case .single:
             return ReaderLayout(posture: .single, pageFrame: bounds, gutter: nil, deck: nil, columns: .one, spineShadow: 0)
         case .spread:
@@ -120,8 +123,13 @@ public enum ReaderLayoutResolver {
         }
     }
 
+    /// Landscape and at least `minimumSpreadWidth` wide: room for two readable pages side by side.
+    private static func fitsSpread(_ bounds: CGRect) -> Bool {
+        bounds.width > bounds.height && bounds.width >= minimumSpreadWidth
+    }
+
     private static func posture(bounds: CGRect, fold: FoldRegion?, hinge: HingeState) -> Posture {
-        let wide = bounds.width > bounds.height && bounds.width >= minimumSpreadWidth
+        let wide = fitsSpread(bounds)
         if let fold {
             // Partially open: stood on a table, the page on the top half, the controls on the bottom.
             if case .partiallyOpen = hinge { return .tabletop }

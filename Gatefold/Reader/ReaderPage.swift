@@ -46,6 +46,8 @@ protocol ReaderPage: AnyObject {
     /// A standby swap retired the page an open reflow was laying out: that reflow's cover, retries and
     /// generation end with it (the model ends its own side, `keeper` and the reflow's notes).
     func endReflowForSwap()
+    /// UI tests: the web view's own count of the text columns on screen (`ReaderJS.columns`).
+    func columnMeasure() async -> String?
 }
 
 extension ReaderPage {
@@ -63,4 +65,5 @@ extension ReaderPage {
     func countPages(_ hrefs: [String], record: @escaping @MainActor (String, Int) -> Void, finished: @escaping @MainActor () -> Void) {}
     func stopCounting() {}
     func endReflowForSwap() {}
+    func columnMeasure() async -> String? { nil }
 }

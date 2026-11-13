@@ -84,6 +84,12 @@ enum LaunchOptions {
     private static var defaults: UserDefaults { .standard }
 
     static var isUITest: Bool { defaults.bool(forKey: "GatefoldUITest") }
+    /// UI tests only: the hidden posture switches at the page's top centre. Only a test that walks the
+    /// postures asks for them: anywhere else a tap in the page's top margin (a review driver's, gatefold#303)
+    /// landed on the spread switch and laid a one-page screen out as two columns for the rest of the open.
+    static var postureSwitches: Bool { isUITest && defaults.bool(forKey: "GatefoldPostureSwitches") }
+    /// UI tests only: `reader.columns` reports the web view's own count of the text columns on screen.
+    static var columnsProbe: Bool { isUITest && defaults.bool(forKey: "GatefoldColumnsProbe") }
     static var resetState: Bool { defaults.bool(forKey: "GatefoldReset") }
     static var skipWelcome: Bool { defaults.bool(forKey: "GatefoldSkipWelcome") }
     /// Measure a cold open: no book is opened ahead of the tap and WebKit isn't started early. Also the
@@ -122,6 +128,10 @@ enum LaunchOptions {
     /// position), as on a device that suspends or ends Gatefold a moment after he leaves, before the write it
     /// had under way lands (gatefold#301). Other writes (the launch jump's) land as ever.
     static var holdTurnWrites: Bool { isUITest && defaults.bool(forKey: "GatefoldHoldTurnWrites") }
+    /// UI tests only: the leave's ordinary place write never lands (it holds before it maps its position), as
+    /// when the jump's chapter still loading holds that write's read of the page until iOS has ended Gatefold
+    /// (gatefold#309). Only what leaving writes at once reaches the reopen.
+    static var holdLeaveWrites: Bool { isUITest && defaults.bool(forKey: "GatefoldHoldLeaveWrites") }
     /// Debug only: Back's first this many sends are taken at their chapter's start, the chapter still
     /// loading meanwhile, as a web view still loading takes a jump (gatefold#170). Counted in sends, not
     /// looks, so a Back that stops sending stays short. Armed once per launch, by its first Back.
