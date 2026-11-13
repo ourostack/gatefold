@@ -93,6 +93,18 @@ jobs:
             if [[ ! -f scripts/screenshots/capture.py ]]; then
               say "$tag (${SHA:0:7}) predates the screenshots pipeline: no screenshots."; echo "render=false" >> "$GITHUB_OUTPUT"; exit 0
             fi
+            # This workflow is main's, the helper the tag's. A tag from before the helper had what this workflow calls
+            # (capture.py capabilities) can't be driven by it, and its app predates the fixes that make two passes
+            # match (gatefold#150, #314): not rendered, as with a tag before the pipeline. The next build renders.
+            caps=" $(python3 -I scripts/screenshots/capture.py capabilities 2>/dev/null | tr '\n' ' ' || true) "
+            missing=""
+            for need in stage recover; do
+              [[ "$caps" == *" $need "* ]] || missing="$missing $need"
+            done
+            if [[ -n "$missing" ]]; then
+              say "$tag (${SHA:0:7}) predates the capture helper this workflow drives; its capture.py lacks:$missing. No screenshots; the next TestFlight build renders."
+              echo "render=false" >> "$GITHUB_OUTPUT"; exit 0
+            fi
             # The checks that guard what goes on screen, on the commit that renders.
             python3 -I scripts/screenshots/capture.py --selftest
             fp="$(python3 -I scripts/screenshots/capture.py fingerprint)"

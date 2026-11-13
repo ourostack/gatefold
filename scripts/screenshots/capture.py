@@ -16,6 +16,9 @@
         The same commit gives the same pixels: every PNG in A has a byte-identical twin in B. Writes nothing.
     python3 -I scripts/screenshots/capture.py fingerprint [--spec S]
         One hash of everything that can change what a shot shows; a release renders only when it changed.
+    python3 -I scripts/screenshots/capture.py capabilities
+        The commands screenshots.yml drives beyond the first pipeline, one per line. A release render runs main's
+        workflow on an older tagged commit; one whose helper lacks any of these is not rendered (gatefold#150).
     python3 -I scripts/screenshots/capture.py --selftest
 Logs carry scene ids and hashes only.
 """
@@ -502,7 +505,13 @@ def selftest_recovery():
     assert WATCH_WORST + WITNESS_WORST + 20 <= 280, "ListingShotsUITests waits 280 s for the host"
 
 
+# What screenshots.yml calls that the first pipeline (#249, #287) lacked; the workflow checks for each (gatefold#150).
+CAPABILITIES = ("stage", "recover")
+
+
 def selftest():
+    for c in CAPABILITIES:
+        assert f'cmd == "{c}"' in pathlib.Path(__file__).read_text(), f"capabilities names {c}, which main() doesn't run"
     assert not settled(["a", "b", "a"]) and settled(["x", "a", "a", "a"]) and not settled(["a", "a"])
     selftest_recovery()
     with tempfile.TemporaryDirectory() as t:
@@ -593,6 +602,9 @@ def main(argv):
         for p in problems:
             print(f"::error::{p}")
         return 1 if problems else 0
+    if cmd == "capabilities":
+        print("\n".join(CAPABILITIES))
+        return 0
     if cmd == "fingerprint":
         print(fingerprint())
         return 0
