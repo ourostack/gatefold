@@ -950,6 +950,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     private func uncoverUnsettled() {
         guard reflowCover != nil || leaf != nil || navigator.view.alpha < 1 else { return }
         readerLog.error("reflow: no settle after 12 s; showing the page as it is")
+        if LaunchOptions.isUITest { weakModel?.shownUnsettledProbe += 1 }
         showPageAsItIs()
         noteShownUnsettled()
         refreshShownProbe()
