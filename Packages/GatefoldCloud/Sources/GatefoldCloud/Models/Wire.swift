@@ -2,7 +2,7 @@ import Foundation
 import GatefoldCore
 
 /// Every date form the Cloud sends: ISO-8601 (with or without fractions or offset),
-/// `yyyy-MM-dd HH:mm:ss` (UTC, on upload responses) and unix seconds.
+/// `yyyy-MM-dd HH:mm:ss` (UTC, on upload responses), unix seconds and numeric unix milliseconds.
 enum PBDate {
     static func parse(_ raw: String) -> Date? {
         let s = raw.trimmingCharacters(in: .whitespaces)
@@ -67,7 +67,7 @@ enum Loose: Decodable {
     var url: URL? { string.flatMap(URL.init(string:)) }
     var date: Date? {
         switch self {
-        case let .number(n): Date(timeIntervalSince1970: n)
+        case let .number(n): Date(timeIntervalSince1970: n > 100_000_000_000 ? n / 1_000 : n)
         case let .string(s): PBDate.parse(s)
         default: nil
         }
