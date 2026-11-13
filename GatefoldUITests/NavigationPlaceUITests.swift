@@ -378,6 +378,40 @@ final class NavigationPlaceUITests: XCTestCase {
         XCTAssertLessThan(abs((reopened?.1 ?? -9) - (chapter?.1 ?? 9)), 0.1, "the reopen is at the chapter he chose, not its file's first page")
     }
 
+    /// A reopen on his words, upright, with no picture of his page, whose page answers no script past the cover's
+    /// own bound, and Readium's first page off his words: the page he sees once it shows is his. On main 361a0b6 the
+    /// cover's bound showed Readium's page, and the settle that found his words later only offered them (gatefold#373,
+    /// 6 pages early; gatefold#332, under a rotation's restore).
+    func testAReopenWhosePageAnswersLateShowsHisWords() {
+        XCUIDevice.shared.orientation = .portrait
+        app.launchArguments = common + ["-GatefoldReset", "YES", "-GatefoldDownloadAll", "YES",
+                                        "-GatefoldOpenBook", "gutenberg-pride-and-prejudice", "-GatefoldGoTo", "0.31"]
+        app.launch()
+        let first = ReaderReads.settle(app, "the launch jump's page") { print("REOPENLATE \($0)") }.words
+        // His turn writes his place with his words.
+        turn(forward: true)
+        XCTAssertTrue(readsUntil(240) { let now = self.visibleText; return !now.isEmpty && now != first }, "his turn moved the page")
+        let his = ReaderReads.settle(app, "his page") { print("REOPENLATE \($0)") }.words
+        XCTAssertNotEqual(opening(his), opening(first), "his turn moved the page")
+        let saved = (app.descendants(matching: .any)["reader.savedWords"].value as? String) ?? ""
+        XCTAssertFalse(saved.isEmpty, "his place carries his words")
+        // The controls up as he leaves: no picture of his page is kept, so nothing covers the page but the cover.
+        showChrome()
+        relaunchExtra = Self.lateReopenOffHisWords
+        leaveAndRelaunch()
+        XCTAssertTrue(readsUntil(240) { self.app.descendants(matching: .any)["reader.page"].exists }, "the book reopened")
+        XCTAssertFalse(app.descendants(matching: .any)["reader.reopenPicture"].exists, "no picture of his page covers the reopen")
+        // Judged as the cover lifts: the first page he sees, not one put right later.
+        XCTAssertTrue(pageReady(), "the reopened page showed")
+        let back = ReaderReads.settle(app, "the reopen") { print("REOPENLATE \($0)") }.words
+        print("REOPENLATE his \(opening(his).count) chars, reopen same \(opening(back) == opening(his))")
+        XCTAssertEqual(opening(back), opening(his), "the reopen shows his page")
+    }
+
+    /// The reopen above: Readium starts it on its chapter's start, and no script answers for 400 looks (at least 20 s),
+    /// past the cover's own 11.5 s, as on CI's starved iPad (gatefold#310, #373).
+    private static let lateReopenOffHisWords = ["-GatefoldReopenOffHisWords", "YES", "-GatefoldStallOpenScripts", "400"]
+
     private func contentsTap(_ title: String) {
         app.buttons["reader.contents"].tap()
         // Exactly this chapter: Contents shows the title tidied ("Chapter XL", its full stop dropped by
