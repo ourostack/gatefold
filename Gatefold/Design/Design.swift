@@ -116,6 +116,10 @@ enum LaunchOptions {
     /// position), as on a device that suspends or ends Gatefold a moment after he leaves, before the write it
     /// had under way lands (gatefold#301). Other writes (the launch jump's) land as ever.
     static var holdTurnWrites: Bool { isUITest && defaults.bool(forKey: "GatefoldHoldTurnWrites") }
+    /// UI tests only: the leave's ordinary place write never lands (it holds before it maps its position), as
+    /// when the jump's chapter still loading holds that write's read of the page until iOS has ended Gatefold
+    /// (gatefold#309). Only what leaving writes at once reaches the reopen.
+    static var holdLeaveWrites: Bool { isUITest && defaults.bool(forKey: "GatefoldHoldLeaveWrites") }
     /// Debug only: Back's first this many sends are taken at their chapter's start, the chapter still
     /// loading meanwhile, as a web view still loading takes a jump (gatefold#170). Counted in sends, not
     /// looks, so a Back that stops sending stays short. Armed once per launch, by its first Back.
