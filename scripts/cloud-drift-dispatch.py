@@ -10,8 +10,8 @@ issue when PocketBook Cloud changes under us. Each pass of this:
 1. Assigns an open `cloud-drift` issue to Copilot's coding agent, with the instructions below, and
    labels it `agent-fixing`. Never twice.
 2. Sees Copilot's pull request for it through:
-   - approves its workflow runs that wait for approval (runs a bot's pushes start wait for a person);
-   - when Copilot has finished (its title loses "[WIP]"), labels it `cloud-drift-fix`, which starts
+   - when Copilot has finished (its title loses "[WIP]"), approves its workflow runs that wait for
+     approval (runs a bot's pushes start wait for a person), labels it `cloud-drift-fix`, which starts
      the live gate (cloud-fix-gate.yml), and marks it ready for review;
    - when the gate passes (`live-canary-passed`), turns on auto-merge. Normal CI and the gate merge
      it, and main's green gate ships it to TestFlight;
@@ -92,12 +92,10 @@ def plan(issues, prs, facts):
         n, sha, labels = pr["number"], pr["headRefOid"], names(pr.get("labels"))
         f = facts.get(n, {})
         marks = f.get("marks", [])
+        if HUMAN in labels or pr["title"].startswith("[WIP]"):
+            continue  # while Copilot works, its pushes' runs wait: no macOS runners for half-done code
         for run in f.get("waiting", []):
             acts.append(("approve-run", n, run))
-        if HUMAN in labels:
-            continue
-        if pr["title"].startswith("[WIP]"):
-            continue
         if FIX not in labels:
             acts.append(("label", n, FIX))
         if pr.get("isDraft"):
@@ -155,6 +153,17 @@ def gather():
     return issues, prs, facts
 
 
+LABELS = {FIXING: ("1D76DB", "Copilot's coding agent is fixing this cloud-drift issue (cloud-drift-dispatch.py)"),
+          FIX: ("0E8A16", "A fix for a cloud-drift issue; gated on the live canary (cloud-fix-gate.yml)"),
+          HUMAN: ("B60205", "The cloud-drift agent gave up; a person needs to look (cloud-drift-dispatch.py)")}
+
+
+def label(kind, n, name):
+    color, about = LABELS[name]
+    gh("label", "create", name, "-R", REPO, "--color", color, "--description", about, check=False)
+    gh(kind, "edit", str(n), "-R", REPO, "--add-label", name)
+
+
 def do(act):
     verb, n, detail = act
     if verb == "assign":
@@ -162,14 +171,14 @@ def do(act):
                 "agent_assignment": {"target_repo": REPO, "base_branch": "main",
                                      "custom_instructions": INSTRUCTIONS.replace("{issue}", str(n))}}
         gh("api", "-X", "POST", f"repos/{REPO}/issues/{n}/assignees", "--input", "-", input=json.dumps(body))
-        gh("issue", "edit", str(n), "-R", REPO, "--add-label", FIXING)
+        label("issue", n, FIXING)
         gh("issue", "comment", str(n), "-R", REPO, "--body",
            "Handed to Copilot's coding agent (`scripts/cloud-drift-dispatch.py`). Its pull request runs "
            "against the real cloud before it merges.")
     elif verb == "approve-run":
         gh("api", "-X", "POST", f"repos/{REPO}/actions/runs/{detail}/approve", check=False)
     elif verb == "label":
-        gh("pr", "edit", str(n), "-R", REPO, "--add-label", detail)
+        label("pr", n, detail)
     elif verb == "ready":
         gh("pr", "ready", str(n), "-R", REPO)
     elif verb == "auto-merge":
@@ -182,7 +191,7 @@ def do(act):
         gh("pr", "comment", str(n), "-R", REPO, "--body",
            f"The live canary was inconclusive (the cloud's login limit); running it again.\n\n{MARK} rerun {detail} -->")
     elif verb == "give-up":
-        gh("pr", "edit", str(n), "-R", REPO, "--add-label", HUMAN)
+        label("pr", n, HUMAN)
         gh("pr", "comment", str(n), "-R", REPO, "--body",
            f"Copilot tried {MAX_TRIES} times and CI or the live canary still fails, so this needs a person.\n\n{MARK} gave-up -->")
 
@@ -210,8 +219,8 @@ def selftest():
     assert plan([dict(issue, assignees=[{"login": "Copilot"}])], [], {}) == []
     wip = {"number": 60, "title": "[WIP] Tolerate the new shape", "isDraft": True, "headRefOid": "a1",
            "labels": [], "body": "Fixes #50", "closingIssuesReferences": [], "autoMergeRequest": None}
-    # Still working: only its waiting runs are approved; the issue is not handed out again.
-    assert plan([issue], [wip], {60: {"waiting": [7]}}) == [("approve-run", 60, 7)]
+    # Still working: nothing, not even its waiting runs; the issue is not handed out again.
+    assert plan([issue], [wip], {60: {"waiting": [7]}}) == []
     done = dict(wip, title="Tolerate the new shape")
     assert plan([issue], [done], {}) == [("label", 60, FIX), ("ready", 60, None)]
     gated = dict(done, isDraft=False, labels=L(FIX))
