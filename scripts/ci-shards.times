@@ -1,0 +1,99 @@
+# Each UI test's slowest pass in CI, in seconds, as device|Class/test<TAB>seconds (gatefold#260). A shard's limit in
+# .github/workflows/app.yml is 30 min of setup, twice what its tests add up to here, 5 for the test run's start and
+# stop, and 12 for the logs; scripts/ci-shards.py check fails when a timeout or its comment doesn't match, and names
+# the line to write. "Slowest" is the 95th percentile of the test's passing or skipped times in the App runs of pull
+# requests and main from 42938568336 to 43280151381 (2026-11-08 to 11-12, 176 runs, runner load up to 800), so one
+# freak run doesn't set it; the slowest single pass is noted after it. A new test needs a line: its slowest pass so
+# far, or an estimate until CI has run it. Notes after the seconds are ignored.
+iPad Pro 13-inch|CountingPlaceholderUITests/testAFreshOpenNeverLeavesTheNumbersSlotBlank	144	# p95 of 109, slowest 215
+iPad Pro 13-inch|CountingPlaceholderUITests/testAFreshOpenOnItsSideNeverLeavesTheNumbersSlotBlank	169	# p95 of 108, slowest 206
+iPad Pro 13-inch|FineTuneTapUITests/testAQuickTouchChangesEverySwitchOnce	219	# p95 of 134, slowest 265
+iPad Pro 13-inch|FineTuneTapUITests/testAQuickTouchChangesEverySwitchOnceInLandscape	232	# p95 of 115, slowest 256
+iPad Pro 13-inch|FineTuneTapUITests/testATapOnTheRowsNameChangesItsSwitch	124	# p95 of 137, slowest 165
+iPad Pro 13-inch|FineTuneTapUITests/testEveryTapFlipsJustifyLandscape	339	# p95 of 112, slowest 360
+iPad Pro 13-inch|FineTuneTapUITests/testEveryTapFlipsJustifyPortrait	254	# p95 of 111, slowest 295
+iPad Pro 13-inch|FineTuneTapUITests/testEveryTapFlipsPageNumbersLandscape	338	# p95 of 108, slowest 393
+iPad Pro 13-inch|FineTuneTapUITests/testEveryTapFlipsPageNumbersPortrait	232	# p95 of 110, slowest 472
+iPad Pro 13-inch|FineTuneTapUITests/testEveryTapFlipsPagesLeftLandscape	328	# p95 of 111, slowest 390
+iPad Pro 13-inch|FineTuneTapUITests/testEveryTapFlipsPagesLeftPortrait	233	# p95 of 109, slowest 423
+iPad Pro 13-inch|FineTuneTapUITests/testEveryTapFlipsPositionLabelLandscape	285	# p95 of 107, slowest 350
+iPad Pro 13-inch|FineTuneTapUITests/testEveryTapFlipsPositionLabelPortrait	234	# p95 of 104, slowest 415
+iPad Pro 13-inch|MarginTapUITests/testEveryMarginTapOnAFreshSpreadTurns	288	# slowest of 5 (main and #322, 2026-11-12)
+iPad Pro 13-inch|NavigationPlaceUITests/testAContentsJumpKeepsThePlace	291	# p95 of 135, slowest 327
+iPad Pro 13-inch|NavigationPlaceUITests/testAJumpFromAPageStillLoadingStartsAtOnce	435	# p95 of 95, slowest 598
+iPad Pro 13-inch|NavigationPlaceUITests/testAJumpsVeilHoldsWhileTheChapterLoads	244	# p95 of 103, slowest 279
+iPad Pro 13-inch|NavigationPlaceUITests/testAScrubberJumpKeepsThePlace	224	# p95 of 98, slowest 252
+iPad Pro 13-inch|NavigationPlaceUITests/testAScrubberJumpLeftWhileItsChapterLoadsKeepsItsTarget	239	# p95 of 19, slowest 239
+iPad Pro 13-inch|NavigationPlaceUITests/testOpenedFromTheShelfThenLeftTwiceWithoutATurnKeepsThePlace	362	# p95 of 149, slowest 435
+iPad Pro 13-inch|NavigationPlaceUITests/testReadInPortraitRotatedThenLeftKeepsHisFirstWords	482	# p95 of 106, slowest 570
+iPad Pro 13-inch|NavigationPlaceUITests/testScrolledAfterTheLaunchReflowThenLeftKeepsWhereHeScrolled	359	# p95 of 105, slowest 464
+iPad Pro 13-inch|NavigationPlaceUITests/testTheCloudsOfferOverTheOpeningCoverTakesHisTap	175	# p95 of 128, slowest 204
+iPad Pro 13-inch|NavigationPlaceUITests/testTheOpeningCoverLetsTheControlsThrough	71	# p95 of 106, slowest 147
+iPad Pro 13-inch|NavigationPlaceUITests/testWithPageNumbersOnReadInPortraitRotatedThenLeftKeepsHisFirstWords	484	# p95 of 104, slowest 612
+iPad Pro 13-inch|PageFurnitureUITests/testOffByDefaultYetVoiceOverStillHearsWhereHeIs	150	# p95 of 115, slowest 275
+iPad Pro 13-inch|PageFurnitureUITests/testOnTheIPadSpreadTwoTogglesThenAReopenKeepHisPage	228	# p95 of 112, slowest 255
+iPad Pro 13-inch|PageFurnitureUITests/testTurningNumbersOnKeepsTheWordsAndIsKept	228	# p95 of 111, slowest 247
+iPad Pro 13-inch|PageNumberUITests/testOnASpreadEveryTurnMovesOnTwoPages	419	# p95 of 112, slowest 527
+iPad Pro 13-inch|PlaceUndoUITests/testAChaptersFirstPageTurnsBackByTapAndBySwipe	228	# p95 of 126, slowest 342
+iPad Pro 13-inch|PlaceUndoUITests/testAContentsJumpThatNeverLoadsLetsTheVeilGo	228	# p95 of 11 (#195's runs), slowest 228
+iPad Pro 13-inch|PlaceUndoUITests/testAJumpIsOneTapToUndoWithTheControlsHidden	261	# p95 of 148, slowest 313
+iPad Pro 13-inch|PlaceUndoUITests/testATapAboveYourPageClosesItAndKeepsThePage	164	# p95 of 127, slowest 236
+iPad Pro 13-inch|PlaceUndoUITests/testATapAtTheLeftEdgeTurnsBackPromptly	151	# p95 of 163, slowest 291
+iPad Pro 13-inch|PlaceUndoUITests/testATapAtTheLeftEdgeTurnsBackPromptlyWithinAChapter	165	# p95 of 124, slowest 199
+iPad Pro 13-inch|PlaceUndoUITests/testATapNearTheLeftEdgeOfASpreadTurnsBack	127	# p95 of 121, slowest 179
+iPad Pro 13-inch|PlaceUndoUITests/testATapWhileAJumpIsUnderWayLandsWhereHeChose	323	# p95 of 125, slowest 491
+iPad Pro 13-inch|PlaceUndoUITests/testATouchOnTheScrubberNeverJumps	158	# p95 of 143, slowest 312
+iPad Pro 13-inch|PlaceUndoUITests/testBackToAChapterStillLoadingWaitsForItAndTakesHimBack	262	# p95 of 82, slowest 288
+iPad Pro 13-inch|PositionUITests/testEveryPostureKeepsThePlace	323	# p95 of 100, slowest 374
+iPad Pro 13-inch|QuickLeaveUITests/testTurnsThenAQuickLeaveReopenOnTheLastTurnsPage	117	# p95 of 2, slowest 117
+iPad Pro 13-inch|ReopenAfterControlsUITests/testAReturnAfterTheControlsAndNumbersShowsTheSameWords1	467	# p95 of 68, slowest 669
+iPad Pro 13-inch|ReopenAfterControlsUITests/testAReturnAfterTheControlsAndNumbersShowsTheSameWords2	433	# p95 of 65, slowest 495
+iPad Pro 13-inch|ReopenAfterControlsUITests/testAReturnAfterTheControlsAndNumbersShowsTheSameWords3	384	# p95 of 66, slowest 631
+iPad Pro 13-inch|ReopenAfterControlsUITests/testAReturnAfterTheControlsAndNumbersShowsTheSameWords4	400	# p95 of 63, slowest 443
+iPad Pro 13-inch|ReopenAfterControlsUITests/testAReturnAfterTheControlsAndNumbersShowsTheSameWords5	427	# p95 of 66, slowest 509
+iPad Pro 13-inch|ReviewerChecksUITests/testEveryReopenReturnsTheSameWords	994	# p95 of 110, slowest 1250
+iPad Pro 13-inch|ReviewerChecksUITests/testPageNumbersAreOnOrOffInEveryBook	1105	# p95 of 101, slowest 1272
+iPad Pro 13-inch|ReviewerChecksUITests/testTheDefaultSpreadIsAsFullAsAppleBooks	137	# p95 of 112, slowest 301
+iPad Pro 13-inch|ReviewerChecksUITests/testTheLastPagesNumberIsTheCount	314	# p95 of 114, slowest 362
+iPad Pro 13-inch|RotationMidTransitionUITests/testARestoreThatNeverSettlesStillShowsTheSpread	206	# p95 of 111, slowest 253
+iPad Pro 13-inch|RotationMidTransitionUITests/testTurningDuringAContentsJump	237	# p95 of 112, slowest 291
+iPad Pro 13-inch|RotationMidTransitionUITests/testTurningDuringAPageTurn	250	# p95 of 132, slowest 305
+iPad Pro 13-inch|RotationMidTransitionUITests/testTurnedOnItsSideAndBackHeIsOnHisPage	250	# estimate (new in #324), as its slowest sibling; replace once CI has timed it
+iPad Pro 13-inch|RotationRepro/testRotateThenLeaveWhileTheRestoreWaitsOnHisKeptPlaceWithoutItsWords	436	# p95 of 27, slowest 548
+iPad Pro 13-inch|RotationRepro/testRotateThenLeaveWhileTheRestoreWaitsOnItsPage	587	# p95 of 71, slowest 644
+iPad Pro 13-inch|RotationRepro/testRotateThenLeaveWhileTheRestoreWaitsOnItsPageWithoutItsWords	470	# p95 of 59, slowest 480
+iPad Pro 13-inch|RotationRepro/testRotateThenLeaveWhileTheRestoreWaitsWithItsSpanReadLate	480	# estimate (gatefold#346): its sibling's 480, and 407 in probe 43381449883
+iPad Pro 13-inch|RotationRepro/testRotateThenLeaveWithItsSpanReadLateAndReopenOnTheChapterStart	519	# estimate (gatefold#346): its sibling's 519, and 259 in probe 43381449883
+iPad Pro 13-inch|RotationRepro/testRotateThenLeaveWithoutItsWordsAndReopenOnTheChapterStart	519	# p95 of 36, slowest 563
+iPad Pro 13-inch|RotationRepro/testRotateThenLeaveWithoutTurning	570	# p95 of 101, slowest 709
+iPad Pro 13-inch|RotationRepro/testRotateThenLeaveWithoutTurningAfterStalledReflows	562	# p95 of 93, slowest 664
+iPad Pro 13-inch|SingleColumnUITests/testAOnePageScreenStaysOneColumnThroughTheReviewSteps	240	# estimate (#307's 240; one pass, 201)
+iPad Pro 13-inch|SpreadTurnSettleUITests/testSpreadTurnsLandWithoutSliding	203	# p95 of 118, slowest 251
+iPad Pro 13-inch|WindowFitUITests/testOnItsSide	158	# p95 of 113, slowest 180
+iPad Pro 13-inch|WindowFitUITests/testUpright	152	# p95 of 113, slowest 284
+iPhone Duo|FineTuneTapUITests/testAQuickTouchChangesEverySwitchOnce	201	# p95 of 115, slowest 230
+iPhone Duo|FineTuneTapUITests/testAQuickTouchChangesEverySwitchOnceInLandscape	199	# p95 of 113, slowest 224
+iPhone Duo|FineTuneTapUITests/testATapOnTheRowsNameChangesItsSwitch	115	# p95 of 114, slowest 161
+iPhone Duo|FineTuneTapUITests/testEveryTapFlipsJustifyLandscape	83	# p95 of 108, slowest 111
+iPhone Duo|FineTuneTapUITests/testEveryTapFlipsJustifyPortrait	251	# p95 of 112, slowest 290
+iPhone Duo|FineTuneTapUITests/testEveryTapFlipsPageNumbersLandscape	86	# p95 of 108, slowest 100
+iPhone Duo|FineTuneTapUITests/testEveryTapFlipsPageNumbersPortrait	218	# p95 of 112, slowest 256
+iPhone Duo|FineTuneTapUITests/testEveryTapFlipsPagesLeftLandscape	83	# p95 of 107, slowest 98
+iPhone Duo|FineTuneTapUITests/testEveryTapFlipsPagesLeftPortrait	232	# p95 of 112, slowest 247
+iPhone Duo|FineTuneTapUITests/testEveryTapFlipsPositionLabelLandscape	93	# p95 of 105, slowest 116
+iPhone Duo|FineTuneTapUITests/testEveryTapFlipsPositionLabelPortrait	210	# p95 of 108, slowest 253
+iPhone Duo|PageNumberUITests/testEveryTurnMovesOnAPageAndAReopenKeepsTheNumbers	316	# p95 of 154, slowest 361
+iPhone Duo|PlaceUndoUITests/testATapAtTheLeftEdgeTurnsBackPromptly	151	# p95 of 157, slowest 204
+iPhone Duo|PlaceUndoUITests/testATapAtTheLeftEdgeTurnsBackPromptlyWithinAChapter	161	# p95 of 117, slowest 203
+iPhone Duo|PositionUITests/testBookmarkInTheTopBarBookmarks	143	# p95 of 107, slowest 299
+iPhone Duo|PositionUITests/testEveryPostureKeepsThePlace	120	# p95 of 107, slowest 177
+iPhone Duo|PositionUITests/testFontChangeKeepsThePlace	190	# p95 of 113, slowest 345
+iPhone Duo|PositionUITests/testRotationKeepsThePlace	116	# p95 of 106, slowest 151
+iPhone Duo|PositionUITests/testTabletopDeckTurnsAndResizes	259	# p95 of 112, slowest 444
+iPhone Duo|QuickLeaveUITests/testTurnsThenAQuickLeaveReopenOnTheLastTurnsPage	115	# p95 of 2, slowest 115
+iPhone Duo|ReviewerChecksUITests/testEveryReopenReturnsTheSameWords	895	# p95 of 103, slowest 1362
+iPhone Duo|ReviewerChecksUITests/testPageNumbersAreOnOrOffInEveryBook	1075	# p95 of 97, slowest 1160
+iPhone Duo|ReviewerChecksUITests/testTheDefaultSpreadIsAsFullAsAppleBooks	1	# p95 of 104, slowest 4
+iPhone Duo|ReviewerChecksUITests/testTheLastPagesNumberIsTheCount	254	# p95 of 100, slowest 299
+iPhone Duo|SingleColumnUITests/testAOnePageScreenStaysOneColumnThroughTheReviewSteps	240	# estimate (#307's 240; one pass, 236)
+iPad Pro 13-inch|RotationMidTransitionUITests/testAColdTurnOnItsSideOpensAWholeSpreadWithNoStandingLeaf	250	# estimate (new on main), as the slowest RotationMidTransition test; replace once CI has timed it
