@@ -138,6 +138,10 @@ jobs:
     environment: internal-testflight
     runs-on: xcode-27
     timeout-minutes: 90
+    # actions: read lets the publish script read this run's earlier attempts (a rerun's duplicate upload, gatefold#337).
+    permissions:
+      contents: read
+      actions: read
     outputs:
       build: ${{ steps.publish.outputs.build }}
     # One publish at a time and never cancelled mid-upload. A newer green commit waiting behind a running
@@ -288,6 +292,7 @@ jobs:
         id: publish
         env:
           GATEFOLD_BUILD_NUMBER: ${{ inputs.build_number }}
+          GATEFOLD_GITHUB_TOKEN: ${{ github.token }}
           GATEFOLD_TESTFLIGHT_TESTER: ${{ secrets.GATEFOLD_TESTFLIGHT_TESTER }}
           GATEFOLD_ARTIFACT_DIR: ${{ runner.temp }}/ci-testflight
         run: scripts/ci-publish-testflight.sh

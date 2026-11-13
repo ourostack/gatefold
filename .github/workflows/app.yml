@@ -205,7 +205,7 @@ jobs:
         env:
           RESULT: ${{ needs.ci-scripts.result }}
         run: |
-          [ "$RESULT" = success ] || { echo "::error title=CI scripts%2C offline::The job \"CI scripts, offline\" ended $RESULT: see its log (simulator helper or UI test lists, not GatefoldCore)"; exit 1; }
+          [ "$RESULT" = success ] || { echo "::error title=CI scripts%2C offline::The job \"CI scripts, offline\" ended $RESULT: see its log (simulator helper, TestFlight publish script or UI test lists, not GatefoldCore)"; exit 1; }
 
   # The CI scripts' offline tests, on the runner image itself, where python3 is installed: in the Swift container they
   # had to fetch it with apt-get, and a DNS blip failed the required check before any test ran (gatefold#241).
@@ -223,6 +223,8 @@ jobs:
         run: |
           python3 -I scripts/ci-simulator.py --selftest
           bash scripts/test-ci-simulator.sh
+      - name: The TestFlight publish script's upload step, offline (a fake kit; no App Store Connect) (gatefold#337)
+        run: bash scripts/test-ci-publish-testflight.sh
       - name: UI test lists (not GatefoldCore) match scripts/ci-shards.expect; fix with `python3 -I scripts/ci-shards.py write` (gatefold#39)
         run: |
           python3 -I scripts/ci-shards.py --selftest
