@@ -2783,7 +2783,7 @@ final class ReaderModel {
         turnFalling = false
         lastTurnMove = moves
         let step = steps
-        Task {
+        turnLook = Task {
             guard let first = page?.currentLocation else { return }
             // A turn is a move too: a Back that comes back late after it puts the page back here.
             landed(step, at: first)
@@ -2815,12 +2815,17 @@ final class ReaderModel {
         fallingWords = nil
         turnCommits += 1
         let commit = turnCommits
-        Task { [weak self] in
+        fallingRead = Task { [weak self] in
             guard let read = await self?.page?.wordsOnPage(), let self, self.turnCommits == commit,
                   read.text.highlight != nil else { return }
             self.fallingWords = read
         }
     }
+    /// His latest landed turn's own work (its report, its write, its second look), for tests to wait on
+    /// its end: the event, never a count of scheduler turns (gatefold#350).
+    @ObservationIgnored private(set) var turnLook: Task<Void, Never>?
+    /// The read of his first words beneath his latest committed turn (`turnCommitted`), for tests to wait on.
+    @ObservationIgnored private(set) var fallingRead: Task<Void, Never>?
     /// A turn of his between letting go and landing (`turnCommitted`).
     @ObservationIgnored private var turnFalling = false
     @ObservationIgnored private var turnCommits = 0

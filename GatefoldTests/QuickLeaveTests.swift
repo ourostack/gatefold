@@ -17,6 +17,22 @@ import Testing
         func saved() -> Locator? {
             app.library.book(ReaderSyncTests.frankenstein.fastHash)?.locatorJSON.flatMap { try? Locator(jsonString: $0) }
         }
+        /// His latest turn's own work (its report, its write, its second look) has ended: every write it
+        /// brought has landed or given way. The event, never a count of scheduler turns: the write maps its
+        /// position on the mapper's actor, which a busy runner can hold past any count (gatefold#350).
+        func turnEnded() async throws {
+            let look = try #require(model.turnLook, "his turn started no work")
+            await look.value
+        }
+        /// A write is waiting at `gate`, or his latest turn's own work has ended without one reaching it (the
+        /// check after this then fails, rather than the run hanging).
+        func untilWaiting(at gate: LeaveGate) async throws {
+            let look = try #require(model.turnLook, "his turn started no work")
+            let (event, signal) = AsyncStream<Void>.makeStream()
+            Task { await gate.arrival(); signal.yield() }
+            Task { await look.value; signal.yield() }
+            for await _ in event { break }
+        }
     }
 
     func open() async throws -> Opened {
@@ -43,9 +59,7 @@ import Testing
         o.page.currentLocation = read
         o.model.userTurnedPage()
         await o.model.locationDidChange(read)
-        for _ in 0..<200 where o.saved()?.locations.progression != read.locations.progression || o.saved()?.text.highlight == nil {
-            await Task.yield()
-        }
+        try await o.turnEnded()
         try #require(o.saved()?.locations.progression == read.locations.progression, "his turn was kept")
         return read
     }
@@ -60,7 +74,7 @@ import Testing
         let turned = try #require(await ReaderSyncTests.locate(o.publication, 0.31))
         o.page.currentLocation = turned
         o.model.userTurnedPage()
-        for _ in 0..<400 where await held.waiters == 0 { await Task.yield() }
+        try await o.untilWaiting(at: held)
         try #require(await held.waiters == 1, "the turn's write waits on its way")
         #expect(o.saved()?.locations.progression == before.locations.progression, "the write landed before he left")
 
@@ -75,7 +89,7 @@ import Testing
         // The app wasn't ended after all: the write under way lands on the same page, with his words.
         let records = o.model.placeRecords
         await held.open()
-        for _ in 0..<400 where o.model.placeRecords == records { await Task.yield() }
+        try await o.turnEnded()
         #expect(o.model.placeRecords > records, "the write under way never landed")
         let after = try #require(o.saved())
         #expect(after.locations.progression == turned.locations.progression, "the write under way moved the place")
@@ -92,7 +106,7 @@ import Testing
         let turned = try #require(await ReaderSyncTests.locate(o.publication, 0.31))
         o.page.currentLocation = turned
         o.model.turnCommitted()
-        for _ in 0..<400 where o.model.fallingWords == nil { await Task.yield() }
+        await o.model.fallingRead?.value
         try #require(o.model.fallingWords != nil, "the page beneath the falling leaf gave its words")
         o.model.keepTurnNow()
         let atOnce = try #require(o.saved())
@@ -104,7 +118,7 @@ import Testing
         let records = o.model.placeRecords
         o.model.userTurnedPage()
         await o.model.locationDidChange(turned)
-        for _ in 0..<400 where o.model.placeRecords == records { await Task.yield() }
+        try await o.turnEnded()
         #expect(o.model.placeRecords > records, "the landing's write never landed")
         let after = try #require(o.saved())
         #expect(after.locations.progression == turned.locations.progression)
@@ -151,7 +165,7 @@ import Testing
         let turned = try #require(await ReaderSyncTests.locate(o.publication, 0.31))
         o.page.currentLocation = turned
         o.model.userTurnedPage()
-        for _ in 0..<400 where await held.waiters == 0 { await Task.yield() }
+        try await o.untilWaiting(at: held)
         try #require(await held.waiters == 1, "the turn's write waits on its way")
         o.page.isTurning = true
         let beneath = try #require(await ReaderSyncTests.locate(o.publication, 0.10))
@@ -175,7 +189,7 @@ import Testing
         let first = try #require(await ReaderSyncTests.locate(o.publication, 0.31))
         o.page.currentLocation = first
         o.model.userTurnedPage()
-        for _ in 0..<400 where await gates.first.waiters == 0 { await Task.yield() }
+        try await o.untilWaiting(at: gates.first)
         try #require(await gates.first.waiters == 1, "the first turn's write waits on its way")
         let last = try #require(await ReaderSyncTests.locate(o.publication, 0.52))
         o.page.currentLocation = last
@@ -183,10 +197,10 @@ import Testing
         o.model.keepTurnNow()
         #expect(o.saved()?.locations.progression == last.locations.progression, "leaving didn't keep the falling turn's page")
 
-        // The first turn's write lands late: the place stays on his last turn.
-        let records = o.model.placeRecords
+        // The first turn's write lands late: the place stays on his last turn. That write has ended once the
+        // turn's second look waits at the second gate, or the turn's work has ended without one.
         await gates.first.open()
-        for _ in 0..<400 where o.model.placeRecords == records { await Task.yield() }
+        try await o.untilWaiting(at: gates.second)
         #expect(o.saved()?.locations.progression == last.locations.progression,
                 "the older turn's write put the place back to \(o.saved()?.locations.progression ?? -1)")
         await gates.second.open()
