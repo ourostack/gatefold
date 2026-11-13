@@ -143,6 +143,8 @@ def plan(issues, prs, facts, recent=0):
             if state == "failure":
                 what.append(f"The live cloud canary failed on this code: {text}")
             acts.append(("retry", n, (sha, " ".join(what))))
+        elif state is None and FIX in labels and f"gate {sha}" not in marks:
+            acts.append(("request-gate", n, sha))  # labelled before the gate existed, or its request was lost
         elif state == "error" and f"rerun {sha}" not in marks:
             acts.append(("rerun-gate", n, sha))
         elif state == "success" and PASSED in labels and not pr.get("autoMergeRequest"):
@@ -234,6 +236,10 @@ def do(act):
            "This touches files outside what an automatic cloud fix may change (`Packages/GatefoldCloud/`, "
            f"`scripts/cloud-canary.py`, `changelog.d/`), so it won't run or merge on its own and needs a person:\n\n"
            f"{listed}\n\n{MARK} out-of-scope -->")
+    elif verb == "request-gate":
+        gh("workflow", "run", "cloud-fix-gate.yml", "-R", REPO, "--ref", "main", "-f", f"pr={n}")
+        gh("pr", "comment", str(n), "-R", REPO, "--body",
+           f"Asked for the live canary on this code (`cloud-fix-gate.yml`).\n\n{MARK} gate {detail} -->")
     elif verb == "give-up":
         label("pr", n, HUMAN)
         gh("pr", "comment", str(n), "-R", REPO, "--body",
@@ -279,6 +285,9 @@ def selftest():
     assert plan_([issue], [done], {}) == [("label", 60, FIX), ("ready", 60, None)]
     gated = dict(done, isDraft=False, labels=L(FIX))
     assert plan_([issue], [gated], {60: {"gate": ("pending", "")}}) == []
+    # Labelled but never gated (the label came before the gate existed): ask for it, once per head.
+    assert plan_([issue], [gated], {}) == [("request-gate", 60, "a1")]
+    assert plan_([issue], [gated], {60: {"marks": ["gate a1"]}}) == []
     assert plan_([issue], [dict(gated, labels=L(FIX, PASSED))], {60: {"gate": ("success", "ok")}}) == [("auto-merge", 60, None)]
     assert plan_([issue], [dict(gated, labels=L(FIX, PASSED), autoMergeRequest={"x": 1})], {60: {"gate": ("success", "ok")}}) == []
     # A failure goes back to Copilot once per head, then to a person after MAX_TRIES.
