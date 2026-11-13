@@ -283,6 +283,26 @@ enum ReaderJS {
         },
         // How many pages the script reads the screen as.
         pages: function () { return twoPages() ? 2 : 1; },
+        // UI tests (gatefold#303): how many columns of text are on screen, from the laid-out lines themselves.
+        // A line that crosses the middle is one column; lines on both sides with none across are two.
+        columns: function () {
+          const w = window.innerWidth, h = window.innerHeight, mid = w / 2;
+          let left = 0, right = 0, across = 0;
+          const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+          const range = document.createRange();
+          while (walker.nextNode()) {
+            const node = walker.currentNode;
+            if (!norm(node.data)) { continue; }
+            range.selectNodeContents(node);
+            for (const r of range.getClientRects()) {
+              if (r.width < 1 || r.right <= 0 || r.left >= w || r.bottom <= 0 || r.top >= h) { continue; }
+              if (r.left < mid - 8 && r.right > mid + 8) { across += 1; } else if (r.left >= mid - 8) { right += 1; } else { left += 1; }
+            }
+          }
+          const css = parseInt(getComputedStyle(document.documentElement).columnCount, 10);
+          const shown = across > 0 ? 1 : (left > 0 && right > 0 ? 2 : (left + right > 0 ? 1 : 0));
+          return "columns " + shown + " css " + (isNaN(css) ? "auto" : css) + " lines " + across + "/" + left + "/" + right + " view " + Math.round(w);
+        },
         // All the text on screen, whitespace collapsed. A spread is read page by page: from the left
         // page's first words to the right page's last. Scanned across both pages at once, a left page
         // opening with a picture (whose caption is never a place) started at the right page's first
@@ -312,6 +332,7 @@ enum ReaderJS {
     }
 
     static let visibleText = "window.gatefold ? window.gatefold.visibleText() : null"
+    static let columns = "window.gatefold ? window.gatefold.columns() : null"
 
     static func progressionOf(_ quote: String) -> String {
         let q = (try? JSONEncoder().encode(quote)).map { String(decoding: $0, as: UTF8.self) } ?? "\"\""
@@ -339,6 +360,8 @@ enum ReaderJS {
         return "window.gatefold ? window.gatefold.pinToTop(\(q)) : null"
     }
     static let removeVerso = "window.gatefold ? window.gatefold.removeVerso() : null"
+    /// 1 on a page our script hasn't been installed on yet: one loaded since the last look.
+    static let isFresh = "window.gatefold ? 0 : 1"
 
     static func setColumns(_ n: Int) -> String { "window.gatefoldColumns = \(n); true" }
 

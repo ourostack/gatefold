@@ -344,13 +344,17 @@ final class ReaderModel {
             injectedPage = page
             return
         }
+        let opening = Self.epubPreferences(prefs, theme: prefs.resolvedTheme(systemIsDark: false), columns: .one, viewWidth: layout.pageFrame.width > 0 ? layout.pageFrame.width : 402, language: Self.hyphenationLanguage(publication),
+                                           fixedLayout: publication.metadata.layout == .fixed)
+        marginsLaidFor = Self.marginBand(columns: .one, viewWidth: layout.pageFrame.width > 0 ? layout.pageFrame.width : 402)
+        appliedPageMargins = opening.pageMargins
         do {
             hostController = try ReaderHostController(
                 model: self,
                 publication: publication,
                 initialLocation: LaunchOptions.reopenOnChapterStart && Self.openingAnchor(from: initial) == nil
                     ? initial?.copy(locations: { $0 = Locator.Locations(progression: 0) }) : initial,
-                preferences: Self.epubPreferences(prefs, theme: prefs.resolvedTheme(systemIsDark: false), columns: .one, viewWidth: layout.pageFrame.width > 0 ? layout.pageFrame.width : 402, language: Self.hyphenationLanguage(publication))
+                preferences: opening
             )
         } catch {
             errorMessage = FriendlyError.unreadable.message
@@ -489,6 +493,10 @@ final class ReaderModel {
     /// UI tests: how many times the number's slot was drawn empty on a page he can see, with page numbers on
     /// in a paged layout: neither the number nor "Counting pages…" (gatefold#262). Never set outside UI tests.
     var slotBlankProbe = 0
+    /// UI tests: display frames an unfold's leaf stood risen, waiting on its spread (gatefold#302).
+    var leafStoodFramesProbe = 0
+    /// UI tests: reflows that found their page loaded anew (the chapter thrown away and reloaded; gatefold#302).
+    var reflowFreshPagesProbe = 0
     /// UI tests only: the latest reflow's number and how far it has got ("3 reflowing", "3 placed", then
     /// "3 settled" once its page is fully shown, its cover faded or its swing played; a restore that gave way
     /// to his move counts as settled when its page starts showing), so a test can let a reflow settle before
@@ -513,7 +521,7 @@ final class ReaderModel {
         let epub = Self.epubPreferences(prefs, theme: theme, columns: layout.columns, viewWidth: layout.pageFrame.width, tabletop: layout.posture == .tabletop)
         return ScreenPageLayout(width: layout.pageFrame.width, height: layout.pageFrame.height,
                                 columnsPerScreen: layout.columns == .two ? 2 : 1, fontScale: prefs.fontScale,
-                                lineHeight: epub.lineHeight ?? 0, margins: epub.pageMargins ?? 1,
+                                lineHeight: epub.lineHeight ?? 0, margins: appliedPageMargins ?? epub.pageMargins ?? 1,
                                 font: prefs.font.rawValue, justify: prefs.justify)
     }
 
@@ -2123,7 +2131,43 @@ final class ReaderModel {
             pendingReflowReason = reason
         }
         layout = new
-        if columnsChanged { applyPreferences(reflow: true) }
+        if columnsChanged {
+            applyPreferences(reflow: true)
+        } else {
+            marginsFollowLayout()
+        }
+    }
+
+    /// The page opens laid out for the placeholder layout's width, a phone's, before the screen is measured. Its
+    /// margins keep a share of the page's width, and that share and Readium's gutter step at a few widths, so kept,
+    /// an iPad's portrait page was read with a phone's margins (while the page count used the iPad's) until its
+    /// first turn on its side set the real ones; turned back, his words fell a third of a page down another page
+    /// (gatefold#302). So a new layout whose width crosses one of those steps gives the page its margins, even
+    /// with the same columns; within a step they stay as they are, so a live resize never reflows on every width.
+    /// Called on each new layout and when the host has loaded (a layout can come before there is a page).
+    func marginsFollowLayout() {
+        guard host != nil, publication.metadata.layout != .fixed, layout.pageFrame.width > 0,
+              Self.marginBand(columns: layout.columns, viewWidth: layout.pageFrame.width) != marginsLaidFor else { return }
+        // Nothing to keep before the page is shown; after, a reflow keeps his words.
+        applyPreferences(reflow: pageReady)
+    }
+
+    /// The steps the page's margins were last laid out at (`applyPreferences`, or the opening).
+    @ObservationIgnored private var marginsLaidFor: MarginBand?
+    /// The margin multiplier the page was last given. Within a step it can differ from the one the width would
+    /// call for, and the counters lay pages out with the page's own (`ReaderHostController.countPages`), so the
+    /// counts are keyed on it (`screenLayout`).
+    private var appliedPageMargins: Double?
+    struct MarginBand: Equatable {
+        let widePage: Bool
+        let gutter: Double
+    }
+    /// The steps `epubPreferences`' margins take at this width: a wide page's share or a narrow one's, and
+    /// Readium's gutter.
+    static func marginBand(columns: GatefoldCore.ColumnCount, viewWidth: CGFloat) -> MarginBand {
+        let view = Double(viewWidth)
+        let page = columns == .two ? view / 2 : view
+        return MarginBand(widePage: page >= PageMargins.widePage, gutter: PageMargins.readiumGutter(viewWidth: view))
     }
 
     func consumeReflowReason() -> ReflowReason? {
@@ -2739,7 +2783,7 @@ final class ReaderModel {
         turnFalling = false
         lastTurnMove = moves
         let step = steps
-        Task {
+        turnLook = Task {
             guard let first = page?.currentLocation else { return }
             // A turn is a move too: a Back that comes back late after it puts the page back here.
             landed(step, at: first)
@@ -2771,12 +2815,17 @@ final class ReaderModel {
         fallingWords = nil
         turnCommits += 1
         let commit = turnCommits
-        Task { [weak self] in
+        fallingRead = Task { [weak self] in
             guard let read = await self?.page?.wordsOnPage(), let self, self.turnCommits == commit,
                   read.text.highlight != nil else { return }
             self.fallingWords = read
         }
     }
+    /// His latest landed turn's own work (its report, its write, its second look), for tests to wait on
+    /// its end: the event, never a count of scheduler turns (gatefold#350).
+    @ObservationIgnored private(set) var turnLook: Task<Void, Never>?
+    /// The read of his first words beneath his latest committed turn (`turnCommitted`), for tests to wait on.
+    @ObservationIgnored private(set) var fallingRead: Task<Void, Never>?
     /// A turn of his between letting go and landing (`turnCommitted`).
     @ObservationIgnored private var turnFalling = false
     @ObservationIgnored private var turnCommits = 0
@@ -3472,8 +3521,26 @@ final class ReaderModel {
         (l.href.string.split(separator: "/").last.map(String.init) ?? "") + String(format: "@%.5f", l.locations.progression ?? -1)
     }
 
+    /// UI tests: the web view's count of the columns on screen, measured with each new look at the page
+    /// (`ReaderJS.columns`), with the layout's own count after it.
+    private(set) var columnsProbe = ""
+    /// Each measure's turn: only the newest look writes the probe, so an older one finishing late never
+    /// overwrites it.
+    private var columnsLook = 0
+
     private func refreshBookmarkState(_ visible: VisibleRange?) {
         if LaunchOptions.isUITest, reopenPicture == nil, let text = visible?.text { visibleTextProbe = String(text.prefix(2400)) }
+        if LaunchOptions.columnsProbe, reopenPicture == nil, visible != nil {
+            columnsLook += 1
+            let look = columnsLook
+            Task { [weak self] in
+                guard let self else { return }
+                let measure = await self.page?.columnMeasure()
+                guard look == self.columnsLook else { return }
+                // No measure is no answer: the probe empties rather than keep an older page's count.
+                self.columnsProbe = measure.map { "\($0) layout \(self.layout.columns == .two ? 2 : 1)" } ?? ""
+            }
+        }
         guard let location else { return }
         let here = location.href.string
         let p = location.locations.progression ?? 0
@@ -3512,11 +3579,13 @@ final class ReaderModel {
 
     func applyPreferences(reflow: Bool) {
         let prefs = preferences
-        host?.apply(
-            Self.epubPreferences(prefs, theme: theme, columns: layout.columns, viewWidth: layout.pageFrame.width, tabletop: layout.posture == .tabletop, language: Self.hyphenationLanguage(publication)),
-            columns: layout.columns == .two ? 2 : 1,
-            reflow: reflow
-        )
+        let epub = Self.epubPreferences(prefs, theme: theme, columns: layout.columns, viewWidth: layout.pageFrame.width, tabletop: layout.posture == .tabletop,
+                                        language: Self.hyphenationLanguage(publication), fixedLayout: publication.metadata.layout == .fixed)
+        if let host {
+            host.apply(epub, columns: layout.columns == .two ? 2 : 1, reflow: reflow)
+            marginsLaidFor = Self.marginBand(columns: layout.columns, viewWidth: layout.pageFrame.width)
+            appliedPageMargins = epub.pageMargins
+        }
         host?.disablePanningIfNeeded()
     }
 
@@ -3527,7 +3596,7 @@ final class ReaderModel {
         publication.metadata.language ?? Language(code: .bcp47("en"))
     }
 
-    static func epubPreferences(_ prefs: ReaderPreferences, theme: ReaderTheme, columns: GatefoldCore.ColumnCount, viewWidth: CGFloat, tabletop: Bool = false, language: Language? = nil) -> EPUBPreferences {
+    static func epubPreferences(_ prefs: ReaderPreferences, theme: ReaderTheme, columns: GatefoldCore.ColumnCount, viewWidth: CGFloat, tabletop: Bool = false, language: Language? = nil, fixedLayout: Bool = false) -> EPUBPreferences {
         let custom = prefs.font != .original || prefs.lineSpacing != .normal || prefs.justify
         // Each choice keeps a share of the page's width (Classic Apple Books' measure on an iPad page),
         // a spread's pages included; tabletop's half-height page keeps no more than Classic.
@@ -3551,6 +3620,12 @@ final class ReaderModel {
             pageMargins: margins,
             publisherStyles: false,
             scroll: prefs.pageTurn == .scroll,
+            // Gatefold lays a reflowable book's spread out itself, in one page's columns. Readium's own spread
+            // (`.auto`, its default) pairs only fixed-layout pages, yet flipping it on a turn of the iPad threw
+            // the page away and loaded the chapter again: 6 s and more behind a frozen leaf, a right page blank,
+            // and on the way back the chapter's first page before his (gatefold#302). Never, so the page lays
+            // itself out again in place.
+            spread: fixedLayout ? nil : .never,
             textAlign: prefs.justify ? .justify : nil,
             textColor: ReadiumNavigator.Color(hex: ThemePalette.hexString(theme.palette.text)),
             theme: theme.palette.isDark ? .dark : .light

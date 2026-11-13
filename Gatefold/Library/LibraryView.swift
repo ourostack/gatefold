@@ -557,6 +557,9 @@ struct CoverView: View {
         }
         .animation(.easeOut(duration: 0.35), value: image == nil)
         .clipShape(Self.shape)
+        // Content and clip render as one bitmap, so a jacket that arrives while its cover is still dropping in gets
+        // the same corner curve as one that arrives after (gatefold#316).
+        .drawingGroup()
         // In the dark a shadow vanishes into black, so a hairline keeps the cover's edge instead.
         .overlay { if scheme == .dark { Self.shape.stroke(Color.hairline, lineWidth: 1) } }
         // By day a crisp contact line and a soft halo: a book resting on a table.

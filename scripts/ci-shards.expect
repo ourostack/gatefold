@@ -22,6 +22,7 @@ main|iPad Pro 13-inch|NavigationPlaceUITests/testAScrubberJumpKeepsThePlace
 main|iPad Pro 13-inch|NavigationPlaceUITests/testAScrubberJumpLeftWhileItsChapterLoadsKeepsItsTarget
 main|iPad Pro 13-inch|NavigationPlaceUITests/testOpenedFromTheShelfThenLeftTwiceWithoutATurnKeepsThePlace
 main|iPad Pro 13-inch|NavigationPlaceUITests/testReadInPortraitRotatedThenLeftKeepsHisFirstWords
+main|iPad Pro 13-inch|NavigationPlaceUITests/testScrolledAfterAStalledSwitchToScrollKeepsWhereHeScrolled
 main|iPad Pro 13-inch|NavigationPlaceUITests/testScrolledAfterTheLaunchReflowThenLeftKeepsWhereHeScrolled
 main|iPad Pro 13-inch|NavigationPlaceUITests/testTheCloudsOfferOverTheOpeningCoverTakesHisTap
 main|iPad Pro 13-inch|NavigationPlaceUITests/testTheOpeningCoverLetsTheControlsThrough
@@ -51,7 +52,9 @@ main|iPad Pro 13-inch|ReviewerChecksUITests/testEveryReopenReturnsTheSameWords
 main|iPad Pro 13-inch|ReviewerChecksUITests/testPageNumbersAreOnOrOffInEveryBook
 main|iPad Pro 13-inch|ReviewerChecksUITests/testTheDefaultSpreadIsAsFullAsAppleBooks
 main|iPad Pro 13-inch|ReviewerChecksUITests/testTheLastPagesNumberIsTheCount
+main|iPad Pro 13-inch|RotationMidTransitionUITests/testAColdTurnOnItsSideOpensAWholeSpreadWithNoStandingLeaf
 main|iPad Pro 13-inch|RotationMidTransitionUITests/testARestoreThatNeverSettlesStillShowsTheSpread
+main|iPad Pro 13-inch|RotationMidTransitionUITests/testTurnedOnItsSideAndBackHeIsOnHisPage
 main|iPad Pro 13-inch|RotationMidTransitionUITests/testTurningDuringAContentsJump
 main|iPad Pro 13-inch|RotationMidTransitionUITests/testTurningDuringAPageTurn
 main|iPad Pro 13-inch|RotationRepro/testRotateThenLeaveWhileTheRestoreWaitsOnHisKeptPlaceWithoutItsWords
@@ -60,6 +63,7 @@ main|iPad Pro 13-inch|RotationRepro/testRotateThenLeaveWhileTheRestoreWaitsOnIts
 main|iPad Pro 13-inch|RotationRepro/testRotateThenLeaveWithoutItsWordsAndReopenOnTheChapterStart
 main|iPad Pro 13-inch|RotationRepro/testRotateThenLeaveWithoutTurning
 main|iPad Pro 13-inch|RotationRepro/testRotateThenLeaveWithoutTurningAfterStalledReflows
+main|iPad Pro 13-inch|SingleColumnUITests/testAOnePageScreenStaysOneColumnThroughTheReviewSteps
 main|iPad Pro 13-inch|SpreadTurnSettleUITests/testSpreadTurnsLandWithoutSliding
 main|iPad Pro 13-inch|SwallowedTapUITests/testTapsAfterSwipesAndAJumpAreAnswered
 main|iPad Pro 13-inch|WindowFitUITests/testOnItsSide
@@ -88,6 +92,7 @@ main|iPhone Duo|ReviewerChecksUITests/testEveryReopenReturnsTheSameWords
 main|iPhone Duo|ReviewerChecksUITests/testPageNumbersAreOnOrOffInEveryBook
 main|iPhone Duo|ReviewerChecksUITests/testTheDefaultSpreadIsAsFullAsAppleBooks
 main|iPhone Duo|ReviewerChecksUITests/testTheLastPagesNumberIsTheCount
+main|iPhone Duo|SingleColumnUITests/testAOnePageScreenStaysOneColumnThroughTheReviewSteps
 pr|iPad Pro 13-inch|FineTuneTapUITests/testAQuickTouchChangesEverySwitchOnce
 pr|iPad Pro 13-inch|FineTuneTapUITests/testATapOnTheRowsNameChangesItsSwitch
 pr|iPad Pro 13-inch|NavigationPlaceUITests/testAContentsJumpKeepsThePlace

@@ -457,7 +457,19 @@ final class NavigationPlaceUITests: XCTestCase {
     /// reports, so a reopen shows where he scrolled to, not where the scroll began. Every wait is a
     /// count of reads of the page, never seconds (#171).
     func testScrolledAfterTheLaunchReflowThenLeftKeepsWhereHeScrolled() {
-        var first = openFresh()
+        scrollAfterTheLaunchReflowThenLeave()
+    }
+
+    /// The same, with the first launch's reflows stalled behind their cover (`-GatefoldStallReflow`; the reopen isn't),
+    /// so the switch to Scroll settles only after the 12 s watchdog shows its page and starts it again, as on CI's slow
+    /// iPad. The words probe holds still meanwhile, and a swipe then lands on a page that can't move: swiping once the
+    /// words held still, without waiting for the reflow to settle, failed "the scroll moved the words" (gatefold#342).
+    func testScrolledAfterAStalledSwitchToScrollKeepsWhereHeScrolled() {
+        scrollAfterTheLaunchReflowThenLeave(["-GatefoldStallReflow", "YES"])
+    }
+
+    private func scrollAfterTheLaunchReflowThenLeave(_ extra: [String] = []) {
+        var first = openFresh(extra)
         // A fresh install offers the Cloud's place and never lands on it (#46): the book opens on its
         // cover, which has no words to scroll through. He takes the offer, as he would.
         if first.isEmpty { first = takeTheCloudsOffer() }
@@ -478,10 +490,16 @@ final class NavigationPlaceUITests: XCTestCase {
         turnStyle.tap()
         let scroll = app.buttons["Scroll"].firstMatch
         XCTAssertTrue(scroll.waitForExistence(timeout: 5), "the page turn menu offers Scroll")
+        let reflowBefore = ReaderReads.reflowNumber(app)
         scroll.tap()
         let close = app.buttons["appearance.close"].exists ? app.buttons["appearance.close"] : app.buttons["appearance.back"]
         if close.exists { close.tap() } else { app.descendants(matching: .any)["reader.page"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.2)).tap() }
-        // The switch to Scroll reflows the book: he swipes once the page has held still (the old 4 s).
+        // The switch to Scroll reflows the book: he swipes once its reflow has settled and the page has held still.
+        // Settled, not only still: on CI's slow iPad the reflow ran past the 12 s watchdog, which showed the page and
+        // started it again while the Scroll layout loaded under Readium's spinner. The words probe held still only
+        // because nothing reported, and six swipes on the loading page moved nothing (gatefold#342).
+        XCTAssertNotNil(ReaderReads.reflowSettled(app, since: reflowBefore, "the switch to Scroll") { print("SCROLL \($0)") },
+                        "the switch to Scroll's reflow (newer than \(reflowBefore)) settled")
         let before = steadyWords()
         let page = app.descendants(matching: .any)["reader.page"]
         let savedBefore = savedWords
