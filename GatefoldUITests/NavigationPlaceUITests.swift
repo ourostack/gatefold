@@ -362,11 +362,9 @@ final class NavigationPlaceUITests: XCTestCase {
         // Contents opens scrolled to the chapter he is in, so any chapter row shows it opened.
         let anyChapter = app.buttons.matching(NSPredicate(format: "label BEGINSWITH[c] %@", "Chapter ")).firstMatch
         XCTAssertTrue(readsUntil(40) { anyChapter.exists }, "the contents opened")
-        // Chapter XL is further down the list than XXX, which 20 slow swipes reach; opened past it, swipe back.
-        for _ in 0..<40 where !(row.exists && row.isHittable) { app.swipeUp(velocity: .slow) }
-        for _ in 0..<40 where !(row.exists && row.isHittable) { app.swipeDown(velocity: .slow) }
-        XCTAssertTrue(row.exists && row.isHittable, "the contents list \(title)")
-        row.tap()
+        // Brought into view by frame reads and held drags, never `isHittable` or a fling (gatefold#98): Chapter XL is
+        // further down than XXX, so it gets twice the drags; opened on it, it is tapped where it is.
+        XCTAssertTrue(ContentsRow.tap(row, in: app, reads: 160, drags: 40).ok, "the contents list \(title)")
     }
 
     private func tag(_ e: XCUIElement) -> (String, Double)? {
