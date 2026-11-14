@@ -192,7 +192,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: ourostack/apple-distribution-kit
-          ref: c296021af0e7eacb424dc9c7f924c9cda8df9d64
+          ref: f19c6ebd6937e853a4e7410c98b8622801697840
           path: .ci/apple-distribution-kit
           persist-credentials: false
 
@@ -207,7 +207,7 @@ jobs:
         if: env.GATEFOLD_FRESH == 'true'
         working-directory: .ci/apple-distribution-kit
         env:
-          EXPECTED_DIST_SHA256: 09e0dded99208496bd96cecc6edc067188ec49bae4486b83f90b85e57db954b9
+          EXPECTED_DIST_SHA256: 3aacf6bc382ac8ffbc816faf52ed86951f411fad5cad259ab189cdad4889c332
         run: |
           set -euo pipefail
           npm ci --loglevel=error
@@ -238,6 +238,13 @@ jobs:
           os.chmod(config, 0o600)
           PY
           echo "APPLE_DISTRIBUTION_KIT_CONFIG=$dir/config.json" >> "$GITHUB_ENV"
+
+      # Record every certificate id before anything can create one, so the safety net below
+      # revokes only what this run created and never another repo's same-named certificate.
+      - name: Record existing certificates
+        if: steps.asc_credentials.outcome == 'success' && env.GATEFOLD_FRESH == 'true'
+        continue-on-error: true
+        run: node "$APPLE_DISTRIBUTION_KIT_BIN" signing snapshot-certificates --out "$RUNNER_TEMP/adk-signing/certificates-before.json"
 
       # The long-lived Apple Distribution certificate from secrets: the run creates no certificate,
       # and xcodebuild signs manually without calling Apple.
@@ -301,7 +308,7 @@ jobs:
       - name: Revoke API-created development certificates (safety net)
         if: always() && steps.asc_credentials.outcome == 'success' && env.GATEFOLD_FRESH == 'true'
         continue-on-error: true
-        run: node "$APPLE_DISTRIBUTION_KIT_BIN" signing revoke-api-certificates --best-effort
+        run: node "$APPLE_DISTRIBUTION_KIT_BIN" signing revoke-api-certificates --best-effort --baseline "$RUNNER_TEMP/adk-signing/certificates-before.json"
 
       - name: Delete signing keychain
         if: always() && steps.signing_identity.outcome != 'skipped' && env.GATEFOLD_FRESH == 'true'
