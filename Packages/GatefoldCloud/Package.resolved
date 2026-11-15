@@ -1,5 +1,5 @@
 {
-  "originHash" : "b7be0a004bd0052ec3de9c64943354ace171931d96c1b0f7d7bb41d649e827d6",
+  "originHash" : "7848d795d6fec5c77d9c4dad10bcb0d79f216ecf29dee1fcb34c0c387daf060b",
   "pins" : [
     {
       "identity" : "cryptoswift",
@@ -38,15 +38,6 @@
       }
     },
     {
-      "identity" : "ouro-ui-apple",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/ourostack/ouro-ui-apple",
-      "state" : {
-        "revision" : "a341db3280d48f6c7e44db6c4f7f8a73323f174e",
-        "version" : "0.8.0"
-      }
-    },
-    {
       "identity" : "sqlite.swift",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/stephencelis/SQLite.swift.git",
@@ -58,7 +49,7 @@
     {
       "identity" : "swift-toolkit",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/ourostack/swift-toolkit",
+      "location" : "https://github.com/ourostack/swift-toolkit.git",
       "state" : {
         "revision" : "a0eb21330d0f8c37476859922bd967073e7b73f4"
       }
