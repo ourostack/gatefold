@@ -25,11 +25,14 @@ private struct Harness {
         self.places = places
     }
 
+    let reports = DownloadReports()
+
     func cloud() -> PocketBookCloud {
         let clock = self.clock
         return PocketBookCloud(
             configuration: .init(storageDirectory: directory, autoFlush: false),
             transport: transport, credentials: creds, tokenStore: tokens, pushedPlaces: places,
+            downloadReports: reports,
             now: { clock.now }, jitter: { 1.0 }, sleep: { _ in }
         )
     }
@@ -154,6 +157,45 @@ struct FileTests {
         let b = try WireDecoder.book(WireDecoder.loose(Data(book(md5: md5Base64(bytes)).utf8)))!
         let url = try await h.cloud().download(b)
         #expect(try Data(contentsOf: url) == bytes)
+    }
+
+    /// P0 (2026-11-13): a listed link the Cloud turns away with a 400 is asked for afresh, not given up on.
+    @Test func refetchesAListedLinkTheCloudAnswersWith400() async throws {
+        let h = Harness()
+        let bytes = Data(repeating: 4, count: 5000)
+        await h.transport.on("GET", "f1.epub", .json(#"{"error_code":0,"error_msg":"payload: This value should not be null."}"#, status: 400))
+        await h.transport.on("GET", "/fileops/info", .json(#"{"fast_hash":"\#(frankenstein)","name":"x.epub","download_link":"https://cloud.pocketbook.digital/api/v1.0/files/x/signature-download/fresh.epub?payload=p2&signature=s2"}"#))
+        await h.transport.on("GET", "fresh.epub", .data(bytes))
+        let b = try WireDecoder.book(WireDecoder.loose(Data(book(md5: md5Base64(bytes)).utf8)))!
+        let url = try await h.cloud().download(b)
+        #expect(try Data(contentsOf: url) == bytes)
+        let report = try #require(h.reports.reports.last)
+        #expect(report.stage == nil)
+        #expect(report.refetched && report.hadListedLink && report.attempts == 2 && report.httpStatus == 200)
+    }
+
+    /// A rate limit is not a stale link: no fresh link is fetched, and the report says the status.
+    @Test func aRateLimitedDownloadReportsItsStatusWithoutRefetching() async throws {
+        let h = Harness()
+        await h.transport.on("GET", "f1.epub", .json("{}", status: 429))
+        let b = try WireDecoder.book(WireDecoder.loose(Data(book(md5: md5Base64(Data([1]))).utf8)))!
+        await #expect(throws: CloudError.self) { _ = try await h.cloud().download(b) }
+        #expect(await h.transport.requests("GET", "/fileops/info").isEmpty)
+        let report = try #require(h.reports.reports.last)
+        #expect(report.stage == .status && report.httpStatus == 429 && report.errorKind == "rateLimited" && !report.refetched)
+    }
+
+    /// The report of a failed check names the stage and the check, and nothing about the book.
+    @Test func aFailedCheckIsReportedAsVerifyWithCountsOnly() async throws {
+        let h = Harness()
+        await h.transport.on("GET", "signature-download", .data(Data(repeating: 7, count: 5000)))
+        let b = try WireDecoder.book(WireDecoder.loose(Data(book(md5: md5Base64(Data([1]))).utf8)))!
+        await #expect(throws: CloudError.checksumMismatch) { _ = try await h.cloud().download(b) }
+        let report = try #require(h.reports.reports.last)
+        #expect(report.stage == .verify && report.check == .md5 && report.errorKind == "checksumMismatch")
+        #expect(report.format == "epub" && report.httpStatus == 200)
+        let described = String(describing: report)
+        #expect(!described.contains(frankenstein) && !described.contains("signature") && !described.contains(".epub"))
     }
 
     @Test func refusesTinyEPUBs() async throws {

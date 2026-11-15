@@ -1,4 +1,5 @@
 import Foundation
+import GatefoldCloud
 import GatefoldCore
 import Observation
 import UIKit
@@ -218,8 +219,10 @@ final class LibraryStore {
     func download(_ book: LibraryBook) async {
         guard let cloud = book.cloud, state(of: book) != .downloading else { return }
         downloads[book.id] = .downloading
+        var fetched = false
         do {
             let temp = try await sync.download(cloud)
+            fetched = true
             let name = "\(book.id).epub"
             let target = booksDir.appending(path: name)
             if FileManager.default.fileExists(atPath: target.path) {
@@ -234,6 +237,13 @@ final class LibraryStore {
                 coverless.remove(book.id)
             }
         } catch {
+            if fetched {
+                // The Cloud's part worked; putting the book on the shelf did not. The Cloud's own stages
+                // report themselves (DownloadReports); this one is ours.
+                var report = DownloadReport(stage: .shelve, format: "epub", isDRM: cloud.isDRM)
+                report.note(error)
+                DownloadReports.shared.record(report)
+            }
             if let message = FriendlyError.message(for: error) {
                 downloads[book.id] = .failed(message)
             } else {

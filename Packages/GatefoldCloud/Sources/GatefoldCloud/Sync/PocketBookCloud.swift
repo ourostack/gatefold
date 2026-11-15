@@ -33,6 +33,8 @@ public actor PocketBookCloud: SyncService {
     private let broadcaster = ChangeBroadcaster()
     /// Our own pointers, kept past a reinstall, so our place never comes back as another device's.
     private let pushedPlaces: PushedPlaces
+    /// Where each download's counts-only report goes (the app forwards them as telemetry).
+    private let downloadReports: DownloadReports
 
     private var books: [CloudBook]
     private var state: OutboxState
@@ -56,12 +58,14 @@ public actor PocketBookCloud: SyncService {
                 credentials: ClientCredentialsProvider? = nil,
                 tokenStore: TokenStore = KeychainTokenStore(),
                 pushedPlaces: PushedPlaces = KeychainPushedPlaces(),
+                downloadReports: DownloadReports = .shared,
                 base: URL = CloudSession.defaultBase,
                 now: @escaping @Sendable () -> Date = { Date() },
                 jitter: @escaping @Sendable () -> Double = { Double.random(in: 0.8...1.2) },
                 sleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) }) {
         self.configuration = configuration
         self.pushedPlaces = pushedPlaces
+        self.downloadReports = downloadReports
         self.transport = transport
         self.now = now
         self.jitter = jitter
@@ -210,39 +214,73 @@ public actor PocketBookCloud: SyncService {
     // MARK: Files
 
     public func download(_ book: CloudBook) async throws -> URL {
+        var report = DownloadReport(hadListedLink: book.downloadURL != nil,
+                                    check: book.verifiableMD5 != nil ? .md5 : (book.bytes > 0 ? .size : .none),
+                                    format: DownloadReport.format(of: book), isDRM: book.isDRM)
+        do {
+            let url = try await download(book, report: &report)
+            report.stage = nil
+            downloadReports.record(report)
+            return url
+        } catch {
+            if error is CancellationError || (error as? URLError)?.code == .cancelled { report.stage = .cancelled }
+            report.note(error)
+            downloadReports.record(report)
+            throw error
+        }
+    }
+
+    private func download(_ book: CloudBook, report: inout DownloadReport) async throws -> URL {
         let ext = (book.format?.lowercased()).flatMap { $0.isEmpty ? nil : $0 } ?? URL(fileURLWithPath: book.name).pathExtension.lowercased()
         let destination = booksDirectory.appendingPathComponent("\(book.fastHash).\(ext.isEmpty ? "epub" : ext)")
         let fm = FileManager.default
         if fm.fileExists(atPath: destination.path) {
-            if try await Self.matches(destination, book) { return destination }
+            if try await Self.matches(destination, book) { report.reusedLocalCopy = true; return destination }
             try? fm.removeItem(at: destination)
         }
 
         var link = book.downloadURL
         var refetched = false
         if link == nil {
+            report.stage = .refetchLink
             link = try await freshDownloadLink(for: book)
             refetched = true
+            report.refetched = true
         }
         while true {
+            report.stage = .link
             guard let url = link else { throw CloudError.unexpectedResponse("no download link") }
             let partial = partialDirectory.appendingPathComponent(UUID().uuidString)
             let response: HTTPURLResponse
+            report.attempts += 1
+            report.stage = .transfer
             do {
                 response = try await transport.download(URLRequest(url: url), to: partial)
             } catch {
                 try? fm.removeItem(at: partial)
                 throw CloudSession.mapTransportError(error)
             }
-            if [401, 403, 404, 410].contains(response.statusCode), !refetched {
+            report.httpStatus = response.statusCode
+            // A listed link goes stale: the Cloud answers an expired or malformed signed link with a 4xx
+            // (403 for a bad signature or payload, 400 for a missing one, seen live 2026-11-14). Ask once
+            // for a fresh link on any 4xx but a rate limit or a timeout.
+            if Self.isStaleLinkStatus(response.statusCode), !refetched {
                 try? fm.removeItem(at: partial)
+                report.stage = .refetchLink
                 link = try await freshDownloadLink(for: book)
                 refetched = true
+                report.refetched = true
                 continue
             }
             do {
+                report.stage = .status
                 try CloudSession.check(response, Data())
+                report.stage = .verify
+                if book.bytes > 0, let size = try? fm.attributesOfItem(atPath: partial.path)[.size] as? NSNumber {
+                    report.sizeMatched = size.int64Value == book.bytes
+                }
                 if try await !Self.matches(partial, book) { throw CloudError.checksumMismatch }
+                report.stage = .store
                 try fm.moveItem(at: partial, to: destination)
             } catch {
                 try? fm.removeItem(at: partial)
@@ -252,6 +290,10 @@ public actor PocketBookCloud: SyncService {
             }
             return destination
         }
+    }
+
+    static func isStaleLinkStatus(_ status: Int) -> Bool {
+        (400..<500).contains(status) && status != 408 && status != 429
     }
 
     private func freshDownloadLink(for book: CloudBook) async throws -> URL? {
