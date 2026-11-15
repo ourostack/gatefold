@@ -56,6 +56,48 @@ struct GatefoldTelemetryTests {
     }
 }
 
+/// A tap on a book not on the device says what the shelf showed, so a tap that never reached the Cloud still counts.
+struct GatefoldDownloadTapTelemetryTests {
+    static let allowed: Set<String> = ["state", "has_cloud_copy", "seconds_downloading"]
+
+    @Test func aTapOnAStuckDownloadSaysHowLongItHasRunInABucket() {
+        let p = GatefoldTelemetry.tapProperties(state: .downloading, hasCloudCopy: true, secondsDownloading: 400)
+        #expect(Set(p.keys) == Self.allowed)
+        #expect(p["state"] == .string("downloading"))
+        #expect(p["seconds_downloading"] == .int(600))
+    }
+
+    @Test func aTapThatStartsADownloadSendsNoTimeAndNoFailureText() {
+        let p = GatefoldTelemetry.tapProperties(state: .failed("PocketBook Cloud is having a little lie-down."), hasCloudCopy: false,
+                                                secondsDownloading: nil)
+        #expect(Set(p.keys).isSubset(of: Self.allowed))
+        #expect(p["state"] == .string("failed"))
+        #expect(p["has_cloud_copy"] == .bool(false))
+        #expect(p["seconds_downloading"] == nil)
+    }
+
+    @Test func bucketsRoundUpAndStopAtAnHour() {
+        #expect(GatefoldTelemetry.bucket(0) == 5)
+        #expect(GatefoldTelemetry.bucket(5) == 15)
+        #expect(GatefoldTelemetry.bucket(59.9) == 60)
+        #expect(GatefoldTelemetry.bucket(86_400) == 3600)
+    }
+
+    @Test func theTapIsSentAsItsOwnEvent() throws {
+        let sent = Box()
+        let defaults = try #require(UserDefaults(suiteName: "telemetry-tap-\(UUID().uuidString)"))
+        let telemetry = GatefoldTelemetry(configuration: .init(apiKey: "phc_test", captureURL: URL(string: "https://example.invalid/e/")!),
+                                          defaults: defaults, send: { sent.requests.append($0) })
+        telemetry.capture("gatefold_download_tap",
+                          properties: GatefoldTelemetry.tapProperties(state: .cloudOnly, hasCloudCopy: true, secondsDownloading: nil))
+        let body = try #require(sent.requests.first?.httpBody)
+        let json = try #require(try JSONSerialization.jsonObject(with: body) as? [String: Any])
+        #expect(json["event"] as? String == "gatefold_download_tap")
+        let props = try #require(json["properties"] as? [String: Any])
+        #expect(props["state"] as? String == "cloud_only")
+    }
+}
+
 private final class Box: @unchecked Sendable {
     var count = 0
     var requests: [URLRequest] = []

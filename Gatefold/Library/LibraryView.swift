@@ -427,8 +427,10 @@ struct BookTile: View {
         Button {
             switch state {
             case .onDevice: onOpen(book)
-            case .cloudOnly, .failed: Task { await app.library.download(book) }
-            case .downloading: break
+            case .cloudOnly, .failed:
+                app.library.noteDownloadTap(book)
+                Task { await app.library.download(book) }
+            case .downloading: app.library.noteDownloadTap(book)
             }
         } label: {
             VStack(alignment: .leading, spacing: 8) {

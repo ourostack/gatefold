@@ -79,6 +79,28 @@ final class GatefoldTelemetry: @unchecked Sendable {
         return p
     }
 
+    /// A tap on a book that isn't on the device yet, with what the shelf showed. A tap that never reaches the
+    /// Cloud (a download already under way, or a book with no Cloud copy) sends no `gatefold_download`, so
+    /// without this a stuck download would look like no tap at all. Seconds are bucketed: the bucket's upper bound.
+    static func tapProperties(state: DownloadState, hasCloudCopy: Bool, secondsDownloading: TimeInterval?) -> [String: Value] {
+        var p: [String: Value] = ["state": .string(name(of: state)), "has_cloud_copy": .bool(hasCloudCopy)]
+        if let s = secondsDownloading { p["seconds_downloading"] = .int(bucket(s)) }
+        return p
+    }
+
+    static let buckets = [5, 15, 30, 60, 120, 300, 600, 1800, 3600]
+    /// The smallest bucket above `seconds`; 3600 for an hour or more.
+    static func bucket(_ seconds: TimeInterval) -> Int { buckets.first { seconds < Double($0) } ?? 3600 }
+
+    private static func name(of state: DownloadState) -> String {
+        switch state {
+        case .cloudOnly: "cloud_only"
+        case .downloading: "downloading"
+        case .onDevice: "on_device"
+        case .failed: "failed"
+        }
+    }
+
     enum Value: Encodable, Equatable {
         case string(String), int(Int), bool(Bool)
         func encode(to encoder: Encoder) throws {
