@@ -31,6 +31,9 @@ runs:
             "completed success") break ;;
             "completed "*) echo "::error::Build for testing ended ${build#completed }, so there is nothing to test"; exit 1 ;;
           esac
+          # A line a minute: every job GitHub cancelled from outside had sat 10 to 15 min in this silent loop (gatefold#404).
+          waited=$(( $(date +%s) - started ))
+          if [ $(( waited % 60 )) -lt 15 ] && [ "$waited" -ge 60 ]; then echo "$(date -u +%T) Build for testing is ${build:-unknown} after $waited s"; fi
           sleep 15
         done
         # An artifact is listed a moment after its upload ends; if it is still missing a minute on, it is another Xcode's.
