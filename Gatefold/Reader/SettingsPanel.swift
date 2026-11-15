@@ -1,4 +1,5 @@
 import GatefoldCore
+import OuroHX
 import ReadiumShared
 import SwiftUI
 import UIKit
@@ -248,15 +249,7 @@ private struct SettingRow<Control: View>: View {
     @ViewBuilder let control: () -> Control
 
     var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: symbol)
-                .font(.system(size: 17, weight: .medium))
-                .frame(width: 28)
-                .accessibilityHidden(true)
-            Text(title)
-                .font(.subheadline)
-                .fixedSize()
-            Spacer(minLength: 8)
+        OuroItem(title, systemImage: symbol, size: .sm) {
             control().frame(maxWidth: 240)
         }
         .frame(minHeight: 44)

@@ -1,4 +1,5 @@
 import GatefoldCore
+import OuroHX
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -711,38 +712,21 @@ private struct EmptyShelf: View {
     var onConnect: () -> Void
 
     var body: some View {
-        VStack(spacing: 18) {
-            Image(systemName: "books.vertical")
-                .font(.system(size: 54, weight: .light))
-                .foregroundStyle(Color.ribbon)
-                .symbolEffect(.wiggle, options: .nonRepeating)
-            Text(signedIn ? "Room on the Shelf" : "A Shelf with Room to Spare")
-                .font(.display(.title2, weight: .bold))
-                .foregroundStyle(Color.ink)
-                .multilineTextAlignment(.center)
-                .accessibilityIdentifier("library.empty")
-            Text(signedIn
-                 ? "Books you add to PocketBook Cloud will land here. EPUBs from Files are welcome too."
-                 : "Slip in an EPUB from Files, or connect PocketBook Cloud to bring your e-reader's books along.")
-                .multilineTextAlignment(.center)
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: 340)
-                .fixedSize(horizontal: false, vertical: true)
-            Button(action: onImport) {
-                Label("Add Books from Files", systemImage: "folder").foregroundStyle(Color.onRibbon)
-            }
-            .buttonStyle(.glassProminent)
-            .tint(.ribbon)
-            .controlSize(.large)
-            if !signedIn {
-                Button("Connect PocketBook Cloud", action: onConnect)
-                    .font(.subheadline.weight(.medium))
-                    .foregroundStyle(Color.ink)
-                    .frame(minHeight: 44)
+        OuroEmptyState(
+            signedIn ? "Room on the Shelf" : "A Shelf with Room to Spare",
+            systemImage: "books.vertical",
+            description: signedIn
+                ? "Books you add to PocketBook Cloud will land here. EPUBs from Files are welcome too."
+                : "Slip in an EPUB from Files, or connect PocketBook Cloud to bring your e-reader's books along."
+        ) {
+            VStack(spacing: 8) {
+                OuroButton("Add Books from Files", systemImage: "folder", size: .lg, action: onImport)
+                if !signedIn {
+                    OuroButton("Connect PocketBook Cloud", variant: .plain, action: onConnect)
+                }
             }
         }
-        .frame(maxWidth: .infinity)
-        .padding(24)
+        .accessibilityIdentifier("library.empty")
     }
 }
 
@@ -753,32 +737,17 @@ private struct UnreachableShelf: View {
     var onImport: () -> Void
 
     var body: some View {
-        VStack(spacing: 18) {
-            Image(systemName: problem == .offline ? "wifi.slash" : "exclamationmark.icloud")
-                .font(.system(size: 48, weight: .light))
-                .foregroundStyle(Color.ribbon)
-            Text("Can't Reach Your Shelf")
-                .font(.display(.title2, weight: .bold))
-                .foregroundStyle(Color.ink)
-                .accessibilityIdentifier("library.unreachable")
-            Text(detail)
-                .multilineTextAlignment(.center)
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: 340)
-                .fixedSize(horizontal: false, vertical: true)
-            Button(action: onRetry) {
-                Label("Try Again", systemImage: "arrow.clockwise").foregroundStyle(Color.onRibbon)
+        OuroEmptyState(
+            "Can't Reach Your Shelf",
+            systemImage: problem == .offline ? "wifi.slash" : "exclamationmark.icloud",
+            description: detail
+        ) {
+            VStack(spacing: 8) {
+                OuroButton("Try Again", systemImage: "arrow.clockwise", size: .lg, action: onRetry)
+                OuroButton("Add Books from Files", variant: .plain, action: onImport)
             }
-            .buttonStyle(.glassProminent)
-            .tint(.ribbon)
-            .controlSize(.large)
-            Button("Add Books from Files", action: onImport)
-                .font(.subheadline.weight(.medium))
-                .foregroundStyle(Color.ink)
-                .frame(minHeight: 44)
         }
-        .frame(maxWidth: .infinity)
-        .padding(24)
+        .accessibilityIdentifier("library.unreachable")
     }
 
     private var detail: String {
@@ -853,16 +822,14 @@ private struct SyncStatusLine: View {
                 }
             } else if case let .other(message)? = app.library.syncProblem, app.account != nil {
                 // Always the reader's words (`FriendlyError`), with a way to try again.
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Label(message, systemImage: "exclamationmark.icloud")
-                        .foregroundStyle(.secondary)
-                        .accessibilityIdentifier("library.syncTrouble")
-                    Button("Try Again") { Task { await app.refresh() } }
-                        .fontWeight(.semibold)
-                        .tint(.ribbon)
-                        .disabled(app.library.isRefreshing)
-                        .accessibilityIdentifier("library.syncRetry")
+                OuroBanner(message, tone: .warning, icon: .system("exclamationmark.icloud")) {
+                    OuroButton("Try Again", tone: .warning, variant: .soft, size: .sm, loading: app.library.isRefreshing) {
+                        Task { await app.refresh() }
+                    }
+                    .accessibilityIdentifier("library.syncRetry")
                 }
+                .accessibilityIdentifier("library.syncTrouble")
+                .padding(.vertical, 4)
             } else if !app.library.placesReachEReader, app.account != nil {
                 // Never "In step" over a place the e-reader didn't get.
                 Label(LibraryStore.placesNotSentLine, systemImage: "exclamationmark.icloud")

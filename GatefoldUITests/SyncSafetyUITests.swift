@@ -79,7 +79,10 @@ final class SyncSafetyUITests: XCTestCase {
         pullToRefresh()
         let trouble = element("library.syncTrouble")
         XCTAssertTrue(trouble.waitForExistence(timeout: 10))
-        XCTAssertTrue(trouble.label.contains("PocketBook Cloud is having a little lie\u{2011}down"), trouble.label)
+        // The banner holds his words as its own text (OuroBanner), beside its Try Again.
+        let kindly = "PocketBook Cloud is having a little lie\u{2011}down"
+        let inBanner = trouble.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", kindly)).firstMatch
+        XCTAssertTrue(trouble.label.contains(kindly) || inBanner.exists, trouble.debugDescription)
         XCTAssertTrue(element("library.syncRetry").exists, "a way to try again")
         assertNoRawErrorText("server trouble")
         XCTAssertEqual(bookCount, before, "no book left the shelf")
