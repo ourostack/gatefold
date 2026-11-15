@@ -643,7 +643,7 @@ jobs:
               ReviewerChecksUITests/testTheLastPagesNumberIsTheCount ReviewerChecksUITests/testPageNumbersAreOnOrOffInEveryBook
             pr_tests: none
             cold: false
-            timeout: 96 # 30 + 2 x 24.4 + 5 + 12
+            timeout: 110 # 30 + 2 x 31.4 + 5 + 12
             lane: 2
     uses: ./.github/workflows/ui-tests.yml
     with:
@@ -759,7 +759,7 @@ jobs:
               ReviewerChecksUITests/testEveryReopenReturnsTheSameWords
             pr_tests: none
             cold: false
-            timeout: 100 # 30 + 2 x 26.2 + 5 + 12
+            timeout: 114 # 30 + 2 x 33.2 + 5 + 12
             lane: 3
     uses: ./.github/workflows/ui-tests.yml
     with:

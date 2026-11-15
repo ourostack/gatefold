@@ -330,6 +330,19 @@ final class ReviewerChecksUITests: XCTestCase {
         if last.count == 2 { XCTAssertEqual(last[1], last[0] + 1, "the last spread's numbers are consecutive") }
     }
 
+    /// A counter that stops hearing back from its chapter never holds the count for good: it is replaced, and the
+    /// book is still counted (gatefold#378, where Emma at the larger size was never counted on CI's starved iPad).
+    func testACounterThatNeverHearsBackStillCounts() {
+        app.launchArguments = base + ["-GatefoldReset", "YES", "-GatefoldDownloadAll", "YES",
+                                      "-GatefoldOpenBook", "gutenberg-alice-in-wonderland", "-GatefoldStallCounterChapter", "3"]
+        app.launch()
+        XCTAssertTrue(opened("alice"), "the book opened")
+        XCTAssertNotNil(counted("alice"), "the book was counted though one counter never heard back")
+        let replaced = Int((el("reader.countersReplaced").value as? String) ?? "") ?? 0
+        note("alice counters replaced=\(replaced)")
+        XCTAssertGreaterThan(replaced, 0, "the stalled counter was replaced, so the stall took place")
+    }
+
     // MARK: Reader-wide toggles
 
     /// Page Numbers is his setting, not a book's: off by default, on in one book is on in the next (a
