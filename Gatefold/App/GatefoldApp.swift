@@ -1,4 +1,5 @@
 import GatefoldCore
+import OuroHX
 import ReadiumShared
 import SwiftUI
 import WebKit
@@ -23,6 +24,7 @@ struct GatefoldApp: App {
     var body: some Scene {
         WindowGroup {
             RootView()
+                .ouroTheme(.gatefold)
                 .environment(app)
                 .task { await app.start() }
                 .task { LaunchClock.firstFrame(); await WebWarmup.startUnlessABookOpens() }
