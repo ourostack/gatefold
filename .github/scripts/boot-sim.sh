@@ -161,10 +161,19 @@ diagnose() {
   grep -hiE "migrat|datamigrator|failed" "$HOME/Library/Logs/CoreSimulator/$1/system.log" 2>/dev/null | tail -15 >&2 || true
   df -h / | tail -1 >&2
 }
+# Devices this script created. A restart shuts down only these: other agents may be running their own simulators on
+# the same Mac, so never every simulator. The service itself is restarted only on a GitHub-hosted runner, where this
+# job owns the whole machine.
+created=""
 restart_service() {
-  xcrun simctl shutdown all >/dev/null 2>&1 || true
-  killall -9 com.apple.CoreSimulator.CoreSimulatorService >/dev/null 2>&1 || true
-  sleep 20
+  local u
+  for u in $created; do xcrun simctl shutdown "$u" >/dev/null 2>&1 || true; done
+  if [[ "${RUNNER_ENVIRONMENT:-}" == github-hosted ]]; then
+    killall -9 com.apple.CoreSimulator.CoreSimulatorService >/dev/null 2>&1 || true
+    sleep 20
+  else
+    echo "not a GitHub-hosted runner: CoreSimulatorService left running for the other simulators on this Mac" >&2
+  fi
   xcrun simctl list devices >/dev/null 2>&1 || true
 }
 for attempt in 1 2 3; do
@@ -173,6 +182,7 @@ for attempt in 1 2 3; do
     restart_service
   fi
   udid="$(xcrun simctl create "$name" "$type" "$runtime")" || { echo "attempt $attempt: create failed" >&2; restart_service; continue; }
+  created="$created $udid"
   if try_boot "$udid"; then echo "$udid"; exit 0; fi
   diagnose "$udid"
   if [[ $attempt == 2 ]]; then

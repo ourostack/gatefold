@@ -327,8 +327,14 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
 
     // MARK: Screen pages
 
-    /// The page laying chapters out out of sight to count their pages (`countPages`).
-    private var counter: (navigators: [EPUBNavigatorViewController], task: Task<Void, Never>)?
+    /// The pages laying chapters out out of sight to count their pages (`countPages`).
+    private var counter: (counters: Counters, task: Task<Void, Never>)?
+
+    /// A count's counters. One that stops answering is swapped for a fresh one, so the set changes while it counts.
+    @MainActor private final class Counters {
+        var navigators: [EPUBNavigatorViewController]
+        init(_ navigators: [EPUBNavigatorViewController]) { self.navigators = navigators }
+    }
     /// The counters' delegate, held here (a navigator holds its delegate weakly).
     private var countingInsets: CountingInsets?
     /// The standby page's delegate until it is the page (a navigator holds its delegate weakly).
@@ -430,12 +436,14 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             return
         }
         let links = hrefs.compactMap { href in publication.readingOrder.first { $0.url().removingFragment().string == href } }
+        CounterStall.arm(publication)
         // A chapter's cost is its web view loading (about 3 s each, one after another, in build 17), not
         // its measuring: several counters behind the page take chapters from one queue at once.
-        let workers = (0..<min(LaunchOptions.counters ?? Self.counters, links.count)).compactMap { _ in
+        let made = (0..<min(LaunchOptions.counters ?? Self.counters, links.count)).compactMap { _ in
             try? Self.makeNavigator(publication: publication, at: nil, preferences: preferences)
         }
-        guard !workers.isEmpty else { Self.countingTurns.done(self); finished(); return }
+        guard !made.isEmpty else { Self.countingTurns.done(self); finished(); return }
+        let workers = Counters(made)
         // The page's own bands (`navigatorContentInset`): without them a tablet counter laid its words out
         // 276 pt taller than the page and counted about a fifth too few columns.
         let insets = CountingInsets { [weak self] in
@@ -443,36 +451,43 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             return self.navigatorContentInset(self.navigator)
         }
         countingInsets = insets
-        for counting in workers {
-            counting.delegate = insets
-            addChild(counting)
-            // The same size as the page, laid out beside it, past the clipped edge. Behind the page, its
-            // chapter came out in the reopen picture drawn from this view, laid over his page. A reflow
-            // stops the count, so it never needs to follow the page's size.
-            counting.view.frame = navigator.view.frame.offsetBy(dx: view.bounds.width + 64, dy: 0)
-            counting.view.isUserInteractionEnabled = false
-            Self.sealed(counting.view, true)
-            view.insertSubview(counting.view, at: 0)
-            counting.didMove(toParent: self)
-        }
+        for counting in made { place(counting, insets) }
         let columns = columns
         let started = ContinuousClock.now
         let queue = CountQueue(links)
+        let pulse = CountPulse()
         let task = Task { @MainActor [weak self] in
-            let running = workers.map { counting in
+            let running = made.map { first in
                 Task { @MainActor [weak self] in
+                    var counting = first
+                    pulse.working += 1
+                    defer { pulse.working -= 1 }
                     while !Task.isCancelled, let link = queue.next() {
                         // A chapter laid out mid-burst costs the next turn frames: wait for 1.5 s without a turn.
                         while let host = self, host.isTurning || host.lastTurnEnded.map({ ContinuousClock.now - $0 < .milliseconds(1500) }) == true, !Task.isCancelled {
                             try? await Task.sleep(for: .milliseconds(250))
                         }
                         guard !Task.isCancelled else { return }
-                        if await Self.count(link, in: counting, columns: columns, record: record) {
+                        switch await Self.count(link, in: counting, columns: columns, pulse: pulse, record: record) {
+                        case .counted:
                             queue.counted += 1
-                        } else if !Task.isCancelled {
+                        case .unsettled:
                             // A chapter that never settled (its web view still loading under the others)
                             // goes to the back of the queue: a book with one uncounted chapter has no numbers.
-                            queue.retry(link)
+                            if !Task.isCancelled { queue.retry(link) }
+                        case .unanswered:
+                            // Its counter stopped answering (gatefold#378: the count waited on it for good, and the
+                            // book never had numbers): the chapter is counted again, and this counter is replaced.
+                            guard !Task.isCancelled, let self else { return }
+                            queue.retry(link, unanswered: true)
+                            guard let fresh = try? Self.makeNavigator(publication: self.publication, at: nil, preferences: self.preferences) else { return }
+                            readerLog.notice("pages: a counter stopped answering in \(link.url().removingFragment().string, privacy: .public) while the others answered \(pulse.answers, privacy: .public) times; a fresh one takes its place")
+                            self.place(fresh, insets)
+                            workers.navigators = workers.navigators.map { $0 === counting ? fresh : $0 }
+                            Self.stopLoading(counting.view)
+                            Self.retire(counting)
+                            counting = fresh
+                            if LaunchOptions.isUITest { self.weakModel?.countersReplacedProbe += 1 }
                         }
                     }
                 }
@@ -484,12 +499,26 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             }
             let counted = queue.counted
             guard !Task.isCancelled else { return }
-            readerLog.notice("pages: counted \(counted, privacy: .public) of \(links.count, privacy: .public) chapters with \(workers.count, privacy: .public) counters in \(ReaderModel.ms(since: started), privacy: .public) ms")
-            if self?.counter?.navigators.first === workers.first { self?.stopCounting() }
+            readerLog.notice("pages: counted \(counted, privacy: .public) of \(links.count, privacy: .public) chapters with \(made.count, privacy: .public) counters in \(ReaderModel.ms(since: started), privacy: .public) ms")
+            if self?.counter?.counters === workers { self?.stopCounting() }
             finished()
         }
         counter = (workers, task)
-        readerLog.notice("pages: counting \(links.count, privacy: .public) chapters behind the page with \(workers.count, privacy: .public) counters")
+        readerLog.notice("pages: counting \(links.count, privacy: .public) chapters behind the page with \(made.count, privacy: .public) counters")
+    }
+
+    /// Puts a counter in the reader, out of sight beside the page.
+    private func place(_ counting: EPUBNavigatorViewController, _ insets: CountingInsets) {
+        counting.delegate = insets
+        addChild(counting)
+        // The same size as the page, laid out beside it, past the clipped edge. Behind the page, its
+        // chapter came out in the reopen picture drawn from this view, laid over his page. A reflow
+        // stops the count, so it never needs to follow the page's size.
+        counting.view.frame = navigator.view.frame.offsetBy(dx: view.bounds.width + 64, dy: 0)
+        counting.view.isUserInteractionEnabled = false
+        Self.sealed(counting.view, true)
+        view.insertSubview(counting.view, at: 0)
+        counting.didMove(toParent: self)
     }
 
     /// The chapters still to count, shared by the counters.
@@ -498,28 +527,50 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         var counted = 0
         init(_ links: [ReadiumShared.Link]) { self.links = links[...] }
         private var tries: [String: Int] = [:]
+        private var unanswered: [String: Int] = [:]
         func next() -> ReadiumShared.Link? { links.popFirst() }
-        func retry(_ link: ReadiumShared.Link) {
+        /// A chapter that never settled gets two more tries; one whose counter stopped answering gets two more on
+        /// fresh counters, apart from those, so a starved runner's slow answers never cost a settled chapter's tries.
+        func retry(_ link: ReadiumShared.Link, unanswered stopped: Bool = false) {
             let href = link.url().removingFragment().string
-            tries[href, default: 0] += 1
+            let n: Int
+            if stopped { unanswered[href, default: 0] += 1; n = unanswered[href]! } else { tries[href, default: 0] += 1; n = tries[href]! }
             // At the front: the chapters are counted in reading order, and each number waits on those before it.
-            if tries[href]! <= 2 { links.insert(link, at: links.startIndex) } else { readerLog.notice("pages: \(href, privacy: .public) never settled") }
+            if n <= 2 { links.insert(link, at: links.startIndex) } else { readerLog.notice("pages: \(href, privacy: .public) never \(stopped ? "answered" : "settled", privacy: .public)") }
         }
     }
 
     /// How many chapters are counted at once.
     private static let counters = 6
 
+    /// How a chapter's count ended.
+    private enum Counted { case counted, unsettled, unanswered }
+
+    /// What a count's counters are doing: the gos and looks answered so far, and how many counters are still at work.
+    /// A counter that waits while the others go on answering has stopped; one that waits while they all wait is on a
+    /// starved runner, slow and not stuck (run 43497327071 replaced three such counters on their first chapters).
+    @MainActor private final class CountPulse { var answers = 0; var working = 0 }
+
+    /// The looks (50 ms each, longer on a starved runner) a counter's go or look may go without an answer before it
+    /// counts as one that stopped answering. They run down only while it is the last counter at work or the others
+    /// answer meanwhile, and start again while its web views' loading moves: about 120 s on a fast runner, inside the
+    /// 300 s or more (600 reads) a test gives a count once the page is ready.
+    private static let counterAnswerLooks = 2400
+
     /// Lays `link` out in `counting` and records its columns once two looks 150 ms apart agree (a web
-    /// view still laying out, or still loading a font, reads short). False if it never settled.
+    /// view still laying out, or still loading a font, reads short). Unsettled if the looks never agreed, and
+    /// unanswered if a go or a look never came back (`counterAnswerLooks`).
     private static func count(_ link: ReadiumShared.Link, in counting: EPUBNavigatorViewController, columns: Int,
-                              record: @MainActor (String, Int) -> Void) async -> Bool {
+                              pulse: CountPulse, record: @MainActor (String, Int) -> Void) async -> Counted {
         // A counter made a moment ago can refuse a go while its first chapter is still loading: ask again
         // in place, since every number after this chapter waits for it.
-        var went = await counting.go(to: link, options: .init(animated: false))
+        let go: @MainActor @Sendable () async -> Bool = { await counting.go(to: link, options: .init(animated: false)) }
+        let loading: @MainActor () -> Double = { loadProgress(counting.view) }
+        guard var went = await answered(within: counterAnswerLooks, moving: loading, pulse: pulse, go) else { return .unanswered }
         for _ in 0..<20 where !went && !Task.isCancelled {
             try? await Task.sleep(for: .milliseconds(150))
-            went = await counting.go(to: link, options: .init(animated: false))
+            guard let again = await answered(within: counterAnswerLooks, moving: loading, pulse: pulse, go) else { return .unanswered }
+            went = again
         }
         let href = link.url().removingFragment().string
         readerLog.debug("pages: \(href, privacy: .public) go \(went, privacy: .public)")
@@ -527,13 +578,64 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         for _ in 0..<40 where !Task.isCancelled {
             try? await Task.sleep(for: .milliseconds(150))
             let lookStart = ContinuousClock.now
-            let look = await geometry(of: counting, columns: columns)
+            guard let look = await answered(within: counterAnswerLooks, moving: loading, pulse: pulse, {
+                await CounterStall.hold(href, in: counting)
+                return await geometry(of: counting, columns: columns)
+            }) else { return .unanswered }
             readerLog.debug("pages: look \(href, privacy: .public) took \(ReaderModel.ms(since: lookStart), privacy: .public) ms")
             guard let (here, geometry) = look, here == href, geometry.columns > 0 else { continue }
-            if geometry.columns == last { record(href, geometry.columns); return true }
+            if geometry.columns == last { record(href, geometry.columns); return .counted }
             last = geometry.columns
         }
-        return false
+        return .unsettled
+    }
+
+    /// `body`'s answer, or nil once `looks` looks of 50 ms pass without one while `moving` holds still (a load
+    /// still moving starts the looks again) and the count goes on without it (`pulse`: the other counters answered
+    /// since it began waiting, or none is left at work), or the wait is cancelled. `body` is not awaited past that: a web view's
+    /// script or load whose page stopped answering never came back, and the count waited on it for good
+    /// (gatefold#378). Readium resumes a wait for a page's load once its counter leaves the reader, but not a script
+    /// already sent to a web view that never answers: that body, and the counter it holds, stay until WebKit calls back.
+    private static func answered<T: Sendable>(within looks: Int, moving: @escaping @MainActor () -> Double, pulse: CountPulse,
+                                              _ body: @escaping @MainActor @Sendable () async -> T) async -> T? {
+        let once = AnswerOnce<T>()
+        let work = Task { @MainActor in
+            let answer = await body()
+            pulse.answers += 1
+            once.resume(answer)
+        }
+        let watch = Task { @MainActor in
+            var left = looks, seen = moving()
+            let othersAt = pulse.answers
+            while left > 0 {
+                try? await Task.sleep(for: .milliseconds(50))
+                if once.answered || Task.isCancelled { return }
+                let now = moving()
+                if now != seen { seen = now; left = looks }
+                // Only while the count goes on without it: everyone waiting together is a starved runner.
+                else if pulse.answers > othersAt || pulse.working <= 1 { left -= 1 }
+            }
+            once.resume(nil)
+        }
+        let answer = await withTaskCancellationHandler {
+            await withCheckedContinuation { once.wait($0) }
+        } onCancel: {
+            Task { @MainActor in once.resume(nil) }
+        }
+        watch.cancel()
+        if !once.bodyAnswered { work.cancel() }
+        return answer
+    }
+
+    /// How far a counter's web views have loaded, summed: it moves while a chapter is still coming in.
+    private static func loadProgress(_ view: UIView) -> Double {
+        ((view as? WKWebView)?.estimatedProgress ?? 0) + view.subviews.reduce(0) { $0 + loadProgress($1) }
+    }
+
+    /// Takes a counter's web views off the network before it leaves (`stopCounters`).
+    private static func stopLoading(_ view: UIView) {
+        if let web = view as? WKWebView { web.stopLoading() }
+        view.subviews.forEach(stopLoading)
     }
 
     /// Takes a navigator that is done (a counter, a standby page, the page a swap replaced) out of the reader,
@@ -573,12 +675,8 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         old.task.cancel()
         // Its web view shares the page's web process: a chapter still loading there would hold up a
         // reflow's looks at the page past their budgets.
-        func stop(_ view: UIView) {
-            if let web = view as? WKWebView { web.stopLoading() }
-            view.subviews.forEach(stop)
-        }
-        for counting in old.navigators {
-            stop(counting.view)
+        for counting in old.counters.navigators {
+            Self.stopLoading(counting.view)
             Self.retire(counting)
         }
     }
@@ -3051,6 +3149,52 @@ enum OpenScriptStall {
 
     static func wait() async {
         while looksLeft > 0 { try? await Task.sleep(for: .milliseconds(50)) }
+    }
+}
+
+/// The first answer to a wait (`ReaderHostController.answered`): the body's, the watch's nil, or a cancel's nil.
+@MainActor
+private final class AnswerOnce<T: Sendable> {
+    private var continuation: CheckedContinuation<T?, Never>?
+    private var answer: T??
+    private(set) var bodyAnswered = false
+    var answered: Bool { answer != nil }
+
+    func wait(_ continuation: CheckedContinuation<T?, Never>) {
+        if let answer { continuation.resume(returning: answer) } else { self.continuation = continuation }
+    }
+
+    func resume(_ value: T?) {
+        guard answer == nil else { return }
+        if value != nil { bodyAnswered = true }
+        answer = .some(value)
+        continuation?.resume(returning: value)
+        continuation = nil
+    }
+}
+
+/// Tests only (`-GatefoldStallCounterChapter`): one chapter's counter never hears back from its first look, as a
+/// counter on CI's starved iPad stopped answering mid-count (gatefold#378). Once per launch: the look answers
+/// again only once that counter has been taken out of the reader, as Readium resumes a cleared page's scripts.
+@MainActor
+enum CounterStall {
+    private static var stalled: String?
+    private static var armed = false
+
+    /// Names the chapter, the first time a count starts.
+    static func arm(_ publication: Publication) {
+        guard !armed, let index = LaunchOptions.stallCounterChapter, publication.readingOrder.indices.contains(index) else { return }
+        armed = true
+        stalled = publication.readingOrder[index].url().removingFragment().string
+    }
+
+    /// Holds `href`'s look if it is the stalled chapter, until `counting` leaves the reader.
+    static func hold(_ href: String, in counting: EPUBNavigatorViewController) async {
+        guard let chapter = stalled, chapter == href else { return }
+        stalled = nil
+        readerLog.notice("pages: \(href, privacy: .public)'s counter hears nothing back, for the test (GatefoldStallCounterChapter)")
+        while counting.parent != nil { try? await Task.sleep(for: .milliseconds(50)) }
+        readerLog.notice("pages: \(href, privacy: .public)'s stalled counter left the reader (GatefoldStallCounterChapter)")
     }
 }
 

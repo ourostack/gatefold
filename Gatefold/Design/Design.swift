@@ -115,6 +115,13 @@ enum LaunchOptions {
         guard isUITest, defaults.object(forKey: "GatefoldStallOpenScripts") != nil else { return nil }
         return defaults.integer(forKey: "GatefoldStallOpenScripts")
     }
+    /// Tests only: the reading order's chapter at this index never answers its counter's first look, as a counter
+    /// on CI's starved iPad stopped hearing back mid-count and Emma was never counted at the larger size
+    /// (run 43462511882, gatefold#378). It answers again once that counter is taken out of the reader.
+    static var stallCounterChapter: Int? {
+        guard isUITest, defaults.object(forKey: "GatefoldStallCounterChapter") != nil else { return nil }
+        return defaults.integer(forKey: "GatefoldStallCounterChapter")
+    }
     /// Tests only, with `shownPageWithoutWords`: at the watchdog the page's span on screen goes unread and Readium
     /// still names the page from before the rotation, his kept place, as on CI's runs 43321734349 and 43370826599
     /// (gatefold#346); unlike `shownPageAtHisPlace`, the screen can be read again as he leaves.

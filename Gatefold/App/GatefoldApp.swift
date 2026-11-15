@@ -1,4 +1,5 @@
 import GatefoldCore
+import OuroHX
 import ReadiumShared
 import SwiftUI
 import WebKit
@@ -16,6 +17,8 @@ struct GatefoldApp: App {
         #if DEBUG
         MainThreadWatch.startIfUITest()
         #endif
+        // Counts-only download telemetry (TestFlight and release builds only).
+        GatefoldTelemetry.shared.start()
         _app = State(initialValue: AppModel())
         readerLog.notice("launch: app entered \(entered, privacy: .public) s after the process started; model ready at \(LaunchClock.sinceLaunch, privacy: .public) s")
     }
@@ -23,6 +26,7 @@ struct GatefoldApp: App {
     var body: some Scene {
         WindowGroup {
             RootView()
+                .ouroTheme(.gatefold)
                 .environment(app)
                 .task { await app.start() }
                 .task { LaunchClock.firstFrame(); await WebWarmup.startUnlessABookOpens() }
