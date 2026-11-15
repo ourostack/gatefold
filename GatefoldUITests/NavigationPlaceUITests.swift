@@ -26,7 +26,12 @@ final class NavigationPlaceUITests: XCTestCase {
 
     private var visibleText: String { (app.descendants(matching: .any)["reader.visibleText"].value as? String) ?? "" }
 
-    private func waitForWords(changingFrom old: String? = nil, timeout: TimeInterval = 60) -> String {
+    /// A first look (no `old`) waits for the page to show, in reads (`pageReady`), before its words: on a starved
+    /// iPad the book's first page took 55 s past the launch, so a 60 s clock ran out on the shelf (gatefold#407,
+    /// run 43669382142). The clock then only judges the words on a page already shown.
+    private func waitForWords(changingFrom old: String? = nil, timeout: TimeInterval = 60,
+                              file: StaticString = #filePath, line: UInt = #line) -> String {
+        if old == nil { XCTAssertTrue(pageReady(file: file, line: line), "the page showed", file: file, line: line) }
         let up = Date().addingTimeInterval(timeout)
         while Date() < up {
             let now = visibleText
@@ -45,7 +50,6 @@ final class NavigationPlaceUITests: XCTestCase {
         app.launchArguments = common + extra + ["-GatefoldReset", "YES", "-GatefoldDownloadAll", "YES",
                                         "-GatefoldOpenBook", "gutenberg-pride-and-prejudice"]
         app.launch()
-        XCTAssertTrue(app.descendants(matching: .any)["reader.page"].waitForExistence(timeout: 60))
         return waitForWords()
     }
 
