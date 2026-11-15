@@ -8,6 +8,20 @@ private func makeSession(_ transport: ScriptedTransport, store: any TokenStore =
     CloudSession(transport: transport, credentials: fakeCredentials, tokenStore: store, now: { clock.now }, sleep: { _ in })
 }
 
+/// A session saved before passwords were kept (builds up to 40).
+private func signedInWithoutAKeptPassword(_ transport: ScriptedTransport, clock: TestClock, store: InMemoryTokenStore) async throws -> CloudSession {
+    _ = try await signedIn(transport, clock: clock, store: store)
+    var saved = try #require(await store.load())
+    saved.password = nil
+    try await store.save(saved)
+    return makeSession(transport, store: store, clock: clock)
+}
+
+actor WaitLog {
+    private(set) var all: [Duration] = []
+    func add(_ d: Duration) { all.append(d) }
+}
+
 private func signedIn(_ transport: ScriptedTransport, clock: TestClock = TestClock(), store: any TokenStore = InMemoryTokenStore()) async throws -> CloudSession {
     await transport.on("POST", "/auth/login/pocketbook_de", .json(tokenJSON("a1")))
     await transport.on("GET", "/api/v1.0/user", .data(try Fixture.data("user.json")))
@@ -113,11 +127,15 @@ struct SessionTests {
         #expect(stores.map(\.alias) == ["pocketbook_de"])
     }
 
-    @Test func anUnknownEmailIsAskedThreeTimesInAll() async throws {
+    /// Seen live 2026-11-15: eight 404s in a row for a real account before it was found.
+    @Test func anUnknownEmailIsAskedSixTimesWaitingLongerEachTime() async throws {
         let t = ScriptedTransport()
         await t.on("GET", "/auth/login", .json(#"{"error_code":111,"error_msg":"No one account has been found"}"#, status: 404))
-        await #expect(throws: CloudError.noAccount) { _ = try await makeSession(t).stores(forEmail: "nobody@example.com") }
-        #expect(await t.requests("GET", "/auth/login").count == 3)
+        let waits = WaitLog()
+        let session = CloudSession(transport: t, credentials: fakeCredentials, tokenStore: InMemoryTokenStore(), sleep: { await waits.add($0) })
+        await #expect(throws: CloudError.noAccount) { _ = try await session.stores(forEmail: "nobody@example.com") }
+        #expect(await t.requests("GET", "/auth/login").count == 6)
+        #expect(await waits.all == [.seconds(1), .seconds(2), .seconds(3), .seconds(4), .seconds(5)])
     }
 
     /// The Cloud refuses about one correct password in three with 403 error 1204 "Authorization partner
@@ -152,7 +170,7 @@ struct SessionTests {
         #expect(await t.requests("POST", "/auth/login/pocketbook_de").count == 2)
     }
 
-    @Test func signsInWithThePasswordGrantAndKeepsOnlyTokens() async throws {
+    @Test func signsInWithThePasswordGrantAndKeepsThePasswordOnlyInTheSavedSession() async throws {
         let t = ScriptedTransport()
         let store = InMemoryTokenStore()
         let session = try await signedIn(t, store: store)
@@ -165,7 +183,9 @@ struct SessionTests {
         #expect(await session.account?.displayName == "Gatefold Test One")
         let saved = try #require(await store.load())
         #expect(saved.token.accessToken == "a1")
-        #expect(String(decoding: try JSONEncoder().encode(saved), as: UTF8.self).contains("\"pw\"") == false, "the password is never stored")
+        #expect(saved.password == "pw", "kept in this device's Keychain so the app can sign in again on its own")
+        #expect(!String(describing: saved).contains("pw"), "never in a log line")
+        #expect(!String(reflecting: saved).contains("pw"), "never in a debug print")
     }
 
     @Test func mapsABadPasswordToInvalidCredentials() async throws {
@@ -239,17 +259,98 @@ struct SessionTests {
 
     /// Build 13 signed out here, wiping the Keychain on one refused renewal. Now a refusal is asked
     /// twice before it counts, and even a confirmed one keeps the session: the app asks him to sign in again.
-    @Test func aConfirmedDeadRefreshTokenAsksForSignInButKeepsTheSession() async throws {
+    @Test func aConfirmedDeadRefreshTokenWithNoKeptPasswordAsksForSignInButKeepsTheSession() async throws {
         let t = ScriptedTransport()
         let store = InMemoryTokenStore()
         let clock = TestClock()
-        let session = try await signedIn(t, clock: clock, store: store)
+        let session = try await signedInWithoutAKeptPassword(t, clock: clock, store: store)
         clock.advance(8000)
         await t.on("POST", "/auth/renew-token", .json(#"{"error_code":3}"#, status: 401))
         await #expect(throws: CloudError.authenticationRequired) { _ = try await session.send(.get("/books")) }
         #expect(await t.requests("POST", "/auth/renew-token").count == 2, "asked twice before believing it")
         #expect(await store.load()?.account.email == "reader@example.com")
         #expect(await session.account?.email == "reader@example.com")
+        #expect(await t.requests("POST", "/auth/login/pocketbook_de").count == 1, "only the sign-in he typed")
+    }
+
+    /// Build 39, 2026-11-15: the Cloud refused his renewal and every download failed until he signed in
+    /// by hand. The Cloud rotates refresh tokens and revokes the family when an old one is reused, so a
+    /// dead one stays dead; the app now signs in again on its own with the kept password.
+    @Test func aConfirmedDeadRefreshTokenSignsInAgainWithTheKeptPassword() async throws {
+        let t = ScriptedTransport()
+        let store = InMemoryTokenStore()
+        let clock = TestClock()
+        await t.on("POST", "/auth/login/pocketbook_de", .json(tokenJSON("a1")))
+        await t.on("GET", "/api/v1.0/user", .json(#"{"email":"Reader@Example.com","full_name":"Gatefold Test One"}"#))
+        let session = makeSession(t, store: store, clock: clock)
+        _ = try await session.signIn(email: " reader@example.com ", password: "pw", store: testStore())
+        clock.advance(8000)
+        await t.on("POST", "/auth/renew-token", .json(#"{"error_code":223,"error_msg":"Access token has been revoked"}"#, status: 403))
+        await t.on("POST", "/auth/login/pocketbook_de", .json(tokenJSON("b1", refresh: "s1")))
+        await t.on("GET", "/books", .json(#"{"total":0,"items":[]}"#))
+        _ = try await session.send(.get("/books"))
+        #expect(await t.requests("GET", "/books").last?.headers["Authorization"] == "Bearer b1")
+        let again = try #require(await t.requests("POST", "/auth/login/pocketbook_de").last)
+        #expect(await t.requests("POST", "/auth/login/pocketbook_de").count == 2)
+        #expect(again.form["username"] == "reader@example.com", "the address he typed, not /user's spelling")
+        #expect(again.form["password"] == "pw")
+        #expect(again.form["shop_id"] == "1")
+        let saved = try #require(await store.load())
+        #expect(saved.token.accessToken == "b1")
+        #expect(saved.token.refreshToken == "s1")
+        #expect(saved.password == "pw")
+        #expect(saved.account.displayName == "Gatefold Test One", "keeps the account details")
+    }
+
+    @Test func aSessionWithNoRefreshTokenSignsInAgainWithTheKeptPassword() async throws {
+        let t = ScriptedTransport()
+        let store = InMemoryTokenStore(StoredSession(account: CloudAccount(email: "reader@example.com", store: testStore()),
+                                                     token: CloudToken(accessToken: "a", refreshToken: nil, expiresAt: utc("2026-01-01T00:00:00Z")),
+                                                     password: "pw"))
+        let session = makeSession(t, store: store, clock: TestClock())
+        await t.on("POST", "/auth/login/pocketbook_de", .json(tokenJSON("b1", refresh: "s1")))
+        await t.on("GET", "/books", .json(#"{"total":0,"items":[]}"#))
+        _ = try await session.send(.get("/books"))
+        #expect(await t.requests("POST", "/auth/renew-token").isEmpty)
+        #expect(await store.load()?.token.accessToken == "b1")
+    }
+
+    /// A password changed on another device: the kept one is refused. It is forgotten, so the app never
+    /// spends his login attempts on it again (the Cloud locks an account out with 429 after a few).
+    @Test func aKeptPasswordTheCloudRefusesIsForgottenAndAsksForSignIn() async throws {
+        let t = ScriptedTransport()
+        let store = InMemoryTokenStore()
+        let clock = TestClock()
+        let session = try await signedIn(t, clock: clock, store: store)
+        clock.advance(8000)
+        await t.on("POST", "/auth/renew-token", .json(#"{"error_code":223,"error_msg":"Unknown token"}"#, status: 403))
+        await t.on("POST", "/auth/login/pocketbook_de", .json(#"{"error_code":1204,"error_msg":"Authorization partner user failed"}"#, status: 403))
+        await #expect(throws: CloudError.authenticationRequired) { _ = try await session.send(.get("/books")) }
+        #expect(await t.requests("POST", "/auth/login/pocketbook_de").count == 3, "the typed sign-in, then the kept password twice")
+        let saved = try #require(await store.load())
+        #expect(saved.password == nil)
+        #expect(saved.account.email == "reader@example.com", "keeps his name, shelf and place")
+        await #expect(throws: CloudError.authenticationRequired) { _ = try await session.send(.get("/books")) }
+        #expect(await t.requests("POST", "/auth/login/pocketbook_de").count == 3, "never tried again")
+    }
+
+    @Test func aReSignInThatFailsOnTheNetworkKeepsThePassword() async throws {
+        let t = ScriptedTransport()
+        let store = InMemoryTokenStore()
+        let clock = TestClock()
+        let session = try await signedIn(t, clock: clock, store: store)
+        clock.advance(8000)
+        await t.on("POST", "/auth/renew-token", .json(#"{"error_code":223,"error_msg":"Unknown token"}"#, status: 403))
+        await t.on("POST", "/auth/login/pocketbook_de", .json("{}", status: 503))
+        await #expect(throws: CloudError.server(status: 503)) { _ = try await session.send(.get("/books")) }
+        #expect(await store.load()?.password == "pw")
+    }
+
+    @Test func aSessionSavedBeforePasswordsWereKeptStillLoads() throws {
+        let old = #"{"account":{"email":"reader@example.com","store":{"alias":"pocketbook_de","shopID":"1","name":"PocketBook"}},"token":{"accessToken":"a","refreshToken":"r","expiresAt":0}}"#
+        let session = try JSONDecoder().decode(StoredSession.self, from: Data(old.utf8))
+        #expect(session.password == nil)
+        #expect(session.account.email == "reader@example.com")
     }
 
     @Test func aSingleRefusedRenewalThatThenWorksKeepsGoing() async throws {
