@@ -6,7 +6,7 @@ import os
 /// where and why (P0, 2026-11-13: "can you see the error? if not, you gotta add telemetry").
 ///
 /// It sends stages, status codes, error domains and codes, and yes/no facts. Never a title, author,
-/// file name, hash, link, email or error message. The install is a random ID that names no one.
+/// file name, hash, link, email or error message. The install is a random ID, and PostHog is told not to place the event by IP.
 /// Off in DEBUG builds, UI tests and the fake Cloud; on in TestFlight and release builds.
 final class GatefoldTelemetry: @unchecked Sendable {
     static let shared = GatefoldTelemetry()
@@ -30,6 +30,10 @@ final class GatefoldTelemetry: @unchecked Sendable {
         self.configuration = configuration
         self.defaults = defaults
         self.send = send
+        // Made once, before any download can race to make a second one.
+        if configuration != nil, defaults.string(forKey: Self.distinctIDKey) == nil {
+            defaults.set(UUID().uuidString, forKey: Self.distinctIDKey)
+        }
     }
 
     static func loadConfiguration(bundle: Bundle = .main) -> Configuration? {
@@ -67,6 +71,7 @@ final class GatefoldTelemetry: @unchecked Sendable {
             "reused_local_copy": .bool(report.reusedLocalCopy),
         ]
         if let v = report.httpStatus { p["http_status"] = .int(v) }
+        if let v = report.linkStatus { p["link_status"] = .int(v) }
         if let v = report.errorDomain { p["error_domain"] = .string(v) }
         if let v = report.errorCode { p["error_code"] = .int(v) }
         if let v = report.errorKind { p["error_kind"] = .string(v) }
@@ -96,6 +101,7 @@ final class GatefoldTelemetry: @unchecked Sendable {
 
     func capture(_ event: String, properties: [String: Value]) {
         guard let configuration else { return }
+        let distinctID = defaults.string(forKey: Self.distinctIDKey) ?? "unknown"
         var props = properties
         let info = Bundle.main.infoDictionary
         props["app"] = .string("gatefold")
@@ -103,7 +109,8 @@ final class GatefoldTelemetry: @unchecked Sendable {
         props["app_build"] = .string(info?["CFBundleVersion"] as? String ?? "?")
         props["os_version"] = .string(ProcessInfo.processInfo.operatingSystemVersionString)
         props["$process_person_profile"] = .bool(false)
-        let payload = Payload(api_key: configuration.apiKey, event: event, distinct_id: distinctID(),
+        props["$geoip_disable"] = .bool(true)
+        let payload = Payload(api_key: configuration.apiKey, event: event, distinct_id: distinctID,
                               properties: props, timestamp: ISO8601DateFormatter().string(from: Date()))
         guard let body = try? JSONEncoder().encode(payload) else { return }
         var request = URLRequest(url: configuration.captureURL)
@@ -115,10 +122,4 @@ final class GatefoldTelemetry: @unchecked Sendable {
         send(request)
     }
 
-    private func distinctID() -> String {
-        if let id = defaults.string(forKey: Self.distinctIDKey) { return id }
-        let id = UUID().uuidString
-        defaults.set(id, forKey: Self.distinctIDKey)
-        return id
-    }
 }

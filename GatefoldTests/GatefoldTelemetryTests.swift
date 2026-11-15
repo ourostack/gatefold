@@ -7,7 +7,7 @@ import Testing
 struct GatefoldTelemetryTests {
     static let allowed: Set<String> = [
         "outcome", "stage", "had_listed_link", "refetched", "attempts", "check", "format", "is_drm",
-        "reused_local_copy", "http_status", "error_domain", "error_code", "error_kind", "size_matched",
+        "reused_local_copy", "http_status", "link_status", "error_domain", "error_code", "error_kind", "size_matched",
     ]
 
     @Test func aFailedDownloadSendsOnlyItsStageAndCodes() {

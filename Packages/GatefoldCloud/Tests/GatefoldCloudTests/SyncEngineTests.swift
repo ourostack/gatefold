@@ -174,6 +174,17 @@ struct FileTests {
         #expect(report.refetched && report.hadListedLink && report.attempts == 2 && report.httpStatus == 200)
     }
 
+    /// A fresh-link call that fails reports its own status, not the stale link's.
+    @Test func aFailedRefetchReportsTheLinkStatusApartFromTheDownloads() async throws {
+        let h = Harness()
+        await h.transport.on("GET", "f1.epub", .json("{}", status: 400))
+        await h.transport.on("GET", "/fileops/info", .json(#"{"error_code":311}"#, status: 404))
+        let b = try WireDecoder.book(WireDecoder.loose(Data(book(md5: md5Base64(Data([1]))).utf8)))!
+        await #expect(throws: CloudError.self) { _ = try await h.cloud().download(b) }
+        let report = try #require(h.reports.reports.last)
+        #expect(report.stage == .refetchLink && report.linkStatus == 404 && report.httpStatus == 400)
+    }
+
     /// A rate limit is not a stale link: no fresh link is fetched, and the report says the status.
     @Test func aRateLimitedDownloadReportsItsStatusWithoutRefetching() async throws {
         let h = Harness()

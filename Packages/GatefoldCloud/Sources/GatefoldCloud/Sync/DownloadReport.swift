@@ -27,7 +27,10 @@ public struct DownloadReport: Sendable, Equatable {
     public enum Check: String, Sendable { case md5, size, none }
 
     public var stage: Stage?
+    /// The download's own status (the last transfer's).
     public var httpStatus: Int?
+    /// The status of a failed `/fileops/info` call for a fresh link.
+    public var linkStatus: Int?
     public var errorDomain: String?
     public var errorCode: Int?
     /// A short, fixed name for the error (`checksumMismatch`, `http`…), never its message.
@@ -74,8 +77,14 @@ public struct DownloadReport: Sendable, Equatable {
         if let cloud = error as? CloudError {
             errorDomain = "CloudError"
             errorKind = cloud.kind
-            if case let .http(status, _) = cloud { httpStatus = httpStatus ?? status }
-            if case let .server(status) = cloud { httpStatus = httpStatus ?? status }
+            var status: Int?
+            if case let .http(s, _) = cloud { status = s }
+            if case let .server(s) = cloud { status = s }
+            if case .notFound = cloud { status = 404 }
+            if case .authenticationRequired = cloud { status = 401 }
+            if let status {
+                if stage == .refetchLink { linkStatus = status } else { httpStatus = status }
+            }
             return
         }
         let ns = error as NSError

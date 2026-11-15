@@ -235,6 +235,7 @@ public actor PocketBookCloud: SyncService {
         let destination = booksDirectory.appendingPathComponent("\(book.fastHash).\(ext.isEmpty ? "epub" : ext)")
         let fm = FileManager.default
         if fm.fileExists(atPath: destination.path) {
+            report.stage = .verify
             if try await Self.matches(destination, book) { report.reusedLocalCopy = true; return destination }
             try? fm.removeItem(at: destination)
         }
@@ -253,6 +254,7 @@ public actor PocketBookCloud: SyncService {
             let partial = partialDirectory.appendingPathComponent(UUID().uuidString)
             let response: HTTPURLResponse
             report.attempts += 1
+            report.httpStatus = nil
             report.stage = .transfer
             do {
                 response = try await transport.download(URLRequest(url: url), to: partial)
