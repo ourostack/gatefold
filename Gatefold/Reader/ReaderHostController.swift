@@ -88,6 +88,9 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError() }
 
+    /// Readium's bands above and below a phone's words, by vertical size class.
+    static let contentInsets: [UIUserInterfaceSizeClass: EPUBContentInsets] = [.compact: (top: 28, bottom: 28), .regular: (top: 44, bottom: 44)]
+
     static func makeNavigator(publication: Publication, at location: Locator?, preferences: EPUBPreferences) throws -> EPUBNavigatorViewController {
         try EPUBNavigatorViewController(
             publication: publication,
@@ -95,7 +98,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             config: .init(
                 preferences: preferences,
                 editingActions: Self.highlightEditingActions,
-                contentInset: [.compact: (top: 28, bottom: 28), .regular: (top: 44, bottom: 44)],
+                contentInset: Self.contentInsets,
                 // Readium shows and reports the first page only once every preloaded neighbour has loaded
                 // too: 2 behind and 4 ahead held the cover up for three to six seconds. Neighbours load on
                 // demand; a turn into a chapter still loading holds the old page (`renderedSnapshot`).
@@ -1784,16 +1787,51 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     // MARK: EPUBNavigatorDelegate
 
     /// A tablet page takes Apple Books' bands above and below the words (`TabletPage`); a phone keeps
-    /// Readium's own (the configured insets, or the notch's).
+    /// Readium's own (the configured insets, or the notch's). A scrolling page that stays at the screen's top
+    /// (`PageSafeArea.placing`) adds the room its first line needs below the camera to the top one.
     func navigatorContentInset(_ navigator: VisualNavigator) -> UIEdgeInsets? {
         let traits = self.navigator.view.traitCollection
+        let clearance = weakModel?.layout.textTopClearance ?? 0
         guard traits.horizontalSizeClass == .regular, traits.verticalSizeClass == .regular,
               let bands = TabletPage.bands(pageHeight: self.navigator.view.bounds.height) else {
             if weakModel?.tabletBands != nil { weakModel?.tabletBands = nil }
-            return nil
+            guard clearance > 0 else { return nil }
+            var inset = readiumPhoneInset()
+            inset.top += clearance
+            return inset
         }
         if weakModel?.tabletBands != bands { weakModel?.tabletBands = bands }
-        return UIEdgeInsets(top: bands.top, left: 0, bottom: bands.bottom, right: 0)
+        return UIEdgeInsets(top: bands.top + clearance, left: 0, bottom: bands.bottom, right: 0)
+    }
+
+    /// Readium's own inset for a reflowable phone page, as `EPUBNavigatorViewController.spreadViewContentInset` works it out.
+    private func readiumPhoneInset() -> UIEdgeInsets {
+        let view = navigator.view!
+        var inset = view.window?.safeAreaInsets ?? .zero
+        let sizeClass = view.traitCollection.verticalSizeClass
+        let configured = Self.contentInsets[sizeClass] ?? Self.contentInsets[.regular] ?? (top: 0, bottom: 0)
+        inset.top = max(inset.top, configured.top)
+        inset.bottom = max(inset.bottom, configured.bottom)
+        return inset
+    }
+
+    /// A scrolling page's clearance changed with no new settings (the camera reported late): Readium sets a
+    /// scrolling page's inset only as settings apply, so the live pages take it now, the way Readium sets it.
+    func refreshScrollInset() {
+        guard let model = weakModel, model.scrollsReflowable else { return }
+        let inset = navigatorContentInset(navigator) ?? readiumPhoneInset()
+        func walk(_ v: UIView) {
+            if let web = v as? WKWebView {
+                let scroll = web.scrollView
+                if scroll.contentInset != inset {
+                    // A page resting at its top keeps its first line at the top of the new inset.
+                    let atTop = abs(scroll.contentOffset.y + scroll.contentInset.top) < 1
+                    scroll.contentInset = inset
+                    if atTop { scroll.contentOffset.y = -inset.top }
+                }
+            } else { v.subviews.forEach(walk) }
+        }
+        walk(navigator.view)
     }
 
     /// A link in the book (a contents page, a cross-reference) jumps like the contents sheet does:

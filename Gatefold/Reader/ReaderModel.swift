@@ -374,6 +374,9 @@ final class ReaderModel {
     var theme: ReaderTheme { preferences.resolvedTheme(systemIsDark: systemIsDark) }
     var reduceMotion = false
     var pageTurn: PageTurnStyle { preferences.effectivePageTurn(reduceMotion: reduceMotion) }
+    /// A reflowable book scrolling: its page can stay at the screen's top with its text inset below the camera
+    /// (`PageSafeArea.placing`). A fixed-layout page keeps Readium's own insets.
+    var scrollsReflowable: Bool { pageTurn == .scroll && publication.metadata.layout != .fixed }
     var totalProgression: Double { location?.locations.totalProgression ?? 0 }
     /// The heading above the first line on screen, for books without contents.
     var heading: String?
@@ -2199,7 +2202,9 @@ final class ReaderModel {
         if new.posture != layout.posture || new.pageFrame.size != layout.pageFrame.size {
             pendingReflowReason = reason
         }
+        let clearanceChanged = new.textTopClearance != layout.textTopClearance
         layout = new
+        if clearanceChanged { host?.refreshScrollInset() }
         if columnsChanged {
             applyPreferences(reflow: true)
         } else {

@@ -194,6 +194,21 @@ struct ChromeLiftTests {
         #expect(PageSafeArea.clearingTop(l, safeTop: 10, occlusions: [CGRect(x: 700, y: 10, width: 40, height: 40)]) == l)
     }
 
+    // Paging, the page moves down to clear the camera; scrolling, it stays at the screen's top so the text runs
+    // there, and carries the same clearance inside it, so a chapter's first line still rests below the camera.
+    @Test func aScrollingPageKeepsItsTopAndCarriesTheClearance() {
+        let l = layout(CGRect(x: 0, y: 0, width: 466, height: 678))
+        let paged = PageSafeArea.placing(l, shift: 38, scrolling: false)
+        #expect(paged.pageFrame == CGRect(x: 0, y: 38, width: 466, height: 640))
+        #expect(paged.textTopClearance == 0)
+        let scrolled = PageSafeArea.placing(l, shift: 38, scrolling: true)
+        #expect(scrolled.pageFrame == l.pageFrame)
+        #expect(scrolled.textTopClearance == 38)
+        #expect(scrolled.pageFrame.minY + PageSafeArea.textTopInset + scrolled.textTopClearance
+                == paged.pageFrame.minY + PageSafeArea.textTopInset, "the first line rests where it would on a page")
+        #expect(PageSafeArea.placing(l, shift: -20, scrolling: true) == l, "no clearance to carry")
+    }
+
     @Test func theStatusBarAlsoPushes() {
         let out = PageSafeArea.clearingTop(layout(CGRect(x: 0, y: 0, width: 600, height: 800)), safeTop: 44, occlusions: [])
         #expect(out.pageFrame.minY == 44 + PageSafeArea.gap - PageSafeArea.textTopInset)
