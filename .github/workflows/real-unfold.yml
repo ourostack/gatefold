@@ -5,7 +5,8 @@ name: Real unfold
 # It drives a window; it is the posture gate (the UI test can't move a hinge, and a spread forced on the folded cover
 # is no reader's layout). It is the main tier: it runs on every push to main and on demand, never cancelled. It takes
 # 45 to 75 min, too long for the PR clock (gatefold#39), so on a pull request the job skips, which reports success
-# under the same required name. A red main is fixed as AGENTS.md says ("CI").
+# under the same required name. A red main is fixed as AGENTS.md says ("CI"). On a slow host it stops starting unfolds
+# in time to print its verdicts and upload its logs, and is red for the unfolds it never made (gatefold#391).
 
 on:
   workflow_dispatch:
@@ -64,6 +65,8 @@ jobs:
     env:
       APP: bot.ouro.gatefold
     steps:
+      # The unfolds stop in time for their verdicts and the upload, counted from here (gatefold#391).
+      - run: echo "JOB_START=$(date +%s)" >> "$GITHUB_ENV"
       - uses: actions/checkout@v4
       - uses: ./.github/actions/select-xcode
       - name: Install the Metal toolchain
@@ -119,34 +122,77 @@ jobs:
           xcrun simctl spawn "$udid" log stream --style compact \
             --predicate 'subsystem == "bot.ouro.gatefold" AND category == "reader"' > "$out/reader.log" 2>&1 &
           stream=$!
+          # A slow host stretches every step: past this, no new unfold starts, so the verdicts on those already made
+          # still print and the logs still upload before the job's 75-min limit (gatefold#391). 10 min for those.
+          stop_at=$(( JOB_START + (75 - 10) * 60 ))
+          rounds="${{ inputs.rounds || '3' }}"
+          planned=$(( 5 * (rounds + 1) + 8 ))
+          # Inside `unfolds || true` bash's -e is off, so each command the step needs says when it failed.
+          out_of_time=0 stalled=0 failed=0
+          in_time() {
+            [ "$stalled" = 0 ] || return 1
+            [ "$(date +%s)" -lt "$stop_at" ] && return 0
+            [ "$out_of_time" = 1 ] || echo "::error::out of time at $(date -u +%T): no more unfolds, so the job can print its verdicts and upload its logs"
+            out_of_time=1
+            return 1
+          }
+          # Each press has 120 s and one retry (gatefold#149): a stall names its press and the app's latest main-thread
+          # hold, never spends the job in silence. A press that answers late is named too.
+          press() {
+            local try t0 took status
+            for try in 1 2; do
+              t0=$(date +%s)
+              # The step runs under bash -e: the status is taken, never left to end the step.
+              status=0
+              perl -e 'alarm shift; exec @ARGV' 120 "$hub" press "$1" || status=$?
+              took=$(( $(date +%s) - t0 ))
+              # 142 is the alarm's SIGALRM. Any other status is the press's own answer (not found, refused): named, and
+              # left to the verdicts, as before.
+              if [ "$status" != 142 ]; then
+                [ "$status" = 0 ] || echo "::warning::press $1 answered status $status"
+                [ "$took" -lt 30 ] || echo "::warning::press $1 took $took s"
+                return 0
+              fi
+              echo "::warning::press $1 gave no answer in 120 s (try $try); the app's latest main-thread note: $(grep -E 'main: (still held|held) ' "$out/reader.log" | tail -1 | sed -E 's/^[0-9-]+ //' | cut -c1-160)"
+            done
+            echo "::error::press $1 stalled twice"
+            stalled=1
+            return 1
+          }
+          unfolds() {
           for place in 0.12 0.31 0.47 0.66 0.83; do
-            "$hub" press "Closed"; sleep 6
+            press "Closed" || return 1; sleep 6
             xcrun simctl launch --terminate-running-process "$udid" "$APP" -GatefoldUITest YES -GatefoldFakeCloud YES \
               -GatefoldReset YES -GatefoldSkipWelcome YES -GatefoldSignedIn YES -GatefoldDownloadAll YES \
-              -GatefoldOpenBook gutenberg-pride-and-prejudice -GatefoldGoTo "$place" >/dev/null
+              -GatefoldOpenBook gutenberg-pride-and-prejudice -GatefoldGoTo "$place" >/dev/null \
+              || { echo "::error::the app's launch at $place failed"; failed=1; return 1; }
             sleep 30
-            for round in $(seq 1 "${{ inputs.rounds || '3' }}"); do
+            for round in $(seq 1 "$rounds"); do
+              in_time || return 1
               echo "UNFOLD place $place round $round" | tee -a "$out/marks.log"
-              "$hub" press "Open"; sleep 14
+              press "Open" || return 1; sleep 14
               xcrun simctl io "$udid" screenshot --display=3 "$out/shots/$place-$round-open.png" >/dev/null 2>&1 || true
-              "$hub" press "Closed"; sleep 12
+              press "Closed" || return 1; sleep 12
             done
             # Half open: tabletop on the inner screen, then flat again and folded.
+            in_time || return 1
             echo "HALF OPEN place $place" | tee -a "$out/marks.log"
-            "$hub" press "Open"; sleep 12
-            "$hub" press "Partially Open"; sleep 14
+            press "Open" || return 1; sleep 12
+            press "Partially Open" || return 1; sleep 14
             xcrun simctl io "$udid" screenshot --display=3 "$out/shots/$place-half.png" >/dev/null 2>&1 || true
-            "$hub" press "Open"; sleep 12
-            "$hub" press "Closed"; sleep 12
+            press "Open" || return 1; sleep 12
+            press "Closed" || return 1; sleep 12
           done
           # Early unfolds: opened folded, then unfolded 2 s after the page shows, as the posture test
           # switches (the reviewer's failures came on the first switch after launch).
           for place in 0.12 0.31 0.47 0.66 0.83 0.12 0.31 0.47; do
-            "$hub" press "Closed"; sleep 6
+            in_time || return 1
+            press "Closed" || return 1; sleep 6
             shown="$(grep -c "open: page shown" "$out/reader.log" || true)"
             xcrun simctl launch --terminate-running-process "$udid" "$APP" -GatefoldUITest YES -GatefoldFakeCloud YES \
               -GatefoldReset YES -GatefoldSkipWelcome YES -GatefoldSignedIn YES -GatefoldDownloadAll YES \
-              -GatefoldOpenBook gutenberg-pride-and-prejudice -GatefoldGoTo "$place" >/dev/null
+              -GatefoldOpenBook gutenberg-pride-and-prejudice -GatefoldGoTo "$place" >/dev/null \
+              || { echo "::error::the app's launch at $place failed"; failed=1; return 1; }
             for wait in $(seq 1 120); do
               [ "$(grep -c "open: page shown" "$out/reader.log" || true)" -gt "$shown" ] && break
               sleep 0.5
@@ -154,9 +200,13 @@ jobs:
             sleep 2
             echo "EARLY UNFOLD place $place" | tee -a "$out/marks.log"
             echo "EARLY UNFOLD place $place" >> "$out/reader.log"
-            "$hub" press "Open"; sleep 16
+            press "Open" || return 1; sleep 16
             xcrun simctl io "$udid" screenshot --display=3 "$out/shots/early-$place-$wait.png" >/dev/null 2>&1 || true
           done
+          }
+          # The flags carry how it ended; the verdicts below print either way.
+          : > "$out/marks.log"
+          unfolds || true
           kill "$stream" || true
           grep -E "reflow check|reflow begins|host size|layout (single|spread|tabletop)|spread: " "$out/reader.log" | sed -E 's/^[0-9-]+ //' | tail -200
           echo "--- verdicts after an unfold (two columns) ---"
@@ -167,9 +217,15 @@ jobs:
           echo "$verdicts" | grep -o "anchor-[a-z]*" | sort | uniq -c
           echo "--- half-open posture changes ---"
           grep -c "reflow begins: posture" "$out/reader.log" || true
-          # Every unfold must have been judged, and no posture change may have lost his words.
-          [ -n "$spreads" ] || { echo "::error::no unfold reached a spread"; exit 1; }
+          echo "--- the app's main thread held a minute or more ---"
+          grep -E "main: held [0-9]+ ms" "$out/reader.log" | awk '{ for (i = 1; i < NF; i++) if ($i == "held" && $(i + 1) >= 60000) print "::warning::the app'"'"'s main thread was held " int($(i + 1) / 1000) " s, ending " $2 }'
+          # No posture change may have lost his words, and every unfold must have been judged.
           if echo "$verdicts" | grep -q "anchor-lost"; then echo "::error::a posture change lost the reader's words"; exit 1; fi
+          # Its verdicts printed, a run cut short is still red: the unfolds it never made weren't judged.
+          [ "$failed" = 0 ] || { echo "::error::a launch failed, so the unfolds after it never ran ($(grep -c "" "$out/marks.log") of $planned begun)"; exit 1; }
+          [ "$stalled" = 0 ] || { echo "::error::a DeviceHub press stalled twice, so the unfolds after it never ran ($(grep -c "" "$out/marks.log") of $planned begun)"; exit 1; }
+          [ "$out_of_time" = 0 ] || { echo "::error::the unfolds stopped for time with $(grep -c "" "$out/marks.log") of $planned begun"; exit 1; }
+          [ -n "$spreads" ] || { echo "::error::no unfold reached a spread"; exit 1; }
       - uses: actions/upload-artifact@v4
         if: always()
         with:

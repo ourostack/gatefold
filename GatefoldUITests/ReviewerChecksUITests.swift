@@ -439,7 +439,9 @@ final class ReviewerChecksUITests: XCTestCase {
                                       "-GatefoldOpenBook", "gutenberg-pride-and-prejudice", "-GatefoldGoTo", "0.31"]
         app.launch()
         XCTAssertTrue(el("reader.page").waitForExistence(timeout: 120))
-        _ = settle(120)
+        // His page, shown: words under the opening cover aren't reported (gatefold#374), so a tap never lands on the
+        // cover, which answers with the controls instead of a turn. In reads, never a fixed 120 s.
+        XCTAssertFalse(settled("the default spread").isEmpty, "the spread shows words")
         var pages: [Density.Measure] = []
         for spread in 0..<3 {
             if spread > 0 { XCTAssertTrue(turnForward(), "turned to spread \(spread + 1)"); _ = settle() }
