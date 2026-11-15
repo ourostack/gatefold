@@ -10,6 +10,8 @@ import UIKit
 final class LibraryStore {
     private(set) var books: [LibraryBook] = []
     private(set) var downloads: [String: DownloadState] = [:]
+    /// When each download under way began, for the tap telemetry's "downloading for how long".
+    private var downloadStarted: [String: Date] = [:]
     private(set) var covers: [String: UIImage] = [:]
     private(set) var isRefreshing = false
     /// The Cloud has answered at least once since launch, so an empty shelf really is empty.
@@ -219,6 +221,8 @@ final class LibraryStore {
     func download(_ book: LibraryBook) async {
         guard let cloud = book.cloud, state(of: book) != .downloading else { return }
         downloads[book.id] = .downloading
+        downloadStarted[book.id] = Date()
+        defer { downloadStarted[book.id] = nil }
         var fetched = false
         do {
             let temp = try await sync.download(cloud)
@@ -250,6 +254,14 @@ final class LibraryStore {
                 downloads[book.id] = nil // called off: back to waiting in the Cloud
             }
         }
+    }
+
+    /// Reports a tap on a book that isn't on the device: counts only (`GatefoldTelemetry.tapProperties`).
+    func noteDownloadTap(_ book: LibraryBook, telemetry: GatefoldTelemetry = .shared) {
+        let state = state(of: book)
+        let waited = state == .downloading ? downloadStarted[book.id].map { Date().timeIntervalSince($0) } : nil
+        telemetry.capture("gatefold_download_tap",
+                          properties: GatefoldTelemetry.tapProperties(state: state, hasCloudCopy: book.cloud != nil, secondsDownloading: waited))
     }
 
     // MARK: Files import
