@@ -90,6 +90,7 @@ def wait_boot(name, limit, clock=time.time, nap=time.sleep):
     status = state_dir() / f"{name}.status"
     started = state_dir() / f"{name}.started"
     end = (float(started.read_text()) if started.exists() else clock()) + limit
+    said = clock()
     while True:
         # Read before the deadline check: a job that builds past the limit while the boot finishes must
         # still see it (#78: 8 of 9 "did not finish" reports came from a boot that had already finished).
@@ -97,6 +98,10 @@ def wait_boot(name, limit, clock=time.time, nap=time.sleep):
             return int(status.read_text().strip())
         if clock() >= end:
             return None
+        # A line a minute: every job GitHub cancelled from outside had sat 10 to 15 min in a silent wait (gatefold#404).
+        if clock() - said >= 60:
+            said = clock()
+            print(f"still booting {name}: {int(end - said)} s left", flush=True)
         nap(2)
 
 
