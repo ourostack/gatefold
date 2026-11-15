@@ -309,6 +309,11 @@ else echo "FAIL boot-sim.sh: a non-number limit override: exit $code (want 2)"; 
 # The watchdog of a bootstatus that finished must not wake: the old one logged a false hang on most boots.
 for n in 1 2 3 4 5; do real_case "a clean boot logs no hang (run $n of 5)" "" "" dev1 "Device already booted" "hung"; done
 
+# No retry or service restart shuts down every simulator on the Mac; other agents' simulators share it.
+if grep -rqxF "shutdown all" "$real" --include=calls; then
+  echo "FAIL boot-sim.sh: a retry ran simctl shutdown all"; fails=$((fails + 1))
+else echo "ok   boot-sim.sh: retries shut down only the devices it created"; fi
+
 # An override that is set but empty means the default, not a crash.
 if CI_SIMULATOR_BUDGET= CI_SIMULATOR_LIST_TIMEOUT= CI_SIMULATOR_BOOT_ATTEMPT= CI_SIMULATOR_RETRY_RESERVE= \
    python3 -I "$here/ci-simulator.py" --selftest >/dev/null 2>"$work/empty-err"; then echo "ok   empty overrides mean the defaults"
