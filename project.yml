@@ -22,6 +22,10 @@ packages:
     # Packages/GatefoldCloud/Package.swift on the same revision: both are the package `swift-toolkit`.
     url: https://github.com/ourostack/swift-toolkit
     revision: a0eb21330d0f8c37476859922bd967073e7b73f4
+  # Ouro UI for Apple: the shelf's empty states, the sync banner, Fine-Tune's rows and their buttons are its OuroHX.
+  OuroUIApple:
+    url: https://github.com/ourostack/ouro-ui-apple
+    minorVersion: 0.6.0
   GatefoldCore:
     path: Packages/GatefoldCore
   GatefoldCloud:
@@ -47,6 +51,8 @@ targets:
       - package: Readium
         product: ReadiumNavigator
       - package: GatefoldCore
+      - package: OuroUIApple
+        product: OuroHX
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: bot.ouro.gatefold
