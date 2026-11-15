@@ -21,6 +21,12 @@ public actor CloudSession {
     /// Bumped by sign-in and sign-out so a refresh that finishes afterwards cannot restore an old session.
     private var generation = 0
     private var clockKnown = false
+    /// After a re-sign-in the Cloud couldn't answer (429, 5xx, offline), no other is tried before
+    /// `until`: a shelf downloading book after book must not send his password on every request
+    /// while the Cloud is rate-limiting it. Calls in the meantime get the same error back.
+    private var reSignInPause: (until: Date, wait: TimeInterval, error: Error)?
+    static let reSignInFirstPause: TimeInterval = 60
+    static let reSignInLongestPause: TimeInterval = 30 * 60
     /// The last Keychain write failure, if any. The session still works for this launch.
     public private(set) var persistenceError: Error?
     /// Server time minus device time, from the latest `Date` header.
@@ -41,18 +47,21 @@ public actor CloudSession {
     /// Sign-in calls the Cloud refuses spuriously are asked again, a second apart. Since November 2026
     /// it answers a real account's lookup with 404 "No one account has been found", and about one
     /// correct password in three with 403 error 1204, the same answer a wrong password gets (seen live
-    /// 2026-11-13). The lookup is asked three times in all. The password only twice: a wrong one costs
-    /// every attempt against the Cloud's per-account login limit (429 "Too many login attempts").
-    static let lookupAttempts = 3
+    /// 2026-11-13). The password only twice: a wrong one costs every attempt against the Cloud's
+    /// per-account login limit (429 "Too many login attempts"). The lookup flaps longer (seen live
+    /// 2026-11-15: eight 404s in a row for a real account), so it is asked six times, waiting a little
+    /// longer each time (1, 2, 3, 4, 5 seconds).
+    static let lookupAttempts = 6
     static let passwordAttempts = 2
 
-    private func performSignInCall(_ endpoint: Endpoint, attempts: Int, refusedWhen refused: (HTTPURLResponse) -> Bool) async throws -> (Data, HTTPURLResponse) {
+    private func performSignInCall(_ endpoint: Endpoint, attempts: Int, backoff: Bool = false,
+                                   refusedWhen refused: (HTTPURLResponse) -> Bool) async throws -> (Data, HTTPURLResponse) {
         var attempt = 1
         while true {
             let (data, response) = try await perform(endpoint, bearer: nil)
             guard refused(response), attempt < attempts else { return (data, response) }
+            try await sleep(.seconds(backoff ? attempt : 1))
             attempt += 1
-            try await sleep(.seconds(1))
         }
     }
 
@@ -75,13 +84,14 @@ public actor CloudSession {
             "username": email.trimmingCharacters(in: .whitespacesAndNewlines),
             "client_id": creds.id, "client_secret": creds.secret, "language": language,
         ])
-        let (data, response) = try await performSignInCall(endpoint, attempts: Self.lookupAttempts) { $0.statusCode == 404 }
+        let (data, response) = try await performSignInCall(endpoint, attempts: Self.lookupAttempts, backoff: true) { $0.statusCode == 404 }
         if response.statusCode == 404 { throw CloudError.noAccount }
         try Self.check(response, data)
         return try WireDecoder.stores(data)
     }
 
-    public func signIn(email: String, password: String, store: CloudStore) async throws -> CloudAccount {
+    /// The password grant: a fresh token for this email and password, or `invalidCredentials`.
+    private func passwordGrant(email: String, password: String, store: CloudStore) async throws -> CloudToken {
         let creds = try await credentials.credentials(refresh: false)
         let endpoint = Endpoint(method: "POST", path: "/auth/login/\(Endpoint.pathSegment(store.alias))", body: .form([
             "shop_id": store.shopID, "username": email.trimmingCharacters(in: .whitespacesAndNewlines), "password": password,
@@ -90,7 +100,11 @@ public actor CloudSession {
         let (data, response) = try await performSignInCall(endpoint, attempts: Self.passwordAttempts) { $0.statusCode == 403 }
         if [400, 401, 403].contains(response.statusCode) { throw CloudError.invalidCredentials }
         try Self.check(response, data)
-        let token = try WireDecoder.token(data, now: now())
+        return try WireDecoder.token(data, now: now())
+    }
+
+    public func signIn(email: String, password: String, store: CloudStore) async throws -> CloudAccount {
+        let token = try await passwordGrant(email: email, password: password, store: store)
 
         // The token is what signs him in; `/user` only fills in details. If it stops answering in a
         // shape we know, he is still signed in, under the address he typed.
@@ -111,8 +125,9 @@ public actor CloudSession {
             account = CloudAccount(email: typed, store: store)
         }
         if account.email.isEmpty { account.email = email }
-        let session = StoredSession(account: account, token: token)
+        let session = StoredSession(account: account, token: token, password: password, login: typed)
         generation += 1
+        reSignInPause = nil
         refreshing = nil
         stored = session
         loaded = true
@@ -122,6 +137,7 @@ public actor CloudSession {
 
     public func signOut() async {
         generation += 1
+        reSignInPause = nil
         refreshing?.cancel()
         refreshing = nil
         stored = nil
@@ -205,16 +221,18 @@ public actor CloudSession {
         return try await task.value
     }
 
-    /// Renews the token. A renewal the Cloud turns away is asked once more before it counts: only two
-    /// refusals in a row are a confirmed `authenticationRequired`. Even then the saved session (account and
-    /// tokens) is kept, so the app keeps his name, his shelf and his place, and asks him to sign in again;
-    /// only `signOut()` forgets it. A failure that isn't a refusal (offline, a 5xx, a cancelled call)
-    /// changes nothing.
+    /// Renews the token. A renewal the Cloud turns away is asked once more before it counts: two
+    /// refusals in a row mean the refresh token is dead (the Cloud rotates it on every renewal and
+    /// revokes the whole family when an old one is reused; seen live 2026-11-15). Then the app signs
+    /// him in again on its own with the password kept in the Keychain. Only when there is no kept
+    /// password, or the Cloud refuses it, is that a confirmed `authenticationRequired`. Even then the
+    /// saved session (account and tokens) is kept, so the app keeps his name, his shelf and his place,
+    /// and asks him to sign in again; only `signOut()` forgets it. A failure that isn't a refusal
+    /// (offline, a 5xx, a cancelled call) changes nothing.
     private func performRefresh(_ old: CloudToken) async throws -> CloudToken {
         let startedIn = generation
-        guard let refreshToken = old.refreshToken, var session = stored else {
-            throw CloudError.authenticationRequired
-        }
+        guard var session = stored else { throw CloudError.authenticationRequired }
+        guard let refreshToken = old.refreshToken else { return try await signInAgain(session, startedIn: startedIn) }
         let endpoint = Endpoint(method: "POST", path: "/auth/renew-token",
                                 body: .form(["grant_type": "refresh_token", "refresh_token": refreshToken]))
         var (data, response) = try await perform(endpoint, bearer: old.accessToken)
@@ -225,12 +243,47 @@ public actor CloudSession {
             (data, response) = try await perform(endpoint, bearer: old.accessToken)
             guard generation == startedIn else { throw CloudError.notSignedIn }
             if Task.isCancelled { throw CancellationError() }
-            if [400, 401, 403].contains(response.statusCode) { throw CloudError.authenticationRequired }
+            if [400, 401, 403].contains(response.statusCode) { return try await signInAgain(session, startedIn: startedIn) }
         }
         try Self.check(response, data)
         var token = try WireDecoder.token(data, now: now())
         if token.refreshToken == nil { token.refreshToken = refreshToken }
         session.token = token
+        return try await keep(session, startedIn: startedIn)
+    }
+
+    /// Signs in again with the kept password, once, after the Cloud refused to renew the token.
+    /// A refused password is forgotten, so a changed password never runs into the Cloud's login limit
+    /// on every launch; he signs in by hand and the new one is kept.
+    private func signInAgain(_ session: StoredSession, startedIn: Int) async throws -> CloudToken {
+        guard let password = session.password else { throw CloudError.authenticationRequired }
+        if let pause = reSignInPause, now() < pause.until { throw pause.error }
+        var session = session
+        do {
+            session.token = try await passwordGrant(email: session.login ?? session.account.email, password: password, store: session.account.store)
+        } catch CloudError.invalidCredentials {
+            guard generation == startedIn else { throw CloudError.notSignedIn }
+            session.password = nil
+            _ = try? await keep(session, startedIn: startedIn)
+            throw CloudError.authenticationRequired
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            guard generation == startedIn else { throw CloudError.notSignedIn }
+            var wait = reSignInPause.map { min($0.wait * 2, Self.reSignInLongestPause) } ?? Self.reSignInFirstPause
+            if case CloudError.rateLimited(let retryAfter?) = error { wait = max(wait, retryAfter) }
+            reSignInPause = (now().addingTimeInterval(wait), wait, error)
+            throw error
+        }
+        reSignInPause = nil
+        guard generation == startedIn else { throw CloudError.notSignedIn }
+        if Task.isCancelled { throw CancellationError() }
+        return try await keep(session, startedIn: startedIn)
+    }
+
+    /// Makes `session` current and saves it, unless he signed out or in again meanwhile.
+    private func keep(_ session: StoredSession, startedIn: Int) async throws -> CloudToken {
+        guard generation == startedIn else { throw CloudError.notSignedIn }
         stored = session
         await persist(session)
         // The write above may have landed after a newer sign-in's: re-assert whatever is current.
@@ -239,7 +292,7 @@ public actor CloudSession {
             if let newer = stored { await persist(newer) } else { await tokenStore.clear() }
             throw CloudError.notSignedIn
         }
-        return token
+        return session.token
     }
 
     private func perform(_ endpoint: Endpoint, bearer: String?) async throws -> (Data, HTTPURLResponse) {
