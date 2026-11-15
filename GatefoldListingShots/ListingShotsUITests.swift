@@ -118,14 +118,20 @@ final class ListingShotsUITests: XCTestCase {
     }
 
     /// Wherever the app speaks of the reader's device (the sync line and slip, the catch-up offer and its tab, a
-    /// highlight's source), it says "your e-reader" (gatefold#253); a listing never shows a trademark. One query for all.
+    /// highlight's source), it says "your e-reader" (gatefold#253); a listing never shows a trademark. The sync
+    /// trouble line is an Ouro banner inside `library.syncStatus` (#399), so its words are that element's texts.
     private func noTrademarkOnScreen(_ app: XCUIApplication, _ id: String) -> Bool {
-        let names = ["library.syncHealth", "library.syncTrouble", "slip", "banner", "banner.tab",
+        let names = ["library.syncHealth", "library.placesNotSent", "slip", "banner", "banner.tab",
                      "highlight.provenance"]
-        let marks = NSPredicate(format: "identifier IN %@ AND (label CONTAINS[c] 'inkpad' OR label CONTAINS[c] 'pocketbook')", names)
-        let shown = app.descendants(matching: .any).matching(marks).firstMatch
-        guard shown.exists else { return true }
-        XCTFail("\(id): \(shown.identifier) names a trademark on screen")
-        return false
+        let trademark = "(label CONTAINS[c] 'inkpad' OR label CONTAINS[c] 'pocketbook')"
+        let marks = NSPredicate(format: "identifier IN %@ AND \(trademark)", names)
+        let named = app.descendants(matching: .any).matching(marks).firstMatch
+        let status = app.descendants(matching: .any)["library.syncStatus"]
+            .descendants(matching: .staticText).matching(NSPredicate(format: trademark)).firstMatch
+        for shown in [named, status] where shown.exists {
+            XCTFail("\(id): \(shown.identifier.isEmpty ? "library.syncStatus" : shown.identifier) names a trademark on screen")
+            return false
+        }
+        return true
     }
 }
