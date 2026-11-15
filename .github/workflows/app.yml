@@ -796,6 +796,28 @@ jobs:
             cold: false
             timeout: 114 # 30 + 2 x 33.2 + 5 + 12
             lane: 3
+          - shard: duo-feel-closed
+            # Main only: Ouro Feel over the reader on the folded Duo, scroll and paged (FeelReaderUITests): an estimate
+            # of 300 each until CI has timed them
+            tests: >-
+              FeelReaderUITests/testClosedScroll FeelReaderUITests/testClosedPaged
+            skip: ""
+            pr_tests: none
+            cold: false
+            timeout: 67 # 30 + 2 x 10.0 + 5 + 12
+            lane: 1
+          - shard: duo-feel-open
+            # Main only, the catch-all for new Feel reader tests: the open Duo in portrait and on its side, its hinge
+            # moved by Device Hub (`hinge`), an estimate of 360 each until CI has timed them
+            tests: >-
+              FeelReaderUITests
+            skip: >-
+              FeelReaderUITests/testClosedScroll FeelReaderUITests/testClosedPaged
+            pr_tests: none
+            cold: false
+            hinge: true
+            timeout: 95 # 30 + 2 x 24.0 + 5 + 12
+            lane: 2
     uses: ./.github/workflows/ui-tests.yml
     with:
       device: "iPhone Duo"
@@ -809,6 +831,7 @@ jobs:
       extra: ${{ needs.changes.outputs.edited-duo }}
       full: ${{ needs.changes.outputs.full }}
       cold: ${{ matrix.cold }}
+      hinge: ${{ matrix.hinge || false }}
       # On a pull request that runs the PR lists, a smoke shard that also runs the classes it edits gets their slowest
       # passes too (`changes`, scripts/ci-shards.py smoke; gatefold#260).
       timeout: ${{ needs.changes.outputs.full == 'false' && matrix.pr_when == 'smoke' && needs.changes.outputs.edited-duo != '' && fromJSON(needs.changes.outputs.smoke-duo) || matrix.timeout }}
