@@ -1,7 +1,8 @@
 import Foundation
 import Security
 
-/// What survives an app restart: the account and its tokens. Never the password.
+/// What survives an app restart: the account, its tokens, and the password and address he signed in
+/// with, kept so the app can sign him in again on its own.
 public struct StoredSession: Sendable, Codable, Hashable, CustomStringConvertible, CustomDebugStringConvertible {
     public var account: CloudAccount
     public var token: CloudToken

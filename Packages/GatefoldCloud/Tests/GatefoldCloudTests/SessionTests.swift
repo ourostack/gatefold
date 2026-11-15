@@ -346,6 +346,52 @@ struct SessionTests {
         #expect(await store.load()?.password == "pw")
     }
 
+    /// Review of #412: while the Cloud rate-limits the re-sign-in, each download in a row must not
+    /// send his password again; that would keep the account locked out.
+    @Test func aReSignInTheCloudRateLimitsPausesFurtherTries() async throws {
+        let t = ScriptedTransport()
+        let store = InMemoryTokenStore()
+        let clock = TestClock()
+        let session = try await signedIn(t, clock: clock, store: store)
+        clock.advance(8000)
+        await t.on("POST", "/auth/renew-token", .json(#"{"error_code":223,"error_msg":"Unknown token"}"#, status: 403))
+        await t.on("POST", "/auth/login/pocketbook_de", .json("{}", status: 429, headers: ["Retry-After": "120"]))
+        await #expect(throws: CloudError.rateLimited(retryAfter: 120)) { _ = try await session.send(.get("/books")) }
+        #expect(await t.requests("POST", "/auth/login/pocketbook_de").count == 2, "the typed sign-in, then one try")
+        clock.advance(30)
+        await #expect(throws: CloudError.rateLimited(retryAfter: 120)) { _ = try await session.send(.get("/books")) }
+        clock.advance(60)
+        await #expect(throws: CloudError.rateLimited(retryAfter: 120)) { _ = try await session.send(.get("/books")) }
+        #expect(await t.requests("POST", "/auth/login/pocketbook_de").count == 2, "no password sent during the pause")
+        #expect(await store.load()?.password == "pw")
+
+        clock.advance(60) // past Retry-After
+        await t.on("POST", "/auth/login/pocketbook_de", .json(tokenJSON("b1", refresh: "s1")))
+        await t.on("GET", "/books", .json(#"{"total":0,"items":[]}"#))
+        _ = try await session.send(.get("/books"))
+        #expect(await t.requests("POST", "/auth/login/pocketbook_de").count == 3)
+        #expect(await store.load()?.token.accessToken == "b1")
+    }
+
+    @Test func pausesBetweenReSignInsGrowWhenTheCloudKeepsFailing() async throws {
+        let t = ScriptedTransport()
+        let clock = TestClock()
+        let session = try await signedIn(t, clock: clock)
+        clock.advance(8000)
+        await t.on("POST", "/auth/renew-token", .json(#"{"error_code":223,"error_msg":"Unknown token"}"#, status: 403))
+        await t.on("POST", "/auth/login/pocketbook_de", .json("{}", status: 503))
+        await #expect(throws: CloudError.server(status: 503)) { _ = try await session.send(.get("/books")) }
+        clock.advance(61)
+        await #expect(throws: CloudError.server(status: 503)) { _ = try await session.send(.get("/books")) }
+        #expect(await t.requests("POST", "/auth/login/pocketbook_de").count == 3, "tried again after 60 s")
+        clock.advance(61)
+        await #expect(throws: CloudError.server(status: 503)) { _ = try await session.send(.get("/books")) }
+        #expect(await t.requests("POST", "/auth/login/pocketbook_de").count == 3, "the next pause is 120 s")
+        clock.advance(60)
+        await #expect(throws: CloudError.server(status: 503)) { _ = try await session.send(.get("/books")) }
+        #expect(await t.requests("POST", "/auth/login/pocketbook_de").count == 4)
+    }
+
     @Test func aSessionSavedBeforePasswordsWereKeptStillLoads() throws {
         let old = #"{"account":{"email":"reader@example.com","store":{"alias":"pocketbook_de","shopID":"1","name":"PocketBook"}},"token":{"accessToken":"a","refreshToken":"r","expiresAt":0}}"#
         let session = try JSONDecoder().decode(StoredSession.self, from: Data(old.utf8))

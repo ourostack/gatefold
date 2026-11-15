@@ -21,6 +21,12 @@ public actor CloudSession {
     /// Bumped by sign-in and sign-out so a refresh that finishes afterwards cannot restore an old session.
     private var generation = 0
     private var clockKnown = false
+    /// After a re-sign-in the Cloud couldn't answer (429, 5xx, offline), no other is tried before
+    /// `until`: a shelf downloading book after book must not send his password on every request
+    /// while the Cloud is rate-limiting it. Calls in the meantime get the same error back.
+    private var reSignInPause: (until: Date, wait: TimeInterval, error: Error)?
+    static let reSignInFirstPause: TimeInterval = 60
+    static let reSignInLongestPause: TimeInterval = 30 * 60
     /// The last Keychain write failure, if any. The session still works for this launch.
     public private(set) var persistenceError: Error?
     /// Server time minus device time, from the latest `Date` header.
@@ -121,6 +127,7 @@ public actor CloudSession {
         if account.email.isEmpty { account.email = email }
         let session = StoredSession(account: account, token: token, password: password, login: typed)
         generation += 1
+        reSignInPause = nil
         refreshing = nil
         stored = session
         loaded = true
@@ -130,6 +137,7 @@ public actor CloudSession {
 
     public func signOut() async {
         generation += 1
+        reSignInPause = nil
         refreshing?.cancel()
         refreshing = nil
         stored = nil
@@ -249,6 +257,7 @@ public actor CloudSession {
     /// on every launch; he signs in by hand and the new one is kept.
     private func signInAgain(_ session: StoredSession, startedIn: Int) async throws -> CloudToken {
         guard let password = session.password else { throw CloudError.authenticationRequired }
+        if let pause = reSignInPause, now() < pause.until { throw pause.error }
         var session = session
         do {
             session.token = try await passwordGrant(email: session.login ?? session.account.email, password: password, store: session.account.store)
@@ -257,7 +266,16 @@ public actor CloudSession {
             session.password = nil
             _ = try? await keep(session, startedIn: startedIn)
             throw CloudError.authenticationRequired
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            guard generation == startedIn else { throw CloudError.notSignedIn }
+            var wait = reSignInPause.map { min($0.wait * 2, Self.reSignInLongestPause) } ?? Self.reSignInFirstPause
+            if case CloudError.rateLimited(let retryAfter?) = error { wait = max(wait, retryAfter) }
+            reSignInPause = (now().addingTimeInterval(wait), wait, error)
+            throw error
         }
+        reSignInPause = nil
         guard generation == startedIn else { throw CloudError.notSignedIn }
         if Task.isCancelled { throw CancellationError() }
         return try await keep(session, startedIn: startedIn)
