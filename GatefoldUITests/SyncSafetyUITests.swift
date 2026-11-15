@@ -41,7 +41,8 @@ final class SyncSafetyUITests: XCTestCase {
         sleep(1)
     }
 
-    private var bookCount: Int { app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH 'book.'")).count }
+    /// The shelf's own count (`library.bookCount`), not the covers in view: a taller sync banner scrolls some away.
+    private var bookCount: Int { Int(element("library.bookCount").label) ?? -1 }
 
     private func pullToRefresh() {
         let top = app.windows.firstMatch.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.25))
@@ -67,7 +68,7 @@ final class SyncSafetyUITests: XCTestCase {
         assertStillSignedIn("before")
         pullToRefresh()
         assertNoRawErrorText("after a cancelled refresh")
-        XCTAssertFalse(element("library.syncTrouble").exists, "a cancelled refresh is not trouble")
+        XCTAssertFalse(element("library.syncRetry").exists, "a cancelled refresh is not trouble")
         XCTAssertEqual(bookCount, before, "no book left the shelf")
         assertStillSignedIn("after")
         shot("sync-01-cancelled-refresh-quiet")
@@ -77,13 +78,10 @@ final class SyncSafetyUITests: XCTestCase {
         launchShelf(scenario: "serverTroubleOnRefresh")
         let before = bookCount
         pullToRefresh()
-        let trouble = element("library.syncTrouble")
-        XCTAssertTrue(trouble.waitForExistence(timeout: 10))
-        // The banner holds his words as its own text (OuroBanner), beside its Try Again.
-        let kindly = "PocketBook Cloud is having a little lie\u{2011}down"
-        let inBanner = trouble.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", kindly)).firstMatch
-        XCTAssertTrue(trouble.label.contains(kindly) || inBanner.exists, trouble.debugDescription)
-        XCTAssertTrue(element("library.syncRetry").exists, "a way to try again")
+        // The trouble is a banner (OuroBanner) that is the sync line itself: his words, then Try Again.
+        XCTAssertTrue(element("library.syncRetry").waitForExistence(timeout: 10), "a way to try again")
+        let kindly = element("library.syncStatus").staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "PocketBook Cloud is having a little lie\u{2011}down")).firstMatch
+        XCTAssertTrue(kindly.exists)
         assertNoRawErrorText("server trouble")
         XCTAssertEqual(bookCount, before, "no book left the shelf")
         assertStillSignedIn("server trouble")

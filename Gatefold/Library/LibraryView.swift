@@ -112,6 +112,13 @@ struct LibraryView: View {
                         .accessibilityIdentifier("library.safeInsets")
                         .accessibilityLabel(Text(verbatim: "leading \(Int(outer.safeAreaInsets.leading)) trailing \(Int(outer.safeAreaInsets.trailing)) width \(Int(outer.size.width))"))
                         .allowsHitTesting(false)
+                    // How many books the shelf holds, however many of them are scrolled into view.
+                    Text("shelf count")
+                        .font(.system(size: 1))
+                        .opacity(0.01)
+                        .accessibilityIdentifier("library.bookCount")
+                        .accessibilityLabel(Text(verbatim: "\(library.books.count)"))
+                        .allowsHitTesting(false)
                 }
             }
             #endif
@@ -828,7 +835,8 @@ private struct SyncStatusLine: View {
                     }
                     .accessibilityIdentifier("library.syncRetry")
                 }
-                .accessibilityIdentifier("library.syncTrouble")
+                // The banner fills the status line, so VoiceOver and UI tests see it as `library.syncStatus` itself:
+                // its words, then Try Again.
                 .padding(.vertical, 4)
             } else if !app.library.placesReachEReader, app.account != nil {
                 // Never "In step" over a place the e-reader didn't get.
