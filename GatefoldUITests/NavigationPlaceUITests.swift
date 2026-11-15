@@ -24,7 +24,12 @@ final class NavigationPlaceUITests: XCTestCase {
         "-GatefoldSignedIn", "YES", "-GatefoldAllowReopen", "YES",
     ]
 
-    private var visibleText: String { (app.descendants(matching: .any)["reader.visibleText"].value as? String) ?? "" }
+    /// Empty until the reader is up: `value` on an element not there yet fails the test on the spot, a few retries in
+    /// (run 43738034691, gatefold#407), so it is read only once it exists.
+    private var visibleText: String {
+        let e = app.descendants(matching: .any)["reader.visibleText"]
+        return e.exists ? (e.value as? String) ?? "" : ""
+    }
 
     /// A first look (no `old`) waits for the page to show, in reads (`pageReady`), before its words: on a starved
     /// iPad the book's first page took 55 s past the launch, so a 60 s clock ran out on the shelf (gatefold#407,
@@ -464,7 +469,7 @@ final class NavigationPlaceUITests: XCTestCase {
     /// Reads (at least 0.25 s apart) until the reader reports its page shown: 1200, past the cover's longest hold.
     private func pageReady(reads: Int = 1200, file: StaticString = #filePath, line: UInt = #line) -> Bool {
         let ready = app.descendants(matching: .any)["reader.pageReady"]
-        return readsUntil(reads, file: file, line: line) { (ready.value as? String) == "1" }
+        return readsUntil(reads, file: file, line: line) { ready.exists && (ready.value as? String) == "1" }
     }
 
     /// Judged in reads, one every 0.25 s, never a timeout in seconds; a hang guard sized from the reads stops a stuck query.
