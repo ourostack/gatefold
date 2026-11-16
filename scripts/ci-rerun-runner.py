@@ -22,7 +22,7 @@ import re
 import subprocess
 import sys
 
-MARK = re.compile(r"No app code ran|The hosted runner lost communication with the server")
+MARK = re.compile(r"No app code ran|The hosted runner lost communication with the server|The runner's disk failed")
 # Jobs that fail only because a job they wait for failed (app.yml's summary checks).
 SUMMARIES = {"iPad (place)", "iPad (reviewer)", "iPad (taps)", "iPad (undo)", "Duo (the reviewers' checks)"}
 
@@ -78,12 +78,18 @@ def selftest():
     boot = "##[error]boot-sim.sh did not finish within 1200 s. No app code ran."
     lost = "The hosted runner lost communication with the server. Anything in your workflow that terminates..."
     test = "ReviewerChecksUITests.swift:355: error: -[GatefoldUITests.ReviewerChecksUITests testX] : XCTAssertTrue failed"
+    disk = ("##[error]Gatefold-2026-11-16-084152.0003.ips: KERN_MEMORY_ERROR at 0x000000010085b6d0 in a mapped file: the "
+            "runner could not read it back. The runner's disk failed; rerun it on a fresh runner (gatefold#135).")
+    app = '##[error]The app crashed during the tests: Gatefold-2026-11-16-070650.ips "exception" : {"type":"EXC_BREAKPOINT"}'
     jumps = "iPad place shard (ipad-place-jumps) / Tests"
     portrait = "iPad place shard (ipad-place-portrait) / Tests"
     cases = [
         ([(jumps, "failure", launch), ("iPad (place)", "failure", "")], True),
         ([(jumps, "failure", boot), (portrait, "failure", lost), ("iPad (place)", "failure", "")], True),
         ([(jumps, "cancelled", ""), ("iPad (place)", "failure", "")], True),
+        # SIGBUS reading a mapped file back (#429, #435): the runner's disk, rerun; any other crash is the app's.
+        ([("iPad reviewer shard (ipad-reviewer-controls) / Tests", "failure", disk + "\n" + test)], True),
+        ([(jumps, "failure", app)], False),
         # A test that failed beside them is left for a person.
         ([(jumps, "failure", launch), (portrait, "failure", test), ("iPad (place)", "failure", "")], False),
         ([(portrait, "failure", test)], False),
