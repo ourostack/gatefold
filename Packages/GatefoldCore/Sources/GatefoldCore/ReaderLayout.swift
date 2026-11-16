@@ -138,7 +138,8 @@ public enum ReaderLayoutResolver {
             // Shut, with the app still on the wide inner screen for the moment before it moves to the cover: nobody
             // sees this screen, so it keeps what it showed. A spread laid out here began an unfold as the book closed,
             // and its restore ran into the cover's (Real unfold at bc72d70: his words lost on the cover).
-            if hinge == .closed, wide, let shown { return shown }
+            // Never one page: arriving from the cover, a frame with the hinge still closed gets the spread it always had.
+            if hinge == .closed, wide, let shown, shown != .single { return shown }
             // Partially open: stood on a table, the page on the top half, the controls on the bottom.
             if case .partiallyOpen = hinge { return .tabletop }
             if fold.isVertical {
