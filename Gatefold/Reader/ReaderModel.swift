@@ -847,7 +847,7 @@ final class ReaderModel {
     /// on #341's iPad the page opened on its file's first page, no reflow came, and it showed there. So while the
     /// cover holds, with no reflow going, the page is read and, if his place is off screen, moved to it, once.
     /// Never once the page is in view: then a place found late is not moved to.
-    private func putBackBarePlaceUnderCover() {
+    func putBackBarePlaceUnderCover() {
         guard openedOnBarePlace != nil, keeper.reflowing == nil, !barePutBackGoing, !pageReady, let page else { return }
         barePutBackGoing = true
         Task { [weak self] in
@@ -917,6 +917,7 @@ final class ReaderModel {
         // Shown with no restore under way: nothing pending to put the open's bare place back.
         if keeper.reflowing == nil { openedOnBarePlace = nil }
         withAnimation(.easeOut(duration: 0.3)) { pageReady = true } completion: { [weak self] in self?.coverLifted = true }
+        if anchorPutOff { anchorPutOff = false; Task { await captureAnchor() } }
         foldOnceSeen()
         if reopenPicture == nil { pageShownAt = Date() }
         // Counting the book's pages waits until the open has settled (the reopen picture gone too), so
@@ -2977,9 +2978,12 @@ final class ReaderModel {
                                 progression: bare.locations.progression ?? 0, at: Date())
     }
 
-    /// Takes the first words on screen as the reader's place, unless a reflow is moving the page.
+    /// Takes the first words on screen as the reader's place, unless a reflow is moving the page, or the cover is
+    /// putting the open's place with no words back (`bareStillOwed`): then it is taken once the cover lifts.
     func captureAnchor() async {
-        guard keeper.reflowing == nil, let (anchor, anchorLoc) = await page?.currentAnchor(), keeper.reflowing == nil else { return }
+        guard keeper.reflowing == nil, !deferAnchorWhileBareOwed() else { return }
+        guard let (anchor, anchorLoc) = await page?.currentAnchor(), keeper.reflowing == nil,
+              !deferAnchorWhileBareOwed() else { return }
         readerLog.notice("anchor \(anchor.text ?? "nil", privacy: .private)")
         keeper.userSettled(on: anchor)
         if keeper.anchor == anchor { anchorLocator = anchorLoc }
@@ -2989,6 +2993,24 @@ final class ReaderModel {
             anchorReady = true
             anchorCheck = "ready \(reflowCount)"
         }
+    }
+
+    /// The cover is putting the open's place with no words back (`putBackBarePlaceUnderCover`) and he hasn't moved:
+    /// the page beneath is where Readium first put it, the chapter's start on CI's starved iPad, not his place.
+    /// Taken as his anchor, its first words ended that put-back (`openPlaceToReapply` holds off once an anchor is
+    /// held), and the reopen showed the chapter's start (gatefold#447: the open's capture and the put-back both
+    /// waited on the page's scripts, and the capture read first when they answered after 23 s; every QuickLeave
+    /// failure since 7b7024b).
+    private var bareStillOwed: Bool {
+        barePutBackGoing && openedOnBarePlace != nil && !pageReady && hisMoves == 0 && !touchedSinceLocation && !isClosed
+    }
+    /// A capture put off while `bareStillOwed`, taken when the page shows (`showPage`).
+    @ObservationIgnored private var anchorPutOff = false
+    private func deferAnchorWhileBareOwed() -> Bool {
+        guard bareStillOwed else { return false }
+        if !anchorPutOff { readerLog.notice("anchor: put off while the open's place (no words) is still owed under the cover") }
+        anchorPutOff = true
+        return true
     }
 
     // MARK: The end

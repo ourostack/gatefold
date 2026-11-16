@@ -37,7 +37,11 @@ final class TwoStepJumpPage: ReaderPage {
 
     private func words(_ here: Locator) -> String { "words at \(here.href.string) \(here.locations.progression ?? -1) on down the page" }
 
+    /// Every place the page was sent to, in order.
+    private(set) var sent: [Locator] = []
+
     @discardableResult func go(to locator: Locator) async -> Bool {
+        sent.append(locator)
         guard target == nil else { return true }
         target = locator
         // Readium's first step: the file's first page, reported as where it is.
