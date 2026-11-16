@@ -13,6 +13,18 @@ import Testing
 
     private func saved(_ f: S.Fixture) -> String? { f.app.library.book(bookID)?.locatorJSON }
 
+    /// A contents entry inside its file, once the open has placed it there. The open places its chapters in a
+    /// task of its own that reads each file, so on a busy machine the test can reach its jump first; a jump
+    /// to an entry not yet placed keeps nothing on leaving, by design (gatefold#254), and the test failed
+    /// for that, not for the code it checks (CI run 43835558803).
+    private func placedEntry(_ f: S.Fixture) async throws -> TOCEntry {
+        for _ in 0..<500 where !f.model.toc.contains(where: { $0.placedInFile }) {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        return try #require(f.model.toc.last(where: { $0.placedInFile && $0.progression > 0.3 && $0.link.url().fragment != nil }),
+                            "the open placed no chapter inside its file")
+    }
+
     /// A first open with nothing ahead in the Cloud shows the book's own page. When the InkPad's place
     /// turns up later (the app coming back to the foreground), it is offered, never landed on: build 20
     /// moved the page and the saved place under him while he read.
@@ -138,7 +150,7 @@ import Testing
         let f = try await S.make(remote: { _, _ in nil }, startAt: 0.05)
         await f.model.load()
         await f.model.locationDidChange(try #require(f.page.currentLocation))
-        let entry = try #require(f.model.toc.last(where: { $0.progression > 0.3 && $0.link.url().fragment != nil }))
+        let entry = try await placedEntry(f)
         let fragment = try #require(entry.link.url().fragment)
         nonisolated(unsafe) let publication = f.publication
         let opened = try #require(await publication.locate(entry.link))
@@ -169,7 +181,7 @@ import Testing
         let f = try await S.make(remote: { _, _ in nil }, startAt: 0.05, jumpBeat: { await Task.yield() })
         await f.model.load()
         await f.model.locationDidChange(try #require(f.page.currentLocation))
-        let entry = try #require(f.model.toc.last(where: { $0.progression > 0.3 && $0.link.url().fragment != nil }))
+        let entry = try await placedEntry(f)
         nonisolated(unsafe) let publication = f.publication
         let opened = try #require(await publication.locate(entry.link))
         let fileStart = opened.copy(locations: { $0.fragments = []; $0.progression = 0 }, text: { $0 = Locator.Text() })
@@ -201,7 +213,7 @@ import Testing
         let f = try await S.make(remote: { _, _ in nil }, startAt: 0.05)
         await f.model.load()
         await f.model.locationDidChange(try #require(f.page.currentLocation))
-        let entry = try #require(f.model.toc.last(where: { $0.progression > 0.3 && $0.link.url().fragment != nil }))
+        let entry = try await placedEntry(f)
         nonisolated(unsafe) let publication = f.publication
         let opened = try #require(await publication.locate(entry.link))
         let fileStart = opened.copy(locations: { $0.fragments = []; $0.progression = 0 }, text: { $0 = Locator.Text() })
@@ -243,7 +255,7 @@ import Testing
         })
         await f.model.load()
         await f.model.locationDidChange(try #require(f.page.currentLocation))
-        let entry = try #require(f.model.toc.last(where: { $0.progression > 0.3 && $0.link.url().fragment != nil }))
+        let entry = try await placedEntry(f)
         let fragment = try #require(entry.link.url().fragment)
         nonisolated(unsafe) let publication = f.publication
         let opened = try #require(await publication.locate(entry.link))
@@ -291,7 +303,7 @@ import Testing
         })
         await f.model.load()
         await f.model.locationDidChange(try #require(f.page.currentLocation))
-        let entry = try #require(f.model.toc.last(where: { $0.progression > 0.3 && $0.link.url().fragment != nil }))
+        let entry = try await placedEntry(f)
         let fragment = try #require(entry.link.url().fragment)
         nonisolated(unsafe) let publication = f.publication
         let opened = try #require(await publication.locate(entry.link))
@@ -339,7 +351,7 @@ import Testing
         })
         await f.model.load()
         await f.model.locationDidChange(try #require(f.page.currentLocation))
-        let entry = try #require(f.model.toc.last(where: { $0.progression > 0.3 && $0.link.url().fragment != nil }))
+        let entry = try await placedEntry(f)
         let fragment = try #require(entry.link.url().fragment)
         nonisolated(unsafe) let publication = f.publication
         let opened = try #require(await publication.locate(entry.link))
@@ -475,7 +487,7 @@ import Testing
         })
         await f.model.load()
         await f.model.locationDidChange(try #require(f.page.currentLocation))
-        let entry = try #require(f.model.toc.last(where: { $0.progression > 0.3 && $0.link.url().fragment != nil }))
+        let entry = try await placedEntry(f)
         nonisolated(unsafe) let publication = f.publication
         let opened = try #require(await publication.locate(entry.link))
         let fileStart = opened.copy(locations: { $0.fragments = []; $0.progression = 0 }, text: { $0 = Locator.Text() })
@@ -517,7 +529,7 @@ import Testing
         let f = try await S.make(remote: { _, _ in nil }, startAt: 0.05)
         await f.model.load()
         await f.model.locationDidChange(try #require(f.page.currentLocation))
-        let entry = try #require(f.model.toc.last(where: { $0.progression > 0.3 && $0.link.url().fragment != nil }))
+        let entry = try await placedEntry(f)
         nonisolated(unsafe) let publication = f.publication
         let opened = try #require(await publication.locate(entry.link))
         let fileStart = opened.copy(locations: { $0.fragments = []; $0.progression = 0 }, text: { $0 = Locator.Text() })
@@ -880,7 +892,7 @@ import Testing
         let f = try await S.make(remote: { _, _ in nil }, startAt: 0.05, jumpBeat: { await Task.yield() })
         await f.model.load()
         await f.model.locationDidChange(try #require(f.page.currentLocation))
-        let entry = try #require(f.model.toc.last(where: { $0.progression > 0.3 && $0.link.url().fragment != nil }))
+        let entry = try await placedEntry(f)
         let fragment = try #require(entry.link.url().fragment)
         nonisolated(unsafe) let publication = f.publication
         let opened = try #require(await publication.locate(entry.link))

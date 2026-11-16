@@ -46,7 +46,9 @@ struct ReaderScreen: View {
                 containerSize: proxy.size,
                 division: FoldReader.division(in: proxy),
                 hinge: hinge,
-                forced: forced
+                forced: forced,
+                // Shut, the inner screen keeps what it shows until the app moves to the cover (no unfold as it closes).
+                shown: model.layout.posture
             )
             let clearance = ChromeClearance.resolve(container: proxy.size, occlusions: occlusions(in: proxy))
             // Bare: the status bar is down and no status column is reported now (the cover screen reports its own
@@ -913,7 +915,8 @@ struct WarmPage: View {
 
     var body: some View {
         GeometryReader { proxy in
-            let input = LayoutInput(containerSize: proxy.size, division: FoldReader.division(in: proxy), hinge: hinge, forced: LaunchOptions.forcedPosture)
+            let input = LayoutInput(containerSize: proxy.size, division: FoldReader.division(in: proxy), hinge: hinge, forced: LaunchOptions.forcedPosture,
+                                    shown: model.layout.posture)
             let layout = ReaderScreen.placed(input, fontScale: model.preferences.fontScale, proxy: proxy, occlusions: FoldReader.occlusions(in: proxy), bare: false, scrolling: model.scrollsReflowable)
             ZStack(alignment: .topLeading) {
                 if let host = model.hostController {
