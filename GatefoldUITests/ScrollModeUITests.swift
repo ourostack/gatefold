@@ -132,7 +132,16 @@ final class ScrollModeUITests: XCTestCase {
         var crossed = false
         for _ in 0..<40 {
             el("reader.page").swipeUp(velocity: .fast)
-            let now = settledPlace("flicked on", quiet: 4)
+            var now = settledPlace("flicked on", quiet: 4)
+            // A flick that left the place where it was began at the chapter's end, so it is the pull that opens the
+            // next chapter. On a busy runner that chapter takes several seconds to open, and the place holds still
+            // at the old end meanwhile. Another flick then would land on the new chapter and scroll it on past its
+            // start (gatefold#425). So wait for the chapter, judged in reads, and flick again only if it never comes.
+            if now.file == place.file, now.progression == end.progression {
+                if readsUntil(ReaderReads.coverReads, { shown()?.file != place.file }) {
+                    now = settledPlace("the pull opened the next chapter", quiet: 4)
+                }
+            }
             if now.file != place.file { crossed = true; break }
             end = now
         }
