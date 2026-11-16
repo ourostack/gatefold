@@ -925,6 +925,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/select-xcode
+        with:
+          xcode: "27.2"
       - name: Install the Metal toolchain (the page curl is a Metal shader)
         run: xcodebuild -downloadComponent MetalToolchain
       - name: Generate the Xcode project from project.yml
@@ -983,6 +985,8 @@ jobs:
         run: echo "JOB_START=$(date +%s)" >> "$GITHUB_ENV"
       - uses: actions/checkout@v4
       - uses: ./.github/actions/select-xcode
+        with:
+          xcode: "27.2"
       - name: Start an iPhone Duo booting
         run: python3 -I scripts/ci-simulator.py start gatefold-duo "iPhone Duo"
       - name: Wait for this commit's build (Build for testing runs while the simulator boots)
