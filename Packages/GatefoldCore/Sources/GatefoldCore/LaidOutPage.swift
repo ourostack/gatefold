@@ -28,6 +28,8 @@ public enum LaidOutPage {
     /// A read of a laid-out page: it has words, and a range a page can have. One that starts past its chapter's end
     /// or ends where it starts was made while the web view laid the page out again (Real unfold at c60ef7e, job
     /// 132884768222: 2.4..2.4, with words that weren't the page's), so its words can't judge the page either.
+    /// For a spread's live read only (`keepOnLeft`): a single page read with Readium's lagging start can end where it
+    /// starts and still be a page.
     static func shows(_ range: VisibleRange) -> Bool {
         range.text != nil && range.start <= 1 && range.end > range.start
     }
