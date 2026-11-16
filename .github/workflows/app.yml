@@ -718,7 +718,7 @@ jobs:
               PositionUITests/testTabletopDeckTurnsAndResizes PositionUITests/testFontChangeKeepsThePlace
             pr_tests: none
             cold: false
-            timeout: 79 # 30 + 2 x 15.9 + 5 + 12
+            timeout: 84 # 30 + 2 x 18.4 + 5 + 12
             lane: 10
           - shard: duo-pagenumber
             # A page a turn, and a reopen keeps the numbers: 295

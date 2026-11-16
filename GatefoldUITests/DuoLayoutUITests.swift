@@ -104,11 +104,20 @@ final class DuoLayoutUITests: XCTestCase {
 
     func testTheChromeHoldsStillBesideAStatusColumnTurningPages() { checkTheChromeHoldsStill(["-GatefoldPageTurn", "slide"]) }
 
-    /// Scrolling, the text runs to the top of the screen, and no running head is drawn over it.
-    func testScrollingTextRunsToTheTopWithNoHeadOverIt() {
-        open(["-GatefoldPageTurn", "scroll"])
+    /// Scrolling, the text runs to the top of the screen, and no running head is drawn over it. The folded Duo had
+    /// its head over a line at (24, 33.8), and the page 46 pt down (Ari, build 39; Ouro Feel on gatefold#413).
+    func testScrollingTextRunsToTheTopWithNoHeadOverIt() { checkScrollingTop([]) }
+
+    /// The same on two facing pages with a status column at the top (the open Duo): Ouro Feel on gatefold#413 found
+    /// both heads at y = -9 over the text there, and the page pushed down out of the window.
+    func testScrollingSpreadRunsToTheTopWithNoHeadOverIt() {
+        checkScrollingTop(["-GatefoldForcePosture", "spread", "-GatefoldStatusColumn", "YES"])
+    }
+
+    private func checkScrollingTop(_ extra: [String], file: StaticString = #filePath, line: UInt = #line) {
+        open(["-GatefoldPageTurn", "scroll"] + extra)
         let page = el("reader.page")
-        XCTAssertTrue(readsUntil(reads: 100) { page.exists }.ok, "the page is up")
+        XCTAssertTrue(readsUntil(reads: 100) { page.exists }.ok, "the page is up", file: file, line: line)
         // Let a late camera report settle the page (`PageTop`): 5 equal looks running, within 60 reads.
         var last = CGRect.null, same = 0
         _ = readsUntil(reads: 60) {
@@ -120,10 +129,15 @@ final class DuoLayoutUITests: XCTestCase {
         shot("scroll-top")
         let window = app.windows.firstMatch.frame
         let frame = page.exists ? page.frame : .null
-        XCTAssertEqual(frame.minY, window.minY, accuracy: 0.5, "the scrolling page starts at the screen's top (\(frame), window \(window))")
-        let head = el("reader.runningHead")
-        if head.exists, !head.frame.isEmpty {
-            XCTAssertFalse(head.frame.intersects(frame), "no running head over the scrolling text (head \(head.frame), page \(frame))")
+        XCTAssertEqual(frame.minY, window.minY, accuracy: 0.5, "the scrolling page starts at the screen's top (\(frame), window \(window))",
+                       file: file, line: line)
+        XCTAssertTrue(window.insetBy(dx: -0.5, dy: -0.5).contains(frame), "the scrolling page \(frame) lies inside the window \(window)",
+                      file: file, line: line)
+        // Scrolling text runs up through the top band, so no running head is drawn at all, on one page or two.
+        for id in ["reader.runningHead", "reader.runningHead.book"] {
+            let head = el(id)
+            XCTAssertFalse(head.exists, "no \(id) while scrolling (one at \(head.exists ? "\(head.frame)" : "-"), page \(frame))",
+                           file: file, line: line)
         }
     }
 }
