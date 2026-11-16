@@ -59,7 +59,7 @@ on:
       hinge:
         description: >-
           Open the Duo's hinge for the tests: Device Hub, driven by ouro-devicehub (ourostack/ouro-ui-apple) at the
-          revision project.yml pins, answers each OuroDuoHinge request. The tests get TEST_RUNNER_OURO_DUO_POSTURE_DIR,
+          revision or release project.yml asks for, answers each OuroDuoHinge request. The tests get TEST_RUNNER_OURO_DUO_POSTURE_DIR,
           and a skipped test fails the shard, since a skip there means the hinge never reached it. The build takes a
           few minutes of the 30 for setup, while the simulator boots.
         type: boolean
@@ -112,8 +112,20 @@ jobs:
         if: inputs.hinge
         run: |
           set -euo pipefail
-          rev="$(awk '/^  OuroUIApple:/ { f = 1 } f && /revision:/ { print $2; exit }' project.yml)"
-          [ -n "$rev" ] || { echo "::error::project.yml pins no OuroUIApple revision"; exit 1; }
+          # The same Ouro UI for Apple the app resolves: a pinned `revision:`, or the newest release within its
+          # `minorVersion:` (1.0.0 takes the newest v1.0.x tag).
+          read -r key value <<< "$(awk '/^  OuroUIApple:/ { f = 1; next } f && /^  [A-Za-z]/ { exit }
+            f && /(revision|minorVersion):/ { sub(":", "", $1); print $1, $2; exit }' project.yml)"
+          case "$key" in
+            revision) rev="$value" ;;
+            minorVersion)
+              series="v${value%.*}."
+              rev="$(git ls-remote --tags --refs https://github.com/ourostack/ouro-ui-apple "refs/tags/${series}*" \
+                | sed 's#.*refs/tags/##' | sort -V | tail -1)" ;;
+            *) rev="" ;;
+          esac
+          [ -n "$rev" ] || { echo "::error::could not read OuroUIApple's revision or minorVersion from project.yml"; exit 1; }
+          echo "ouro-devicehub from ourostack/ouro-ui-apple $rev"
           git init -q "$RUNNER_TEMP/ouro-ui-apple"
           git -C "$RUNNER_TEMP/ouro-ui-apple" fetch -q --depth 1 https://github.com/ourostack/ouro-ui-apple "$rev"
           git -C "$RUNNER_TEMP/ouro-ui-apple" checkout -q FETCH_HEAD
