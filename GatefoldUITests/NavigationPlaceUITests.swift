@@ -608,7 +608,16 @@ final class NavigationPlaceUITests: XCTestCase {
         // still: counted in reads, never a fixed wait (gatefold#210, which a 45 s sleep let run out first).
         XCTAssertTrue(spreadCounted(after: portraitLayout), "the spread's page count finished")
         _ = steadyWords()
-        XCTAssertTrue(flat(visibleText).contains(his), "the spread shows his first words")
+        // The words the spread shows, beside the opening read in portrait, kept in the result bundle when this
+        // fails: the opening is what the test looks for, and the log withholds the text (gatefold#434).
+        let spreadText = flat(visibleText)
+        if !spreadText.contains(his) {
+            let note = XCTAttachment(string: "opening (portrait): \(his)\n\nspread: \(spreadText)")
+            note.name = "spread-words"
+            note.lifetime = .keepAlways
+            add(note)
+        }
+        XCTAssertTrue(spreadText.contains(his), "the spread shows his first words")
         let spread = opening(visibleText)
         for round in 1...3 {
             leaveAndRelaunch()
