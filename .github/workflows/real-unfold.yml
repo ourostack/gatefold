@@ -157,6 +157,8 @@ jobs:
             captured=1
             local dir="$out/stall" pid hubpid
             mkdir -p "$dir"
+            # First, so the record shows how long the host took to run the lookups below (run 43958142531: 14 min).
+            echo "asked at $(date -u +%T)" > "$dir/state.txt"
             pid="$(pgrep -f 'Gatefold\.app/Gatefold$' | head -1 || true)"
             hubpid="$(pgrep -x DeviceHub | head -1 || true)"
             {
@@ -166,7 +168,7 @@ jobs:
               if [ -n "$pid" ]; then ps -o pid,stat,%cpu,time,etime,command -p "$pid"; else echo "Gatefold: no process"; fi
               [ -z "$hubpid" ] || ps -o pid,stat,%cpu,time,etime,command -p "$hubpid"
               top -l 1 -o cpu -n 10 -stats pid,command,cpu,state,time | tail -12
-            } > "$dir/state.txt" 2>&1
+            } >> "$dir/state.txt" 2>&1
             [ -z "$pid" ] || perl -e 'alarm shift; exec @ARGV' 30 sample "$pid" 3 -mayDie -file "$dir/gatefold-sample.txt" >/dev/null 2>&1 || true
             [ -z "$hubpid" ] || perl -e 'alarm shift; exec @ARGV' 30 sample "$hubpid" 3 -mayDie -file "$dir/devicehub-sample.txt" >/dev/null 2>&1 || true
             sed 's/^/  /' "$dir/state.txt"
@@ -313,12 +315,14 @@ jobs:
           [ "$out_of_time" = 0 ] || { echo "::error::the unfolds stopped for time with $(grep -c "" "$out/marks.log") of $planned begun"; exit 1; }
           [ -n "$spreads" ] || { echo "::error::no unfold reached a spread"; exit 1; }
       - name: What Gatefold and DeviceHub were doing when the unfolds ran out of time
-        # Only when the step hit its limit before any press stalled, so nothing was sampled (stacks only, no page text).
-        if: ${{ always() && steps.unfold.outcome == 'failure' }}
+        # Only when the step failed or hit its limit (a step's timeout reads as cancelled: run 43958142531 skipped this)
+        # before any press stalled, so nothing was sampled (stacks only, no page text).
+        if: ${{ always() && (steps.unfold.outcome == 'failure' || steps.unfold.outcome == 'cancelled') }}
         timeout-minutes: 2
         run: |
           dir="$RUNNER_TEMP/unfold/stall"
-          [ ! -d "$dir" ] || { echo "sampled at the stalled press already"; exit 0; }
+          # A press's capture the step's limit cut short (run 43958142531) left no sample: take one now.
+          [ ! -f "$dir/gatefold-sample.txt" ] || { echo "sampled at the stalled press already"; exit 0; }
           mkdir -p "$dir"
           pid="$(pgrep -f 'Gatefold\.app/Gatefold$' | head -1 || true)"
           hubpid="$(pgrep -x DeviceHub | head -1 || true)"
@@ -329,7 +333,7 @@ jobs:
             [ -z "$hubpid" ] || ps -o pid,stat,%cpu,time,etime,command -p "$hubpid"
             pgrep -fl 'simctl|devicehub' | cut -c1-200 || true
             top -l 1 -o cpu -n 10 -stats pid,command,cpu,state,time | tail -12
-          } > "$dir/state.txt" 2>&1
+          } >> "$dir/state.txt" 2>&1
           [ -z "$pid" ] || perl -e 'alarm shift; exec @ARGV' 30 sample "$pid" 3 -mayDie -file "$dir/gatefold-sample.txt" >/dev/null 2>&1 || true
           [ -z "$hubpid" ] || perl -e 'alarm shift; exec @ARGV' 30 sample "$hubpid" 3 -mayDie -file "$dir/devicehub-sample.txt" >/dev/null 2>&1 || true
           cat "$dir/state.txt"
