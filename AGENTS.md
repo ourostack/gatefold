@@ -6,6 +6,10 @@
 - Merge as fast as possible; 30 minutes past green is the outer alarm, not the goal. Rebase it, fix it and merge it, or close it with a one-line reason and an issue for whatever is still worth doing.
 - Don't stack fixes on a branch under review. A new finding during review is its own pull request, unless it's a defect in that pull request's own change.
 
+## Interfaces follow Ouro UI
+
+**[Interfaces follow Ouro UI](https://github.com/ourostack/.github/blob/main/agents/interfaces-follow-ouro-ui.md).** Every screen a person uses is built from Ouro HX, every door an agent uses is declared once with `ouro-actions` and checked by the Ouro AX X-ray in CI, Ouro is taken from its release tags (never copied by hand) and kept within a day of them, and what Ouro lacks is fixed in Ouro first.
+
 ## CI
 
 - `app.yml` builds the app and its tests once (`Build for testing`, named by commit and Xcode version). Every simulator job downloads that build and runs `test-without-building`, and boots its simulator with `scripts/ci-simulator.py` while it downloads. Don't add `xcodebuild test` from source to a simulator job.
