@@ -138,6 +138,35 @@ jobs:
           }
           # Each press has 120 s and one retry (gatefold#149): a stall names its press and the app's latest main-thread
           # hold, never spends the job in silence. A press that answers late is named too.
+          # At the first press that gives no answer, what each side was doing (gatefold#423): is Gatefold alive and
+          # being run, its main thread's stack (host `sample`: frames only, never the book's words), DeviceHub's stack,
+          # whether the log stream still runs, and the host's load. run 43923823167's app logged nothing for 8 min
+          # after its last press, not even its own "main: still held" watch, which a main-thread hang would print.
+          captured=0
+          stall_capture() {
+            [ "$captured" = 0 ] || return 0
+            captured=1
+            local dir="$out/stall" pid hubpid
+            mkdir -p "$dir"
+            pid="$(pgrep -f 'Gatefold\.app/Gatefold$' | head -1 || true)"
+            hubpid="$(pgrep -x DeviceHub | head -1 || true)"
+            {
+              echo "at $(date -u +%T), press $1"
+              uptime
+              if kill -0 "$stream" 2>/dev/null; then echo "log stream: running"; else echo "log stream: gone"; fi
+              if [ -n "$pid" ]; then ps -o pid,stat,%cpu,time,etime,command -p "$pid"; else echo "Gatefold: no process"; fi
+              [ -z "$hubpid" ] || ps -o pid,stat,%cpu,time,etime,command -p "$hubpid"
+              top -l 1 -o cpu -n 10 -stats pid,command,cpu,state,time | tail -12
+            } > "$dir/state.txt" 2>&1
+            [ -z "$pid" ] || perl -e 'alarm shift; exec @ARGV' 30 sample "$pid" 3 -mayDie -file "$dir/gatefold-sample.txt" >/dev/null 2>&1 || true
+            [ -z "$hubpid" ] || perl -e 'alarm shift; exec @ARGV' 30 sample "$hubpid" 3 -mayDie -file "$dir/devicehub-sample.txt" >/dev/null 2>&1 || true
+            sed 's/^/  /' "$dir/state.txt"
+            if [ -f "$dir/gatefold-sample.txt" ]; then
+              echo "--- Gatefold's main thread at the stall (heaviest frames, from host sample) ---"
+              awk '/^Call graph:/ { on = 1 } on && /^ +[0-9]+ Thread_/ { n++ } on && n == 1 { print } n > 1 { exit }' "$dir/gatefold-sample.txt" \
+                | sed -E 's/  \(in [^)]*\)//; s/ +\[0x[0-9a-f,]+\]//g' | cut -c1-200 | head -40
+            fi
+          }
           press() {
             local try t0 took status
             for try in 1 2; do
@@ -154,6 +183,7 @@ jobs:
                 return 0
               fi
               echo "::warning::press $1 gave no answer in 120 s (try $try); the app's latest main-thread note: $(grep -E 'main: (still held|held) ' "$out/reader.log" | tail -1 | sed -E 's/^[0-9-]+ //' | cut -c1-160)"
+              stall_capture "$1"
             done
             echo "::error::press $1 stalled twice"
             stalled=1
@@ -282,3 +312,4 @@ jobs:
             ${{ runner.temp }}/unfold/build.log
             ${{ runner.temp }}/unfold/marks.log
             ${{ runner.temp }}/unfold/shots
+            ${{ runner.temp }}/unfold/stall
