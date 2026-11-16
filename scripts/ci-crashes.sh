@@ -9,7 +9,9 @@
 #                         the reader dying, so it must never pass as "the system ended it in the background".
 #                         When every report is the runner failing to read a mapped file back (SIGBUS, KERN_MEMORY_ERROR;
 #                         ci-bootstrap.py crash), the error says the runner failed, so rerun-runner.yml reruns the
-#                         shard; one report of any other kind keeps them all the app's
+#                         shard. So does a report from within 30 s of the simulator's iOS runtime disk disappearing
+#                         (simdiskimaged.log in the result bundle's diagnostics, kept beside the reports; ci-bootstrap.py
+#                         lost; gatefold#440). One report of any other kind keeps them all the app's
 set -eu
 mark="$RUNNER_TEMP/crash-mark"
 reports="$HOME/Library/Logs/DiagnosticReports"
@@ -43,15 +45,34 @@ case "${1:-}" in
       exit $status
     fi
     here="$(dirname "$0")"
+    # The simulator's disk-image log, from the result bundle xcodebuild has just written (simctl's diagnostics in it).
+    disk="$out/simdiskimaged.log"
+    if [ -d "$RUNNER_TEMP/ui.xcresult" ]; then
+      diag="$RUNNER_TEMP/diagnostics"
+      xcrun xcresulttool export diagnostics --path "$RUNNER_TEMP/ui.xcresult" --output-path "$diag" >/dev/null 2>&1 || true
+      log="$(find "$diag" -type f -name simdiskimaged.log 2>/dev/null | head -1)"
+      [ -n "$log" ] && cp "$log" "$disk"
+    fi
+    [ -f "$disk" ] || echo "no simdiskimaged.log in the result bundle: a crash can't be put down to the runtime disk going"
+    # Why a report is the runner's, or nothing when it is the app's.
+    runner_why() {
+      python3 -I "$here/ci-bootstrap.py" crash "$1" && return 0
+      [ -f "$disk" ] && python3 -I "$here/ci-bootstrap.py" lost "$disk" "$1" && return 0
+      return 1
+    }
     runner=1
     for f in $found; do
-      python3 -I "$here/ci-bootstrap.py" crash "$f" >/dev/null || runner=0
+      runner_why "$f" >/dev/null || runner=0
     done
     printf '%s\n' "$found" | while IFS= read -r f; do
       cp "$f" "$out/"
       if [ "$runner" = 1 ]; then
-        why="$(python3 -I "$here/ci-bootstrap.py" crash "$f")"
-        echo "::error title=The runner, not the app::$(basename "$f"): $why. The runner's disk failed; rerun it on a fresh runner (gatefold#135)."
+        why="$(runner_why "$f")"
+        case "$why" in
+          *"runtime disk disappeared"*) tail="The simulator's runtime disk disappeared; rerun it on a fresh runner (gatefold#440)." ;;
+          *) tail="The runner's disk failed; rerun it on a fresh runner (gatefold#135)." ;;
+        esac
+        echo "::error title=The runner, not the app::$(basename "$f"): $why. $tail"
       else
         why="$(grep -o -E '"(exception|termination)" : \{[^}]*\}' "$f" | tr '\n' ' ' | cut -c1-400 || true)"
         echo "::error::The app crashed during the tests: $(basename "$f") $why"

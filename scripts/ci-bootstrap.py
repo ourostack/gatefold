@@ -3,6 +3,8 @@
 
     python3 -I scripts/ci-bootstrap.py why <ui.log>   # prints the reason and exits 0 if so; exits 1 if not
     python3 -I scripts/ci-bootstrap.py crash <.ips>   # exits 0 if the crash is the runner's disk (below); 1 if not
+    python3 -I scripts/ci-bootstrap.py lost <simdiskimaged.log> <.ips>   # exits 0 if the iOS runtime's disk went
+                                                                         # away as the app crashed (below); 1 if not
     python3 -I scripts/ci-bootstrap.py --selftest
 
 The hosted simulators often fail to start XCTest's runner: "Failed to install or launch the test runner" (Mach error
@@ -14,6 +16,7 @@ help (#429's first run: the boot hung or the erase ran out of time), so the shar
 scripts/ci-rerun-runner.py reads, and the shard runs again on a fresh runner. A run in which any test started is never
 retried: its failure is the test's.
 """
+import datetime
 import json
 import re
 import sys
@@ -56,6 +59,32 @@ def disk_fault(report):
     if not re.match(r"\s*--->\s+mapped file\s", region):
         return None
     return f"{exc['subtype']} in a mapped file: the runner could not read it back"
+
+
+# simdiskimaged's line when a mounted runtime image goes away without being asked to (an unmount it was asked for
+# logs "Disk unmount requested" first, and only "Volume at ... is gone"). Only an iOS runtime counts: the runner image
+# unmounts watchOS and tvOS runtimes on its own while the tests run.
+DISAPPEARED = re.compile(r"^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d(?:\.\d+)?)Z\s.*Disk disappeared at (\S*(?:iPhoneOS\.SimulatorRuntime|/iOS_)\S*?),?\s", re.M)
+# gatefold#440: the disk was logged gone 2.6 s and 8.1 s after Gatefold crashed (the processes that read it fail
+# first), so the window reaches both ways.
+WINDOW = 30
+
+
+def runtime_lost(diskimaged, report):
+    """The reason, when simdiskimaged.log (from the result bundle's diagnostics) shows an iOS simulator runtime's disk
+    disappearing within WINDOW seconds of the report's crash. With it gone, the app dies however its next read of the
+    runtime fails: a SIGABRT when libobjc cannot dlopen its trampolines, a SIGSEGV with no app frame (gatefold#440, run
+    43870503829), or a SIGBUS. Any crash without that line nearby is None: it stays the app's."""
+    try:
+        d = json.loads(report.split("\n", 1)[1])
+        crashed = datetime.datetime.strptime(d["captureTime"][:19], "%Y-%m-%d %H:%M:%S")
+    except (IndexError, ValueError, KeyError, TypeError):
+        return None
+    for when, path in DISAPPEARED.findall(diskimaged):
+        gone = datetime.datetime.strptime(when[:19], "%Y-%m-%d %H:%M:%S")
+        if abs((gone - crashed).total_seconds()) <= WINDOW:
+            return f"the simulator's iOS runtime disk disappeared at {when}Z ({path.rsplit('/', 1)[-1]})"
+    return None
 
 
 def selftest():
@@ -105,7 +134,49 @@ def selftest():
         if bool(disk_fault(report)) != want:
             bad += 1
             print(f"FAIL: crash {report[-90:]!r}: want {want}")
-    total = len(cases) + len(crashes)
+    # gatefold#440, run 43870503829: simdiskimaged.log from each shard's result bundle and the Gatefold report's
+    # timing and exception, trimmed.
+    taps_log = (
+        "2026-11-16 13:21:42.851Z   Info     Volume at /Library/Developer/CoreSimulator/Volumes/watchOS_24R362 is gone, "
+        "cancelling any dyld cache updates under it\n"
+        "2026-11-16 13:23:36.623Z   Info     Skipping Mobile Asset purge for /System/Library/AssetsV2/com_apple_MobileAsset_"
+        "appleTVOSSimulatorRuntime/f6a3a9321156c52c0d245f50953d9867b2b139ab.asset/AssetData; another runtime registration "
+        "still references this asset\n"
+        "2026-11-16 13:23:53.304Z   Info     Disk disappeared at /private/var/run/com.apple.security.cryptexd/mnt/com.apple."
+        "iPhoneOS.SimulatorRuntime-v24.1.434.0.a8xtfK, cancelling any dyld cache updates\n"
+        "2026-11-16 13:23:53.362Z   Info     Volume at /private/var/run/com.apple.security.cryptexd/mnt/com.apple.iPhoneOS."
+        "SimulatorRuntime-v24.1.434.0.a8xtfK is gone, cancelling any dyld cache updates under it\n")
+    shelf_log = (
+        "2026-11-16 13:46:16.473Z   Info     Disk disappeared at /private/var/run/com.apple.security.cryptexd/mnt/com.apple."
+        "iPhoneOS.SimulatorRuntime-v24.1.434.0.17Td8m, cancelling any dyld cache updates\n"
+        "2026-11-16 13:46:18.606Z   Info     Disk disappeared at /private/var/run/com.apple.security.cryptexd/mnt/com.apple."
+        "XROS.SimulatorRuntime-v24.13.362.0.hvn3UY, cancelling any dyld cache updates\n")
+    watch_log = (  # an unmount of another platform's runtime, as the runner image does mid-run
+        "2026-11-16 13:23:50.000Z   Info     Disk disappeared at /private/var/run/com.apple.security.cryptexd/mnt/com.apple."
+        "watchOS.SimulatorRuntime-v24.13.362.0.Ab12Cd, cancelling any dyld cache updates\n")
+    def at(when, exception, termination):
+        return ('{"app_name":"Gatefold","timestamp":"' + when[:19] + '.00 +0000","bug_type":"309"}\n'
+                + json.dumps({"captureTime": when, "exception": exception, "termination": termination}))
+    abort = {"codes": "0x0000000000000000, 0x0000000000000000", "type": "EXC_CRASH", "signal": "SIGABRT"}
+    objc = {"namespace": "OBJC", "flags": 646, "code": 1}
+    taps = at("2026-11-16 13:23:45.1886 +0000", abort, objc)  # Gatefold-2026-11-16-132347.ips
+    shelf = at("2026-11-16 13:46:13.8986 +0000",  # Gatefold-2026-11-16-134615.0004.ips
+               {"type": "EXC_BAD_ACCESS", "signal": "SIGSEGV", "subtype": "KERN_INVALID_ADDRESS at 0x0000000000000008"},
+               {"namespace": "SIGNAL", "code": 11, "indicator": "Segmentation fault: 11"})
+    losses = [
+        (taps_log, taps, True),  # 8.1 s before the disk was logged gone
+        (shelf_log, shelf, True),  # 2.6 s before
+        (taps_log, shelf, False),  # the same disk loss 22 minutes earlier
+        (watch_log, taps, False),  # another platform's runtime going
+        (taps_log.split("2026-11-16 13:23:53.304Z")[0], taps, False),  # a SIGABRT with no disk loss stays the app's
+        ("", taps, False),
+        (taps_log, "not a report", False),
+    ]
+    for log, report, want in losses:
+        if bool(runtime_lost(log, report)) != want:
+            bad += 1
+            print(f"FAIL: lost {report[-60:]!r} with {log[-90:]!r}: want {want}")
+    total = len(cases) + len(crashes) + len(losses)
     print(f"{total - bad} of {total} passed")
     return 1 if bad else 0
 
@@ -128,6 +199,16 @@ def main(argv):
         try:
             with open(argv[1], errors="replace") as f:
                 reason = disk_fault(f.read())
+        except OSError:
+            return 1
+        if reason:
+            print(reason)
+            return 0
+        return 1
+    if len(argv) == 3 and argv[0] == "lost":
+        try:
+            with open(argv[1], errors="replace") as f, open(argv[2], errors="replace") as g:
+                reason = runtime_lost(f.read(), g.read())
         except OSError:
             return 1
         if reason:
