@@ -98,6 +98,11 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             config: .init(
                 preferences: preferences,
                 editingActions: Self.highlightEditingActions,
+                // In scroll a sideways swipe never changes chapter: it threw him into the next one, and the
+                // swipe back landed at that chapter's start or end, never his place (Ari, build 39). Chapters
+                // turn by scrolling on past an end (`pagePanned`), or from the contents and the slider. A
+                // fixed-layout page fits the screen and has nothing to scroll: there the swipe stays its turn.
+                disablePageTurnsWhileScrolling: publication.metadata.layout != .fixed,
                 contentInset: Self.contentInsets,
                 // Readium shows and reports the first page only once every preloaded neighbour has loaded
                 // too: 2 behind and 4 ahead held the cover up for three to six seconds. Neighbours load on
@@ -2146,16 +2151,61 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         return true
     }
 
-    /// In curl and fade modes the page must not also slide under the finger.
+    /// In curl and fade modes the page must not also slide under the finger. Readium's row of chapters
+    /// slides only where it can scroll at all: in scroll mode it can't (`disablePageTurnsWhileScrolling`),
+    /// and a pan switched back on here would let a sideways swipe change chapter again (Ari, build 39).
+    /// No page scrolls to its top on a tap on the status bar, in any mode (Ari, build 39: "tapping top
+    /// of screen goes to start of chapter? when would i ever want that"). Each chapter's own scroll view
+    /// gets the pull past its end or start that turns the chapter in scroll mode (`pagePanned`).
     func disablePanningIfNeeded() {
         let ownsSwipes = model.pageTurn == .curl || model.pageTurn == .fade
         func walk(_ v: UIView) {
             if let scroll = v as? UIScrollView {
-                scroll.panGestureRecognizer.isEnabled = !ownsSwipes
+                scroll.scrollsToTop = false
+                scroll.panGestureRecognizer.isEnabled = !ownsSwipes && scroll.isScrollEnabled
+                if scroll.superview is WKWebView, !pulledPages.contains(scroll) {
+                    pulledPages.add(scroll)
+                    scroll.panGestureRecognizer.addTarget(self, action: #selector(pagePanned(_:)))
+                }
             }
             v.subviews.forEach(walk)
         }
         walk(navigator.view)
+    }
+
+    /// Chapters' scroll views already told about `pagePanned`, held weakly.
+    private let pulledPages = NSHashTable<UIScrollView>.weakObjects()
+    /// The edge of the chapter a scroll-mode drag began at, if it began at one.
+    private var pullEdge: ScrollPull.Edge?
+
+    /// Scroll mode's only page turn: a drag on past the chapter's end opens the next at its start, and one
+    /// back past its start opens the one before at its end, where he left it. A sideways swipe never turns.
+    @objc private func pagePanned(_ pan: UIPanGestureRecognizer) {
+        guard let model = weakModel, model.pageTurn == .scroll, publication.metadata.layout != .fixed,
+              let scroll = pan.view as? UIScrollView else { return }
+        switch pan.state {
+        case .began:
+            pullEdge = ScrollPull.edge(offset: scroll.contentOffset.y, viewport: scroll.bounds.height,
+                                       content: scroll.contentSize.height, insetTop: scroll.adjustedContentInset.top,
+                                       insetBottom: scroll.adjustedContentInset.bottom)
+        case .ended:
+            defer { pullEdge = nil }
+            guard let edge = pullEdge,
+                  let forward = ScrollPull.turn(from: edge, dragged: pan.translation(in: scroll)) else { return }
+            guard TurnGate.starts(turning: isTurning, veiled: veil != nil, jumpStarting: jumpStarting) else { return }
+            readerLog.notice("scroll: pulled past the chapter's \(forward ? "end" : "start", privacy: .public); turning the chapter")
+            isTurning = true
+            Task {
+                let moved = forward ? await navigator.goForward(options: .init(animated: false))
+                                    : await navigator.goBackward(options: .init(animated: false))
+                isTurning = false
+                if moved { weakModel?.userTurnedPage() } else if forward { weakModel?.reachedEnd() }
+            }
+        case .cancelled, .failed:
+            pullEdge = nil
+        default:
+            break
+        }
     }
 
     // MARK: Jumps
