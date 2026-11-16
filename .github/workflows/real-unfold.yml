@@ -113,7 +113,16 @@ jobs:
           open -a "$(xcode-select -p)/../Applications/DeviceHub.app"
           sleep 20
           "$RUNNER_TEMP/unfold/devicehub" dump
+      # The unfold step ends 5 min before the job's limit (gatefold#423): main's runs at e132d48 and 74383b3 hung in
+      # it past 75 min, and the job's own limit skipped the upload, so neither left a log or an artifact.
+      - id: left
+        run: |
+          left=$(( (JOB_START + (75 - 5) * 60 - $(date +%s)) / 60 ))
+          [ "$left" -ge 1 ] || left=1
+          echo "minutes=$left" >> "$GITHUB_OUTPUT"
       - name: Unfold with a book open, at five places
+        id: unfold
+        timeout-minutes: ${{ fromJSON(steps.left.outputs.minutes) }}
         run: |
           set -uo pipefail
           udid="${{ steps.sim.outputs.udid }}"
@@ -303,6 +312,28 @@ jobs:
           [ "$stalled" = 0 ] || { echo "::error::a DeviceHub press stalled twice, so the unfolds after it never ran ($(grep -c "" "$out/marks.log") of $planned begun)"; exit 1; }
           [ "$out_of_time" = 0 ] || { echo "::error::the unfolds stopped for time with $(grep -c "" "$out/marks.log") of $planned begun"; exit 1; }
           [ -n "$spreads" ] || { echo "::error::no unfold reached a spread"; exit 1; }
+      - name: What Gatefold and DeviceHub were doing when the unfolds ran out of time
+        # Only when the step hit its limit before any press stalled, so nothing was sampled (stacks only, no page text).
+        if: ${{ always() && steps.unfold.outcome == 'failure' }}
+        timeout-minutes: 2
+        run: |
+          dir="$RUNNER_TEMP/unfold/stall"
+          [ ! -d "$dir" ] || { echo "sampled at the stalled press already"; exit 0; }
+          mkdir -p "$dir"
+          pid="$(pgrep -f 'Gatefold\.app/Gatefold$' | head -1 || true)"
+          hubpid="$(pgrep -x DeviceHub | head -1 || true)"
+          {
+            echo "at $(date -u +%T), after the unfold step ended"
+            uptime
+            if [ -n "$pid" ]; then ps -o pid,stat,%cpu,time,etime,command -p "$pid"; else echo "Gatefold: no process"; fi
+            [ -z "$hubpid" ] || ps -o pid,stat,%cpu,time,etime,command -p "$hubpid"
+            pgrep -fl 'simctl|devicehub' | cut -c1-200 || true
+            top -l 1 -o cpu -n 10 -stats pid,command,cpu,state,time | tail -12
+          } > "$dir/state.txt" 2>&1
+          [ -z "$pid" ] || perl -e 'alarm shift; exec @ARGV' 30 sample "$pid" 3 -mayDie -file "$dir/gatefold-sample.txt" >/dev/null 2>&1 || true
+          [ -z "$hubpid" ] || perl -e 'alarm shift; exec @ARGV' 30 sample "$hubpid" 3 -mayDie -file "$dir/devicehub-sample.txt" >/dev/null 2>&1 || true
+          cat "$dir/state.txt"
+          tail -5 "$RUNNER_TEMP/unfold/reader.log" 2>/dev/null | grep -E "main: |layout |reflow " | sed -E 's/^[0-9-]+ //' | cut -c1-160 || true
       - uses: actions/upload-artifact@v4
         if: always()
         with:
