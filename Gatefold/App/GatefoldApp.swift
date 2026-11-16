@@ -19,7 +19,9 @@ struct GatefoldApp: App {
         #endif
         // Counts-only download telemetry (TestFlight and release builds only).
         GatefoldTelemetry.shared.start()
-        _app = State(initialValue: AppModel())
+        let model = AppModel()
+        _app = State(initialValue: model)
+        ActionHandlers.bind(to: model)
         readerLog.notice("launch: app entered \(entered, privacy: .public) s after the process started; model ready at \(LaunchClock.sinceLaunch, privacy: .public) s")
     }
 

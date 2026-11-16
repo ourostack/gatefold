@@ -1,0 +1,61 @@
+{
+  "generator": "ouro-actions 0.16.0",
+  "set": "gatefold",
+  "tools": [
+    {
+      "name": "list_books",
+      "description": "Lists the books in the library with their title, author and whether each is on this device. Changes nothing.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Words to match against titles and authors; leave it out to list everything."
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "consequentialHint": false
+      }
+    },
+    {
+      "name": "open_book",
+      "description": "Opens a book from the library in Gatefold, at the reading place kept for it, so the person sees it. Changes no text. Fails when the book is not on this device.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "book": {
+            "type": "string",
+            "description": "The book: its title as list_books shows it, or its id."
+          }
+        },
+        "required": [
+          "book"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "consequentialHint": false
+      }
+    },
+    {
+      "name": "sync_reading_place",
+      "description": "Sends the reading place of every book whose place is still waiting to be sent, now rather than later. Returns when the sending finishes.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "consequentialHint": false
+      }
+    }
+  ],
+  "refusals": {}
+}

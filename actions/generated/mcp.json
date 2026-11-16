@@ -1,0 +1,112 @@
+{
+  "generator": "ouro-actions 0.16.0",
+  "set": "gatefold",
+  "tools": [
+    {
+      "name": "list_books",
+      "title": "List Books",
+      "description": "Lists the books in the library with their title, author and whether each is on this device. Changes nothing.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Words to match against titles and authors; leave it out to list everything."
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "openWorldHint": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "books": {
+            "type": "string",
+            "description": "One line per book: its title, two spaces, then its id. Empty when none match."
+          },
+          "count": {
+            "type": "integer",
+            "description": "How many books match.",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "books",
+          "count"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "open_book",
+      "title": "Open Book",
+      "description": "Opens a book from the library in Gatefold, at the reading place kept for it, so the person sees it. Changes no text. Fails when the book is not on this device.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "book": {
+            "type": "string",
+            "description": "The book: its title as list_books shows it, or its id."
+          }
+        },
+        "required": [
+          "book"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "openWorldHint": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "summary": {
+            "type": "string",
+            "description": "What happened, in a sentence."
+          }
+        },
+        "required": [
+          "summary"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "sync_reading_place",
+      "title": "Sync Reading Place",
+      "description": "Sends the reading place of every book whose place is still waiting to be sent, now rather than later. Returns when the sending finishes.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "openWorldHint": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "summary": {
+            "type": "string",
+            "description": "What happened, in a sentence."
+          }
+        },
+        "required": [
+          "summary"
+        ],
+        "additionalProperties": false
+      }
+    }
+  ],
+  "refusals": {}
+}
