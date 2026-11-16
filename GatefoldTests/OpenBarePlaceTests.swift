@@ -106,6 +106,23 @@ import Testing
                 "moved a page showing the saved place (\(offsets.0), \(offsets.1))")
     }
 
+    /// gatefold#447: under the cover, with no reflow, the page sat on the chapter's start while its scripts were
+    /// stalled. The open's capture read that page's first words as his anchor while the cover's put-back of his
+    /// place was waiting on the same page, and the put-back then found an anchor held and did nothing: the reopen
+    /// showed the chapter's start.
+    @Test func aCaptureWhileTheCoverPutsTheBarePlaceBackLeavesItToThePutBack() async throws {
+        let o = try await open(at: 0.31)
+        let p = try #require(o.saved.locations.progression)
+        o.page.currentLocation = o.saved.copy(locations: { $0.progression = 0 })
+        o.model.putBackBarePlaceUnderCover()
+        await o.model.captureAnchor()
+        #expect(o.model.keeper.anchor == nil, "the chapter's start was taken as his place under the cover")
+        for _ in 0..<100 where !o.page.sent.contains(where: { $0.locations.progression == p }) {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(o.page.sent.contains { $0.locations.progression == p }, "the cover never put his place back")
+    }
+
     @Test func aPlaceWithWordsIsLeftToItsAnchor() async throws {
         let o = try await open(at: 0.31, words: "placeholder words for the anchor")
         o.model.keeper.reflowWillBegin(.rotation)
