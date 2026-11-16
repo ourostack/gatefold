@@ -45,7 +45,13 @@ case "${1:-}" in
     ;;
   report)
     verify_vendored
-    node "$GEN" check "$DECLARATIONS" "$OUT" --report "${2:-xray-actions/report.json}" --app "Gatefold" --commit "${GITHUB_SHA:-local}"
+    report_file="${2:-xray-actions/report.json}"
+    node "$GEN" check "$DECLARATIONS" "$OUT" --report "$report_file" --app "Gatefold" --commit "${GITHUB_SHA:-local}"
+    # The generator fails only on drift; a must claim that does not hold, or none at all, fails the report here.
+    python3 -I -c 'import json,sys; s=json.load(open(sys.argv[1]))["summary"]; sys.exit(0 if s["must"] > 0 and s["mustHolding"] == s["must"] else 1)' "$report_file" || {
+      echo "error: a must claim does not hold (or there are none). Fix: read $report_file and make the claim hold, or fix the claim set." >&2
+      exit 1
+    }
     ;;
   *)
     sed -n '2,9p' "$0" >&2
