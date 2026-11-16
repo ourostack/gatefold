@@ -1,0 +1,40 @@
+{
+  "generator": "ouro-actions 0.16.0",
+  "set": "gatefold",
+  "tool": "gatefold",
+  "commands": [
+    {
+      "name": "list",
+      "summary": "Lists the books in the library with their title, author and whether each is on this device. Changes nothing.",
+      "effect": "private",
+      "readOnly": true,
+      "flags": {
+        "query": {
+          "type": "string",
+          "description": "Words to match against titles and authors; leave it out to list everything."
+        }
+      },
+      "output": "{ books, count }"
+    },
+    {
+      "name": "open",
+      "summary": "Opens a book from the library in Gatefold, at the reading place kept for it, so the person sees it. Changes no text. Fails when the book is not on this device.",
+      "effect": "private",
+      "flags": {
+        "book": {
+          "type": "string",
+          "description": "The book: its title as list_books shows it, or its id.",
+          "required": true
+        }
+      },
+      "output": "{ summary }"
+    },
+    {
+      "name": "sync",
+      "summary": "Sends the reading place of every book whose place is still waiting to be sent, now rather than later. Returns when the sending finishes.",
+      "effect": "private",
+      "output": "{ summary }"
+    }
+  ],
+  "personOnly": {}
+}

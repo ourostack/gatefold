@@ -38,6 +38,8 @@ targets:
       - path: Gatefold
         excludes:
           - "**/.DS_Store"
+      # The App Intents and buttons for the actions in actions/gatefold.actions.mts (scripts/ouro-actions.sh generate).
+      - path: actions/generated/OuroActions.swift
     resources: []
     dependencies:
       - package: GatefoldCloud

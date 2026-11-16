@@ -1,0 +1,77 @@
+{
+  "generator": "ouro-actions 0.16.0",
+  "set": "gatefold",
+  "tool": "gatefold",
+  "actions": [
+    {
+      "id": "list_books",
+      "consent": "read",
+      "label": "List Books",
+      "description": "See the books in your Gatefold library.",
+      "agent": "Lists the books in the library with their title, author and whether each is on this device. Changes nothing.",
+      "input": {
+        "query": {
+          "label": "Search",
+          "description": "Words to match against titles and authors; leave it out to list everything.",
+          "optional": true,
+          "kind": "string"
+        }
+      },
+      "output": {
+        "books": {
+          "label": "Books",
+          "description": "One line per book: its title, two spaces, then its id. Empty when none match.",
+          "returned": true,
+          "kind": "string"
+        },
+        "count": {
+          "label": "Count",
+          "description": "How many books match.",
+          "min": 0,
+          "kind": "integer"
+        }
+      },
+      "cli": "list"
+    },
+    {
+      "id": "open_book",
+      "consent": "write",
+      "label": "Open Book",
+      "description": "Open a book in Gatefold at the place you left it.",
+      "agent": "Opens a book from the library in Gatefold, at the reading place kept for it, so the person sees it. Changes no text. Fails when the book is not on this device.",
+      "input": {
+        "book": {
+          "label": "Book",
+          "description": "The book: its title as list_books shows it, or its id.",
+          "ask": "Which book?",
+          "kind": "string"
+        }
+      },
+      "output": {
+        "summary": {
+          "label": "Summary",
+          "description": "What happened, in a sentence.",
+          "kind": "string"
+        }
+      },
+      "opensApp": true,
+      "cli": "open"
+    },
+    {
+      "id": "sync_reading_place",
+      "consent": "write",
+      "label": "Sync Reading Place",
+      "description": "Send your reading place to your other devices now.",
+      "agent": "Sends the reading place of every book whose place is still waiting to be sent, now rather than later. Returns when the sending finishes.",
+      "input": {},
+      "output": {
+        "summary": {
+          "label": "Summary",
+          "description": "What happened, in a sentence.",
+          "kind": "string"
+        }
+      },
+      "cli": "sync"
+    }
+  ]
+}
