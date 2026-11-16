@@ -159,49 +159,96 @@ jobs:
             stalled=1
             return 1
           }
+          # Waits on the app's own lines, never a fixed time, so a fast host moves on as soon as the app has done its part.
+          # Each wait is capped at the fixed wait it replaced, so a slow host is never held longer than before (#391).
+          # After a press: the app's layout for the posture pressed ("layout single" on the cover, "layout spread",
+          # "layout tabletop"), a verdict ("reflow check") after it, then 3 s with no new reflow or layout, at most `cap`
+          # seconds. A verdict before that layout doesn't count: folded shut from tabletop, the inner screen's tabletop
+          # reflow can give its verdict seconds before the app moves to the cover, whose verdict is the one wanted.
+          # Polled once a second.
+          settled() {
+            local before=$1 want=$2 cap=$3 t0 lines n last="" quiet=0
+            t0=$(date +%s)
+            while [ $(( $(date +%s) - t0 )) -lt "$cap" ]; do
+              lines="$(grep -E "reflow (begins|check)|layout (single|spread|tabletop) [0-9]" "$out/reader.log" || true)"
+              n="$(printf '%s\n' "$lines" | grep -c "" || true)"
+              if printf '%s\n' "$lines" | awk -v before="$before" -v want="layout $want " '
+                  index($0, want) { layouts++; seen = 0; next }
+                  /reflow check/ { if (layouts > before) seen = 1; last = "check"; next }
+                  { last = "other" }
+                  END { exit !(seen && last == "check") }' && [ "$n" = "$last" ]; then
+                quiet=$(( quiet + 1 ))
+                [ "$quiet" -lt 3 ] || return 0
+              else
+                quiet=0
+              fi
+              last=$n
+              sleep 1
+            done
+            return 0
+          }
+          # A press, then `settled` for the layout it should bring.
+          move() {
+            local before
+            before="$(grep -cE "layout $2 [0-9]" "$out/reader.log" || true)"
+            press "$1" || return 1
+            settled "$before" "$2" "$3"
+          }
+          # The app's "first page ready" (or, on a cold first launch, "open: page shown") after `before` of them, at most
+          # `cap` seconds. (The early unfolds waited on
+          # "open: page shown", a line the app prints only when a hidden page is revealed, so each spent its whole
+          # minute, then about 100 s on a slow host, and unfolded long after the page showed.)
+          page_ready() {
+            local before=$1 cap=$2 t0
+            t0=$(date +%s)
+            while [ "$(grep -cE "first page ready|open: page shown" "$out/reader.log" || true)" -le "$before" ] && [ $(( $(date +%s) - t0 )) -lt "$cap" ]; do
+              sleep 0.5
+            done
+            echo $(( $(date +%s) - t0 ))
+          }
           unfolds() {
           for place in 0.12 0.31 0.47 0.66 0.83; do
             press "Closed" || return 1; sleep 6
+            ready="$(grep -cE "first page ready|open: page shown" "$out/reader.log" || true)"
             xcrun simctl launch --terminate-running-process "$udid" "$APP" -GatefoldUITest YES -GatefoldFakeCloud YES \
               -GatefoldReset YES -GatefoldSkipWelcome YES -GatefoldSignedIn YES -GatefoldDownloadAll YES \
               -GatefoldOpenBook gutenberg-pride-and-prejudice -GatefoldGoTo "$place" >/dev/null \
               || { echo "::error::the app's launch at $place failed"; failed=1; return 1; }
-            sleep 30
+            # The page shown, then 5 s for the launch jump's settle, within the 30 s this always had.
+            took="$(page_ready "$ready" 25)"; sleep 5
+            echo "  page ready in $took s"
             for round in $(seq 1 "$rounds"); do
               in_time || return 1
               echo "UNFOLD place $place round $round" | tee -a "$out/marks.log"
-              press "Open" || return 1; sleep 14
+              move "Open" spread 14 || return 1
               xcrun simctl io "$udid" screenshot --display=3 "$out/shots/$place-$round-open.png" >/dev/null 2>&1 || true
-              press "Closed" || return 1; sleep 12
+              move "Closed" single 12 || return 1
             done
             # Half open: tabletop on the inner screen, then flat again and folded.
             in_time || return 1
             echo "HALF OPEN place $place" | tee -a "$out/marks.log"
-            press "Open" || return 1; sleep 12
-            press "Partially Open" || return 1; sleep 14
+            move "Open" spread 12 || return 1
+            move "Partially Open" tabletop 14 || return 1
             xcrun simctl io "$udid" screenshot --display=3 "$out/shots/$place-half.png" >/dev/null 2>&1 || true
-            press "Open" || return 1; sleep 12
-            press "Closed" || return 1; sleep 12
+            move "Open" spread 12 || return 1
+            move "Closed" single 12 || return 1
           done
           # Early unfolds: opened folded, then unfolded 2 s after the page shows, as the posture test
           # switches (the reviewer's failures came on the first switch after launch).
           for place in 0.12 0.31 0.47 0.66 0.83 0.12 0.31 0.47; do
             in_time || return 1
             press "Closed" || return 1; sleep 6
-            shown="$(grep -c "open: page shown" "$out/reader.log" || true)"
+            ready="$(grep -cE "first page ready|open: page shown" "$out/reader.log" || true)"
             xcrun simctl launch --terminate-running-process "$udid" "$APP" -GatefoldUITest YES -GatefoldFakeCloud YES \
               -GatefoldReset YES -GatefoldSkipWelcome YES -GatefoldSignedIn YES -GatefoldDownloadAll YES \
               -GatefoldOpenBook gutenberg-pride-and-prejudice -GatefoldGoTo "$place" >/dev/null \
               || { echo "::error::the app's launch at $place failed"; failed=1; return 1; }
-            for wait in $(seq 1 120); do
-              [ "$(grep -c "open: page shown" "$out/reader.log" || true)" -gt "$shown" ] && break
-              sleep 0.5
-            done
+            took="$(page_ready "$ready" 60)"
             sleep 2
-            echo "EARLY UNFOLD place $place" | tee -a "$out/marks.log"
+            echo "EARLY UNFOLD place $place (page ready in $took s)" | tee -a "$out/marks.log"
             echo "EARLY UNFOLD place $place" >> "$out/reader.log"
-            press "Open" || return 1; sleep 16
-            xcrun simctl io "$udid" screenshot --display=3 "$out/shots/early-$place-$wait.png" >/dev/null 2>&1 || true
+            move "Open" spread 16 || return 1
+            xcrun simctl io "$udid" screenshot --display=3 "$out/shots/early-$place-$took.png" >/dev/null 2>&1 || true
           done
           }
           # The flags carry how it ended; the verdicts below print either way.
