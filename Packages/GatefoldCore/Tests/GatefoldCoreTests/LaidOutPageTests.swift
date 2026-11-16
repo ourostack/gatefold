@@ -56,6 +56,35 @@ import Testing
         #expect(range.map { $0.contains(Self.his) } == false, "a page without his words read as his")
     }
 
+    /// Real unfold at c60ef7e (job 132884768222): the spread settle put his words on the left page, and the read
+    /// straight after came back 2.4..2.4 with words in it. No laid-out page starts past its chapter's end, or ends where
+    /// it starts: the web view was laying the spread out again under that read, and its words were not the page's. The
+    /// check said his words were lost; Readium's next report, with nothing moved, was his page. Such a read is read again.
+    @Test func aReadWhoseRangeNoPageHasIsReadAgain() async {
+        var made = 0
+        let read: () async -> VisibleRange? = {
+            made += 1
+            if made == 1 { return VisibleRange(href: Self.file, start: 2.4, end: 2.4, text: "words from a page still being laid out") }
+            if made == 2 { return VisibleRange(href: Self.file, start: 0.9, end: 0.9, text: "words from a page still being laid out") }
+            return VisibleRange(href: Self.file, start: 0.869565, end: 0.891304,
+                                text: "the first words of his sentence on the left page and on across the spread")
+        }
+        let (range, reads) = await LaidOutPage.read(read, beat: {})
+        #expect(range.map { $0.contains(Self.his) } == true, "his words read as lost on a page still laying out: \(String(describing: range))")
+        #expect(reads == 3 && made == 3, "read \(made) times, said \(reads)")
+    }
+
+    /// The chapter's last page may end at 1: that range is a page, read once.
+    @Test func theChaptersLastPageIsReadOnce() async {
+        var made = 0
+        let read: () async -> VisibleRange? = {
+            made += 1
+            return VisibleRange(href: Self.file, start: 0.97, end: 1, text: "the last words of the chapter")
+        }
+        let (_, reads) = await LaidOutPage.read(read, beat: {})
+        #expect(reads == 1 && made == 1)
+    }
+
     /// Overtaken (a newer reflow, his move): no more reads.
     @Test func anOvertakenLookStopsReading() async {
         let (read, made) = page(layingOut: .max)
