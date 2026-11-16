@@ -22,7 +22,8 @@ import re
 import subprocess
 import sys
 
-MARK = re.compile(r"No app code ran|The hosted runner lost communication with the server|The runner's disk failed")
+MARK = re.compile(r"No app code ran|The hosted runner lost communication with the server|The runner's disk failed"
+                  r"|simulator runtime is not available\. runtime path not found")
 # Jobs that fail only because a job they wait for failed (app.yml's summary checks).
 SUMMARIES = {"iPad (place)", "iPad (reviewer)", "iPad (taps)", "iPad (undo)", "Duo (the reviewers' checks)"}
 
@@ -90,6 +91,9 @@ def selftest():
         # SIGBUS reading a mapped file back (#429, #435): the runner's disk, rerun; any other crash is the app's.
         ([("iPad reviewer shard (ipad-reviewer-controls) / Tests", "failure", disk + "\n" + test)], True),
         ([(jumps, "failure", app)], False),
+        # The simulator runtime's disk image gone mid-run (main at de443f4): the same runner fault as the SIGBUS above.
+        ([(jumps, "failure", "Failed to prepare device 'gatefold-ipad' for impending launch. (Underlying Error: The iOS "
+          "27.0 simulator runtime is not available. runtime path not found. Download the iOS 27.0 simulator runtime")], True),
         # A test that failed beside them is left for a person.
         ([(jumps, "failure", launch), (portrait, "failure", test), ("iPad (place)", "failure", "")], False),
         ([(portrait, "failure", test)], False),
