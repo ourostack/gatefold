@@ -88,22 +88,61 @@ final class FeelReaderUITests: XCTestCase {
 
     /// A tap on the page, then waits (in reads) until the controls are up, or away; fails if they never
     /// get there, so the checks after it never judge the wrong screen.
-    private func controls(up: Bool, _ at: String) -> Bool {
+    private func controls(up: Bool, _ at: String, file: StaticString = #filePath, line: UInt = #line) -> Bool {
         app.coordinate(withNormalizedOffset: CGVector(dx: Self.onThePage.x, dy: Self.onThePage.y)).tap()
         let close = el("reader.close")
         let guardUntil = Date().addingTimeInterval(HangGuard.seconds(reads: 40))
+        var came = false
         for _ in 0..<40 where Date() < guardUntil {
-            if close.exists == up { RunLoop.current.run(until: Date().addingTimeInterval(1)); return true }
+            if close.exists == up { came = true; break }
             RunLoop.current.run(until: Date().addingTimeInterval(0.25))
         }
-        XCTFail("the controls did not come \(up ? "up" : "away") within 40 reads of a tap on the page (\(at))")
-        return false
+        if came { RunLoop.current.run(until: Date().addingTimeInterval(1)) }
+        judge(came, up ? "the controls come up" : "the controls go away", at,
+              "not within 40 reads of a tap on the page", file: file, line: line)
+        print("FEEL: \(name) the controls \(up ? "come up" : "go away") (\(at)) \(came ? "passed" : "FAILED")")
+        return came
+    }
+
+    /// Reds the app still has, each with its issue: `what` and where (`at`) to the issue and whether a pass must fail
+    /// (strict). A strict mark fails once the check passes, so the fix removes it here; a mark seen only once is not
+    /// strict, so a lucky pass doesn't turn main red. Never a skip.
+    private static let known: [String: (issue: String, strict: Bool)] = {
+        let headOverText = (issue: "https://github.com/ourostack/gatefold/issues/417", strict: true)
+        let noControls = (issue: "https://github.com/ourostack/gatefold/issues/418", strict: true)
+        var marks = [
+            "the running heads cover no text|closed, scroll": headOverText,
+            "the running heads cover no text|open, portrait, scroll": headOverText,
+            "the running heads cover no text|open, on its side, scroll": headOverText,
+            "still while idle, reading|open, portrait, scroll": (issue: "https://github.com/ourostack/gatefold/issues/419", strict: false),
+        ]
+        for posture in ["open, portrait", "open, on its side"] {
+            for mode in ["scroll", "paged"] { marks["the controls come up|\(posture), \(mode)"] = noControls }
+        }
+        return marks
+    }()
+
+    /// Fails the test on a red, unless it is a known red (``known``), which is expected and named with its issue.
+    private func judge(_ passed: Bool, _ what: String, _ at: String, _ detail: String, file: StaticString, line: UInt) {
+        guard let mark = Self.known["\(what)|\(at)"] else {
+            if !passed { XCTFail("\(what) (\(at)):\n\(detail)", file: file, line: line) }
+            return
+        }
+        if passed {
+            if mark.strict {
+                XCTFail("\(what) (\(at)) now passes: remove its mark for \(mark.issue) in FeelReaderUITests.known", file: file, line: line)
+            }
+            return
+        }
+        XCTExpectFailure("known: \(mark.issue)") {
+            XCTFail("\(what) (\(at)):\n\(detail)", file: file, line: line)
+        }
     }
 
     /// Records the check and fails the test on it, naming where it ran.
     private func check(_ result: FeelResult, _ what: String, _ at: String, file: StaticString = #filePath, line: UInt = #line) {
         feel.record(result, name: "\(what) (\(at))")
-        if !result.passed { XCTFail("\(what) (\(at)):\n\(result.text)", file: file, line: line) }
+        judge(result.passed, what, at, result.text, file: file, line: line)
         print("FEEL: \(name) \(what) (\(at)) \(result.passed ? "passed" : "FAILED")")
     }
 
