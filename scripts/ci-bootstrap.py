@@ -8,8 +8,10 @@ The hosted simulators often fail to start XCTest's runner: "Failed to install or
 -308, "server died", or SpringBoard refusing the launch), the runner crashing or stalling "while preparing to run
 tests", or the device gone from xcodebuild's list ("Unable to find a device matching the provided destination").
 gatefold#135 has a dozen of them since 2026-11-09, and main's App run at 15fe8ab lost 3 of its 7 red shards this way
-(run 43799490331). None of them runs a line of the app, so the shard's step erases the device (or boots a fresh one)
-and runs its tests once more. A run in which any test started is never retried: its failure is the test's.
+(run 43799490331). None of them runs a line of the app. Erasing the device or booting another on the same host did not
+help (#429's first run: the boot hung or the erase ran out of time), so the shard's step fails with a line that
+scripts/ci-rerun-runner.py reads, and the shard runs again on a fresh runner. A run in which any test started is never
+retried: its failure is the test's.
 """
 import re
 import sys
