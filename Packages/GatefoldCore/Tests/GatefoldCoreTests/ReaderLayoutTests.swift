@@ -63,6 +63,29 @@ struct ReaderLayoutTests {
         #expect(ReaderLayoutResolver.resolve(.init(containerSize: size, division: fold)).posture == .spread)
     }
 
+    /// Real unfold at bc72d70 (job 132947504798), 2f5fd1d and c60ef7e: folded shut from tabletop, the hinge read
+    /// "closed" while the app was still on the wide inner screen, and the reader laid out a spread there (an unfold, with
+    /// its rising leaf) for the second before the app moved to the cover. That spread's restore and the cover's ran over
+    /// each other, and the cover's was judged on a page still laid out for the spread: "a posture change lost the
+    /// reader's words". A shut inner screen shows nothing, so it keeps the layout it had until the app moves.
+    @Test func aShutInnerScreenKeepsItsLayoutUntilTheAppMoves() {
+        let inner = CGSize(width: 951, height: 669)
+        let fold = FoldRegion(frame: CGRect(x: 455.5, y: 0, width: 40, height: 669), isActive: false)
+        let shut = ReaderLayoutResolver.resolve(.init(containerSize: inner, division: fold, hinge: .closed, shown: .tabletop))
+        #expect(shut.posture == .tabletop, "a shut screen laid out \(shut.posture)")
+        #expect(shut == ReaderLayoutResolver.resolve(.init(containerSize: inner, division: fold, hinge: .partiallyOpen(angleDegrees: 133), shown: .tabletop)))
+        // Folded straight from flat, with no tabletop on the way, the spread it had stays.
+        #expect(ReaderLayoutResolver.resolve(.init(containerSize: inner, division: fold, hinge: .closed, shown: .spread)).posture == .spread)
+        // Arriving from the cover, a frame on the inner screen whose hinge still reads closed is a spread, as before.
+        #expect(ReaderLayoutResolver.resolve(.init(containerSize: inner, division: fold, hinge: .closed, shown: .single)).posture == .spread)
+        // On the cover (the fold as the Duo still reports it in the first frame there), one page, whatever was shown.
+        let coverFold = FoldRegion(frame: CGRect(x: 455.5, y: 0, width: 40, height: 669), isActive: false)
+        #expect(ReaderLayoutResolver.resolve(.init(containerSize: duoOuter, division: coverFold, hinge: .closed, shown: .spread)).posture == .single)
+        #expect(ReaderLayoutResolver.resolve(.init(containerSize: duoOuter, division: coverFold, hinge: .closed, shown: .tabletop)).posture == .single)
+        // Opened again, the hinge decides.
+        #expect(ReaderLayoutResolver.resolve(.init(containerSize: inner, division: fold, hinge: .fullyOpen, shown: .tabletop)).posture == .spread)
+    }
+
     @Test func aBentHingeWithoutAFoldOnThisScreenChangesNothing() {
         // The folded Duo's cover screen has no fold in it, whatever the hinge says.
         #expect(ReaderLayoutResolver.resolve(.init(containerSize: duoOuter, hinge: .partiallyOpen(angleDegrees: 90))).posture == .single)
