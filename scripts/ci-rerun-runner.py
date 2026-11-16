@@ -23,7 +23,7 @@ import subprocess
 import sys
 
 MARK = re.compile(r"No app code ran|The hosted runner lost communication with the server|The runner's disk failed"
-                  r"|simulator runtime is not available\. runtime path not found")
+                  r"|The simulator's runtime disk disappeared|simulator runtime is not available\. runtime path not found")
 # Jobs that fail only because a job they wait for failed (app.yml's summary checks).
 SUMMARIES = {"iPad (place)", "iPad (reviewer)", "iPad (taps)", "iPad (undo)", "Duo (the reviewers' checks)"}
 
@@ -91,6 +91,11 @@ def selftest():
         # SIGBUS reading a mapped file back (#429, #435): the runner's disk, rerun; any other crash is the app's.
         ([("iPad reviewer shard (ipad-reviewer-controls) / Tests", "failure", disk + "\n" + test)], True),
         ([(jumps, "failure", app)], False),
+        # The iOS runtime's disk disappearing as the app crashed (gatefold#440): the runner's, rerun.
+        ([("iPad taps shard (ipad-taps-rest) / Tests", "failure", "##[error]Gatefold-2026-11-16-132347.ips: the "
+          "simulator's iOS runtime disk disappeared at 2026-11-16 13:23:53.304Z (com.apple.iPhoneOS.SimulatorRuntime-"
+          "v24.1.434.0.a8xtfK). The simulator's runtime disk disappeared; rerun it on a fresh runner (gatefold#440).\n"
+          "Test crashed with signal bus.")], True),
         # The simulator runtime's disk image gone mid-run (main at de443f4): the same runner fault as the SIGBUS above.
         ([(jumps, "failure", "Failed to prepare device 'gatefold-ipad' for impending launch. (Underlying Error: The iOS "
           "27.0 simulator runtime is not available. runtime path not found. Download the iOS 27.0 simulator runtime")], True),
