@@ -787,7 +787,8 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
                 _ = try await navigator.answer(ReaderJS.setColumns(columns))
                 return ()
             }
-            if reflow, model.pageReady {
+            // The reader can close while the columns are set (App run 43774388606 crashed on `model` here).
+            if reflow, weakModel?.pageReady == true {
                 try? await Task.sleep(for: .seconds(1))
                 await logTypography()
             }
