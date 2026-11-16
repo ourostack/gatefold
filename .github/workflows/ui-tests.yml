@@ -151,17 +151,7 @@ jobs:
       - name: Keep the app's place log as it runs (file and progression only, never the book's words)
         run: |
           sh scripts/ci-crashes.sh mark
-          nohup sh -c 'xcrun simctl spawn "$0" log stream --style compact --predicate "subsystem == \"bot.ouro.gatefold\"" 2>/dev/null \
-            | grep --line-buffered -E "place (read|write)|place:|location |reflow|landing|landed|reopen|tapped|warm:|open:|first page|pages:|turn:|spread:|veil:|settle [0-9]|REPRO|snapshot:|back:" \
-            | grep --line-buffered -v -E "text:|\] visible|\] anchor[: ]" >> "$1"' "$UDID" "$RUNNER_TEMP/place.log" >/dev/null 2>&1 &
-          # Why the system ended the app, when it did (gatefold#76): runningboardd's lines about it, no page text.
-          nohup sh -c 'xcrun simctl spawn "$0" log stream --style compact --predicate "process == \"runningboardd\" AND eventMessage CONTAINS \"bot.ouro.gatefold\"" 2>/dev/null \
-            | grep --line-buffered -i -E "termin|kill|jetsam|exit|reason|invalidat|memory|highwater|limit" >> "$1"' "$UDID" "$RUNNER_TEMP/rb.log" >/dev/null 2>&1 &
-          # The reader's own lines (launch-jump landings among them; gatefold#72), kept for every shard as Real unfold
-          # keeps them; lines carrying the page's text are dropped. ($0 and $1 are the inner shell's, so single quotes.)
-          # shellcheck disable=SC2016
-          nohup sh -c 'xcrun simctl spawn "$0" log stream --style compact --predicate "subsystem == \"bot.ouro.gatefold\" AND category == \"reader\"" 2>/dev/null \
-            | grep --line-buffered -v "text:" >> "$1"' "$UDID" "$RUNNER_TEMP/reader.log" >/dev/null 2>&1 &
+          sh scripts/ci-app-logs.sh "$UDID"
           # Every thread of the app and its busiest neighbours while main is held past 30 s (gatefold#357): the app's
           # own watch names main's work only, and nothing when main waits on another thread or the process starves.
           nohup sh scripts/ci-hang-sample.sh "$RUNNER_TEMP/reader.log" "$RUNNER_TEMP/hangs" >> "$RUNNER_TEMP/hangs.log" 2>&1 &
@@ -189,8 +179,10 @@ jobs:
           # The rotation shards only: the runner draws the spread two to four times slower than a Mac (up to 50 s
           # seen), so 90 s still fails a page left stuck for good. Empty elsewhere, which the tests read as no floor.
           TEST_RUNNER_GATEFOLD_SPREAD_FLOOR: ${{ inputs.cold && '90' || '' }}
+          SIM: ${{ inputs.sim }}
         run: |
           set -o pipefail
+          began=$(date +%s)
           # A pull request runs the PR list, and in a smoke shard the UI test classes it edits; main and full-list pull
           # requests run the full list, less the skipped tests.
           if [ "$FULL" = false ]; then
@@ -206,13 +198,44 @@ jobs:
           echo "$(date -u +%T) running: ${only[*]}"
           # Each test's result prints as it finishes: a job cut off at its limit still names the slow test
           # (run 42393941976's reviewer leg printed nothing, since this read the log only at the end).
-          python3 -I scripts/ci-within.py --until "$STEP_UNTIL" -- xcodebuild test-without-building -xctestrun "$XCTESTRUN" \
-            -destination "$DESTINATION" "${only[@]}" \
-            -resultBundlePath "$RUNNER_TEMP/ui.xcresult" 2>&1 | tee "$RUNNER_TEMP/ui.log" \
-            | grep --line-buffered -E "Test Case .*(started|passed|failed|skipped)|TEST (SUCCEEDED|FAILED)|REPRO (setup|jump|round|SUMMARY|visibleSettleMove)|MIDTURN|TAPRATE|PLACEHOLDER|REVIEWER|OLDPAGEHELD|TURNWAIT|WINDOWFIT|REOPEN round [0-9]+:|probe says|probe timing|\.swift:[0-9]+: error|::error::" \
-            | awk '{ if (match($0, /XCTAssert[A-Za-z]* failed/)) $0 = substr($0, 1, RSTART + RLENGTH - 1) " (text withheld)"; print; fflush() }'
-          status=${PIPESTATUS[0]}
+          run_tests() {
+            python3 -I scripts/ci-within.py --until "$STEP_UNTIL" -- xcodebuild test-without-building -xctestrun "$XCTESTRUN" \
+              -destination "$DESTINATION" "${only[@]}" \
+              -resultBundlePath "$RUNNER_TEMP/ui.xcresult" 2>&1 | tee "$RUNNER_TEMP/ui.log" \
+              | grep --line-buffered -E "Test Case .*(started|passed|failed|skipped)|TEST (SUCCEEDED|FAILED)|REPRO (setup|jump|round|SUMMARY|visibleSettleMove)|MIDTURN|TAPRATE|PLACEHOLDER|REVIEWER|OLDPAGEHELD|TURNWAIT|WINDOWFIT|REOPEN round [0-9]+:|probe says|probe timing|\.swift:[0-9]+: error|::error::" \
+              | awk '{ if (match($0, /XCTAssert[A-Za-z]* failed/)) $0 = substr($0, 1, RSTART + RLENGTH - 1) " (text withheld)"; print; fflush() }'
+            return "${PIPESTATUS[0]}"
+          }
+          status=0
+          run_tests || status=$?
           echo "$(date -u +%T) done ($status)"
+          # The runner never started (no test began), for a reason in the machine: once more, on an erased or fresh
+          # device, while half the step's time is left (scripts/ci-bootstrap.py; gatefold#135). Never after a test began.
+          if [ "$status" != 0 ] && [ "$status" != 124 ] && why=$(python3 -I scripts/ci-bootstrap.py why "$RUNNER_TEMP/ui.log"); then
+            now=$(date +%s)
+            if [ $((STEP_UNTIL - now)) -ge $(((STEP_UNTIL - began) / 2)) ]; then
+              echo "::warning title=Infrastructure retry::No test started: $why. Erasing the device and running the tests once more."
+              mv "$RUNNER_TEMP/ui.log" "$RUNNER_TEMP/ui-before-retry.log"
+              mv "$RUNNER_TEMP/ui.xcresult" "$RUNNER_TEMP/ui-before-retry.xcresult" 2>/dev/null || true
+              # A crash of the runner as it started is the machine's: kept for the record, not failed on below.
+              mkdir -p "$RUNNER_TEMP/crashes-before-retry"
+              find "$HOME/Library/Logs/DiagnosticReports" -type f -name 'Gatefold*' -newer "$RUNNER_TEMP/crash-mark" \
+                -exec cp {} "$RUNNER_TEMP/crashes-before-retry/" \; 2>/dev/null || true
+              # The erase gets what is left beyond half the step; ci-simulator.py ends it with its own message.
+              budget=$((STEP_UNTIL - now - (STEP_UNTIL - began) / 2))
+              if udid=$(CI_SIMULATOR_BUDGET="$budget" python3 -I scripts/ci-simulator.py erase "$SIM" "$UDID"); then
+                UDID="$udid"
+                DESTINATION="platform=iOS Simulator,arch=$(uname -m),id=$udid"
+                sh scripts/ci-crashes.sh mark
+                sh scripts/ci-app-logs.sh "$UDID"
+                status=0
+                run_tests || status=$?
+                echo "$(date -u +%T) done on the second try ($status)"
+              else
+                echo "::error title=Simulator did not come back::The erase after \"$why\" failed. No app code ran."
+              fi
+            fi
+          fi
           # Every entry must have run at least one test: a name that matches nothing is a red, never a quiet pass.
           # Checked after a passing run only; a run that failed or ran out of time is red already.
           if [ "$status" = 0 ]; then
@@ -260,6 +283,8 @@ jobs:
             ${{ runner.temp }}/load.log
             ${{ runner.temp }}/crashes
             ${{ runner.temp }}/ui.log
+            ${{ runner.temp }}/ui-before-retry.log
+            ${{ runner.temp }}/crashes-before-retry
             ${{ runner.temp }}/hangs
             ${{ runner.temp }}/hangs.log
       - uses: actions/upload-artifact@v4
