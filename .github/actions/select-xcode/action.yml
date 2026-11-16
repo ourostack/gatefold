@@ -14,7 +14,17 @@ runs:
         XCODE: ${{ inputs.xcode }}
       run: |
         set -euo pipefail
-        sudo xcode-select -s "/Applications/Xcode_${XCODE}.app"
+        app=""
+        for candidate in /Applications/Xcode_${XCODE}*.app; do
+          [ -d "$candidate" ] && app="$candidate"
+        done
+        if [ -z "$app" ]; then
+          echo "::error::No Xcode ${XCODE} is installed on this runner. Installed:"
+          ls -d /Applications/Xcode* || true
+          exit 1
+        fi
+        echo "Selecting $app"
+        sudo xcode-select -s "$app"
         echo "DEVELOPER_DIR=$(xcode-select -p)"
         xcrun --sdk iphonesimulator --show-sdk-version
         xcode_version="$(xcodebuild -version)"
