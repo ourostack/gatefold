@@ -113,7 +113,16 @@ jobs:
           open -a "$(xcode-select -p)/../Applications/DeviceHub.app"
           sleep 20
           "$RUNNER_TEMP/unfold/devicehub" dump
+      # The unfold step ends 5 min before the job's limit (gatefold#423): main's runs at e132d48 and 74383b3 hung in
+      # it past 75 min, and the job's own limit skipped the upload, so neither left a log or an artifact.
+      - id: left
+        run: |
+          left=$(( (JOB_START + (75 - 5) * 60 - $(date +%s)) / 60 ))
+          [ "$left" -ge 1 ] || left=1
+          echo "minutes=$left" >> "$GITHUB_OUTPUT"
       - name: Unfold with a book open, at five places
+        id: unfold
+        timeout-minutes: ${{ fromJSON(steps.left.outputs.minutes) }}
         run: |
           set -uo pipefail
           udid="${{ steps.sim.outputs.udid }}"
@@ -138,6 +147,37 @@ jobs:
           }
           # Each press has 120 s and one retry (gatefold#149): a stall names its press and the app's latest main-thread
           # hold, never spends the job in silence. A press that answers late is named too.
+          # At the first press that gives no answer, what each side was doing (gatefold#423): is Gatefold alive and
+          # being run, its main thread's stack (host `sample`: frames only, never the book's words), DeviceHub's stack,
+          # whether the log stream still runs, and the host's load. run 43923823167's app logged nothing for 8 min
+          # after its last press, not even its own "main: still held" watch, which a main-thread hang would print.
+          captured=0
+          stall_capture() {
+            [ "$captured" = 0 ] || return 0
+            captured=1
+            local dir="$out/stall" pid hubpid
+            mkdir -p "$dir"
+            # First, so the record shows how long the host took to run the lookups below (run 43958142531: 14 min).
+            echo "asked at $(date -u +%T)" > "$dir/state.txt"
+            pid="$(pgrep -f 'Gatefold\.app/Gatefold$' | head -1 || true)"
+            hubpid="$(pgrep -x DeviceHub | head -1 || true)"
+            {
+              echo "at $(date -u +%T), press $1"
+              uptime
+              if kill -0 "$stream" 2>/dev/null; then echo "log stream: running"; else echo "log stream: gone"; fi
+              if [ -n "$pid" ]; then ps -o pid,stat,%cpu,time,etime,command -p "$pid"; else echo "Gatefold: no process"; fi
+              [ -z "$hubpid" ] || ps -o pid,stat,%cpu,time,etime,command -p "$hubpid"
+              top -l 1 -o cpu -n 10 -stats pid,command,cpu,state,time | tail -12
+            } >> "$dir/state.txt" 2>&1
+            [ -z "$pid" ] || perl -e 'alarm shift; exec @ARGV' 30 sample "$pid" 3 -mayDie -file "$dir/gatefold-sample.txt" >/dev/null 2>&1 || true
+            [ -z "$hubpid" ] || perl -e 'alarm shift; exec @ARGV' 30 sample "$hubpid" 3 -mayDie -file "$dir/devicehub-sample.txt" >/dev/null 2>&1 || true
+            sed 's/^/  /' "$dir/state.txt"
+            if [ -f "$dir/gatefold-sample.txt" ]; then
+              echo "--- Gatefold's main thread at the stall (heaviest frames, from host sample) ---"
+              awk '/^Call graph:/ { on = 1 } on && /^ +[0-9]+ Thread_/ { n++ } on && n == 1 { print } n > 1 { exit }' "$dir/gatefold-sample.txt" \
+                | sed -E 's/  \(in [^)]*\)//; s/ +\[0x[0-9a-f,]+\]//g' | cut -c1-200 | head -40
+            fi
+          }
           press() {
             local try t0 took status
             for try in 1 2; do
@@ -154,6 +194,7 @@ jobs:
                 return 0
               fi
               echo "::warning::press $1 gave no answer in 120 s (try $try); the app's latest main-thread note: $(grep -E 'main: (still held|held) ' "$out/reader.log" | tail -1 | sed -E 's/^[0-9-]+ //' | cut -c1-160)"
+              stall_capture "$1"
             done
             echo "::error::press $1 stalled twice"
             stalled=1
@@ -273,6 +314,30 @@ jobs:
           [ "$stalled" = 0 ] || { echo "::error::a DeviceHub press stalled twice, so the unfolds after it never ran ($(grep -c "" "$out/marks.log") of $planned begun)"; exit 1; }
           [ "$out_of_time" = 0 ] || { echo "::error::the unfolds stopped for time with $(grep -c "" "$out/marks.log") of $planned begun"; exit 1; }
           [ -n "$spreads" ] || { echo "::error::no unfold reached a spread"; exit 1; }
+      - name: What Gatefold and DeviceHub were doing when the unfolds ran out of time
+        # Only when the step failed or hit its limit (a step's timeout reads as cancelled: run 43958142531 skipped this)
+        # before any press stalled, so nothing was sampled (stacks only, no page text).
+        if: ${{ always() && (steps.unfold.outcome == 'failure' || steps.unfold.outcome == 'cancelled') }}
+        timeout-minutes: 2
+        run: |
+          dir="$RUNNER_TEMP/unfold/stall"
+          # A press's capture the step's limit cut short (run 43958142531) left no sample: take one now.
+          [ ! -f "$dir/gatefold-sample.txt" ] || { echo "sampled at the stalled press already"; exit 0; }
+          mkdir -p "$dir"
+          pid="$(pgrep -f 'Gatefold\.app/Gatefold$' | head -1 || true)"
+          hubpid="$(pgrep -x DeviceHub | head -1 || true)"
+          {
+            echo "at $(date -u +%T), after the unfold step ended"
+            uptime
+            if [ -n "$pid" ]; then ps -o pid,stat,%cpu,time,etime,command -p "$pid"; else echo "Gatefold: no process"; fi
+            [ -z "$hubpid" ] || ps -o pid,stat,%cpu,time,etime,command -p "$hubpid"
+            pgrep -fl 'simctl|devicehub' | cut -c1-200 || true
+            top -l 1 -o cpu -n 10 -stats pid,command,cpu,state,time | tail -12
+          } >> "$dir/state.txt" 2>&1
+          [ -z "$pid" ] || perl -e 'alarm shift; exec @ARGV' 30 sample "$pid" 3 -mayDie -file "$dir/gatefold-sample.txt" >/dev/null 2>&1 || true
+          [ -z "$hubpid" ] || perl -e 'alarm shift; exec @ARGV' 30 sample "$hubpid" 3 -mayDie -file "$dir/devicehub-sample.txt" >/dev/null 2>&1 || true
+          cat "$dir/state.txt"
+          tail -5 "$RUNNER_TEMP/unfold/reader.log" 2>/dev/null | grep -E "main: |layout |reflow " | sed -E 's/^[0-9-]+ //' | cut -c1-160 || true
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -282,3 +347,4 @@ jobs:
             ${{ runner.temp }}/unfold/build.log
             ${{ runner.temp }}/unfold/marks.log
             ${{ runner.temp }}/unfold/shots
+            ${{ runner.temp }}/unfold/stall

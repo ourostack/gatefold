@@ -823,6 +823,17 @@ final class ReaderModel {
         }
     }
     private var revealing = false
+    /// The Cloud place's page, to load behind this one once the first page has shown (`showPage`).
+    @ObservationIgnored private var standbyOwed: Locator?
+    /// Loads the page an offer would land on behind this one, so the tap only swaps it in. Never while the opening
+    /// cover is up: loaded beside the first page, it raced it for the web views, and on CI's iPad every first open
+    /// with the Cloud ahead showed only by the cover's forced reveal (13 to 28 s after the tap), and at 55344d8 both
+    /// pages were still loading 52 s after it. Like the page count, it waits until the first page is up.
+    private func prepareStandbyOnceShown(_ locator: Locator) {
+        guard pageReady else { standbyOwed = locator; return }
+        standbyOwed = nil
+        page?.prepareStandby(at: locator)
+    }
     /// A saved place not yet settled on: from init until load() has settled the page on his words,
     /// nothing but the placeholder's bounded `forceReady` reveals the page.
     @ObservationIgnored private var openSettling = false
@@ -850,7 +861,7 @@ final class ReaderModel {
     /// on #341's iPad the page opened on its file's first page, no reflow came, and it showed there. So while the
     /// cover holds, with no reflow going, the page is read and, if his place is off screen, moved to it, once.
     /// Never once the page is in view: then a place found late is not moved to.
-    private func putBackBarePlaceUnderCover() {
+    func putBackBarePlaceUnderCover() {
         guard openedOnBarePlace != nil, keeper.reflowing == nil, !barePutBackGoing, !pageReady, let page else { return }
         barePutBackGoing = true
         Task { [weak self] in
@@ -920,6 +931,8 @@ final class ReaderModel {
         // Shown with no restore under way: nothing pending to put the open's bare place back.
         if keeper.reflowing == nil { openedOnBarePlace = nil }
         withAnimation(.easeOut(duration: 0.3)) { pageReady = true } completion: { [weak self] in self?.coverLifted = true }
+        if anchorPutOff { anchorPutOff = false; Task { await captureAnchor() } }
+        if let owed = standbyOwed, !isClosed { standbyOwed = nil; page?.prepareStandby(at: owed) }
         foldOnceSeen()
         if reopenPicture == nil { pageShownAt = Date() }
         // Counting the book's pages waits until the open has settled (the reopen picture gone too), so
@@ -1145,8 +1158,8 @@ final class ReaderModel {
             if suggestionLocator == nil { suggestionLocator = found.locator }
         }
         guard !isClosed else { return }
-        // The tap should land at once: load the Cloud place's page now, behind this one.
-        if let locator = suggestionLocator { page?.prepareStandby(at: locator) }
+        // The tap should land at once: load the Cloud place's page behind this one, once this one has shown.
+        if let locator = suggestionLocator { prepareStandbyOnceShown(locator) }
         // Counted after the awaits above, so a count that finished during them is the one shown.
         let counted = countedPagesBetween(totalProgression, target.totalProgression)
         let pages = counted ?? pagesBetween(totalProgression, target.totalProgression)
@@ -1360,7 +1373,7 @@ final class ReaderModel {
         withAnimation(Motion.banner) {
             suggestion = .ownPlace(at: total, page: chapterMap.positionCount > 1 ? chapterMap.page(at: total) : nil)
         }
-        page?.prepareStandby(at: suggestionLocator ?? locator)
+        prepareStandbyOnceShown(suggestionLocator ?? locator)
         aheadTab = SyncSlip.ownPlaceTab
         aheadTarget = nil
         aheadSlipParts = nil
@@ -2187,6 +2200,7 @@ final class ReaderModel {
 
     func dismissSuggestion() {
         offersHisPlace = false
+        standbyOwed = nil
         page?.dropStandby()
         suggestionLocator = nil
         suggestionRemote = nil
@@ -2394,7 +2408,7 @@ final class ReaderModel {
         reflowSettledAt = Date()
         if LaunchOptions.isUITest { reflowProbe = "\(reflowCount) placed" }
         // A reflow throws away the page loading behind this one; the catch-up still on offer gets a new one.
-        if let waiting = suggestionLocator, !isClosed { page?.prepareStandby(at: waiting) }
+        if let waiting = suggestionLocator, !isClosed { prepareStandbyOnceShown(waiting) }
         if let visible, let anchor = keeper.anchor {
             anchorCheck = (visible.contains(anchor) ? "anchor-visible " : "anchor-lost ") + "\(reflowCount)"
             anchorDetail = "anchor \(anchor.href)@\(anchor.progression) [\(anchor.text?.prefix(40) ?? "-")] visible \(visible.href) \(visible.start)..\(visible.end) [\(visible.text?.prefix(60) ?? "nil")]"
@@ -2525,6 +2539,15 @@ final class ReaderModel {
     /// landed: the page still shows what Readium names, so the running head and the end check stay there).
     /// `leaving`: the place a reflow owes, written as he leaves (`keepOwedPlace`), past a close and a reflow
     /// still under way.
+    /// `locator` is the start of the file his newest jump is bound for, with the jump's place further in and
+    /// its move not yet kept: the first of a two-step jump's reports (gatefold#450).
+    private func isJumpsFileStart(_ locator: Locator) -> Bool {
+        guard let jump = jumpOnItsWay, jump.move == moves, recordedMoves != moves,
+              ContentsIndex.sameResource(locator.href.string, jump.target.href.string), (locator.locations.progression ?? 1) == 0,
+              (jump.target.locations.progression ?? 0) > 0 else { return false }
+        return true
+    }
+
     func locationDidChange(_ locator: Locator, duringTurn: Bool = false, hisMove: Bool = false, placeOnly: Bool = false,
                            leaving: Bool = false) async {
         guard !isClosed || leaving else { return }
@@ -2553,6 +2576,16 @@ final class ReaderModel {
             if !pageReady, launchGoTo == nil { markReady() }
             Task { await refreshScreenNumbers() }
             if !duringTurn, hasMoved, isPastStory(locator) { reachedEnd() }
+        }
+        // A jump of his to a place inside a file (the scrubber, a bookmark, a highlight) goes in two steps
+        // when the file isn't loaded: Readium names the file's start, then the place. The start is a step on
+        // the way, not his move: kept, it claimed the move, the place's own report a beat later was dropped,
+        // and the reopen showed the file's start (gatefold#450: on CI's starved iPad the start came 7 s
+        // after the jump and the place 1.4 s after that, the start's write long done). Left unkept, the
+        // place's report keeps the move, and a leave before it keeps the jump's target.
+        if !hisMove, !duringTurn, !leaving, !touchedSinceLocation, isJumpsFileStart(locator) {
+            readerLog.notice("place: the file's start on a jump's way to \(Self.placeTag(self.jumpOnItsWay!.target), privacy: .public); not his move, nothing kept")
+            return
         }
         // A landing records its place once it has settled; the steps on the way are not places. So does a
         // test's launch jump: a report on its way (its file's first page) could finish after the landing and
@@ -2982,9 +3015,12 @@ final class ReaderModel {
                                 progression: bare.locations.progression ?? 0, at: Date())
     }
 
-    /// Takes the first words on screen as the reader's place, unless a reflow is moving the page.
+    /// Takes the first words on screen as the reader's place, unless a reflow is moving the page, or the cover is
+    /// putting the open's place with no words back (`bareStillOwed`): then it is taken once the cover lifts.
     func captureAnchor() async {
-        guard keeper.reflowing == nil, let (anchor, anchorLoc) = await page?.currentAnchor(), keeper.reflowing == nil else { return }
+        guard keeper.reflowing == nil, !deferAnchorWhileBareOwed() else { return }
+        guard let (anchor, anchorLoc) = await page?.currentAnchor(), keeper.reflowing == nil,
+              !deferAnchorWhileBareOwed() else { return }
         readerLog.notice("anchor \(anchor.text ?? "nil", privacy: .private)")
         keeper.userSettled(on: anchor)
         if keeper.anchor == anchor { anchorLocator = anchorLoc }
@@ -2994,6 +3030,24 @@ final class ReaderModel {
             anchorReady = true
             anchorCheck = "ready \(reflowCount)"
         }
+    }
+
+    /// The cover is putting the open's place with no words back (`putBackBarePlaceUnderCover`) and he hasn't moved:
+    /// the page beneath is where Readium first put it, the chapter's start on CI's starved iPad, not his place.
+    /// Taken as his anchor, its first words ended that put-back (`openPlaceToReapply` holds off once an anchor is
+    /// held), and the reopen showed the chapter's start (gatefold#447: the open's capture and the put-back both
+    /// waited on the page's scripts, and the capture read first when they answered after 23 s; every QuickLeave
+    /// failure since 7b7024b).
+    private var bareStillOwed: Bool {
+        barePutBackGoing && openedOnBarePlace != nil && !pageReady && hisMoves == 0 && !touchedSinceLocation && !isClosed
+    }
+    /// A capture put off while `bareStillOwed`, taken when the page shows (`showPage`).
+    @ObservationIgnored private var anchorPutOff = false
+    private func deferAnchorWhileBareOwed() -> Bool {
+        guard bareStillOwed else { return false }
+        if !anchorPutOff { readerLog.notice("anchor: put off while the open's place (no words) is still owed under the cover") }
+        anchorPutOff = true
+        return true
     }
 
     // MARK: The end

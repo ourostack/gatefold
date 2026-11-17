@@ -206,13 +206,23 @@ jobs:
           echo "$(date -u +%T) running: ${only[*]}"
           # Each test's result prints as it finishes: a job cut off at its limit still names the slow test
           # (run 42393941976's reviewer leg printed nothing, since this read the log only at the end).
-          python3 -I scripts/ci-within.py --until "$STEP_UNTIL" -- xcodebuild test-without-building -xctestrun "$XCTESTRUN" \
-            -destination "$DESTINATION" "${only[@]}" \
-            -resultBundlePath "$RUNNER_TEMP/ui.xcresult" 2>&1 | tee "$RUNNER_TEMP/ui.log" \
-            | grep --line-buffered -E "Test Case .*(started|passed|failed|skipped)|TEST (SUCCEEDED|FAILED)|REPRO (setup|jump|round|SUMMARY|visibleSettleMove)|MIDTURN|TAPRATE|PLACEHOLDER|REVIEWER|OLDPAGEHELD|TURNWAIT|WINDOWFIT|REOPEN round [0-9]+:|probe says|probe timing|\.swift:[0-9]+: error|::error::" \
-            | awk '{ if (match($0, /XCTAssert[A-Za-z]* failed/)) $0 = substr($0, 1, RSTART + RLENGTH - 1) " (text withheld)"; print; fflush() }'
-          status=${PIPESTATUS[0]}
+          run_tests() {
+            python3 -I scripts/ci-within.py --until "$STEP_UNTIL" -- xcodebuild test-without-building -xctestrun "$XCTESTRUN" \
+              -destination "$DESTINATION" "${only[@]}" \
+              -resultBundlePath "$RUNNER_TEMP/ui.xcresult" 2>&1 | tee "$RUNNER_TEMP/ui.log" \
+              | grep --line-buffered -E "Test Case .*(started|passed|failed|skipped)|TEST (SUCCEEDED|FAILED)|REPRO (setup|jump|round|SUMMARY|visibleSettleMove)|MIDTURN|TAPRATE|PLACEHOLDER|REVIEWER|OLDPAGEHELD|TURNWAIT|WINDOWFIT|REOPEN round [0-9]+:|probe says|probe timing|\.swift:[0-9]+: error|::error::" \
+              | awk '{ if (match($0, /XCTAssert[A-Za-z]* failed/)) $0 = substr($0, 1, RSTART + RLENGTH - 1) " (text withheld)"; print; fflush() }'
+            return "${PIPESTATUS[0]}"
+          }
+          status=0
+          run_tests || status=$?
           echo "$(date -u +%T) done ($status)"
+          # The test runner never started, for a reason in the machine (scripts/ci-bootstrap.py; gatefold#135): this
+          # host's simulator service is sick, and erasing or booting another device on it hung or ran out of time
+          # (#429's own run). Fail at once with the line rerun-runner.yml reads, so a fresh runner runs the shard.
+          if [ "$status" != 0 ] && [ "$status" != 124 ] && why=$(python3 -I scripts/ci-bootstrap.py why "$RUNNER_TEMP/ui.log"); then
+            echo "::error title=The runner, not the app::No test started: $why. No app code ran; rerun it on a fresh runner (gatefold#135)."
+          fi
           # Every entry must have run at least one test: a name that matches nothing is a red, never a quiet pass.
           # Checked after a passing run only; a run that failed or ran out of time is red already.
           if [ "$status" = 0 ]; then
