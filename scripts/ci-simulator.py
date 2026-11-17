@@ -3,7 +3,7 @@
 
     python3 -I scripts/ci-simulator.py start <name> "<device name prefix>"   # e.g. "iPad Pro 13-inch", "iPhone Duo"
     python3 -I scripts/ci-simulator.py wait <name> "<device name prefix>" [s] # wait for it (default 1200 s)
-    python3 -I scripts/ci-simulator.py settle <runtime identifier> [s]        # wait out a swap of its image (660 s)
+    python3 -I scripts/ci-simulator.py settle <runtime identifier> [s]        # wait for its image to settle (900 s)
     python3 -I scripts/ci-simulator.py --selftest
 
 `start` picks the newest iOS runtime the image already has that offers that device and is no newer than the selected
@@ -27,15 +27,20 @@ Once a device passes its check, `wait` and `erase` remove its first-boot jobs (.
 gatefold#209) on the step's time left, so XCUITest does not launch the app inside the first boot's load.
 Offline test: bash scripts/test-ci-simulator.sh (a fake xcrun and boot-sim.sh; no simulator).
 
-Before it boots, `start` waits until the runtime's image has settled (`settle`). A fresh hosted runner is still
-copying some runtimes into place when the job starts. When a copy finishes, simdiskimaged logs "Image is a duplicate of
-existing image - preferring cryptex variant", unmounts the image the simulator booted from and mounts the copy at a
-new path. A booted device then loses its runtime under the tests: "runtime path not found", "Test crashed with signal
-term", "Channel disconnected", or system processes crashing with SIGBUS (gatefold#71, #329, #440; job 134238519731's
-simdiskimaged.log shows iOS 27.0 swapped 5.5 min into the job, just after the boot). `settle` reads
-`simctl runtime list -j` and waits while the runtime has an image that isn't Ready or two images of one build, up to
-660 s (on probe runners every copy had finished by 640 s, gatefold#467). It waits only when the runtime is mid-swap,
-and boots anyway at the limit, so the check in `wait` still has the last word.
+Before it boots, `start` waits until the runtime's image has settled (`settle`), and every other job that boots a
+simulator calls `settle` too, so this is the one place the rule lives. On some fresh hosted runners the runtime's
+cryptex mount fails when the job starts, and simdiskimaged mounts a stand-in copy of the same image from
+/Library/Developer/CoreSimulator/Volumes/. Minutes later it registers the image again as a cryptex ("Image is a
+duplicate of existing image - preferring cryptex variant"), tears the stand-in down and mounts the cryptex. A device
+booted on the stand-in loses its runtime under the tests: "runtime path not found", "Test crashed with signal bus",
+Mach error -308, "Failed to install or launch the test runner" (gatefold#71, #329, #440, #469). In job 134323696516
+iOS 27.1 started on the stand-in; the cryptex copy appeared 5 min in, the stand-in went at 10 min and the cryptex was
+mounted at 13.7 min, after the tests had already failed. `settle` reads `simctl runtime list -j` and waits while the
+runtime's image is not Ready, has two images of one build, or is mounted anywhere but its cryptex
+(/private/var/run/com.apple.security.cryptexd/mnt/). On the four probe runners of run 44177949522 iOS 27.1 was a Ready
+cryptex from the start and stayed one for 25 min, so there it does not wait. It waits only on the event, never a fixed
+time, up to 900 s, and then fails as "The runner, not the app", before any boot, so the job doesn't spend its test
+time on a runtime that is about to move. A listing that doesn't answer never holds the boot.
 
 A prefix that is a whole device name ("iPhone Duo") picks that device only, never a sibling such as "iPhone Duo Pro".
 """
@@ -81,8 +86,12 @@ def pick(runtimes, prefix, sdk):
 SETTLE_NAP = 10
 
 
+CRYPTEX_MOUNTS = "/com.apple.security.cryptexd/mnt/"
+
+
 def pending(images, runtime):
-    """Why the runtime's image may still be swapped (a copy not Ready, or two images of one build), or None."""
+    """Why the runtime's image may still move (not Ready, two images of one build, or mounted from a stand-in, not its
+    cryptex), or None."""
     mine = [v for v in images.values() if v.get("runtimeIdentifier") == runtime]
     for v in mine:
         if v.get("state") != "Ready":
@@ -91,6 +100,9 @@ def pending(images, runtime):
     for b in sorted(set(builds), key=str):
         if builds.count(b) > 1:
             return f"{runtime} has {builds.count(b)} images of build {b}"
+    for v in mine:
+        if CRYPTEX_MOUNTS not in (v.get("mountPath") or ""):
+            return f"{runtime} is mounted from {v.get('mountPath') or 'nowhere'}, not its cryptex"
     return None
 
 
@@ -104,8 +116,8 @@ def runtime_images():
 
 
 def settle(runtime, limit=None, images=runtime_images, clock=time.time, nap=time.sleep):
-    """Seconds waited until the runtime's image settled; None when it hadn't by the limit (the boot goes on)."""
-    limit = setting("CI_SIMULATOR_SETTLE_LIMIT", "660") if limit is None else limit
+    """Seconds waited until the runtime's image settled; None when it hadn't by the limit."""
+    limit = setting("CI_SIMULATOR_SETTLE_LIMIT", "900") if limit is None else limit
     began = clock()
     said = None
     while True:
@@ -114,16 +126,23 @@ def settle(runtime, limit=None, images=runtime_images, clock=time.time, nap=time
         waited = clock() - began
         if why is None:
             if said:
-                print(f"::notice title=Runtime settled::{runtime} settled after {int(waited)} s ({said}); booting now.")
+                print(f"::notice title=Runtime settled::{runtime} settled after {int(waited)} s ({said}); booting now.",
+                      flush=True)
+            else:
+                print(f"{runtime} is settled (a Ready cryptex); booting now.", flush=True)
             return waited
         if said is None:
             said = why
-            print(f"Waiting for {runtime} to settle before booting: {why}")
+            print(f"Waiting for {runtime} to settle before booting: {why}", flush=True)
         if waited >= limit:
-            print(f"::warning title=Runtime not settled::{runtime} still had {why} after {int(waited)} s; "
-                  "booting anyway (the check after the boot still applies).")
+            print(f"::error title=The runner, not the app::{runtime} had not settled after {int(waited)} s ({why}). "
+                  "simdiskimaged was still moving its image, so no simulator was booted and no app code ran.",
+                  flush=True)
             return None
-        nap(SETTLE_NAP)
+        nap(min(SETTLE_NAP, max(1, limit - waited)))
+
+
+UNSETTLED = 98  # <name>.status when `settle` reached its limit
 
 
 def start(name, prefix):
@@ -137,9 +156,10 @@ def start(name, prefix):
     (d / f"{name}.started").write_text(f"{time.time()}\n")
     (d / f"{name}.plan").write_text(json.dumps({"kind": kind, "runtime": runtime, "prefix": prefix, "sdk": sdk}))
     # Detached, so it outlives this step: it waits for the runtime to settle, then boots. The UDID goes to
-    # <name>.udid, boot-sim.sh's exit code to <name>.status.
+    # <name>.udid, boot-sim.sh's exit code to <name>.status (UNSETTLED when the runtime never settled).
     subprocess.Popen(
-        ["sh", "-c", '"$6" -I "$7" settle "$4"; "$1" "$2" "$3" "$4" > "$5.udid"; echo $? > "$5.status"', "boot",
+        ["sh", "-c", f'"$6" -I "$7" settle "$4" || {{ echo {UNSETTLED} > "$5.status"; exit; }}; '
+         '"$1" "$2" "$3" "$4" > "$5.udid"; echo $? > "$5.status"', "boot",
          str(BOOT_SIM), name, kind, runtime, str(d / name), sys.executable, str(Path(__file__).resolve())],
         stdout=open(d / f"{name}.log", "ab"), stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
         start_new_session=True)
@@ -168,6 +188,8 @@ def wait_boot(name, limit, clock=time.time, nap=time.sleep):
 def outcome(code, udid, limit):
     if code is None:
         return f"boot-sim.sh did not finish within {limit} s"
+    if code == UNSETTLED:
+        return "the runtime never settled, so nothing was booted (see the log above)"
     if code != 0:
         return f"boot-sim.sh exited {code}"
     return "booted" if udid else "boot-sim.sh printed no UDID"
@@ -411,8 +433,7 @@ def main(argv):
             (d / f"{argv[1]}.status").write_text("97\n")
         return 0
     if len(argv) in (2, 3) and argv[0] == "settle":
-        settle(argv[1], float(argv[2]) if len(argv) == 3 else None)
-        return 0
+        return 0 if settle(argv[1], float(argv[2]) if len(argv) == 3 else None) is not None else 1
     if len(argv) == 3 and argv[0] == "erase":
         # The cold step: erase the booted device and boot it again, each simctl call bounded, then the same check.
         # If its runtime went (gatefold#71), one fresh device, erased the same way, so the test still runs on an
@@ -482,7 +503,8 @@ def main(argv):
                     print(f"{udid} booted on the second try, and its runtime is available")
                     return 0
                 said = f"booted again, but {problem}"
-        print(f"::error title=Simulator did not boot::{said}. No app code ran.")
+        title = "The runner, not the app" if code == UNSETTLED else "Simulator did not boot"
+        print(f"::error title={title}::{said}. No app code ran.")
         return 1
     print(__doc__, file=sys.stderr)
     return 2
@@ -538,22 +560,29 @@ def selftest():
     assert unready("a", [], devs) == "its runtime iOS-27-2 is no longer available"
     gone = {"iOS-27-2": [{"udid": "a", "state": "Booted", "isAvailable": False, "availabilityError": "runtime profile not found"}]}
     assert unready("a", rts, gone) == "a is unavailable (runtime profile not found)"
-    ready = {"runtimeIdentifier": "iOS-27-0", "build": "24A434", "state": "Ready"}
-    copying = dict(ready, state="Copying")
+    crypt = "/private/var/run/com.apple.security.cryptexd/mnt/com.apple.iPhoneOS.SimulatorRuntime-v24.1.434.0.EBNAho"
+    ready = {"runtimeIdentifier": "iOS-27-0", "build": "24A434", "state": "Ready", "mountPath": crypt}
+    copying = dict(ready, state="Copying", mountPath=None)
+    standin = dict(ready, mountPath="/Library/Developer/CoreSimulator/Volumes/iOS_24A434")
     other = {"runtimeIdentifier": "watchOS-27-2", "build": "24S118", "state": "Copying"}
     assert pending({"a": ready, "w": other}, "iOS-27-0") is None, "another runtime's copy doesn't hold this one"
     assert pending({"a": ready, "b": copying}, "iOS-27-0") == "an image of iOS-27-0 (build 24A434) is Copying"
     assert pending({"a": ready, "b": dict(ready)}, "iOS-27-0") == "iOS-27-0 has 2 images of build 24A434"
     assert pending({"a": ready, "b": dict(ready, build="24A999")}, "iOS-27-0") is None, "two builds are two runtimes"
     assert pending({}, "iOS-27-0") is None, "a runtime with no image listed boots at once"
+    assert pending({"a": standin}, "iOS-27-0") == ("iOS-27-0 is mounted from /Library/Developer/CoreSimulator/Volumes/"
+                                                   "iOS_24A434, not its cryptex"), "a stand-in mount will move"
+    assert pending({"a": dict(ready, mountPath=None)}, "iOS-27-0") == "iOS-27-0 is mounted from nowhere, not its cryptex"
     now[0] = 0.0
-    seq = iter([{"a": ready, "b": copying}, {"a": ready, "b": copying}, {"b": ready}])
+    # Job 134323696516's iOS 27.1: a Ready stand-in, then its cryptex copy, then the cryptex alone.
+    seq = iter([{"a": standin}, {"a": standin, "b": copying}, {"b": ready}])
     with redirect_stdout(open(os.devnull, "w")):
-        assert settle("iOS-27-0", 660, lambda: next(seq), clock, nap) == 20, "waits out the swap, then boots"
+        assert settle("iOS-27-0", 900, lambda: next(seq), clock, nap) == 20, "waits out the move, then boots"
         now[0] = 0.0
-        assert settle("iOS-27-0", 30, lambda: {"a": ready, "b": copying}, clock, nap) is None, "boots at the limit"
+        assert settle("iOS-27-0", 30, lambda: {"a": standin}, clock, nap) is None, "fails at the limit"
         now[0] = 0.0
         assert settle("iOS-27-0", 30, lambda: None, clock, nap) == 0, "an unanswered listing never holds the boot"
+    assert outcome(UNSETTLED, "", 1200).startswith("the runtime never settled"), "an unsettled runtime says so"
     print("ci-simulator: selftest passed")
     return 0
 
