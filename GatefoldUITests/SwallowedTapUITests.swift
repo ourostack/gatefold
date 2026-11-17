@@ -13,6 +13,9 @@ final class SwallowedTapUITests: XCTestCase {
         app.launchArguments = [
             "-GatefoldUITest", "YES", "-GatefoldFakeCloud", "YES", "-GatefoldReset", "YES", "-GatefoldSkipWelcome", "YES", "-GatefoldSignedIn", "YES",
             "-GatefoldAllowReopen", "YES", "-GatefoldDownloadAll", "YES",
+            // The round with the Cloud's offer up needs it up: unanswered, it folds 10 s after the page shows, and on
+            // CI's iPad this test's first look for it came 15 and 17 s after (d502a1f, a8061a1). A swipe still folds it.
+            "-GatefoldOfferFoldSeconds", "600",
         ]
         app.launch()
         func el(_ id: String) -> XCUIElement { app.descendants(matching: .any).matching(identifier: id).firstMatch }

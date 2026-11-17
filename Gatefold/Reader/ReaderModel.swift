@@ -820,6 +820,17 @@ final class ReaderModel {
         }
     }
     private var revealing = false
+    /// The Cloud place's page, to load behind this one once the first page has shown (`showPage`).
+    @ObservationIgnored private var standbyOwed: Locator?
+    /// Loads the page an offer would land on behind this one, so the tap only swaps it in. Never while the opening
+    /// cover is up: loaded beside the first page, it raced it for the web views, and on CI's iPad every first open
+    /// with the Cloud ahead showed only by the cover's forced reveal (13 to 28 s after the tap), and at 55344d8 both
+    /// pages were still loading 52 s after it. Like the page count, it waits until the first page is up.
+    private func prepareStandbyOnceShown(_ locator: Locator) {
+        guard pageReady else { standbyOwed = locator; return }
+        standbyOwed = nil
+        page?.prepareStandby(at: locator)
+    }
     /// A saved place not yet settled on: from init until load() has settled the page on his words,
     /// nothing but the placeholder's bounded `forceReady` reveals the page.
     @ObservationIgnored private var openSettling = false
@@ -918,6 +929,7 @@ final class ReaderModel {
         if keeper.reflowing == nil { openedOnBarePlace = nil }
         withAnimation(.easeOut(duration: 0.3)) { pageReady = true } completion: { [weak self] in self?.coverLifted = true }
         if anchorPutOff { anchorPutOff = false; Task { await captureAnchor() } }
+        if let owed = standbyOwed, !isClosed { standbyOwed = nil; page?.prepareStandby(at: owed) }
         foldOnceSeen()
         if reopenPicture == nil { pageShownAt = Date() }
         // Counting the book's pages waits until the open has settled (the reopen picture gone too), so
@@ -1143,8 +1155,8 @@ final class ReaderModel {
             if suggestionLocator == nil { suggestionLocator = found.locator }
         }
         guard !isClosed else { return }
-        // The tap should land at once: load the Cloud place's page now, behind this one.
-        if let locator = suggestionLocator { page?.prepareStandby(at: locator) }
+        // The tap should land at once: load the Cloud place's page behind this one, once this one has shown.
+        if let locator = suggestionLocator { prepareStandbyOnceShown(locator) }
         // Counted after the awaits above, so a count that finished during them is the one shown.
         let counted = countedPagesBetween(totalProgression, target.totalProgression)
         let pages = counted ?? pagesBetween(totalProgression, target.totalProgression)
@@ -1358,7 +1370,7 @@ final class ReaderModel {
         withAnimation(Motion.banner) {
             suggestion = .ownPlace(at: total, page: chapterMap.positionCount > 1 ? chapterMap.page(at: total) : nil)
         }
-        page?.prepareStandby(at: suggestionLocator ?? locator)
+        prepareStandbyOnceShown(suggestionLocator ?? locator)
         aheadTab = SyncSlip.ownPlaceTab
         aheadTarget = nil
         aheadSlipParts = nil
@@ -2185,6 +2197,7 @@ final class ReaderModel {
 
     func dismissSuggestion() {
         offersHisPlace = false
+        standbyOwed = nil
         page?.dropStandby()
         suggestionLocator = nil
         suggestionRemote = nil
@@ -2390,7 +2403,7 @@ final class ReaderModel {
         reflowSettledAt = Date()
         if LaunchOptions.isUITest { reflowProbe = "\(reflowCount) placed" }
         // A reflow throws away the page loading behind this one; the catch-up still on offer gets a new one.
-        if let waiting = suggestionLocator, !isClosed { page?.prepareStandby(at: waiting) }
+        if let waiting = suggestionLocator, !isClosed { prepareStandbyOnceShown(waiting) }
         if let visible, let anchor = keeper.anchor {
             anchorCheck = (visible.contains(anchor) ? "anchor-visible " : "anchor-lost ") + "\(reflowCount)"
             anchorDetail = "anchor \(anchor.href)@\(anchor.progression) [\(anchor.text?.prefix(40) ?? "-")] visible \(visible.href) \(visible.start)..\(visible.end) [\(visible.text?.prefix(60) ?? "nil")]"
