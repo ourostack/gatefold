@@ -15,6 +15,12 @@ name: App
 # UI tests run in shards (.github/workflows/ui-tests.yml), each on its own runner; a gate job named for each required
 # check is green only when all of its shards passed.
 #
+# Don't test the same tree twice (scripts/ci-proof.py). A run that ran the full lists and passed (the merge queue's, or a
+# full-list pull request's) ends with the job "Full suite passed on tree <tree>". A push to main whose tree such a run
+# already passed runs no shard: each required check reports success by that proof and names its run, so TestFlight
+# publishes right after the merge. Anything else on main (a direct push, another tree, a red run, an unreadable API)
+# runs the full suite.
+#
 # A pull request that changes only Markdown still gets every required check: `changes` says so, the test shards skip,
 # and each gate job (`iPad (...)`, `Duo (the reviewers' checks)`, `Build and unit-test the app`) reports success
 # (gatefold#42). The jobs run unless `changes` said "only Markdown", and a failed `build` turns them red at the wait
@@ -24,6 +30,7 @@ name: App
 
 on:
   pull_request:
+  merge_group:
   push:
     branches: [main]
     paths-ignore:
@@ -72,10 +79,34 @@ jobs:
       edited-duo: ${{ steps.diff.outputs.edited-duo }}
       smoke-ipad: ${{ steps.diff.outputs.smoke-ipad }}
       smoke-duo: ${{ steps.diff.outputs.smoke-duo }}
+      tree: ${{ steps.tree.outputs.tree }}
+      proven: ${{ steps.proof.outputs.proven }}
+      proof: ${{ steps.proof.outputs.proof }}
+    # Its own token scope: the proof reads which pull request was merged as this commit.
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - id: tree
+        name: The tree this run tests (the proof job names it)
+        run: echo "tree=$(git rev-parse 'HEAD^{tree}')" >> "$GITHUB_OUTPUT"
+      # Don't test the same tree twice. A main push whose tree a pull request's or the merge queue's run already passed
+      # with the full lists (its job "Full suite passed on tree <tree>") runs no shard: every required check reports
+      # success by that proof, naming the run. A direct push, another tree, a red run or an unreadable API runs the full
+      # suite, as before (scripts/ci-proof.py; it fails closed).
+      - id: proof
+        name: Has a pull request or the merge queue already passed this tree? (main pushes only)
+        if: github.event_name == 'push'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          python3 -I scripts/ci-proof.py --sha "$GITHUB_SHA" --workflow app.yml --prefix "Full suite passed on tree " \
+            > proof.txt 2>&1 || echo "Not proven: the full suite runs." >> proof.txt
+          cat proof.txt | tee -a "$GITHUB_STEP_SUMMARY"
       - id: diff
         env:
           EVENT: ${{ github.event_name }}
@@ -139,7 +170,7 @@ jobs:
   build:
     name: Build for testing
     needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
+    if: ${{ !cancelled() && needs.changes.outputs.app != 'false' && needs.changes.outputs.proven != 'true' }}
     runs-on: xcode-27
     timeout-minutes: 35
     outputs:
@@ -199,13 +230,21 @@ jobs:
     container: swift:6.2
     timeout-minutes: 20
     steps:
+      - name: Passed by proof (a pull request or the merge queue passed this tree with the full lists)
+        if: needs.changes.outputs.proven == 'true'
+        env:
+          PROOF: ${{ needs.changes.outputs.proof }}
+        run: echo "::notice::GatefoldCore tests and the CI scripts passed on this tree in $PROOF; not run again."
       - uses: actions/checkout@v4
+        if: needs.changes.outputs.proven != 'true'
       - name: Toolchain
+        if: needs.changes.outputs.proven != 'true'
         run: swift --version
       - name: swift test
+        if: needs.changes.outputs.proven != 'true'
         run: swift test --package-path Packages/GatefoldCore
       - name: The CI scripts' offline tests passed (job "CI scripts, offline"; gatefold#241)
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && needs.changes.outputs.proven != 'true' }}
         env:
           RESULT: ${{ needs.ci-scripts.result }}
         run: |
@@ -216,7 +255,7 @@ jobs:
   ci-scripts:
     name: CI scripts, offline
     needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
+    if: ${{ !cancelled() && needs.changes.outputs.app != 'false' && needs.changes.outputs.proven != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -231,6 +270,8 @@ jobs:
         run: |
           python3 -I scripts/ci-bootstrap.py --selftest
           python3 -I scripts/ci-rerun-runner.py --selftest
+      - name: A main commit skips the suite only on proof of its own tree (a mismatched tree or a red run proves nothing)
+        run: python3 -I scripts/ci-proof.py --selftest
       - name: The TestFlight publish script's upload step, offline (a fake kit; no App Store Connect) (gatefold#337)
         run: bash scripts/test-ci-publish-testflight.sh
       - name: UI test lists (not GatefoldCore) match scripts/ci-shards.expect; fix with `python3 -I scripts/ci-shards.py write` (gatefold#39)
@@ -264,7 +305,7 @@ jobs:
   ipad-place:
     name: iPad place shard (${{ matrix.shard }})
     needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
+    if: ${{ !cancelled() && needs.changes.outputs.app != 'false' && needs.changes.outputs.proven != 'true' }}
     strategy:
       fail-fast: false
       max-parallel: ${{ github.event_name != 'pull_request' && 3 || needs.changes.outputs.full != 'false' && 2 || 10 }}
@@ -430,7 +471,7 @@ jobs:
   ipad-undo:
     name: iPad undo shard (${{ matrix.shard }})
     needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
+    if: ${{ !cancelled() && needs.changes.outputs.app != 'false' && needs.changes.outputs.proven != 'true' }}
     strategy:
       fail-fast: false
       max-parallel: ${{ github.event_name != 'pull_request' && 1 || needs.changes.outputs.full != 'false' && 1 || 4 }}
@@ -497,7 +538,7 @@ jobs:
   ipad-taps:
     name: iPad taps shard (${{ matrix.shard }})
     needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
+    if: ${{ !cancelled() && needs.changes.outputs.app != 'false' && needs.changes.outputs.proven != 'true' }}
     strategy:
       fail-fast: false
       max-parallel: ${{ github.event_name != 'pull_request' && 2 || needs.changes.outputs.full != 'false' && 1 || 7 }}
@@ -592,7 +633,7 @@ jobs:
   ipad-reviewer:
     name: iPad reviewer shard (${{ matrix.shard }})
     needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
+    if: ${{ !cancelled() && needs.changes.outputs.app != 'false' && needs.changes.outputs.proven != 'true' }}
     strategy:
       fail-fast: false
       max-parallel: ${{ github.event_name != 'pull_request' && 3 || needs.changes.outputs.full != 'false' && 2 || 5 }}
@@ -670,7 +711,7 @@ jobs:
   duo:
     name: Duo shard (${{ matrix.shard }})
     needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
+    if: ${{ !cancelled() && needs.changes.outputs.app != 'false' && needs.changes.outputs.proven != 'true' }}
     strategy:
       fail-fast: false
       max-parallel: ${{ github.event_name != 'pull_request' && 3 || needs.changes.outputs.full != 'false' && 2 || 9 }}
@@ -804,8 +845,11 @@ jobs:
       - env:
           APP: ${{ needs.changes.outputs.app }}
           SHARDS: ${{ needs.ipad-place.result }}
+          PROVEN: ${{ needs.changes.outputs.proven }}
+          PROOF: ${{ needs.changes.outputs.proof }}
         run: |
           if [ "$APP" = false ]; then echo "Only Markdown changed; nothing to test."; exit 0; fi
+          if [ "$PROVEN" = true ]; then echo "::notice::Passed by proof: every shard passed on this tree in $PROOF"; exit 0; fi
           echo "Shards: $SHARDS"
           [ "$SHARDS" = success ]
 
@@ -821,8 +865,11 @@ jobs:
       - env:
           APP: ${{ needs.changes.outputs.app }}
           SHARDS: ${{ needs.ipad-undo.result }}
+          PROVEN: ${{ needs.changes.outputs.proven }}
+          PROOF: ${{ needs.changes.outputs.proof }}
         run: |
           if [ "$APP" = false ]; then echo "Only Markdown changed; nothing to test."; exit 0; fi
+          if [ "$PROVEN" = true ]; then echo "::notice::Passed by proof: every shard passed on this tree in $PROOF"; exit 0; fi
           echo "Shards: $SHARDS"
           [ "$SHARDS" = success ]
 
@@ -838,8 +885,11 @@ jobs:
       - env:
           APP: ${{ needs.changes.outputs.app }}
           SHARDS: ${{ needs.ipad-taps.result }}
+          PROVEN: ${{ needs.changes.outputs.proven }}
+          PROOF: ${{ needs.changes.outputs.proof }}
         run: |
           if [ "$APP" = false ]; then echo "Only Markdown changed; nothing to test."; exit 0; fi
+          if [ "$PROVEN" = true ]; then echo "::notice::Passed by proof: every shard passed on this tree in $PROOF"; exit 0; fi
           echo "Shards: $SHARDS"
           [ "$SHARDS" = success ]
 
@@ -856,8 +906,11 @@ jobs:
       - env:
           APP: ${{ needs.changes.outputs.app }}
           SHARDS: ${{ needs.ipad-reviewer.result }}
+          PROVEN: ${{ needs.changes.outputs.proven }}
+          PROOF: ${{ needs.changes.outputs.proof }}
         run: |
           if [ "$APP" = false ]; then echo "Only Markdown changed; nothing to test."; exit 0; fi
+          if [ "$PROVEN" = true ]; then echo "::notice::Passed by proof: every shard passed on this tree in $PROOF"; exit 0; fi
           echo "Shards: $SHARDS"
           [ "$SHARDS" = success ]
 
@@ -873,8 +926,11 @@ jobs:
       - env:
           APP: ${{ needs.changes.outputs.app }}
           SHARDS: ${{ needs.duo.result }}
+          PROVEN: ${{ needs.changes.outputs.proven }}
+          PROOF: ${{ needs.changes.outputs.proof }}
         run: |
           if [ "$APP" = false ]; then echo "Only Markdown changed; nothing to test."; exit 0; fi
+          if [ "$PROVEN" = true ]; then echo "::notice::Passed by proof: every shard passed on this tree in $PROOF"; exit 0; fi
           echo "Shards: $SHARDS"
           [ "$SHARDS" = success ]
 
@@ -886,7 +942,7 @@ jobs:
   release:
     name: Release build for devices
     needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
+    if: ${{ !cancelled() && needs.changes.outputs.app != 'false' && needs.changes.outputs.proven != 'true' }}
     runs-on: xcode-27
     # PR lane (gatefold#286): see "macOS lanes" at the top of app.yml. Never cancel-in-progress.
     concurrency:
@@ -942,7 +998,7 @@ jobs:
   unit:
     name: Unit tests (iPhone Duo)
     needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
+    if: ${{ !cancelled() && needs.changes.outputs.app != 'false' && needs.changes.outputs.proven != 'true' }}
     runs-on: xcode-27
     # PR lane (gatefold#286): see "macOS lanes" at the top of app.yml. Never cancel-in-progress.
     concurrency:
@@ -1051,7 +1107,25 @@ jobs:
           APP: ${{ needs.changes.outputs.app }}
           RELEASE: ${{ needs.release.result }}
           UNIT: ${{ needs.unit.result }}
+          PROVEN: ${{ needs.changes.outputs.proven }}
+          PROOF: ${{ needs.changes.outputs.proof }}
         run: |
           if [ "$APP" = false ]; then echo "Only Markdown changed; nothing to build."; exit 0; fi
+          if [ "$PROVEN" = true ]; then echo "::notice::Passed by proof: the Release build and the unit tests passed on this tree in $PROOF"; exit 0; fi
           echo "Release build: $RELEASE; unit tests: $UNIT"
           [ "$RELEASE" = success ] && [ "$UNIT" = success ]
+
+  # The proof that main reads (scripts/ci-proof.py): this job passes only when the full lists ran and every required
+  # check of this run passed, and its name carries the tree it tested. A run of the PR lists skips it, so it proves
+  # nothing; a main push that was itself proven doesn't need it.
+  proof:
+    name: Full suite passed on tree ${{ needs.changes.outputs.tree }}
+    needs: [changes, core, app, ipad-place-gate, ipad-undo-gate, ipad-taps-gate, ipad-reviewer-gate, duo-gate]
+    if: ${{ success() && needs.changes.outputs.full == 'true' && needs.changes.outputs.app == 'true' && needs.changes.outputs.proven != 'true' && needs.changes.outputs.tree != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          echo "$RESULTS" | python3 -Ic 'import json,sys; r={k:v["result"] for k,v in json.load(sys.stdin).items()}; print(r); sys.exit(any(v!="success" for v in r.values()))'
