@@ -9,11 +9,13 @@ commit. Equal trees are equal files, so the workflows, the test lists and the ap
     python3 -I scripts/ci-proof.py --sha <main commit> --workflow app.yml --prefix "Full suite passed on tree "
     python3 -I scripts/ci-proof.py --selftest
 
-Where it looks, for the workflow's runs of event pull_request or merge_group (never push, never dispatch):
-  - the main commit itself (a merge queue fast-forwards main to the commit its group tested), and
+Where it looks, for the workflow's runs of event pull_request or merge_group (never push, never dispatch), taking
+only the newest such run on each commit:
+  - the main commit itself (a merge queue fast-forwards main to the commit its group tested; a pull request's head
+    pushed to main as it is has its own runs there), and
   - the head of each pull request GitHub says was merged as this commit (merge_commit_sha == the main commit).
 Exit 0 and `proven=true`, `proof=<run url>` in $GITHUB_OUTPUT when one run proves the main commit's tree; exit 1 and
-`proven=false` otherwise: a direct push, a tree that differs, a red or unfinished run, a proof job that skipped. Exit 2
+`proven=false` otherwise: a push no such run passed, a tree that differs, a red or unfinished run, a proof job that skipped. Exit 2
 and `proven=false` when GitHub can't be read. Anything but 0 runs the full suite: it fails closed.
 """
 import json
@@ -66,10 +68,11 @@ def prove(api, sha, workflow, prefix):
     if len(heads) == 1:
         lines.append("no pull request was merged as this commit (a direct push?); only a merge queue run can prove it")
     for head in heads:
-        for run in api.runs(workflow, head):
-            where = f"run {run['id']} ({run.get('event')}, head {head[:7]})"
-            if run.get("event") not in EVENTS:
-                continue
+        # Only the newest run on a head counts, as in ci-green-gate.py: a rerun or a reopen that went red after a green
+        # run takes the proof back.
+        runs = sorted((r for r in api.runs(workflow, head) if r.get("event") in EVENTS), key=lambda r: r["id"])
+        for run in runs[-1:]:
+            where = f"run {run['id']} ({run.get('event')}, head {head[:7]}, the newest on it)"
             if run.get("status") != "completed" or run.get("conclusion") != "success":
                 lines.append(f"{where}: {run.get('status')} {run.get('conclusion')}, not a proof")
                 continue
@@ -141,7 +144,7 @@ def selftest():
             (Fake({main: tree}, pr, [run(7)], {7: [job(P + tree, "skipped")]}), not_proven),
         "a green PR run with no proof job does not":
             (Fake({main: tree}, pr, [run(8)], {8: [job("iPad (place)")]}), not_proven),
-        "a direct push (no merged pull request) does not":
+        "a direct push with no proving run on its own commit does not":
             (Fake({main: tree}, {}, [run(9)], {9: [job(P + tree)]}), not_proven),
         "a pull request not merged as this commit does not":
             (Fake({main: tree}, {main: [{"head": {"sha": head}, "merged_at": "x", "merge_commit_sha": other}]},
@@ -150,9 +153,14 @@ def selftest():
             (Fake({main: tree}, {}, [run(11, "push", h=main)], {11: [job(P + tree)]}), not_proven),
         "another workflow's run does not":
             (Fake({main: tree}, pr, [run(12, wf="real-unfold.yml")], {12: [job(P + tree)]}), not_proven),
-        "a red run beside a green proving one: the green one proves it":
+        "a red run before a green proving one: the newer green one proves it":
             (Fake({main: tree}, pr, [run(13, concl="failure"), run(14)], {13: [job(P + tree)], 14: [job(P + tree)]}),
              proven),
+        "a green proving run then a newer red one on the same head does not":
+            (Fake({main: tree}, pr, [run(15), run(16, concl="failure")], {15: [job(P + tree)], 16: [job(P + tree)]}),
+             not_proven),
+        "a direct push of a commit whose own pull_request run proved its tree does (equal trees, equal files)":
+            (Fake({main: tree}, {}, [run(17, h=main)], {17: [job(P + tree)]}), proven),
     }
     for name, (api, want) in cases.items():
         url, lines = prove(api, main, "app.yml", P)

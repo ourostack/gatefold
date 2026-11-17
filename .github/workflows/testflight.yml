@@ -38,6 +38,8 @@ jobs:
     permissions:
       contents: read
       checks: read
+      # The gate counts only main's own push runs' checks (scripts/ci-green-gate.py), found by their check suites.
+      actions: read
     outputs:
       sha: ${{ steps.sha.outputs.sha }}
       state: ${{ steps.gate.outputs.state }}

@@ -64,6 +64,32 @@ def judge(required, runs):
     return "green", lines
 
 
+def from_push(runs, suites):
+    """Only the check runs of this commit's own push runs on main. A pull request's or the merge queue's run on the same
+    commit (a PR head pushed to main as it is, or the queue's commit) can carry a required name with another meaning: on
+    a pull request a check that doesn't apply reports success without running. Main's verdict is main's runs'."""
+    return [r for r in runs if (r.get("check_suite") or {}).get("id") in suites]
+
+
+def push_suites(repo, sha, token):
+    body = get(f"https://api.github.com/repos/{repo}/actions/runs?head_sha={sha}&event=push&per_page=100", token)
+    return {r["check_suite_id"] for r in body.get("workflow_runs", []) if r.get("head_branch") == "main"}
+
+
+def get(url, token):
+    req = urllib.request.Request(url, headers={
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    })
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        return json.load(resp)
+
+
+def main_runs(repo, sha, token):
+    return from_push(fetch_runs(repo, sha, token), push_suites(repo, sha, token))
+
+
 def fetch_runs(repo, sha, token):
     runs, page = [], 1
     while True:
@@ -92,7 +118,7 @@ def newer_green(sha, repo, token, limit=20):
                           check=True, capture_output=True, text=True).stdout.split()
     required = required_names()
     for rev in revs:  # newest first
-        if judge(required, fetch_runs(repo, rev, token))[0] == "green":
+        if judge(required, main_runs(repo, rev, token))[0] == "green":
             return rev
     return ""
 
@@ -120,9 +146,15 @@ def selftest():
     for i, (runs, want) in enumerate(cases):
         got, _ = judge(req, runs)
         assert got == want, f"case {i}: got {got}, want {want}"
+    # Only main's own push runs count: a pull request's skipped-as-success check on the same commit is not main's.
+    pr_run = {"name": "B", "status": "completed", "conclusion": "success", "id": 5, "check_suite": {"id": 99}}
+    push_a = {**ok("A"), "check_suite": {"id": 1}}
+    assert judge(req, from_push([push_a, pr_run], {1}))[0] == "pending"
+    assert judge(req, from_push([push_a, {**pr_run, "check_suite": {"id": 1}}], {1}))[0] == "green"
+    assert judge(req, from_push([push_a, pr_run], set()))[0] == "pending"
     names = required_names()
     assert "Build and unit-test the app" in names and "Real unfold" in names, names
-    print(f"ci-green-gate selftest: {len(cases)} cases pass; {len(names)} required checks listed")
+    print(f"ci-green-gate selftest: {len(cases) + 3} cases pass; {len(names)} required checks listed")
 
 
 def main(argv):
@@ -135,7 +167,7 @@ def main(argv):
         print("ci-green-gate: needs --sha, GITHUB_REPOSITORY and GITHUB_TOKEN", file=sys.stderr)
         return 2
     try:
-        runs = fetch_runs(repo, sha, token)
+        runs = main_runs(repo, sha, token)
     except Exception as exc:  # network or API trouble: say so, never guess green
         print(f"ci-green-gate: could not read check runs for {sha}: {exc}", file=sys.stderr)
         return 2

@@ -18,8 +18,8 @@ name: App
 # Don't test the same tree twice (scripts/ci-proof.py). A run that ran the full lists and passed (the merge queue's, or a
 # full-list pull request's) ends with the job "Full suite passed on tree <tree>". A push to main whose tree such a run
 # already passed runs no shard: each required check reports success by that proof and names its run, so TestFlight
-# publishes right after the merge. Anything else on main (a direct push, another tree, a red run, an unreadable API)
-# runs the full suite.
+# publishes right after the merge. Anything else on main (a push no such run passed, another tree, a red newest run,
+# an unreadable API) runs the full suite.
 #
 # A pull request that changes only Markdown still gets every required check: `changes` says so, the test shards skip,
 # and each gate job (`iPad (...)`, `Duo (the reviewers' checks)`, `Build and unit-test the app`) reports success
