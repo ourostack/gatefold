@@ -248,8 +248,10 @@ final class NavigationPlaceUITests: XCTestCase {
     /// words from under a cover held for that jump (the open's rotation reflow didn't settle, and its 12 s watchdog
     /// read the page beneath), judged them settled, and tapped the cover's edge: that brought the controls up, as a
     /// tap on the cover does (#104), and its next tap took them down, so neither turned the page. Here the first
-    /// page's load is held for 600 looks (`-GatefoldHoldOpeningLoad`), so the cover stays up for the launch jump
-    /// after the page beneath has reported its words. Each read under the cover must find no words; once it lifts,
+    /// page's load is held (`-GatefoldHoldOpeningLoad`) until the page beneath has reported its words, this test
+    /// has read the screen 10 times since, and for 600 looks after, so the cover stays up for the launch jump with
+    /// words beneath it, however slow the runner (the looks once counted from the open, and a starved runner spent
+    /// them all first: run 44170382162). Each read under the cover must find no words; once it lifts,
     /// the words come. Judged in reads, never seconds.
     func testNoWordsAreReadUnderTheOpeningCover() {
         app.launchArguments = common + ["-GatefoldHoldOpeningLoad", "600", "-GatefoldReset", "YES", "-GatefoldDownloadAll", "YES",
