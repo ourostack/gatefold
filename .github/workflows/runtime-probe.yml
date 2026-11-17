@@ -1,5 +1,5 @@
-# Temporary probe (not for merge): when does the runner swap its simulator runtimes from the plain disk image to the
-# cryptex copy ("Image is a duplicate ... preferring cryptex variant"), and how long does a boot take after that?
+# Temporary probe (not for merge): does a booted simulator's runtime survive simdiskimaged's periodic
+# scan-and-mount (every 600 s), with and without stopping that scan?
 name: Runtime probe
 on:
   pull_request:
@@ -8,46 +8,55 @@ permissions:
   contents: read
 jobs:
   probe:
-    name: Probe ${{ matrix.n }}
+    name: Probe ${{ matrix.arm }} ${{ matrix.n }}
     runs-on: xcode-27
-    timeout-minutes: 30
+    timeout-minutes: 40
     strategy:
+      fail-fast: false
       matrix:
-        n: [1, 2, 3]
+        include:
+          - { arm: control, n: 1 }
+          - { arm: pref, n: 1 }
+          - { arm: pref-kick, n: 1 }
+          - { arm: pref-kick, n: 2 }
     steps:
-      - name: Watch the runtime images until they settle
+      - name: Set up the arm
         run: |
-          start=$(date +%s)
-          echo "job start $(date -u +%T), uptime: $(uptime)"
+          start=$(date +%s); echo "START=$start" >> "$GITHUB_ENV"
+          echo "job start $(date -u +%T); $(uptime)"
           sudo xcode-select -s /Applications/Xcode_27.1.app
-          prev=""
-          cat > "$RUNNER_TEMP/rt.py" <<'PYEOF'
-          import json, sys, collections
-          d = json.load(sys.stdin)
-          rows = sorted("%s %s %s %s %s" % (v.get("runtimeIdentifier", "?").split(".")[-1], v.get("build"), v.get("state"),
-                        v.get("kind"), (v.get("mountPath") or "").split("/")[-1]) for v in d.values()
-                        if "iOS" in v.get("runtimeIdentifier", ""))
-          c = collections.Counter((v.get("runtimeIdentifier"), v.get("build")) for v in d.values())
-          dup = sum(1 for n in c.values() if n > 1)
-          busy = sum(1 for v in d.values() if v.get("state") != "Ready")
-          print("dup=%d busy=%d" % (dup, busy))
-          print("\n".join(rows))
-          PYEOF
-          while :; do
-            t=$(( $(date +%s) - start ))
-            now=$(xcrun simctl runtime list -j | python3 "$RUNNER_TEMP/rt.py")
-            if [ "$now" != "$prev" ]; then echo "--- t=${t}s"; echo "$now"; prev="$now"; fi
-            case "$now" in "dup=0 busy=0"*) echo "SETTLED at ${t}s"; echo "settled=$t" >> "$GITHUB_ENV"; break;; esac
-            [ $t -gt 1200 ] && { echo "NOT SETTLED in 1200s"; break; }
-            sleep 10
-          done
-      - name: Boot an iPad on iOS 27.0 after that
+          case "${{ matrix.arm }}" in
+            pref|pref-kick)
+              sudo defaults write com.apple.CoreSimulator.simdiskimaged MinimumTimeBetweenScanAndMounts -int 86400
+              defaults write com.apple.CoreSimulator.simdiskimaged MinimumTimeBetweenScanAndMounts -int 86400
+              sudo defaults read com.apple.CoreSimulator.simdiskimaged ;;
+          esac
+          if [ "${{ matrix.arm }}" = pref-kick ]; then
+            s=$(date +%s); sudo launchctl kickstart -k system/com.apple.CoreSimulator.simdiskimaged; echo "kickstart $(( $(date +%s) - s ))s"
+          fi
+          if [ "${{ matrix.arm }}" != control ]; then
+            s=$(date +%s); xcrun simctl runtime scan-and-mount; echo "scan-and-mount took $(( $(date +%s) - s ))s, at $(( $(date +%s) - start ))s"
+          fi
+      - name: Boot an iPad on iOS 27.0
         run: |
           s=$(date +%s)
           rt=$(xcrun simctl list runtimes -j | python3 -c 'import json,sys; print([r["identifier"] for r in json.load(sys.stdin)["runtimes"] if r["identifier"].endswith("iOS-27-0") and r["isAvailable"]][0])')
           kind=$(xcrun simctl list devicetypes -j | python3 -c 'import json,sys; print([d["identifier"] for d in json.load(sys.stdin)["devicetypes"] if d["name"].startswith("iPad Pro 13-inch")][0])')
           u=$(xcrun simctl create probe "$kind" "$rt")
+          echo "U=$u" >> "$GITHUB_ENV"
           xcrun simctl bootstatus "$u" -b > /dev/null
-          echo "BOOT took $(( $(date +%s) - s ))s after settling at ${settled:-?}s"
-          sudo log show --last 30m --predicate 'process == "simdiskimaged"' --style compact 2>/dev/null | grep -E 'preferring cryptex|Unmounting /Library|Disk disappeared|login session' | cut -c1-220 || true
-          xcrun simctl delete "$u"
+          echo "BOOT took $(( $(date +%s) - s ))s, done at $(( $(date +%s) - START ))s"
+      - name: Watch the booted simulator for 24 min
+        run: |
+          bad=0
+          while [ $(( $(date +%s) - START )) -lt 1560 ]; do
+            t=$(( $(date +%s) - START ))
+            if ! perl -e 'alarm 30; exec @ARGV' xcrun simctl spawn "$U" launchctl list > /dev/null 2>&1; then echo "t=${t}s SPAWN FAILED"; bad=$((bad+1)); fi
+            st=$(xcrun simctl list devices -j | python3 -c "import json,sys; print([d['state'] for ds in json.load(sys.stdin)['devices'].values() for d in ds if d['udid']=='$U'])")
+            case "$st" in *Booted*) ;; *) echo "t=${t}s state $st"; bad=$((bad+1));; esac
+            sleep 15
+          done
+          echo "RESULT ${{ matrix.arm }}: $bad bad checks"
+          sudo log show --start "$(date -r "$START" '+%Y-%m-%d %H:%M:%S')" --predicate 'process == "simdiskimaged"' --style compact 2>/dev/null \
+            | grep -E 'preferring cryptex|Unmounting /|Disk disappeared|Starting .* scan and mount|login session|scan-and-mount' | cut -c12-23,60-240 || true
+          xcrun simctl delete "$U" || true
