@@ -134,10 +134,11 @@ def lane(pr, block=None):
     # A matrix whose legs each wait in their own lane, shared by every pull request: one lane per distinct `lane:`.
     m = re.fullmatch(r"format\('gatefold-macos-pr-lane-([a-z0-9-]+)-\{0\}', matrix\.lane\)", pr)
     if m:
-        legs = set(re.findall(r"^            lane: (\d+)\s*$", block or "", re.M))
-        if not legs:
+        entries = re.split(r"^          - ", block or "", flags=re.M)[1:]
+        legs = [re.search(r"^(?:            )?lane: (\d+)\s*$", e, re.M) for e in entries]
+        if not entries or not all(legs):
             return None, "a lane by matrix.lane needs a literal `lane:` in each matrix entry"
-        return m.group(1), len(legs)
+        return m.group(1), len({l.group(1) for l in legs})
     m = re.fullmatch(r"format\('gatefold-macos-pr-lane-([a-z0-9-]+)-\{0\}', (.+)\)", pr)
     if not m:
         return None, "the pull-request branch must be a lane name: 'gatefold-macos-pr-lane-<name>-0', or a format of one"
@@ -201,6 +202,11 @@ def check(files):
             names[name] = where
             total += lanes
     errors += check_shards(files.get("app.yml", ""), files.get("ui-tests.yml", ""))
+    for job, block in jobs(files.get("real-unfold.yml", "")):
+        limit = re.search(r"^      LIMIT: \"(\d+)\"", block, re.M)
+        timeout = re.search(r"^    timeout-minutes: (\d+)", block, re.M)
+        if limit and (not timeout or timeout.group(1) != limit.group(1)):
+            errors.append(f"real-unfold.yml: {job}: env LIMIT must equal timeout-minutes, or the unfolds stop by the wrong clock")
     if total > BUDGET:
         errors.append(f"the lanes add up to {total}, over the budget of {BUDGET} (see BUDGET in scripts/ci-lanes.py)")
     return errors
@@ -312,7 +318,8 @@ def selftest():
         "comment only": ({**good, "app.yml": GOOD_JOB.replace("      queue: max", "      # queue: max") + GOOD_CALLER}, "queue: max"),
         "unlaned unfold": ({**good, "real-unfold.yml": "jobs:\n  unfold:\n    if: always()\n    runs-on: xcode-27\n"}, "no lane"),
         "matrix lanes": ({**good, "real-unfold.yml": GOOD_LEGS}, None),
-        "matrix lanes without a lane": ({**good, "real-unfold.yml": GOOD_LEGS.replace("            lane: 2\n", "").replace("            lane: 1\n", "")}, "literal `lane:`"),
+        "matrix lanes without a lane": ({**good, "real-unfold.yml": GOOD_LEGS.replace("            lane: 2\n", "")}, "literal `lane:`"),
+        "unfold limit drifts": ({**good, "real-unfold.yml": GOOD_LEGS + "    timeout-minutes: 70\n    env:\n      LIMIT: \"60\"\n"}, "must equal"),
         "testflight on PRs": ({**good, "testflight.yml": "on:\n  pull_request:\njobs:\n  publish:\n    runs-on: xcode-27\n"}, "testflight.yml runs on pull requests"),
         "matrix os": ({**good, "app.yml": GOOD_JOB + "  m:\n    runs-on: ${{ matrix.os }}\n    strategy:\n      matrix:\n        os: [macos-26]\n" + GOOD_CALLER}, "no lane"),
         "leg group": ({**good, "app.yml": GOOD_JOB.replace("    runs-on: xcode-27\n", "    runs-on: xcode-27\n    strategy:\n      matrix: {}\n") + GOOD_CALLER}, "group of their own"),

@@ -81,7 +81,7 @@ jobs:
           if [ "$EVENT" != pull_request ]; then echo "reader=true" >> "$GITHUB_OUTPUT"; exit 0; fi
           git diff --name-only "$BASE...$HEAD" > changed.txt
           # The reader, the fold and the app shell it runs in; GatefoldCore; the Readium link; the project; the hinge driver.
-          if grep -E '^(\.github/(workflows/real-unfold\.yml|scripts/duo/|actions/)|Gatefold/(Reader|Duo|App)/|Packages/GatefoldCore/|Packages/GatefoldCloud/(Package\.(swift|resolved)$|Sources/GatefoldCloudReadium/)|project\.yml$)' changed.txt; then
+          if grep -E '^(\.github/(workflows/real-unfold\.yml|scripts/duo/|scripts/boot-sim\.sh|actions/)|Gatefold/(Reader|Duo|App)/|Packages/GatefoldCore/|Packages/GatefoldCloud/(Package\.(swift|resolved)$|Sources/GatefoldCloudReadium/)|project\.yml$)' changed.txt; then
             echo "reader=true" >> "$GITHUB_OUTPUT"
           else
             echo "reader=false" >> "$GITHUB_OUTPUT"
@@ -166,12 +166,14 @@ jobs:
         && format('gatefold-macos-pr-lane-unfold-{0}', matrix.lane)
         || format('real-unfold-{0}-{1}-{2}', github.run_id, github.run_attempt, strategy.job-index) }}
       queue: max
-    # 36 for the build wait (its own limit), 3 to install and open, twice a place's slowest unfolds (about 9.5 min:
-    # 43 min for five places and eight early unfolds in run 44019735528), and 5 for the verdicts and the upload.
-    timeout-minutes: 63
+    # 36 for the boot, DeviceHub and the build wait (await-build's own limit), up to 12 for a slow download and the
+    # install, twice a place's slowest unfolds (about 9.5 min: 43 min for five places and eight early unfolds in run
+    # 44019735528), and the last 10 for the verdicts and the upload, when no new unfold starts (stop_at below). A late
+    # build eats into the unfolds' share first; a place that runs out is red, never shortened.
+    timeout-minutes: 77
     env:
       APP: bot.ouro.gatefold
-      LIMIT: "63" # the job's timeout-minutes, for the unfold step's own stop
+      LIMIT: "77" # the job's timeout-minutes, for the unfold step's own stop (scripts/ci-lanes.py checks they agree)
     steps:
       # The unfolds stop in time for their verdicts and the upload, counted from here (gatefold#391).
       - run: echo "JOB_START=$(date +%s)" >> "$GITHUB_ENV"
@@ -414,7 +416,7 @@ jobs:
             echo "EARLY UNFOLD place $place (page ready in $took s)" | tee -a "$out/marks.log"
             echo "EARLY UNFOLD place $place" >> "$out/reader.log"
             move "Open" spread 16 || return 1
-            xcrun simctl io "$udid" screenshot --display=3 "$out/shots/early-$place-$took.png" >/dev/null 2>&1 || true
+            xcrun simctl io "$udid" screenshot --display=3 "$out/shots/early-$place-$(grep -c "" "$out/marks.log")-$took.png" >/dev/null 2>&1 || true
           done
           }
           # The flags carry how it ended; the verdicts below print either way.
