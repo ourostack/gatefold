@@ -326,12 +326,12 @@ struct SessionTests {
         await t.on("POST", "/auth/renew-token", .json(#"{"error_code":223,"error_msg":"Unknown token"}"#, status: 403))
         await t.on("POST", "/auth/login/pocketbook_de", .json(#"{"error_code":1204,"error_msg":"Authorization partner user failed"}"#, status: 403))
         await #expect(throws: CloudError.authenticationRequired) { _ = try await session.send(.get("/books")) }
-        #expect(await t.requests("POST", "/auth/login/pocketbook_de").count == 3, "the typed sign-in, then the kept password twice")
+        #expect(await t.requests("POST", "/auth/login/pocketbook_de").count == 4, "the typed sign-in, then the kept password three times")
         let saved = try #require(await store.load())
         #expect(saved.password == nil)
         #expect(saved.account.email == "reader@example.com", "keeps his name, shelf and place")
         await #expect(throws: CloudError.authenticationRequired) { _ = try await session.send(.get("/books")) }
-        #expect(await t.requests("POST", "/auth/login/pocketbook_de").count == 3, "never tried again")
+        #expect(await t.requests("POST", "/auth/login/pocketbook_de").count == 4, "never tried again")
     }
 
     @Test func aReSignInThatFailsOnTheNetworkKeepsThePassword() async throws {
