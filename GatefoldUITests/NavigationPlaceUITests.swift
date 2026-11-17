@@ -136,24 +136,27 @@ final class NavigationPlaceUITests: XCTestCase {
     /// the jump's start, so that is what is judged: the old page gets the one look a page still loading
     /// gets (`OldPagePicture.tries`), counted by the app in looks, and the veil is up within 10 probe
     /// reads of where the same jump from a loaded page has it, on the same runner. Both jumps then move
-    /// the page and put up Back within `jumpReadCeiling` reads.
+    /// the page and put up Back before `jumpReadLimit`.
     ///
-    /// The far chapter's load after the start is the same code for both and is not compared: on CI's
+    /// The far chapter's load after the start is the same code for both and is not judged in reads: on CI's
     /// iPad, at a load average near 400, it took 5.8 to 26.8 s run to run, with or without the hold,
     /// either one the slower (#73: loaded 22 and still loading 11 reads at e8d5ae1, 14 and 33 at
     /// d2534bd; run 43188075650, held first and last: held 10, loaded 27, loaded 26, held 11). In every
-    /// one of those runs the jump pictured its old page in one look, under 0.7 s.
+    /// one of those runs the jump pictured its old page in one look, under 0.7 s. A 60-read ceiling on the
+    /// move timed that load, not the start (gatefold#358): across 41 runs from 11-15 to 11-16 the held
+    /// jump moved in 7 to 82 reads and the loaded one in 10 to 52, with no step at any merge, and it failed
+    /// only at the top of that spread (64 at 74383b3, 82 at b27d41b, at a load average near 600, where
+    /// WebKit took 10 s to start the far chapter's web process). Both of those still started in 1 read.
     func testAJumpFromAPageStillLoadingStartsAtOnce() {
         let plain = contentsJumpReads([])
         let held = contentsJumpReads(["-GatefoldHoldOldPageLoad", "1200"])
         print("OLDPAGEHELD reads to start: loaded \(plain.start), still loading \(held.start); old page looks: loaded \(plain.looks.map(String.init) ?? "none"), still loading \(held.looks.map(String.init) ?? "none"); to move: loaded \(plain.move), still loading \(held.move); to Back: loaded \(plain.back), still loading \(held.back)")
-        // At once, everywhere: neither jump may take more than `jumpReadCeiling` reads, whatever the
-        // runner. Baselines on CI's iPad: loaded 9 and 81, still loading 12 (runs 42484222632 and
-        // 42490481581); the 81 was a 37 s jump, which is not at once.
-        XCTAssertLessThanOrEqual(plain.move, Self.jumpReadCeiling, "the jump from a loaded page moved the page only after \(plain.move) reads")
-        XCTAssertLessThanOrEqual(held.move, Self.jumpReadCeiling, "the jump from a page still loading moved the page only after \(held.move) reads")
-        XCTAssertLessThanOrEqual(plain.back, Self.jumpReadCeiling, "the jump from a loaded page put up Back only after \(plain.back) reads")
-        XCTAssertLessThanOrEqual(held.back, Self.jumpReadCeiling, "the jump from a page still loading put up Back only after \(held.back) reads")
+        // Both jumps arrive: the page moves and Back comes up before the read limit. How long the far
+        // chapter takes to load is the runner's (gatefold#358), so it is printed above, not judged.
+        XCTAssertLessThan(plain.move, Self.jumpReadLimit, "the jump from a loaded page never moved the page")
+        XCTAssertLessThan(held.move, Self.jumpReadLimit, "the jump from a page still loading never moved the page")
+        XCTAssertLessThan(plain.back, Self.jumpReadLimit, "the jump from a loaded page never put up Back")
+        XCTAssertLessThan(held.back, Self.jumpReadLimit, "the jump from a page still loading never put up Back")
         // The start. Both jumps ran under a veil, and the app kept the looks its old page took.
         XCTAssertNotNil(plain.looks, "the jump from a loaded page ran under a veil")
         XCTAssertNotNil(held.looks, "the jump from a page still loading ran under a veil")
@@ -164,8 +167,6 @@ final class NavigationPlaceUITests: XCTestCase {
     }
 
     private static let jumpReadLimit = 400
-    /// About 30 s of probe reads on CI's iPad (about 0.5 s a read there).
-    private static let jumpReadCeiling = 60
 
     /// Opens fresh, jumps to chapter XXX through Contents, and counts probe reads from the tap until
     /// the jump starts (its veil is up), until the words change, and until Back is up (the limit when
