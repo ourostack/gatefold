@@ -16,7 +16,7 @@ final class ReopenTimingUITests: XCTestCase {
         "-GatefoldSignedIn", "YES", "-GatefoldAllowReopen", "YES",
     ]
 
-    private var visibleText: String { (app.descendants(matching: .any)["reader.visibleText"].value as? String) ?? "" }
+    private var visibleText: String { app.readerVisibleText }
 
     private func settle(_ seconds: TimeInterval) {
         let deadline = Date().addingTimeInterval(seconds)
