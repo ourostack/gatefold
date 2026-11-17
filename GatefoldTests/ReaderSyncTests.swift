@@ -132,7 +132,12 @@ final class ScriptedPage: ReaderPage {
     private(set) var standby: Locator?
     private(set) var promoted: [Locator] = []
 
-    func prepareStandby(at locator: Locator) { standby = locator }
+    /// Standby loads asked for while the opening cover was still up (the first page not yet shown).
+    private(set) var standbysUnderCover = 0
+    func prepareStandby(at locator: Locator) {
+        if model?.pageReady == false { standbysUnderCover += 1 }
+        standby = locator
+    }
     func dropStandby() { standby = nil }
 
     func promoteStandby(for locator: Locator) async -> Bool {
@@ -398,6 +403,24 @@ final class ScriptedPage: ReaderPage {
         // The cover gives way once the check has answered (it was held for a landing): counted in reads.
         for _ in 0..<100 where !f.model.pageReady { try await Task.sleep(for: .milliseconds(20)) }
         #expect(f.model.pageReady, "the cover never gave way to the page")
+        f.model.close()
+    }
+
+    /// A first open with the Cloud ahead: the page the offer would land on loads behind this one, but only once the
+    /// first page has shown. Loaded under the cover, it raced the first page for the web views: on CI's iPad every
+    /// cold open of a book with the Cloud ahead showed only by the cover's forced reveal (13 to 28 s), and at 55344d8
+    /// the first page and the Cloud's page were both still loading 52 s after the tap (ipad-taps-rest, job
+    /// 133753597520). Counted in reads.
+    @Test func theCloudPlacesPageLoadsBehindOnlyOnceTheFirstPageHasShown() async throws {
+        let f = try await Self.make(remote: { _, _ in
+            ReadingPosition(cfi: nil, totalProgression: 0.42, updated: Date(), source: .pocketBookNative)
+        }, book: { $0.remote = ReadingPosition(cfi: nil, totalProgression: 0.42, updated: Date(), source: .pocketBookNative) })
+        await f.model.load()
+        #expect(f.model.suggestion != nil, "the Cloud's place is offered")
+        for _ in 0..<100 where !f.model.pageReady || f.page.standby == nil { try await Task.sleep(for: .milliseconds(20)) }
+        #expect(f.model.pageReady, "the cover never gave way to the page")
+        #expect(f.page.standby != nil, "the Cloud place's page never started loading behind the page")
+        #expect(f.page.standbysUnderCover == 0, "the Cloud place's page started loading while the first page was still under its cover")
         f.model.close()
     }
 
@@ -804,7 +827,9 @@ final class ScriptedPage: ReaderPage {
         let loading = Task { await f.model.load() }
         for _ in 0..<100 where f.page.jumps.isEmpty { try await Task.sleep(for: .milliseconds(50)) }
         await f.model.checkRemote()
-        #expect(f.page.standby != nil)
+        #expect(f.model.suggestion != nil)
+        // Taken over the opening cover: the Cloud place's page loads once the first page shows, and the tap swaps it in.
+        #expect(f.page.standby == nil || f.model.pageReady, "the Cloud place's page loaded under the opening cover")
         await f.model.acceptSuggestion()
         let afterSwap = f.page.jumps.count
         await loading.value
