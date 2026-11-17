@@ -150,14 +150,14 @@ struct SessionTests {
         #expect(await t.requests("POST", "/auth/login/pocketbook_de").count == 2)
     }
 
-    /// Only twice: each try counts against the Cloud's per-account login limit.
-    @Test func aPasswordRefusedTwiceIsWrong() async throws {
+    /// Each try counts against the Cloud's per-account login limit.
+    @Test func aPasswordRefusedThreeTimesIsWrong() async throws {
         let t = ScriptedTransport()
         await t.on("POST", "/auth/login/pocketbook_de", .json(#"{"error_code":1204,"error_msg":"Authorization partner user failed"}"#, status: 403))
         await #expect(throws: CloudError.invalidCredentials) {
             _ = try await makeSession(t).signIn(email: "reader@example.com", password: "bad", store: testStore())
         }
-        #expect(await t.requests("POST", "/auth/login/pocketbook_de").count == 2)
+        #expect(await t.requests("POST", "/auth/login/pocketbook_de").count == 3)
     }
 
     @Test func theLoginLimitStopsTheRetryAndSaysSo() async throws {
