@@ -33,8 +33,8 @@ EXEMPT = {
     # The shards and Unit tests wait for this run's build inside their own jobs, so a laned build would spend their
     # setup budget. One runs per pull request being pushed.
     ("app.yml", "build"): None,
-    # Main and dispatch only: its `if` keeps it off pull requests, and the check holds it to that.
-    ("real-unfold.yml", "real-unfold"): "github.event_name != 'pull_request'",
+    # Main, the merge queue and dispatch only: its `if` keeps it off pull requests, and the check holds it to that.
+    ("real-unfold.yml", "unfold"): "github.event_name != 'pull_request'",
     # The cloud canary signs in to the live cloud, so it runs from schedule and dispatch only, one at a time in its
     # own group; never on a pull request.
     ("cloud-canary.yml", "canary"): "github.event_name != 'pull_request'",
@@ -282,14 +282,14 @@ def selftest():
         "unbounded lane": ({**good, "app.yml": GOOD_JOB.replace("(endsWith(format('{0}', github.event.pull_request.number), '1') || endsWith(format('{0}', github.event.pull_request.number), '4')) && '1' || '0'", "github.event.pull_request.number") + GOOD_CALLER}, "last-digit chain"),
         "swapped": ({**good, "app.yml": GOOD_JOB.replace("github.event_name == 'pull_request'", "github.event_name != 'pull_request'") + GOOD_CALLER}, "the group must read"),
         "comment only": ({**good, "app.yml": GOOD_JOB.replace("      queue: max", "      # queue: max") + GOOD_CALLER}, "queue: max"),
-        "real-unfold on PRs": ({**good, "real-unfold.yml": "jobs:\n  real-unfold:\n    if: always()\n    runs-on: xcode-27\n"}, "exempt only while"),
+        "real-unfold on PRs": ({**good, "real-unfold.yml": "jobs:\n  unfold:\n    if: always()\n    runs-on: xcode-27\n"}, "exempt only while"),
         "testflight on PRs": ({**good, "testflight.yml": "on:\n  pull_request:\njobs:\n  publish:\n    runs-on: xcode-27\n"}, "testflight.yml runs on pull requests"),
         "matrix os": ({**good, "app.yml": GOOD_JOB + "  m:\n    runs-on: ${{ matrix.os }}\n    strategy:\n      matrix:\n        os: [macos-26]\n" + GOOD_CALLER}, "no lane"),
         "leg group": ({**good, "app.yml": GOOD_JOB.replace("    runs-on: xcode-27\n", "    runs-on: xcode-27\n    strategy:\n      matrix: {}\n") + GOOD_CALLER}, "group of their own"),
         "hash in group": ({**good, "app.yml": GOOD_JOB.replace("        || format('app-unit", "        #${{ github.event.pull_request.number }}\n        || format('app-unit") + GOOD_CALLER}, "the group must read"),
         "blank in group": ({**good, "app.yml": GOOD_JOB.replace("        || format('app-unit", "\n        || format('app-unit") + GOOD_CALLER}, "the group must read"),
         "off-PR joins a lane": ({**good, "app.yml": GOOD_JOB.replace("format('app-unit-{0}-{1}'", "format('gatefold-macos-pr-lane-unit-0'") + GOOD_CALLER}, "group of their own"),
-        "condition in a step": ({**good, "real-unfold.yml": "jobs:\n  real-unfold:\n    if: always()\n    runs-on: xcode-27\n    steps:\n      - if: github.event_name != 'pull_request'\n"}, "exempt only while"),
+        "condition in a step": ({**good, "real-unfold.yml": "jobs:\n  unfold:\n    if: always()\n    runs-on: xcode-27\n    steps:\n      - if: github.event_name != 'pull_request'\n"}, "exempt only while"),
         "testflight inline on": ({**good, "testflight.yml": "on: [workflow_run, pull_request]\njobs:\n  publish:\n    runs-on: xcode-27\n"}, "testflight.yml runs on pull requests"),
         "exempt build": ({**good, "app.yml": GOOD_JOB + "  build:\n    runs-on: xcode-27\n" + GOOD_CALLER}, None),
         "one shard set": ({**good, "ui-tests.yml": re.sub(r"format\('gatefold-macos-pr-lane-shard-\{0\}-\{1\}', inputs\.lane, .*\)\n", "format('gatefold-macos-pr-lane-shard-{0}-{1}', inputs.lane, '0')\n", GOOD_UI)}, "shard lane's {1}"),
