@@ -8,10 +8,11 @@ name: Real unfold
 #
 # One build, five places at once (gatefold#39's pattern): `Build for testing` builds the app for the simulator once and
 # uploads it; each place's job boots its own iPhone Duo and opens DeviceHub while that build runs, waits for it
-# (.github/actions/await-build), installs it and unfolds at its place: three rounds and a half open, then its share of
-# the eight early unfolds. One job held all five places in a row (about 43 min of unfolds, 62 to 81 min a run). Each
-# job stops starting unfolds in time to print its verdicts and upload its logs, and is red for the unfolds it never
-# made (gatefold#391).
+# (.github/actions/await-build), installs it and unfolds: five jobs each take one place (three rounds and a half open,
+# about 8 min), and two more take four of the eight early unfolds each (about 2 min apiece). One job held all five
+# places in a row (about 43 min of unfolds, 62 to 81 min a run); one job a place, early unfolds included, ran 9 to 12
+# min of unfolds (run 44122659961). Each job stops starting unfolds in time to print its verdicts and upload its logs,
+# and is red for the unfolds it never made (gatefold#391).
 #
 # The required check `Real unfold` is the gate job at the end: green when every place passed; on a pull request that
 # doesn't touch the reader; or on a main push whose tree the merge queue's run or a pull request's already unfolded and
@@ -131,7 +132,7 @@ jobs:
           overwrite: true
 
   unfold:
-    name: Unfold at ${{ matrix.place }}
+    name: ${{ matrix.place != '' && format('Unfold at {0}', matrix.place) || format('Unfold early, at {0}', matrix.early) }}
     needs: changes
     # Starts with the run, so the simulator boots and DeviceHub opens while `build` builds. A failed `changes` leaves
     # the outputs empty, so the unfolds run rather than skipping as a pass.
@@ -141,24 +142,32 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Five places in the book, and the eight early unfolds spread over them (0.12, 0.31 and 0.47 get two).
+          # Five places in the book, one job each for its rounds and half open; the eight early unfolds (0.12, 0.31
+          # and 0.47 twice, 0.66 and 0.83 once) split over two more jobs, four each, so no job runs much past 8 min
+          # of unfolds. Every unfold the single job made is still made, and judged the same way.
           - place: "0.12"
-            early: "0.12 0.12"
+            early: ""
             lane: 1
           - place: "0.31"
-            early: "0.31 0.31"
+            early: ""
             lane: 2
           - place: "0.47"
-            early: "0.47 0.47"
+            early: ""
             lane: 3
           - place: "0.66"
-            early: "0.66"
+            early: ""
             lane: 4
           - place: "0.83"
-            early: "0.83"
+            early: ""
             lane: 5
+          - place: ""
+            early: "0.12 0.31 0.47 0.66"
+            lane: 6
+          - place: ""
+            early: "0.12 0.31 0.47 0.83"
+            lane: 7
     runs-on: xcode-27
-    # PR lane (gatefold#286): one lane per place, shared by every open pull request; see "macOS lanes" in app.yml.
+    # PR lane (gatefold#286): one lane per job, shared by every open pull request; see "macOS lanes" in app.yml.
     # Never cancel-in-progress.
     concurrency:
       group: >-
@@ -167,7 +176,7 @@ jobs:
         || format('real-unfold-{0}-{1}-{2}', github.run_id, github.run_attempt, strategy.job-index) }}
       queue: max
     # 36 for the boot, DeviceHub and the build wait (await-build's own limit), up to 12 for a slow download and the
-    # install, twice a place's slowest unfolds (about 9.5 min: 43 min for five places and eight early unfolds in run
+    # install, twice a job's slowest unfolds (about 9.5 min: 43 min for five places and eight early unfolds in run
     # 44019735528), and the last 10 for the verdicts and the upload, when no new unfold starts (stop_at below). A late
     # build eats into the unfolds' share first; a place that runs out is red, never shortened.
     timeout-minutes: 77
@@ -245,7 +254,7 @@ jobs:
           left=$(( (JOB_START + (LIMIT - 5) * 60 - $(date +%s)) / 60 ))
           [ "$left" -ge 1 ] || left=1
           echo "minutes=$left" >> "$GITHUB_OUTPUT"
-      - name: Unfold with a book open, at ${{ matrix.place }}
+      - name: Unfold with a book open, at ${{ matrix.place || matrix.early }}
         id: unfold
         timeout-minutes: ${{ fromJSON(steps.left.outputs.minutes) }}
         run: |
@@ -262,7 +271,7 @@ jobs:
           rounds="${{ inputs.rounds || '3' }}"
           places="${{ matrix.place }}"
           early="${{ matrix.early }}"
-          planned=$(( (rounds + 1) + $(echo "$early" | wc -w) ))
+          planned=$(( (rounds + 1) * $(echo "$places" | wc -w) + $(echo "$early" | wc -w) ))
           # Inside `unfolds || true` bash's -e is off, so each command the step needs says when it failed.
           out_of_time=0 stalled=0 failed=0
           in_time() {
@@ -468,7 +477,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: real-unfold-${{ matrix.place }}
+          name: real-unfold-${{ matrix.place || format('early-{0}', matrix.lane) }}
           path: |
             ${{ runner.temp }}/unfold/reader.log
             ${{ runner.temp }}/unfold/marks.log

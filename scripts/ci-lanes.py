@@ -28,10 +28,11 @@ SHARD_SETS = 2
 # tests, 1 each for Duo tour, the cloud package and the two screenshot jobs. Builds for testing aren't laned (see
 # EXEMPT): one runs per pull request being pushed. Raised from 28 on 2026-11-13 while spoonjoy is outside the
 # enterprise, so ourostack has all 50 of its macOS slots; if spoonjoy rejoins, set SHARD_SETS back to 1 and BUDGET to 28.
-# Plus 5 for Real unfold's places on pull requests that touch the reader (2026-11-17). From 2026-11-15 to 11-17 the
+# Plus 7 for Real unfold's jobs (five places and two of early unfolds) on pull requests that touch the reader
+# (2026-11-17). From 2026-11-15 to 11-17 the
 # organization's macOS jobs peaked at 82 at once (gatefold, ouro-ui-apple, ouro-md, ouro-ui-core), so 50 is not a hard
 # ceiling, but main's unlaned shards waited 5 to 34 min whenever about 50 to 65 ran: the pool is busy, not idle.
-BUDGET = 51
+BUDGET = 53
 EXEMPT = {
     # The shards and Unit tests wait for this run's build inside their own jobs, so a laned build would spend their
     # setup budget. One runs per pull request being pushed.
