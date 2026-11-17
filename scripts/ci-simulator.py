@@ -3,6 +3,7 @@
 
     python3 -I scripts/ci-simulator.py start <name> "<device name prefix>"   # e.g. "iPad Pro 13-inch", "iPhone Duo"
     python3 -I scripts/ci-simulator.py wait <name> "<device name prefix>" [s] # wait for it (default 1200 s)
+    python3 -I scripts/ci-simulator.py settle <runtime identifier> [s]        # wait out a swap of its image (660 s)
     python3 -I scripts/ci-simulator.py --selftest
 
 `start` picks the newest iOS runtime the image already has that offers that device and is no newer than the selected
@@ -25,6 +26,16 @@ check; if the runtime went, one fresh device erased the same way. It prints the 
 Once a device passes its check, `wait` and `erase` remove its first-boot jobs (.github/scripts/quiet-sim.labels,
 gatefold#209) on the step's time left, so XCUITest does not launch the app inside the first boot's load.
 Offline test: bash scripts/test-ci-simulator.sh (a fake xcrun and boot-sim.sh; no simulator).
+
+Before it boots, `start` waits until the runtime's image has settled (`settle`). A fresh hosted runner is still
+copying some runtimes into place when the job starts. When a copy finishes, simdiskimaged logs "Image is a duplicate of
+existing image - preferring cryptex variant", unmounts the image the simulator booted from and mounts the copy at a
+new path. A booted device then loses its runtime under the tests: "runtime path not found", "Test crashed with signal
+term", "Channel disconnected", or system processes crashing with SIGBUS (gatefold#71, #329, #440; job 134238519731's
+simdiskimaged.log shows iOS 27.0 swapped 5.5 min into the job, just after the boot). `settle` reads
+`simctl runtime list -j` and waits while the runtime has an image that isn't Ready or two images of one build, up to
+660 s (on probe runners every copy had finished by 640 s, gatefold#467). It waits only when the runtime is mid-swap,
+and boots anyway at the limit, so the check in `wait` still has the last word.
 
 A prefix that is a whole device name ("iPhone Duo") picks that device only, never a sibling such as "iPhone Duo Pro".
 """
@@ -67,6 +78,54 @@ def pick(runtimes, prefix, sdk):
     return r["identifier"], sorted(d["identifier"] for d in (exact or kinds))[-1]
 
 
+SETTLE_NAP = 10
+
+
+def pending(images, runtime):
+    """Why the runtime's image may still be swapped (a copy not Ready, or two images of one build), or None."""
+    mine = [v for v in images.values() if v.get("runtimeIdentifier") == runtime]
+    for v in mine:
+        if v.get("state") != "Ready":
+            return f"an image of {runtime} (build {v.get('build')}) is {v.get('state')}"
+    builds = [v.get("build") for v in mine]
+    for b in sorted(set(builds), key=str):
+        if builds.count(b) > 1:
+            return f"{runtime} has {builds.count(b)} images of build {b}"
+    return None
+
+
+def runtime_images():
+    """`simctl runtime list -j`, or None when it doesn't answer."""
+    try:
+        out = subprocess.run(["xcrun", "simctl", "runtime", "list", "-j"], capture_output=True, text=True, timeout=60)
+        return json.loads(out.stdout)
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return None
+
+
+def settle(runtime, limit=None, images=runtime_images, clock=time.time, nap=time.sleep):
+    """Seconds waited until the runtime's image settled; None when it hadn't by the limit (the boot goes on)."""
+    limit = setting("CI_SIMULATOR_SETTLE_LIMIT", "660") if limit is None else limit
+    began = clock()
+    said = None
+    while True:
+        listed = images()
+        why = pending(listed, runtime) if isinstance(listed, dict) else None
+        waited = clock() - began
+        if why is None:
+            if said:
+                print(f"::notice title=Runtime settled::{runtime} settled after {int(waited)} s ({said}); booting now.")
+            return waited
+        if said is None:
+            said = why
+            print(f"Waiting for {runtime} to settle before booting: {why}")
+        if waited >= limit:
+            print(f"::warning title=Runtime not settled::{runtime} still had {why} after {int(waited)} s; "
+                  "booting anyway (the check after the boot still applies).")
+            return None
+        nap(SETTLE_NAP)
+
+
 def start(name, prefix):
     sdk = subprocess.run(["xcrun", "--sdk", "iphonesimulator", "--show-sdk-version"], capture_output=True, text=True,
                          check=True, timeout=60).stdout.strip()
@@ -77,10 +136,11 @@ def start(name, prefix):
     d = state_dir()
     (d / f"{name}.started").write_text(f"{time.time()}\n")
     (d / f"{name}.plan").write_text(json.dumps({"kind": kind, "runtime": runtime, "prefix": prefix, "sdk": sdk}))
-    # Detached, so it outlives this step: the UDID goes to <name>.udid, boot-sim.sh's exit code to <name>.status.
+    # Detached, so it outlives this step: it waits for the runtime to settle, then boots. The UDID goes to
+    # <name>.udid, boot-sim.sh's exit code to <name>.status.
     subprocess.Popen(
-        ["sh", "-c", '"$1" "$2" "$3" "$4" > "$5.udid"; echo $? > "$5.status"', "boot",
-         str(BOOT_SIM), name, kind, runtime, str(d / name)],
+        ["sh", "-c", '"$6" -I "$7" settle "$4"; "$1" "$2" "$3" "$4" > "$5.udid"; echo $? > "$5.status"', "boot",
+         str(BOOT_SIM), name, kind, runtime, str(d / name), sys.executable, str(Path(__file__).resolve())],
         stdout=open(d / f"{name}.log", "ab"), stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
         start_new_session=True)
 
@@ -350,6 +410,9 @@ def main(argv):
             (d / f"{argv[1]}.log").open("a").write(f"ci-simulator start failed: {e!r}\n")
             (d / f"{argv[1]}.status").write_text("97\n")
         return 0
+    if len(argv) in (2, 3) and argv[0] == "settle":
+        settle(argv[1], float(argv[2]) if len(argv) == 3 else None)
+        return 0
     if len(argv) == 3 and argv[0] == "erase":
         # The cold step: erase the booted device and boot it again, each simctl call bounded, then the same check.
         # If its runtime went (gatefold#71), one fresh device, erased the same way, so the test still runs on an
@@ -475,6 +538,22 @@ def selftest():
     assert unready("a", [], devs) == "its runtime iOS-27-2 is no longer available"
     gone = {"iOS-27-2": [{"udid": "a", "state": "Booted", "isAvailable": False, "availabilityError": "runtime profile not found"}]}
     assert unready("a", rts, gone) == "a is unavailable (runtime profile not found)"
+    ready = {"runtimeIdentifier": "iOS-27-0", "build": "24A434", "state": "Ready"}
+    copying = dict(ready, state="Copying")
+    other = {"runtimeIdentifier": "watchOS-27-2", "build": "24S118", "state": "Copying"}
+    assert pending({"a": ready, "w": other}, "iOS-27-0") is None, "another runtime's copy doesn't hold this one"
+    assert pending({"a": ready, "b": copying}, "iOS-27-0") == "an image of iOS-27-0 (build 24A434) is Copying"
+    assert pending({"a": ready, "b": dict(ready)}, "iOS-27-0") == "iOS-27-0 has 2 images of build 24A434"
+    assert pending({"a": ready, "b": dict(ready, build="24A999")}, "iOS-27-0") is None, "two builds are two runtimes"
+    assert pending({}, "iOS-27-0") is None, "a runtime with no image listed boots at once"
+    now[0] = 0.0
+    seq = iter([{"a": ready, "b": copying}, {"a": ready, "b": copying}, {"b": ready}])
+    with redirect_stdout(open(os.devnull, "w")):
+        assert settle("iOS-27-0", 660, lambda: next(seq), clock, nap) == 20, "waits out the swap, then boots"
+        now[0] = 0.0
+        assert settle("iOS-27-0", 30, lambda: {"a": ready, "b": copying}, clock, nap) is None, "boots at the limit"
+        now[0] = 0.0
+        assert settle("iOS-27-0", 30, lambda: None, clock, nap) == 0, "an unanswered listing never holds the boot"
     print("ci-simulator: selftest passed")
     return 0
 
