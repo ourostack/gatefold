@@ -14,6 +14,10 @@ reruns the failed jobs, once (the run's first attempt only), when every failed o
 - was cancelled (none of our workflows cancels a job of a run that goes on, so it was stopped from outside), or
 - is a summary check that fails only because a shard did (SUMMARIES).
 
+A run with a cancelled job ends "cancelled", not "failure" (main's App run 44021756211 at 4688f6d: five iPad shards
+stopped from outside, and the rerun workflow skipped it twice), so both conclusions come here. A pull request's run
+cancelled because a newer push replaced it (app.yml's cancel-in-progress) is left alone: its newer run is the one.
+
 A test that failed next to them leaves the run as it is, for a person. Adapted from ouro-ui-apple's
 scripts/ci-rerun-broken-runner.py (#196, #202): annotations are read before logs, which GitHub stores late.
 """
@@ -37,6 +41,12 @@ def decide(failed):
     if other:
         return False, "other jobs failed too, so the run is left for a person: " + "; ".join(other)
     return True, "the runner stopped: " + "; ".join(runner)
+
+
+def superseded(run, newest_id):
+    """`run`: the App run ({id, conclusion, event}); `newest_id`: the newest App run of its branch and event. True when a
+    newer push cancelled it (only pull requests cancel in progress), so there is nothing to rerun."""
+    return run["conclusion"] == "cancelled" and run["event"] == "pull_request" and newest_id not in (None, run["id"])
 
 
 def gh(*args):
@@ -63,6 +73,15 @@ def evidence(repo, job_id):
 
 def main(run_id):
     repo = "repos/{owner}/{repo}"
+    run = json.loads(gh("api", f"{repo}/actions/runs/{run_id}",
+                        "--jq", "{id, conclusion, event, head_branch, workflow_id}"))
+    if run["conclusion"] == "cancelled" and run["event"] == "pull_request":
+        newest = json.loads(gh("api", f"{repo}/actions/workflows/{run['workflow_id']}/runs", "-X", "GET",
+                               "-f", f"branch={run['head_branch']}", "-f", "event=pull_request", "-f", "per_page=1",
+                               "--jq", "[.workflow_runs[].id]"))
+        if superseded(run, newest[0] if newest else None):
+            print(f"Not rerunning: a newer push replaced it (run {newest[0]})")
+            return
     jobs = json.loads(gh("api", "--paginate", f"{repo}/actions/runs/{run_id}/attempts/1/jobs",
                          "--jq", "[.jobs[]|{id, name, conclusion}]"))
     failed = [(j["name"], j["conclusion"], evidence(repo, j["id"]) if j["conclusion"] == "failure" else "")
@@ -118,6 +137,19 @@ def selftest():
         if got != want:
             bad += 1
             print(f"FAIL: {[f[0] for f in failed]}: got {got} ({why}), want {want}")
+    runs = [
+        # Main's run 44021756211: shards cancelled from outside end the run "cancelled"; main never cancels in progress.
+        (({"id": 1, "conclusion": "cancelled", "event": "push"}, 2), False),
+        # A pull request's run replaced by a newer push: that newer run is the one.
+        (({"id": 1, "conclusion": "cancelled", "event": "pull_request"}, 2), True),
+        (({"id": 2, "conclusion": "cancelled", "event": "pull_request"}, 2), False),
+        (({"id": 1, "conclusion": "failure", "event": "pull_request"}, 2), False),
+    ]
+    for (run, newest), want in runs:
+        if superseded(run, newest) != want:
+            bad += 1
+            print(f"FAIL: superseded({run}, {newest}) is not {want}")
+    cases += runs
     print(f"{len(cases) - bad} of {len(cases)} passed")
     return 1 if bad else 0
 
