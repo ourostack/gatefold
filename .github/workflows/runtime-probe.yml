@@ -21,15 +21,21 @@ jobs:
           echo "job start $(date -u +%T), uptime: $(uptime)"
           sudo xcode-select -s /Applications/Xcode_27.1.app
           prev=""
+          cat > "$RUNNER_TEMP/rt.py" <<'PYEOF'
+          import json, sys, collections
+          d = json.load(sys.stdin)
+          rows = sorted("%s %s %s %s %s" % (v.get("runtimeIdentifier", "?").split(".")[-1], v.get("build"), v.get("state"),
+                        v.get("kind"), (v.get("mountPath") or "").split("/")[-1]) for v in d.values()
+                        if "iOS" in v.get("runtimeIdentifier", ""))
+          c = collections.Counter((v.get("runtimeIdentifier"), v.get("build")) for v in d.values())
+          dup = sum(1 for n in c.values() if n > 1)
+          busy = sum(1 for v in d.values() if v.get("state") != "Ready")
+          print("dup=%d busy=%d" % (dup, busy))
+          print("\n".join(rows))
+          PYEOF
           while :; do
             t=$(( $(date +%s) - start ))
-            now=$(xcrun simctl runtime list -j | python3 -c '
-          import json,sys,collections
-          d=json.load(sys.stdin)
-          rows=sorted(f"{v.get(\"runtimeIdentifier\",\"?\").split(\".\")[-1]} {v.get(\"build\")} {v.get(\"state\")} {v.get(\"kind\")} {(v.get(\"mountPath\") or \"\").split(\"/\")[-1]}" for v in d.values() if v.get("platformIdentifier","").endswith("iphonesimulator") or "iOS" in v.get("runtimeIdentifier",""))
-          c=collections.Counter((v.get("runtimeIdentifier"),v.get("build")) for v in d.values())
-          dup=sum(1 for n in c.values() if n>1); busy=sum(1 for v in d.values() if v.get("state")!="Ready")
-          print(f"dup={dup} busy={busy}"); print("\n".join(rows))')
+            now=$(xcrun simctl runtime list -j | python3 "$RUNNER_TEMP/rt.py")
             if [ "$now" != "$prev" ]; then echo "--- t=${t}s"; echo "$now"; prev="$now"; fi
             case "$now" in "dup=0 busy=0"*) echo "SETTLED at ${t}s"; echo "settled=$t" >> "$GITHUB_ENV"; break;; esac
             [ $t -gt 1200 ] && { echo "NOT SETTLED in 1200s"; break; }
