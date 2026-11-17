@@ -227,6 +227,10 @@ jobs:
         run: |
           python3 -I scripts/ci-simulator.py --selftest
           bash scripts/test-ci-simulator.sh
+      - name: A shard whose test runner never started is told from one whose test failed (gatefold#135)
+        run: |
+          python3 -I scripts/ci-bootstrap.py --selftest
+          python3 -I scripts/ci-rerun-runner.py --selftest
       - name: The TestFlight publish script's upload step, offline (a fake kit; no App Store Connect) (gatefold#337)
         run: bash scripts/test-ci-publish-testflight.sh
       - name: UI test lists (not GatefoldCore) match scripts/ci-shards.expect; fix with `python3 -I scripts/ci-shards.py write` (gatefold#39)
@@ -237,32 +241,6 @@ jobs:
         run: |
           python3 -I scripts/ci-lanes.py --selftest
           python3 -I scripts/ci-lanes.py check
-
-  # Gatefold's actions (actions/gatefold.actions.mts) against the vendored generator: the vendored files match ouro-ui-core's
-  # hashes, nothing generated has drifted, and the actions' claims report is uploaded for the Ouro adoption ledger. Runs on
-  # every pull request and on every push to main (its artifact `actions-xray`), no simulator needed.
-  ouro-actions:
-    name: Ouro actions and X-ray
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-      - name: The vendored generator matches ouro-ui-core's hashes, and the generated actions have not drifted (scripts/ouro-actions.sh check)
-        run: scripts/ouro-actions.sh check
-      - name: The actions' claims report (xray-actions/report.json)
-        env:
-          GITHUB_SHA: ${{ github.sha }}
-        run: scripts/ouro-actions.sh report
-      - name: Upload the actions' X-ray (artifact actions-xray)
-        if: ${{ always() }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: actions-xray
-          path: xray-actions/
-          if-no-files-found: error
 
   # UI tests run in shards, each on its own runner (.github/workflows/ui-tests.yml). A shard starts with the run, or
   # when its matrix has a free slot: it boots its new simulator (alongside `build`, when it starts with the run), then

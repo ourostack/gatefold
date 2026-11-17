@@ -132,7 +132,12 @@ final class ScriptedPage: ReaderPage {
     private(set) var standby: Locator?
     private(set) var promoted: [Locator] = []
 
-    func prepareStandby(at locator: Locator) { standby = locator }
+    /// Standby loads asked for while the opening cover was still up (the first page not yet shown).
+    private(set) var standbysUnderCover = 0
+    func prepareStandby(at locator: Locator) {
+        if model?.pageReady == false { standbysUnderCover += 1 }
+        standby = locator
+    }
     func dropStandby() { standby = nil }
 
     func promoteStandby(for locator: Locator) async -> Bool {
@@ -401,6 +406,24 @@ final class ScriptedPage: ReaderPage {
         f.model.close()
     }
 
+    /// A first open with the Cloud ahead: the page the offer would land on loads behind this one, but only once the
+    /// first page has shown. Loaded under the cover, it raced the first page for the web views: on CI's iPad every
+    /// cold open of a book with the Cloud ahead showed only by the cover's forced reveal (13 to 28 s), and at 55344d8
+    /// the first page and the Cloud's page were both still loading 52 s after the tap (ipad-taps-rest, job
+    /// 133753597520). Counted in reads.
+    @Test func theCloudPlacesPageLoadsBehindOnlyOnceTheFirstPageHasShown() async throws {
+        let f = try await Self.make(remote: { _, _ in
+            ReadingPosition(cfi: nil, totalProgression: 0.42, updated: Date(), source: .pocketBookNative)
+        }, book: { $0.remote = ReadingPosition(cfi: nil, totalProgression: 0.42, updated: Date(), source: .pocketBookNative) })
+        await f.model.load()
+        #expect(f.model.suggestion != nil, "the Cloud's place is offered")
+        for _ in 0..<100 where !f.model.pageReady || f.page.standby == nil { try await Task.sleep(for: .milliseconds(20)) }
+        #expect(f.model.pageReady, "the cover never gave way to the page")
+        #expect(f.page.standby != nil, "the Cloud place's page never started loading behind the page")
+        #expect(f.page.standbysUnderCover == 0, "the Cloud place's page started loading while the first page was still under its cover")
+        f.model.close()
+    }
+
     /// Behind the shelf too: nothing moves and nothing is kept, and the offer waits for the tap.
     @Test func aPercentOnlyPlaceBehindTheShelfIsOfferedAtTheTap() async throws {
         let f = try await Self.make(remote: { _, _ in
@@ -541,8 +564,8 @@ final class ScriptedPage: ReaderPage {
         f.model.close()
     }
 
-    /// The other order: a two-step jump reports its file's start first, then (while that report is
-    /// still reading the page) the place itself. The place is what he sees, so it is kept, not the start.
+    /// The other order: a two-step jump reports its file's start first, then the place itself. The start is a
+    /// step on the way (gatefold#450): it reads no words and claims nothing, so the place, what he sees, is kept.
     @Test func aJumpsStartReportThenItsPlaceKeepsThePlace() async throws {
         let f = try await Self.make(remote: { _, _ in nil })
         await f.model.load()
@@ -551,18 +574,33 @@ final class ScriptedPage: ReaderPage {
         let place = try #require(f.page.currentLocation)
         let start = Self.boundary(of: place)
         f.page.currentLocation = start
-        f.page.holdNextAnchor = true
         let reads = f.page.anchorReads
-        let first = Task { await f.model.locationDidChange(start) }
-        for _ in 0..<10_000 where !f.page.isHoldingAnchor { await Task.yield() }
-        try #require(f.page.isHoldingAnchor && f.page.anchorReads == reads + 1, "the start's report isn't the read held")
-        // The page reaches the place and says so while the start's read is out.
+        await f.model.locationDidChange(start)
+        #expect(f.page.anchorReads == reads, "the jump's file start was read for his words")
         f.page.currentLocation = place
         await f.model.locationDidChange(place)
-        f.page.releaseAnchor()
-        await first.value
         let saved = try #require(f.app.library.book(Self.frankenstein.fastHash)?.locatorJSON.flatMap { try? Locator(jsonString: $0) })
         #expect(saved.locations.progression == place.locations.progression, "the jump's file start was kept, not the place it reached")
+        f.model.close()
+    }
+
+    /// The same two steps a beat apart, as on CI's starved iPad (run 43958142613): the jump's file start was
+    /// reported and written 7 s after the jump went out, while the chapter loaded, and the place itself came
+    /// 1.4 s later (gatefold#450). The start had claimed the move, so the place was dropped and the reopen showed the start.
+    @Test func aJumpsStartReportWrittenBeforeItsPlaceKeepsThePlace() async throws {
+        let f = try await Self.make(remote: { _, _ in nil })
+        await f.model.load()
+        f.page.reportsOnGo = false
+        await f.model.go(toProgression: 0.5, rememberBack: false)
+        let place = try #require(f.page.currentLocation)
+        let start = Self.boundary(of: place)
+        f.page.currentLocation = start
+        await f.model.locationDidChange(start)
+        f.page.currentLocation = place
+        await f.model.locationDidChange(place)
+        let saved = try #require(f.app.library.book(Self.frankenstein.fastHash)?.locatorJSON.flatMap { try? Locator(jsonString: $0) })
+        #expect(saved.href == place.href && saved.locations.progression == place.locations.progression,
+                "the jump's file start was kept, not the place it reached")
         f.model.close()
     }
 
@@ -789,7 +827,9 @@ final class ScriptedPage: ReaderPage {
         let loading = Task { await f.model.load() }
         for _ in 0..<100 where f.page.jumps.isEmpty { try await Task.sleep(for: .milliseconds(50)) }
         await f.model.checkRemote()
-        #expect(f.page.standby != nil)
+        #expect(f.model.suggestion != nil)
+        // Taken over the opening cover: the Cloud place's page loads once the first page shows, and the tap swaps it in.
+        #expect(f.page.standby == nil || f.model.pageReady, "the Cloud place's page loaded under the opening cover")
         await f.model.acceptSuggestion()
         let afterSwap = f.page.jumps.count
         await loading.value
