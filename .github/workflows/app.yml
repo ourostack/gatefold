@@ -640,14 +640,15 @@ jobs:
             lane: 8
           - shard: ipad-reviewer-rest
             # Main only, the catch-all for new reviewer checks: 842 + 88, about 240 for one column on a portrait page (#303),
-            # and about 90 for the pages behind the shelf staying out of accessibility (#357)
+            # about 90 for the pages behind the shelf staying out of accessibility (#357), and about 20 for the shelf
+            # reading no reader words
             tests: >-
-              ReviewerChecksUITests SingleColumnUITests ShelfAccessibilityUITests
+              ReviewerChecksUITests SingleColumnUITests ShelfAccessibilityUITests ReaderVisibleTextUITests
             skip: >-
               ReviewerChecksUITests/testTheLastPagesNumberIsTheCount ReviewerChecksUITests/testPageNumbersAreOnOrOffInEveryBook
             pr_tests: none
             cold: false
-            timeout: 110 # 30 + 2 x 31.4 + 5 + 12
+            timeout: 111 # 30 + 2 x 31.9 + 5 + 12
             lane: 2
     uses: ./.github/workflows/ui-tests.yml
     with:

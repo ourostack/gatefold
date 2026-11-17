@@ -22,7 +22,7 @@ final class PageNumberTimingUITests: XCTestCase {
         "-GatefoldSignedIn", "YES", "-GatefoldAllowReopen", "YES", "-GatefoldPageFurniture", "YES",
     ]
 
-    private var visibleText: String { (app.descendants(matching: .any)["reader.visibleText"].value as? String) ?? "" }
+    private var visibleText: String { app.readerVisibleText }
 
     private var hasNumber: Bool {
         app.descendants(matching: .any).matching(identifier: "reader.pageNumber").allElementsBoundByIndex
