@@ -8,7 +8,7 @@ name: App
 #
 # Build once: `build` makes the app and its tests for the simulator (build-for-testing) and uploads them, named by
 # commit and Xcode version; no simulator job compiles the app again (gatefold#39: each job spent 10 to 16 min building).
-# Every simulator job starts with the run (a capped shard, when a slot frees; gatefold#243), boots its new simulator
+# Every simulator job starts with the run (a pull request's shard, when its lane frees), boots its new simulator
 # (alongside `build`, when it starts with the run), waits for that artifact (.github/actions/await-build) and runs
 # test-without-building.
 #
@@ -245,9 +245,12 @@ jobs:
   # UI tests run in shards, each on its own runner (.github/workflows/ui-tests.yml). A shard starts with the run, or
   # when its matrix has a free slot: it boots its new simulator (alongside `build`, when it starts with the run), then
   # waits for the build's artifact.
-  # Per run, each matrix's `max-parallel` caps how many of its shards run at once, so full-list runs leave macOS runners
-  # for app pull requests (gatefold#243). The five caps sum to 12 on main and 8 on a pull request running the full lists;
-  # one running only its tier is uncapped. GitHub may start a matrix's shards in any order. On main each shard holds about
+  # No `max-parallel`: every shard of a full run starts with the run, so a full run takes its build plus its longest
+  # shard, not three or four waves of them. The caps (12 on main, 8 on a full-list pull request; gatefold#243) held
+  # main's full run to a median 87 min and a full-list pull request to about 2 h, and they guarded a pool that main's
+  # duplicate full runs kept busy. Main now runs nothing a merge queue or pull request already proved
+  # (scripts/ci-proof.py), and a pull request's shards still wait in their lanes ("macOS lanes" above), which bound
+  # pull requests on their own. Measured 2026-11-15 to 11-17: the organization's macOS jobs peaked at 82 at once. On main each shard holds about
   # 5 min of tests by its median pass on main (eight runs, 42605267361 to 42905906538). On a pull request a shard runs
   # its `pr_tests` only when its `pr_when` group is in `changes`' `fired`; every other shard reports from a no-op job.
   # Each `timeout` is 30 min of setup (the simulator wait step's own limit; gatefold#198), plus twice the sum of its
@@ -267,7 +270,6 @@ jobs:
     if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
     strategy:
       fail-fast: false
-      max-parallel: ${{ github.event_name != 'pull_request' && 3 || needs.changes.outputs.full != 'false' && 2 || 10 }}
       matrix:
         include:
           - shard: ipad-place-portrait
@@ -433,7 +435,6 @@ jobs:
     if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
     strategy:
       fail-fast: false
-      max-parallel: ${{ github.event_name != 'pull_request' && 1 || needs.changes.outputs.full != 'false' && 1 || 4 }}
       matrix:
         include:
           - shard: ipad-undo-underway
@@ -500,7 +501,6 @@ jobs:
     if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
     strategy:
       fail-fast: false
-      max-parallel: ${{ github.event_name != 'pull_request' && 2 || needs.changes.outputs.full != 'false' && 1 || 7 }}
       matrix:
         include:
           - shard: ipad-taps-quick
@@ -595,7 +595,6 @@ jobs:
     if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
     strategy:
       fail-fast: false
-      max-parallel: ${{ github.event_name != 'pull_request' && 3 || needs.changes.outputs.full != 'false' && 2 || 5 }}
       matrix:
         include:
           - shard: ipad-reviewer-smoke
@@ -673,7 +672,6 @@ jobs:
     if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
     strategy:
       fail-fast: false
-      max-parallel: ${{ github.event_name != 'pull_request' && 3 || needs.changes.outputs.full != 'false' && 2 || 9 }}
       matrix:
         include:
           - shard: duo-taps-portrait
