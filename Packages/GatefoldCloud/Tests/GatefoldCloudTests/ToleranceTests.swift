@@ -50,14 +50,12 @@ struct ToleranceTests {
 
     @Test func skipsPasswordProvidersThatRequireAnUnsupportedSecondFactor() throws {
         let stores = try WireDecoder.stores(Data(#"{"providers":[{"alias":"pocketbook_de","logged_by":"password","is_2fa_enabled":true}]}"#.utf8))
-        #expect(stores.first?.twoFactorEnabled == true)
-        #expect(stores.first?.usesPassword == false)
+        #expect(stores.isEmpty)
         #expect(noted("/auth/login: provider requires an unsupported second factor"))
     }
 
     @Test func stillReadsProvidersWithoutTheSecondFactorField() throws {
         let stores = try WireDecoder.stores(Data(#"{"providers":[{"alias":"pocketbook_de","logged_by":"password"}]}"#.utf8))
-        #expect(stores.first?.twoFactorEnabled == nil)
         #expect(stores.first?.usesPassword == true)
     }
 

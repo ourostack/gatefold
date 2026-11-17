@@ -9,19 +9,16 @@ public struct CloudStore: Sendable, Codable, Hashable, Identifiable {
     public var iconURL: URL?
     /// `"password"` for password accounts; social-login accounts report something else.
     public var loggedBy: String?
-    /// The provider's password flow requires an additional factor, which Gatefold cannot collect.
-    public var twoFactorEnabled: Bool?
 
     public var id: String { shopID + alias }
-    public var usesPassword: Bool { (loggedBy == nil || loggedBy == "password") && twoFactorEnabled != true }
+    public var usesPassword: Bool { loggedBy == nil || loggedBy == "password" }
 
-    public init(alias: String, name: String, shopID: String, iconURL: URL?, loggedBy: String?, twoFactorEnabled: Bool? = nil) {
+    public init(alias: String, name: String, shopID: String, iconURL: URL?, loggedBy: String?) {
         self.alias = alias
         self.name = name
         self.shopID = shopID
         self.iconURL = iconURL
         self.loggedBy = loggedBy
-        self.twoFactorEnabled = twoFactorEnabled
     }
 }
 

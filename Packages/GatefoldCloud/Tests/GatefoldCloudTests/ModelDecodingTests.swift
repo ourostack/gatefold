@@ -10,7 +10,7 @@ struct ModelDecodingTests {
         let stores = try WireDecoder.stores(Fixture.data("auth-providers.json"))
         #expect(stores == [CloudStore(alias: "pocketbook_de", name: "Pocketbook.de", shopID: "1",
                                       iconURL: URL(string: "https://pocketbook.de/static/version1793097427/webapi_rest/_view/de_DE/images/logo.svg"),
-                                      loggedBy: "password", twoFactorEnabled: false)])
+                                      loggedBy: "password")])
         #expect(stores[0].usesPassword)
     }
 
