@@ -2521,6 +2521,15 @@ final class ReaderModel {
     /// landed: the page still shows what Readium names, so the running head and the end check stay there).
     /// `leaving`: the place a reflow owes, written as he leaves (`keepOwedPlace`), past a close and a reflow
     /// still under way.
+    /// `locator` is the start of the file his newest jump is bound for, with the jump's place further in and
+    /// its move not yet kept: the first of a two-step jump's reports (gatefold#450).
+    private func isJumpsFileStart(_ locator: Locator) -> Bool {
+        guard let jump = jumpOnItsWay, jump.move == moves, recordedMoves != moves,
+              ContentsIndex.sameResource(locator.href.string, jump.target.href.string), (locator.locations.progression ?? 1) == 0,
+              (jump.target.locations.progression ?? 0) > 0 else { return false }
+        return true
+    }
+
     func locationDidChange(_ locator: Locator, duringTurn: Bool = false, hisMove: Bool = false, placeOnly: Bool = false,
                            leaving: Bool = false) async {
         guard !isClosed || leaving else { return }
@@ -2549,6 +2558,16 @@ final class ReaderModel {
             if !pageReady, launchGoTo == nil { markReady() }
             Task { await refreshScreenNumbers() }
             if !duringTurn, hasMoved, isPastStory(locator) { reachedEnd() }
+        }
+        // A jump of his to a place inside a file (the scrubber, a bookmark, a highlight) goes in two steps
+        // when the file isn't loaded: Readium names the file's start, then the place. The start is a step on
+        // the way, not his move: kept, it claimed the move, the place's own report a beat later was dropped,
+        // and the reopen showed the file's start (gatefold#450: on CI's starved iPad the start came 7 s
+        // after the jump and the place 1.4 s after that, the start's write long done). Left unkept, the
+        // place's report keeps the move, and a leave before it keeps the jump's target.
+        if !hisMove, !duringTurn, !leaving, !touchedSinceLocation, isJumpsFileStart(locator) {
+            readerLog.notice("place: the file's start on a jump's way to \(Self.placeTag(self.jumpOnItsWay!.target), privacy: .public); not his move, nothing kept")
+            return
         }
         // A landing records its place once it has settled; the steps on the way are not places. So does a
         // test's launch jump: a report on its way (its file's first page) could finish after the landing and
