@@ -33,6 +33,10 @@ struct ReaderScreen: View {
     @State private var leafFolding = false
     /// On the cover screen the status column sits on the page's trailing edge; it stays hidden there.
     @State private var coverScreen = false
+    /// A status column sat under the controls as last seen (a frame behind the report, unlike `coverScreen`, which
+    /// remembers one per size). Only a page with none is bare: the folded Duo's column changes height as sheets come
+    /// and go, and a page that followed it reflowed under him (`ReaderScreen.placed`).
+    @State private var columnTaken = false
     /// The status bar as last drawn, for the UI tests' stand-in status column (`LaunchOptions.fakeStatusColumn`),
     /// which, like the system's own report, follows the status bar a frame behind.
     @State private var statusBarDrawn = false
@@ -51,10 +55,11 @@ struct ReaderScreen: View {
                 shown: model.layout.posture
             )
             let clearance = ChromeClearance.resolve(container: proxy.size, occlusions: occlusions(in: proxy))
-            // Bare: the status bar is down and no status column is reported now (the cover screen reports its own
-            // with the status bar hidden, so a column there is never bare). The remembered column (`StatusColumn`)
-            // keeps the status bar down but doesn't stop the open screen's page settling its top.
-            let layout = Self.placed(input, fontScale: model.preferences.fontScale, proxy: proxy, occlusions: occlusions(in: proxy), bare: !model.chromeVisible && !clearance.bookmarkLeading, scrolling: model.scrollsReflowable)
+            // Bare: the controls are down and no status column was under them as last seen (`columnTaken`). The
+            // remembered column (`StatusColumn`) keeps the status bar down but doesn't stop the open screen's page
+            // settling its top; the folded Duo's page settles on its first frame, before its column is seen, and
+            // holds there when the column grows under Contents and shrinks again (gatefold#415's CI).
+            let layout = Self.placed(input, fontScale: model.preferences.fontScale, proxy: proxy, occlusions: occlusions(in: proxy), bare: !model.chromeVisible && !columnTaken, scrolling: model.scrollsReflowable)
             let safeTop = ReaderChrome.safeTop(proxy.safeAreaInsets)
             // Where the top bar starts: below a band across the window's top, as ReaderChrome sets it.
             let barTop = max(safeTop, clearance.top)
@@ -233,6 +238,7 @@ struct ReaderScreen: View {
             // status bar back, which brought the column back, several times a second (Ari, build 39).
             .onChange(of: StatusColumn.Reading(taken: clearance.bookmarkLeading, size: proxy.size), initial: true) { _, now in
                 if now.taken { StatusColumn.saw(at: now.size) }
+                columnTaken = now.taken
                 coverScreen = now.taken || StatusColumn.seen(at: now.size)
             }
             .onChange(of: occlusions(in: proxy), initial: true) { _, new in

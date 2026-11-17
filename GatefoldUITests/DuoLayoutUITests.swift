@@ -114,6 +114,53 @@ final class DuoLayoutUITests: XCTestCase {
         checkScrollingTop(["-GatefoldForcePosture", "spread", "-GatefoldStatusColumn", "YES"])
     }
 
+    /// On the folded Duo, the cover screen's status column reaches down to 174 pt while Contents is up and back to
+    /// 82 pt once it closes. The page settles its top once and holds it through that: before the fix it moved with
+    /// the column, reflowed twice, and the second reflow never settled, so the next turn never landed
+    /// (SingleColumnUITests on gatefold#415's CI). On a screen with no status column it holds still all the same.
+    func testContentsOpenedAndClosedLeavesThePageWhereItWas() {
+        open([])
+        let page = el("reader.page")
+        let reflow = el("reader.reflow")
+        let contents = app.buttons["reader.contents"]
+        func still() -> (frame: CGRect, reflows: String) {
+            var last = (frame: CGRect.null, reflows: ""), same = 0
+            _ = readsUntil(reads: 100) {
+                let now = (frame: page.exists ? page.frame : .null, reflows: (reflow.value as? String) ?? "")
+                same = now.frame == last.frame && now.reflows == last.reflows && !now.reflows.hasSuffix("reflowing") ? same + 1 : 0
+                last = now
+                return same >= 5
+            }
+            return last
+        }
+        func tapMiddle(until done: () -> Bool) {
+            for _ in 0..<3 where !done() {
+                page.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+                _ = readsUntil(reads: 25, done)
+            }
+        }
+        let before = still()
+        tapMiddle { contents.exists && contents.isHittable }
+        XCTAssertTrue(contents.exists, "the controls came up")
+        contents.tap()
+        let rows = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier == %@ OR identifier BEGINSWITH %@", "contents.current", "contents.entry."))
+        XCTAssertTrue(readsUntil(reads: 100) { rows.firstMatch.exists }.ok, "Contents opened")
+        // Closed by its Done button: a swipe down starts on a row (a slow simulator takes it for a tap and jumps
+        // there) or on the tabs (it changes tab and leaves the sheet up).
+        let done = app.buttons["Done"].firstMatch
+        XCTAssertTrue(done.exists, "Contents has its Done button")
+        done.tap()
+        XCTAssertTrue(readsUntil(reads: 100) { !done.exists && !rows.firstMatch.exists }.ok, "Contents closed")
+        tapMiddle { !contents.exists }
+        XCTAssertFalse(contents.exists, "the controls went down")
+        let after = still()
+        shot("after-contents")
+        XCTAssertEqual(after.frame, before.frame, "the page holds its place through Contents")
+        XCTAssertEqual(after.reflows.split(separator: " ").first, before.reflows.split(separator: " ").first,
+                       "no reflow for opening and closing Contents (\(before.reflows) then \(after.reflows))")
+    }
+
     private func checkScrollingTop(_ extra: [String], file: StaticString = #filePath, line: UInt = #line) {
         open(["-GatefoldPageTurn", "scroll"] + extra)
         let page = el("reader.page")

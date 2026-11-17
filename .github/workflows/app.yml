@@ -722,7 +722,7 @@ jobs:
               PositionUITests/testTabletopDeckTurnsAndResizes PositionUITests/testFontChangeKeepsThePlace
             pr_tests: none
             cold: false
-            timeout: 84 # 30 + 2 x 18.4 + 5 + 12
+            timeout: 89 # 30 + 2 x 20.9 + 5 + 12
             lane: 10
           - shard: duo-scroll
             # Scroll mode keeps the place: a sideways swipe, a status-bar tap, a chapter's end and back (estimates until CI has run them)

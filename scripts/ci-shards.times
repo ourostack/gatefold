@@ -104,6 +104,7 @@ iPhone Duo|DuoLayoutUITests/testScrollingTextRunsToTheTopWithNoHeadOverIt	150	# 
 iPhone Duo|DuoLayoutUITests/testScrollingSpreadRunsToTheTopWithNoHeadOverIt	150	# an estimate until CI has timed it (about 20 s locally)
 iPhone Duo|DuoLayoutUITests/testTheChromeHoldsStillBesideAStatusColumnScrolling	150	# an estimate until CI has timed it (about 60 s locally)
 iPhone Duo|DuoLayoutUITests/testTheChromeHoldsStillBesideAStatusColumnTurningPages	150	# an estimate until CI has timed it (about 60 s locally)
+iPhone Duo|DuoLayoutUITests/testContentsOpenedAndClosedLeavesThePageWhereItWas	150	# an estimate until CI has timed it
 iPhone Duo|ReviewerChecksUITests/testACounterThatNeverHearsBackStillCounts	420	# an estimate (an open, a count and a stalled counter's wait) until CI has timed it
 iPhone Duo|ReviewerChecksUITests/testEveryReopenReturnsTheSameWords	895	# p95 of 103, slowest 1362
 iPhone Duo|ReviewerChecksUITests/testPageNumbersAreOnOrOffInEveryBook	1075	# p95 of 97, slowest 1160
