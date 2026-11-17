@@ -76,8 +76,16 @@ jobs:
           EVENT: ${{ github.event_name }}
           BASE: ${{ github.event.pull_request.base.sha }}
           HEAD: ${{ github.event.pull_request.head.sha }}
+          QBASE: ${{ github.event.merge_group.base_sha }}
+          QHEAD: ${{ github.event.merge_group.head_sha }}
         run: |
           set -eu
+          # The merge queue runs everything, unless its whole group changes only Markdown (as a pull request's Markdown-only
+          # run does; main's push of such a group runs nothing, by paths-ignore or the proof). An unreadable diff runs it all.
+          if [ "$EVENT" = merge_group ] && git diff --name-only "$QBASE" "$QHEAD" > queued.txt && [ -s queued.txt ] && ! grep -qv '\.md$' queued.txt; then
+            echo "::notice::This merge group changes only Markdown: the checks report success without running."
+            echo "reader=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
           if [ "$EVENT" != pull_request ]; then echo "reader=true" >> "$GITHUB_OUTPUT"; exit 0; fi
           git diff --name-only "$BASE...$HEAD" > changed.txt
           # The reader, the fold and the app shell it runs in; GatefoldCore; the Readium link; the project; the hinge driver.
@@ -493,6 +501,7 @@ jobs:
         run: |
           if [ "$PROVEN" = true ]; then echo "::notice::Passed by proof: every unfold passed on this tree in $PROOF"; exit 0; fi
           if [ "$EVENT" = pull_request ] && [ "$READER" = false ]; then echo "This pull request doesn't touch the reader; the merge queue and main unfold it."; exit 0; fi
+          if [ "$EVENT" = merge_group ] && [ "$READER" = false ]; then echo "This merge group changes only Markdown; nothing to unfold."; exit 0; fi
           echo "Build: $BUILD; unfolds at every place: $UNFOLD"
           [ "$BUILD" = success ] && [ "$UNFOLD" = success ]
 
