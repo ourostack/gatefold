@@ -39,14 +39,14 @@ MACOS = re.compile(r"^(macos|xcode)-", re.I)
 
 def waiting(runs, jobs_of):
     """(run, count) for the newest unfinished merge-group run with a macOS job queued for a runner, or None."""
-    newest = {}
+    newest = {}  # the newest run of each workflow, finished or not: an older run behind a finished one is an orphan
     for r in runs:
-        if (r.get("event") == "merge_group" and r.get("status") != "completed"
-                and (r.get("head_branch") or "").startswith("gh-readonly-queue/main/")):
+        if r.get("event") == "merge_group" and (r.get("head_branch") or "").startswith("gh-readonly-queue/main/"):
             w = r.get("workflow_id")
             if w not in newest or r["id"] > newest[w]["id"]:
                 newest[w] = r
-    for run in sorted(newest.values(), key=lambda r: r["id"], reverse=True):
+    live = [r for r in newest.values() if r.get("status") != "completed"]
+    for run in sorted(live, key=lambda r: r["id"], reverse=True):
         queued = [j for j in jobs_of(run["id"])
                   if j.get("status") == "queued" and any(MACOS.match(l or "") for l in j.get("labels") or [])]
         if queued:
@@ -156,6 +156,8 @@ def selftest():
         ("no merge-group run at all: go", ([], {}), False),
         ("an older group's run of the same workflow (an orphan) doesn't hold",
          ([run(44261384475), run(44273931050)], {44261384475: [job()], 44273931050: [job("in_progress")]}), False),
+        ("an older group's run behind a finished newer one (green, waiting to merge) doesn't hold",
+         ([run(44261384475), run(44273931050, "completed")], {44261384475: [job()]}), False),
         ("another branch's queue doesn't hold", ([run(1, branch="gh-readonly-queue/release/pr-1-" + "c" * 40)], {1: [job()]}), False),
     ]
     for name, (runs, jobs), want in cases:
@@ -170,13 +172,13 @@ def selftest():
 
     out, os.environ["GITHUB_STEP_SUMMARY"] = os.environ.pop("GITHUB_STEP_SUMMARY", None), ""
     try:
-        loops = run_loops(front, clear)
+        loops = run_loops(front, clear) + budget()
     finally:
         if out is None:
             os.environ.pop("GITHUB_STEP_SUMMARY")
         else:
             os.environ["GITHUB_STEP_SUMMARY"] = out
-    n = len(cases) + 2 + loops + budget()
+    n = len(cases) + 2 + loops
     print(f"ci-yield selftest: {n} cases pass")
 
 
