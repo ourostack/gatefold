@@ -4,7 +4,9 @@
 # The load average counts runnable threads, not busy CPUs: these runners have 3 CPUs (`cpus` below), so a load of 450
 # means about 150 threads waiting for each CPU, and the busiest processes by %CPU (the 8 lines under each `==`) can't
 # say whose threads those are. So each sample also counts the runnable threads by process, and splits the CPU between
-# the host and the simulator (a process whose path is inside a simulator runtime or device). Names and numbers only.
+# the host and the simulator (a process whose path is inside a simulator runtime or device). Every process with a
+# runnable thread goes to <out file>.threads, one line a sample, for the long tail the 8 busiest leave out. Names and
+# numbers only.
 set -u
 out="$1"
 every="${2:-20}"
@@ -23,19 +25,22 @@ while :; do
         sub(/^ *[0-9]+ +[0-9.]+ +/, "")
         name = $0; sub(/.*\//, "", name); names[pid] = name
         sim[pid] = $0 ~ /RuntimeRoot\/|CoreSimulator\/Devices\//
+        procs++; sprocs += sim[pid]
         if (sim[pid]) scpu += cpu; else hcpu += cpu
         next
       }
       FNR > 1 {
         pid = $(NF - 1); all++
-        if ($NF ~ /^R/) { run++; byproc[pid]++; if (sim[pid]) srun++ }
+        if ($NF ~ /^R/) { run++; if (!byproc[pid]++) { rprocs++; if (sim[pid]) srprocs++ }; if (sim[pid]) srun++ }
         else if ($NF ~ /^U/) blocked++
       }
       END {
         printf "cpu: host %d%%, simulator %d%% of %d%%; threads %d, runnable %d (simulator %d), blocked %d\n",
           hcpu, scpu, ncpu * 100, all, run, srun, blocked
+        printf "processes: %d (simulator %d), with a runnable thread %d (simulator %d)\n", procs, sprocs, rprocs, srprocs
         for (p in byproc) printf "%d %s%s\n", byproc[p], (p in names ? names[p] : p), (sim[p] ? "*" : "") > top
       }' "$tmp/procs" "$tmp/threads"
+    { printf "%s" "$(date -u +%T)"; sort -rn "$tmp/top" 2>/dev/null | awk '{ $1 = $1; printf " %s,", $0 }' | sed 's/,$//'; echo; } >> "$out.threads"
     printf "runnable threads (* in the simulator):"
     sort -rn "$tmp/top" 2>/dev/null | head -8 | awk '{ $1 = $1; printf " %s,", $0 }' | sed 's/,$//'
     echo
