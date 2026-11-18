@@ -6,8 +6,8 @@
 # (its data container's Library/Caches), which neither the tests' install over this one nor `-GatefoldReset` clears,
 # and a cached shader needs no compiler. So one launch here draws the shelf while the books download, then the open
 # into a book and its page with the controls, page furniture and Fine-Tune up, before any test runs. It closes the
-# app at "first page ready"; anything not drawn by then is compiled by the tests as before. Setup only: it never
-# fails the job, and it ends by its bound.
+# app at "first page ready" or "first page forced ready"; anything not drawn by then is compiled by the tests as
+# before. Setup only: it never fails the job, and it ends by its bound.
 #   ci-warm-metal.sh <udid> <Gatefold.app> <log> [bound in seconds, at most 180]
 # <log> gets the app's `reader` lines for this launch only (no page text), apart from the tests' reader.log.
 set -u
@@ -45,7 +45,7 @@ if ! xcrun simctl launch "$udid" "$id" -GatefoldUITest YES -GatefoldFakeCloud YE
 fi
 ready=false
 while [ $(($(date +%s) - started)) -lt "$bound" ]; do
-  if grep -q "first page ready" "$log"; then
+  if grep -Eq "first page (forced )?ready" "$log"; then
     ready=true
     break
   fi
