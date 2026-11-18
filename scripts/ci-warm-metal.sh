@@ -35,6 +35,7 @@ sh -c 'echo $$ > "$1"; exec xcrun simctl spawn "$0" log stream --style compact \
   | grep --line-buffered -v "text:" >> "$log" &
 filter=$!
 stop() { kill "$(cat "$pidf" 2>/dev/null)" "$filter" 2>/dev/null; }
+trap stop EXIT INT TERM
 if ! xcrun simctl launch "$udid" "$id" -GatefoldUITest YES -GatefoldFakeCloud YES -GatefoldSkipWelcome YES \
   -GatefoldSignedIn YES -GatefoldReset YES -GatefoldDownloadAll YES -GatefoldPageFurniture YES -GatefoldShowChrome YES \
   -GatefoldSheet customize -GatefoldOpenBook gutenberg-pride-and-prejudice -GatefoldGoTo 0.31 > /dev/null; then
