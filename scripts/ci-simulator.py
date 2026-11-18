@@ -22,8 +22,9 @@ runtime that fails to mount ("Malformed bundle") can vanish after the boot, and 
 "runtime path not found" (gatefold#71). If not, it runs boot-sim.sh once more for a fresh device, on the time left.
 `erase <name> <udid>` is the cold step's erase: shutdown, erase, boot and bootstatus, each bounded, then the same
 check; if the runtime went, one fresh device erased the same way. It prints the UDID to test on.
-Once a device passes its check, `wait` and `erase` remove its first-boot jobs (.github/scripts/quiet-sim.labels,
-gatefold#209) on the step's time left, so XCUITest does not launch the app inside the first boot's load.
+Every boot disables the first-boot jobs in .github/scripts/quiet-sim.labels (gatefold#404), and once a device passes
+its check, `wait` and `erase` remove any still loaded (gatefold#209) on the step's time left, so XCUITest does not
+launch the app inside the first boot's load.
 Offline test: bash scripts/test-ci-simulator.sh (a fake xcrun and boot-sim.sh; no simulator).
 
 A prefix that is a whole device name ("iPhone Duo") picks that device only, never a sibling such as "iPhone Duo Pro".
@@ -274,12 +275,21 @@ def again(name, limit):
 # Shutdown's bound is a setting so the offline test can make it hang. On a healthy runner an idle device shuts down in
 # seconds; the one that hung past 120 s (job 129031300623) did so while `simctl list` hung too, so CoreSimulatorService
 # was not answering: a longer bound or a second shutdown would only spend more of the step on the same stall.
-ERASE_STEPS = [(("shutdown",), setting("CI_SIMULATOR_SHUTDOWN_TIMEOUT", "120")), (("erase",), 300), (("boot",), 300),
-               (("bootstatus", "-b"), 420)]
-
-
 QUIET_LABELS = Path(__file__).resolve().parent.parent / ".github" / "scripts" / "quiet-sim.labels"
 QUIET_LIMIT = setting("CI_SIMULATOR_QUIET_LIMIT", "120")
+
+
+def quiet_labels(labels=QUIET_LABELS):
+    """The launchd labels in quiet-sim.labels, or [] when it can't be read."""
+    try:
+        return [l.split("#")[0].strip() for l in labels.read_text().splitlines() if l.split("#")[0].strip()]
+    except OSError:
+        return []
+
+
+# The erase's boot keeps the first-boot jobs from starting at all, as boot-sim.sh's does (gatefold#404).
+ERASE_STEPS = [(("shutdown",), setting("CI_SIMULATOR_SHUTDOWN_TIMEOUT", "120")), (("erase",), 300),
+               (("boot", *(f"--disabledJob={n}" for n in quiet_labels())), 300), (("bootstatus", "-b"), 420)]
 
 
 def quiet(udid, labels=QUIET_LABELS):
@@ -287,9 +297,8 @@ def quiet(udid, labels=QUIET_LABELS):
     first-boot load ends in minutes, not about 15. Only after the check, and only on the step's time left: it never
     fails a device or takes the time a check or a retry needs. Each call bounded; QUIET_LIMIT in all. Logs to stderr
     (`erase` prints the UDID on stdout)."""
-    try:
-        names = [l.strip() for l in labels.read_text().splitlines() if l.strip() and not l.strip().startswith("#")]
-    except OSError:
+    names = quiet_labels(labels)
+    if not names:
         print(f"no {labels}; {udid} not quieted", file=sys.stderr)
         return
     end = time.time() + min(QUIET_LIMIT, left() - 5)
