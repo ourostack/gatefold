@@ -1713,13 +1713,15 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     }
 
     /// The page on screen is laid out in the reader's columns: its style has the count he asked Readium for, or sets
-    /// none (a scrolled page, a fixed layout). A page that doesn't answer isn't judged here: `visibleRange` says so.
+    /// none (a scrolled page, a fixed layout). A page that doesn't answer is still being replaced, so it isn't laid out
+    /// yet: turned back upright, the count went unanswered while the spread changed, and the page read next was still
+    /// in two columns (gatefold#482).
     private func laidOutInColumns() async -> Bool {
         let shown = await Self.onSpread { () async throws -> Int? in
             (try await self.navigator.answer(ReaderJS.styleColumns) as? NSNumber)?.intValue
         }
-        guard let shown, shown > 0 else { return true }
-        return shown == columns
+        guard let shown else { return false }
+        return shown <= 0 || shown == columns
     }
 
     /// UI tests: the web view's own count of the text columns on screen (`ReaderJS.columns`).
