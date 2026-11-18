@@ -5,7 +5,14 @@ name: Stuck-run watchdog
 # it waits: merge-group run 44213268613 stalled the queue for about 2 h until it was force-cancelled by hand. Each
 # cancel is listed in the step summary, and a merge-group run's pull request gets a comment. Linux only, one page of
 # runs per quiet tick; HTTP 403 or 429 stops it. On a pull request that edits it, only its selftest runs.
+#
+# Each pass also cancels merge-group runs nobody will read: queued or in progress on a head commit that is no longer a
+# merge queue entry's (the queue rebuilt that group) nor one of main's newest. On 2026-11-18 three such runs held 12
+# macOS runners while the queue's front group had 39 jobs queued for 76 min. A queue read that fails cancels nothing.
+# Every new merge group starts this workflow too, and that run does only this sweep, so the group it replaced is
+# cancelled within seconds of its rebuild, not at the next 5-min tick. This is not a required check.
 on:
+  merge_group:
   schedule:
     - cron: "*/5 * * * *"
   workflow_dispatch:
@@ -38,8 +45,13 @@ jobs:
             .github/workflows
       - name: The decision logic passes its selftest
         run: python3 -I scripts/ci-stuck.py --selftest
-      - name: Cancel runs with a job past its timeout
-        if: github.event_name != 'pull_request' && github.repository == 'ourostack/gatefold'
+      - name: Cancel orphaned merge-group runs, and runs with a job past its timeout
+        if: github.event_name != 'pull_request' && github.event_name != 'merge_group' && github.repository == 'ourostack/gatefold'
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: python3 -I scripts/ci-stuck.py check --act
+      - name: Cancel the merge-group runs this new group replaced
+        if: github.event_name == 'merge_group' && github.repository == 'ourostack/gatefold'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 -I scripts/ci-stuck.py orphans --act
