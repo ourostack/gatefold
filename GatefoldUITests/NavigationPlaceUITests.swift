@@ -589,8 +589,8 @@ final class NavigationPlaceUITests: XCTestCase {
         let moved = readsUntilMoved(from: first)
         print("REPRO jump contents: moved \(moved.ok) after \(moved.reads) reads\(moved.hung ? " (hang guard)" : "")")
         XCTAssertTrue(moved.ok, "the contents jump never moved the page in \(moved.reads) reads\(moved.hung ? " (hang guard)" : "")")
-        var words = visibleText
         XCTAssertTrue(keptWhatIsShown(), "the jump kept a place other than the page shown")
+        var words = visibleText
         sleep(3)
         for _ in 0..<2 {
             turn(forward: true)
