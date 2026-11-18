@@ -1,0 +1,45 @@
+name: Stuck-run watchdog
+
+# Every 5 min: cancel a run whose job has outlived its workflow's timeout by 5 min, and force-cancel it 2 min later if
+# it is still running (scripts/ci-stuck.py). A lost runner leaves its job in_progress forever, and a merge queue behind
+# it waits: merge-group run 44213268613 stalled the queue for about 2 h until it was force-cancelled by hand. Each
+# cancel is listed in the step summary, and a merge-group run's pull request gets a comment. Linux only, one page of
+# runs per quiet tick; HTTP 403 or 429 stops it. On a pull request that edits it, only its selftest runs.
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "scripts/ci-stuck.py"
+      - ".github/workflows/stuck-runs.yml"
+
+permissions:
+  contents: read
+
+# No concurrency group: a tick whose own runner was lost must not hold back the next one. Two ticks that overlap
+# can both cancel a run; a cancel of a run that is already ending is ignored.
+
+jobs:
+  watch:
+    name: Stuck-run watchdog
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    permissions:
+      contents: read
+      actions: write
+      pull-requests: write
+      issues: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          sparse-checkout: |
+            scripts/ci-stuck.py
+            .github/workflows
+      - name: The decision logic passes its selftest
+        run: python3 -I scripts/ci-stuck.py --selftest
+      - name: Cancel runs with a job past its timeout
+        if: github.event_name != 'pull_request' && github.repository == 'ourostack/gatefold'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 -I scripts/ci-stuck.py check --act
