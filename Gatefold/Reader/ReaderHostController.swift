@@ -296,14 +296,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     func promoteStandby(for locator: Locator) async -> Bool {
         guard let next = standby, next.locator == locator else { return false }
         // A page that hasn't loaded in 1.5 s may never load: the plain jump is no slower than waiting on.
-        let ready = next.ready
-        let loaded = await withTaskGroup(of: Bool.self) { group in
-            group.addTask { await ready.value; return true }
-            group.addTask { try? await Task.sleep(for: .milliseconds(1500)); return false }
-            let first = await group.next() ?? false
-            group.cancelAll()
-            return first
-        }
+        let loaded = await Self.finished(next.ready, within: .milliseconds(1500))
         guard loaded else {
             readerLog.notice("standby: not loaded 1.5 s after the tap; jumping the plain way")
             dropStandby()
@@ -328,6 +321,19 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         weakModel?.highlights.navigatorChanged()
         if let here = navigator.currentLocation { self.navigator(navigator, locationDidChange: here) }
         return true
+    }
+
+    /// True when `task` ends within `limit`, false as soon as `limit` passes. Never waits on past the limit: a task
+    /// group's child awaiting `task.value` ignores the group's cancel, so the group waited out the whole load. On CI's
+    /// starved iPad a catch-up tap waited 4 minutes on a standby page still loading, under a veil that let go after
+    /// 150 beats, and the test read no words (merge-queue run 44170382162).
+    static func finished(_ task: Task<Void, Never>, within limit: Duration) async -> Bool {
+        let once = AnswerOnce<Bool>()
+        Task { @MainActor in await task.value; once.resume(true) }
+        let timer = Task { @MainActor in try? await Task.sleep(for: limit); once.resume(false) }
+        let answer = await withCheckedContinuation { once.wait($0) }
+        timer.cancel()
+        return answer ?? false
     }
 
     // MARK: Screen pages
