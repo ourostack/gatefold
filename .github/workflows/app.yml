@@ -182,6 +182,8 @@ jobs:
       - name: The simulator boot and wait logic passes its selftest (#78)
         run: python3 -I scripts/ci-simulator.py --selftest
       - uses: ./.github/actions/select-xcode
+        with:
+          xcode: "27.2"
       - name: The test-step stopper passes its selftest (#126)
         run: python3 -I scripts/ci-within.py --selftest
       - id: name
@@ -681,14 +683,15 @@ jobs:
             lane: 8
           - shard: ipad-reviewer-rest
             # Main only, the catch-all for new reviewer checks: 842 + 88, about 240 for one column on a portrait page (#303),
-            # and about 90 for the pages behind the shelf staying out of accessibility (#357)
+            # about 90 for the pages behind the shelf staying out of accessibility (#357), and about 20 for the shelf
+            # reading no reader words
             tests: >-
-              ReviewerChecksUITests SingleColumnUITests ShelfAccessibilityUITests
+              ReviewerChecksUITests SingleColumnUITests ShelfAccessibilityUITests ReaderVisibleTextUITests
             skip: >-
               ReviewerChecksUITests/testTheLastPagesNumberIsTheCount ReviewerChecksUITests/testPageNumbersAreOnOrOffInEveryBook
             pr_tests: none
             cold: false
-            timeout: 110 # 30 + 2 x 31.4 + 5 + 12
+            timeout: 111 # 30 + 2 x 31.9 + 5 + 12
             lane: 2
     uses: ./.github/workflows/ui-tests.yml
     with:
@@ -956,6 +959,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/select-xcode
+        with:
+          xcode: "27.2"
       - name: Install the Metal toolchain (the page curl is a Metal shader)
         run: xcodebuild -downloadComponent MetalToolchain
       - name: Generate the Xcode project from project.yml
@@ -1014,6 +1019,8 @@ jobs:
         run: echo "JOB_START=$(date +%s)" >> "$GITHUB_ENV"
       - uses: actions/checkout@v4
       - uses: ./.github/actions/select-xcode
+        with:
+          xcode: "27.2"
       - name: Start an iPhone Duo booting
         run: python3 -I scripts/ci-simulator.py start gatefold-duo "iPhone Duo"
       - name: Wait for this commit's build (Build for testing runs while the simulator boots)

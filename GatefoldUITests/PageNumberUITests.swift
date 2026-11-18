@@ -20,7 +20,7 @@ final class PageNumberUITests: XCTestCase {
         "-GatefoldPageFurniture", "YES",
     ]
 
-    private var visibleText: String { (app.descendants(matching: .any)["reader.visibleText"].value as? String) ?? "" }
+    private var visibleText: String { app.readerVisibleText }
 
     /// The numbers on the pages in view, left to right.
     private var numbers: [Int] {
