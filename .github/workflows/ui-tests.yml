@@ -167,6 +167,14 @@ jobs:
           # Every thread of the app and its busiest neighbours while main is held past 30 s (gatefold#357): the app's
           # own watch names main's work only, and nothing when main waits on another thread or the process starves.
           nohup sh scripts/ci-hang-sample.sh "$RUNNER_TEMP/reader.log" "$RUNNER_TEMP/hangs" >> "$RUNNER_TEMP/hangs.log" 2>&1 &
+      - name: Fill the app's Metal shader cache before the tests (gatefold#487)
+        # A first draw compiles its shader on the app's main thread, waiting on the simulator's compiler service, which
+        # a busy runner left unrun for 40 s and more (main held up to 207 s, run 44292342494). One launch here draws the
+        # shelf, the zoom into a book, its controls and Fine-Tune; the tests then find those shaders cached. Ends by
+        # its 180 s bound and never fails the job: the tests run as before either way.
+        timeout-minutes: 4
+        continue-on-error: true
+        run: sh scripts/ci-warm-metal.sh "$UDID" "$(ls -d "$RUNNER_TEMP"/dd/Build/Products/*-iphonesimulator/Gatefold.app | head -1)" "$RUNNER_TEMP/reader.log" 180
       - id: left
         uses: ./.github/actions/time-left
         with:
