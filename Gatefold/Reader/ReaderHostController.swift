@@ -1176,7 +1176,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             let deadline = ContinuousClock.now + budget
             while true {
                 // The columns first: a page read after them is laid out in them (a count, once taken, stays).
-                let inColumns = await laidOutInColumns()
+                let inColumns = true // PROBE RED (gatefold#482): the fix's wait for his columns taken out
                 let range = await visibleRange()
                 releaseLateColumns()
                 guard let r = range, r.text == nil || !inColumns, ContinuousClock.now < deadline,
