@@ -21,6 +21,20 @@ com.apple.hybridsearchd
 com.apple.suggestd
 com.apple.siriactionsd
 com.apple.siriknowledged
+# The simulator processes holding the most runnable threads through the tests in probe 44308174398 (Find My,
+# Reminders, Wallet, Siri, Fitness, ad attribution, Finance, Safari bookmark sync, Family Controls, Calendar access),
+# and apsd, which used about 12% of the runner's 3 CPUs throughout. Gatefold sends and receives no push notifications.
+com.apple.apsd
+com.apple.findmy.findmylocated
+com.apple.remindd
+com.apple.passd
+com.apple.assistantd
+com.apple.fitcore
+com.apple.ap.adprivacyd
+com.apple.financed
+com.apple.SafariBookmarksSyncAgent
+com.apple.FamilyControlsAgent
+com.apple.calaccessd
 com.apple.chronod
 com.apple.contacts.postersyncd
 com.apple.assetsd
