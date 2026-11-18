@@ -1,3 +1,4 @@
+// PROBE (gatefold#492): touched so the taps guard runs on this pull request.
 import GatefoldCore
 import SwiftUI
 
