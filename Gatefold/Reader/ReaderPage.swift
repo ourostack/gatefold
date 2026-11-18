@@ -38,9 +38,9 @@ protocol ReaderPage: AnyObject {
     /// `finished` once the count has ended by itself (not when stopped).
     func countPages(_ hrefs: [String], record: @escaping @MainActor (String, Int) -> Void, finished: @escaping @MainActor () -> Void)
     func stopCounting()
-    /// Puts `anchor`'s words back on his page if a late layout moved them: a spread's left page, or the one page
-    /// on screen; `stillWanted` turns false once the reader has moved or the page is gone.
-    func keepWordsOnPage(_ anchor: ReadingAnchor, stillWanted: @escaping @MainActor () -> Bool) async
+    /// Puts `anchor`'s words back on the spread's left page if a late layout moved them; `stillWanted`
+    /// turns false once the reader has moved or the page is gone.
+    func keepWordsOnLeft(_ anchor: ReadingAnchor, stillWanted: @escaping @MainActor () -> Bool) async
     /// A jump's landing put on the spread a restore of its place would show (`SpreadSettler`, `.restore`).
     func settleLanding(_ anchor: ReadingAnchor, stillWanted: @escaping @MainActor () -> Bool) async
     /// A standby swap retired the page an open reflow was laying out: that reflow's cover, retries and
@@ -54,7 +54,7 @@ protocol ReaderPage: AnyObject {
 }
 
 extension ReaderPage {
-    func keepWordsOnPage(_ anchor: ReadingAnchor, stillWanted: @escaping @MainActor () -> Bool) async {}
+    func keepWordsOnLeft(_ anchor: ReadingAnchor, stillWanted: @escaping @MainActor () -> Bool) async {}
     func settleLanding(_ anchor: ReadingAnchor, stillWanted: @escaping @MainActor () -> Bool) async {}
     var isLoadingChapter: Bool { false }
     var isTurning: Bool { false }
