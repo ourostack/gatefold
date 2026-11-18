@@ -19,7 +19,7 @@ final class PageCountCostUITests: XCTestCase {
     private static let books = ["alice-in-wonderland", "dracula", "emma", "frankenstein", "moby-dick",
                                 "pride-and-prejudice", "sherlock-holmes", "the-great-gatsby"]
 
-    private var visibleText: String { (app.descendants(matching: .any)["reader.visibleText"].value as? String) ?? "" }
+    private var visibleText: String { app.readerVisibleText }
     private var total: String { (app.descendants(matching: .any)["reader.pageCount"].value as? String) ?? "" }
 
     private func open(_ book: String) {

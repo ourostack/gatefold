@@ -63,11 +63,10 @@ enum ReaderReads {
     /// back there (gatefold#310). `say` notes why a settle failed.
     static func settle(_ app: XCUIApplication, _ what: String, say: (String) -> Void,
                        file: StaticString = #filePath, line: UInt = #line) -> (words: String, reads: Int) {
-        let text = el(app, "reader.visibleText")
         let guardEnds = Date().addingTimeInterval(HangGuard.seconds(reads: coverReads))
         var last = "", same = 0, readyAt: Int?
         for read in 1...coverReads {
-            let now = (text.value as? String) ?? ""
+            let now = app.readerVisibleText
             if readyAt == nil, ready(app) { readyAt = read }
             // Counted only once the page is shown, so words that held still beneath the cover need their quiet reads again.
             if now == last, readyAt != nil { same += 1 } else { last = now; same = 0 }

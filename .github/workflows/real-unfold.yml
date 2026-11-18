@@ -7,6 +7,10 @@ name: Real unfold
 # 45 to 75 min, too long for the PR clock (gatefold#39), so on a pull request the job skips, which reports success
 # under the same required name. A red main is fixed as AGENTS.md says ("CI"). On a slow host it stops starting unfolds
 # in time to print its verdicts and upload its logs, and is red for the unfolds it never made (gatefold#391).
+#
+# The required check `Real unfold` is the gate job at the end: green when the unfolds passed, on a pull request where
+# they don't run, or on a main push whose tree the merge queue's run (or a pull request's) already unfolded and passed
+# (its job "Real unfold passed on tree <tree>"; scripts/ci-proof.py). A main push without that proof unfolds as before.
 
 on:
   workflow_dispatch:
@@ -17,6 +21,7 @@ on:
   # Every pull request, because Real unfold is a required check: the job skips there, which reports success (a
   # workflow-level path filter never reported, so such a pull request waited forever; gatefold#42).
   pull_request:
+  merge_group:
   push:
     branches: [main]
 
@@ -34,10 +39,30 @@ jobs:
     timeout-minutes: 5
     outputs:
       reader: ${{ steps.diff.outputs.reader }}
+      tree: ${{ steps.tree.outputs.tree }}
+      proven: ${{ steps.proof.outputs.proven }}
+      proof: ${{ steps.proof.outputs.proof }}
+    # The proof reads which pull request was merged as this commit, and that run's jobs.
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - id: tree
+        name: The tree this run tests (the proof job names it)
+        run: echo "tree=$(git rev-parse 'HEAD^{tree}')" >> "$GITHUB_OUTPUT"
+      - id: proof
+        name: Has the merge queue or a pull request already unfolded this tree? (main pushes only)
+        if: github.event_name == 'push'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          python3 -I scripts/ci-proof.py --sha "$GITHUB_SHA" --workflow real-unfold.yml --prefix "Real unfold passed on tree " \
+            > proof.txt 2>&1 || echo "Not proven: the unfolds run." >> proof.txt
+          cat proof.txt | tee -a "$GITHUB_STEP_SUMMARY"
       - id: diff
         env:
           EVENT: ${{ github.event_name }}
@@ -54,12 +79,12 @@ jobs:
             echo "reader=false" >> "$GITHUB_OUTPUT"
           fi
 
-  real-unfold:
-    name: Real unfold
+  unfold:
+    name: Unfold with a book open
     needs: changes
-    # Main and dispatch only (see the top). A failed `changes` leaves the output empty, so the unfold runs rather than
-    # skipping as a pass.
-    if: ${{ !cancelled() && github.event_name != 'pull_request' && needs.changes.outputs.reader != 'false' }}
+    # Main, the merge queue and dispatch only (see the top). A failed `changes` leaves the outputs empty, so the unfold
+    # runs rather than skipping as a pass.
+    if: ${{ !cancelled() && github.event_name != 'pull_request' && needs.changes.outputs.reader != 'false' && needs.changes.outputs.proven != 'true' }}
     runs-on: xcode-27
     timeout-minutes: 75
     env:
@@ -348,3 +373,33 @@ jobs:
             ${{ runner.temp }}/unfold/marks.log
             ${{ runner.temp }}/unfold/shots
             ${{ runner.temp }}/unfold/stall
+
+  # The required check. Never skipped, so it always reports.
+  real-unfold:
+    name: Real unfold
+    needs: [changes, unfold]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - env:
+          EVENT: ${{ github.event_name }}
+          READER: ${{ needs.changes.outputs.reader }}
+          UNFOLD: ${{ needs.unfold.result }}
+          PROVEN: ${{ needs.changes.outputs.proven }}
+          PROOF: ${{ needs.changes.outputs.proof }}
+        run: |
+          if [ "$PROVEN" = true ]; then echo "::notice::Passed by proof: every unfold passed on this tree in $PROOF"; exit 0; fi
+          if [ "$EVENT" = pull_request ] && [ "$UNFOLD" = skipped ]; then echo "The unfolds run in the merge queue and on main, not on a pull request."; exit 0; fi
+          echo "Unfolds: $UNFOLD"
+          [ "$UNFOLD" = success ]
+
+  # The proof a main push reads (scripts/ci-proof.py): every unfold ran and passed on this tree, with the usual rounds.
+  proof:
+    name: Real unfold passed on tree ${{ needs.changes.outputs.tree }}
+    needs: [changes, unfold]
+    if: ${{ needs.unfold.result == 'success' && needs.changes.outputs.tree != '' && github.event_name != 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - run: echo "Every unfold passed on tree ${{ needs.changes.outputs.tree }}."
