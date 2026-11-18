@@ -202,8 +202,9 @@ def summary(line):
             f.write(line + "\n")
 
 
-def sweep(api, act, now):
-    """Cancel the merge-group runs nobody will read. Returns them."""
+def sweep(api, act, now, cancelled):
+    """Cancel the merge-group runs nobody will read, appending each to `cancelled` as it goes (so an error part way
+    still leaves the ones cancelled to be force-cancelled). Returns them."""
     reply = api.queue()
     kept = keep(reply)
     if kept is None:
@@ -222,6 +223,7 @@ def sweep(api, act, now):
                 f"({run.get('head_branch', '')}) | {run.get('status')} | {what} |")
         if act:
             api.call(f"actions/runs/{run['id']}/cancel", "POST")
+            cancelled.append(run)
     return found
 
 
@@ -236,11 +238,12 @@ def force(api, ids):
 def check(api, act, now=None, wait=time.sleep, stuck_too=True):
     now = now or datetime.datetime.now(datetime.timezone.utc)
     found = stuck(api.runs(), limits_here(), api.jobs, now) if stuck_too else []
+    cancelled = []
     try:
-        lost = sweep(api, act, now)
+        lost = sweep(api, act, now, cancelled)
     except (Stop, urllib.error.URLError, OSError, ValueError) as e:  # HTTPError is a URLError
-        summary(f"::warning title=Orphan sweep stopped::{e}; no orphaned run is cancelled this tick.")
-        lost = []
+        summary(f"::warning title=Orphan sweep stopped::{e}; it cancels no more orphaned runs this tick.")
+        lost = cancelled
     found = [f for f in found if f[0]["id"] not in {r["id"] for r in lost}]
     if stuck_too and not found:
         summary("No run has a job past its timeout.")
@@ -426,12 +429,13 @@ def selftest_orphans(now, ago):
     try:
         with contextlib.redirect_stdout(io.StringIO()):
             end_to_end(now, incident)
+        queue_checked = queue_errors()
     finally:
         if out is None:
             os.environ.pop("GITHUB_STEP_SUMMARY")
         else:
             os.environ["GITHUB_STEP_SUMMARY"] = out
-    n = len(cases) + len(fail_closed) + 5 + queue_errors()
+    n = len(cases) + len(fail_closed) + 5 + queue_checked
     print(f"ci-stuck selftest: {n} orphan cases pass")
     return n
 
