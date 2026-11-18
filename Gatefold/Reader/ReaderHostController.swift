@@ -44,6 +44,9 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             guard oldValue != isTurning else { return }
             if LaunchOptions.isUITest {
                 if isTurning { frames.start() } else { frames.stop(counting: counter != nil) }
+                // A test waits on the turn itself, not a count of reads: one into another chapter waits for that
+                // chapter's page beneath, which on CI's busy iPad took up to 58 s (gatefold#492).
+                weakModel?.turningProbe = isTurning
             }
             // A chapter still loading behind the page shares its web process with the turn: stop the count
             // for the turn (what's counted is kept) and take it up again once turns go quiet.
