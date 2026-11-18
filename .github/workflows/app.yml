@@ -82,6 +82,7 @@ jobs:
       tree: ${{ steps.tree.outputs.tree }}
       proven: ${{ steps.proof.outputs.proven }}
       proof: ${{ steps.proof.outputs.proof }}
+      shards: ${{ steps.shards.outputs.shards }}
     # Its own token scope: the proof reads which pull request was merged as this commit.
     permissions:
       contents: read
@@ -97,16 +98,35 @@ jobs:
       # Don't test the same tree twice. A main push whose tree a pull request's or the merge queue's run already passed
       # with the full lists (its job "Full suite passed on tree <tree>") runs no shard: every required check reports
       # success by that proof, naming the run. A direct push, another tree, a red run or an unreadable API runs the full
-      # suite, as before (scripts/ci-proof.py; it fails closed).
+      # suite, as before (scripts/ci-proof.py; it fails closed). In the merge queue, another group's run that passed in
+      # full on this very tree is the proof: a pull request re-enqueued after a runner fault isn't tested twice.
       - id: proof
-        name: Has a pull request or the merge queue already passed this tree? (main pushes only)
-        if: github.event_name == 'push'
+        name: Has a pull request or the merge queue already passed this tree? (main pushes and the merge queue)
+        if: github.event_name == 'push' || github.event_name == 'merge_group'
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          TREE: ${{ steps.tree.outputs.tree }}
         run: |
-          python3 -I scripts/ci-proof.py --sha "$GITHUB_SHA" --workflow app.yml --prefix "Full suite passed on tree " \
+          # The merge queue: another group's run that passed on this very tree (a re-enqueue after a runner fault).
+          if [ "$EVENT" = merge_group ]; then where=(--tree "$TREE" --run "$GITHUB_RUN_ID"); else where=(--sha "$GITHUB_SHA"); fi
+          python3 -I scripts/ci-proof.py "${where[@]}" --workflow app.yml --prefix "Full suite passed on tree " \
             > proof.txt 2>&1 || echo "Not proven: the full suite runs." >> proof.txt
           cat proof.txt | tee -a "$GITHUB_STEP_SUMMARY"
+      # Per shard, in the merge queue: a shard that passed on this very tree in another group's run reports "Passed on
+      # this tree" instead of running again, so a group re-enqueued after a runner fault reruns only what hasn't passed
+      # on its tree. The gates, and the proof job, still pass only when every shard has (scripts/ci-proof.py --shards;
+      # trouble reading GitHub runs every shard).
+      - id: shards
+        name: Which UI shards already passed on this tree? (the merge queue only)
+        if: github.event_name == 'merge_group' && steps.proof.outputs.proven != 'true'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          TREE: ${{ steps.tree.outputs.tree }}
+        run: |
+          python3 -I scripts/ci-proof.py --shards --tree "$TREE" --run "$GITHUB_RUN_ID" --workflow app.yml \
+            > shards.txt 2>&1 || echo "Not read: every shard runs." >> shards.txt
+          cat shards.txt | tee -a "$GITHUB_STEP_SUMMARY"
       - id: diff
         env:
           EVENT: ${{ github.event_name }}
@@ -466,6 +486,7 @@ jobs:
       pr_tests: ${{ matrix.pr_tests }}
       pr_when: ${{ matrix.pr_when || '' }}
       fired: ${{ needs.changes.outputs.fired }}
+      passed: ${{ needs.changes.outputs.shards }}
       extra: ${{ needs.changes.outputs.edited-ipad }}
       full: ${{ needs.changes.outputs.full }}
       cold: ${{ matrix.cold }}
@@ -532,6 +553,7 @@ jobs:
       pr_tests: ${{ matrix.pr_tests }}
       pr_when: ${{ matrix.pr_when || '' }}
       fired: ${{ needs.changes.outputs.fired }}
+      passed: ${{ needs.changes.outputs.shards }}
       extra: ${{ needs.changes.outputs.edited-ipad }}
       full: ${{ needs.changes.outputs.full }}
       cold: ${{ matrix.cold }}
@@ -626,6 +648,7 @@ jobs:
       pr_tests: ${{ matrix.pr_tests }}
       pr_when: ${{ matrix.pr_when || '' }}
       fired: ${{ needs.changes.outputs.fired }}
+      passed: ${{ needs.changes.outputs.shards }}
       extra: ${{ needs.changes.outputs.edited-ipad }}
       full: ${{ needs.changes.outputs.full }}
       cold: ${{ matrix.cold }}
@@ -702,6 +725,7 @@ jobs:
       pr_tests: ${{ matrix.pr_tests }}
       pr_when: ${{ matrix.pr_when || '' }}
       fired: ${{ needs.changes.outputs.fired }}
+      passed: ${{ needs.changes.outputs.shards }}
       extra: ${{ needs.changes.outputs.edited-ipad }}
       full: ${{ needs.changes.outputs.full }}
       cold: ${{ matrix.cold }}
@@ -826,6 +850,7 @@ jobs:
       pr_tests: ${{ matrix.pr_tests }}
       pr_when: ${{ matrix.pr_when || '' }}
       fired: ${{ needs.changes.outputs.fired }}
+      passed: ${{ needs.changes.outputs.shards }}
       extra: ${{ needs.changes.outputs.edited-duo }}
       full: ${{ needs.changes.outputs.full }}
       cold: ${{ matrix.cold }}
@@ -1122,11 +1147,12 @@ jobs:
 
   # The proof that main reads (scripts/ci-proof.py): this job passes only when the full lists ran and every required
   # check of this run passed, and its name carries the tree it tested. A run of the PR lists skips it, so it proves
-  # nothing; a main push that was itself proven doesn't need it.
+  # nothing. A run that passed by proof ends with it too (the proof it relied on is of this same tree), so main's push
+  # after a merge group that passed by proof finds it on the commit the queue merged.
   proof:
     name: Full suite passed on tree ${{ needs.changes.outputs.tree }}
     needs: [changes, core, app, ipad-place-gate, ipad-undo-gate, ipad-taps-gate, ipad-reviewer-gate, duo-gate]
-    if: ${{ success() && needs.changes.outputs.full == 'true' && needs.changes.outputs.app == 'true' && needs.changes.outputs.proven != 'true' && needs.changes.outputs.tree != '' }}
+    if: ${{ success() && needs.changes.outputs.full == 'true' && needs.changes.outputs.app == 'true' && needs.changes.outputs.tree != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
