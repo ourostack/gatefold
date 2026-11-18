@@ -93,6 +93,9 @@ jobs:
         || format('ui-tests-{0}-{1}-{2}', github.run_id, github.run_attempt, inputs.shard) }}
       queue: max
     timeout-minutes: ${{ inputs.timeout }}
+    permissions:
+      contents: read
+      actions: write
     steps:
       - name: Note when the job began, so each test step can stop in time to upload its logs (gatefold#126)
         run: echo "JOB_START=$(date +%s)" >> "$GITHUB_ENV"
@@ -281,3 +284,7 @@ jobs:
         with:
           name: ${{ inputs.shard }}-xcresults-${{ github.run_attempt }}
           path: ${{ runner.temp }}/ui.xcresult
+      # Merge queue only: a failed job cancels the other runs on this commit, so the queue drops it now
+      # (.github/actions/fail-fast). Last, so the logs above are uploaded first.
+      - if: failure() && github.event_name == 'merge_group'
+        uses: ./.github/actions/fail-fast

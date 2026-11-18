@@ -89,6 +89,9 @@ jobs:
     timeout-minutes: 75
     env:
       APP: bot.ouro.gatefold
+    permissions:
+      contents: read
+      actions: write
     steps:
       # The unfolds stop in time for their verdicts and the upload, counted from here (gatefold#391).
       - run: echo "JOB_START=$(date +%s)" >> "$GITHUB_ENV"
@@ -373,6 +376,10 @@ jobs:
             ${{ runner.temp }}/unfold/marks.log
             ${{ runner.temp }}/unfold/shots
             ${{ runner.temp }}/unfold/stall
+      # Merge queue only: a failed job cancels the other runs on this commit, so the queue drops it now
+      # (.github/actions/fail-fast). Last, so the logs above are uploaded first.
+      - if: failure() && github.event_name == 'merge_group'
+        uses: ./.github/actions/fail-fast
 
   # The required check. Never skipped, so it always reports.
   real-unfold:

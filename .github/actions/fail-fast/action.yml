@@ -1,0 +1,13 @@
+name: Merge queue fails fast
+description: >-
+  The last step of each merge-group job, under `if: failure() && github.event_name == 'merge_group'`: cancels every
+  other run on the merge-group commit, then this one, so the queue drops the entry at once (scripts/ci-fail-fast.py).
+  The failed job keeps its failure and its logs. The job needs `actions: write`.
+runs:
+  using: composite
+  steps:
+    - name: Cancel the other runs on this merge-group commit
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+      run: python3 -I "$GITHUB_WORKSPACE/scripts/ci-fail-fast.py"
