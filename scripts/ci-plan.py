@@ -37,7 +37,7 @@ import re
 import subprocess
 import sys
 
-NOT_AFFECTED = re.compile(r"(\.md$|^changelog\.d/|^docs/|^distribution/|^tools/|^screenshots/|^scripts/screenshots/"
+NOT_AFFECTED = re.compile(r"(^(?!Gatefold|Packages/|actions/generated/).*\.md$|^changelog\.d/|^docs/|^distribution/|^tools/|^screenshots/|^scripts/screenshots/"
                           r"|^\.gitignore$|^\.github/(workflows/(?!(app|ui-tests)\.yml$)[^/]+|required-checks\.txt"
                           r"|CODEOWNERS)$|^actions/(?!generated/)"
                           r"|^scripts/(cloud-[^/]+|ouro-actions\.sh|changelog\.py|(package|release)-testflight[^/]*)$)")
@@ -66,11 +66,13 @@ def everything(reason):
             "smoke-ipad": "0", "smoke-duo": "0", "reason": reason}
 
 
-def plan(files, expect, ci_named, classes_of, on_main, smoke, offline_named=frozenset()):
+def plan(files, expect, ci_named, classes_of, on_main, smoke, offline_named=frozenset(), deleted=frozenset()):
     """The outputs for a pull request with `files` changed (both paths of a rename), `expect` files by GitHub's count.
 
     ci_named: paths the CI that builds, boots or runs the app's tests names (a change to one runs everything).
     offline_named: paths only the job "CI scripts, offline" names (a change to one runs that job, on Linux).
+    deleted: paths the change removes (or renames away). A removed script or CI file runs everything: the scan can't
+    read a file that is gone, so it can't tell whether a job still calls it.
     classes_of(path): the XCTestCase classes a UI test file declares, or None when it is gone.
     on_main: {(device, class)} main runs. smoke(device, classes) -> minutes, or None.
     """
@@ -80,7 +82,10 @@ def plan(files, expect, ci_named, classes_of, on_main, smoke, offline_named=froz
         raise Hidden(f"the diff lists {len(files)} files but the pull request changes {expect}")
     full, app, offline, fired, ipad, duo, why = False, False, False, set(), [], [], []
     for f in files:
-        if CI.match(f) or f in ci_named:
+        if f in deleted and f.startswith(("scripts/", ".github/")) and not NOT_AFFECTED.search(f):
+            full = True
+            why.append(f"{f} is removed, and the plan can't read what called it")
+        elif CI.match(f) or f in ci_named:
             full = True
             why.append(f"{f} is the CI that runs the app's tests")
         elif f in offline_named or SCRIPTS.match(f) and not NOT_AFFECTED.search(f):
@@ -100,7 +105,7 @@ def plan(files, expect, ci_named, classes_of, on_main, smoke, offline_named=froz
                 continue  # deleted: shards-check fails on a listed test that no longer exists
             if not classes:
                 full = True
-                why.append(f"{f} has no test class, so every test uses it")
+                why.append(f"{f} declares something besides its test classes, so other tests may use it")
             for c in classes:
                 on_ipad, on_duo = (IPAD, c) in on_main, (DUO, c) in on_main
                 if on_ipad or not on_duo:
@@ -137,15 +142,19 @@ def plan(files, expect, ci_named, classes_of, on_main, smoke, offline_named=froz
 # The repository, for the real run.
 
 def changed(base, head):
-    out = subprocess.run(["git", "diff", "--name-status", "-M", f"{base}...{head}"], capture_output=True, text=True)
+    """(every path the change touches, the paths it removes). Without rename detection a rename is a removal and an
+    addition, so git lists at least as many files as GitHub's count, never fewer, whatever git's rename limits."""
+    out = subprocess.run(["git", "diff", "--name-status", "--no-renames", f"{base}...{head}"], capture_output=True,
+                         text=True)
     if out.returncode:
         raise Hidden(f"git diff failed: {out.stderr.strip()}")
-    files, entries = [], 0
+    files, deleted = [], set()
     for line in out.stdout.splitlines():
-        parts = line.split("\t")
-        entries += 1
-        files.extend(parts[1:])  # a rename names both paths; both count for the plan
-    return files, entries
+        status, path = line.split("\t", 1)
+        files.append(path)
+        if status.startswith("D"):
+            deleted.add(path)
+    return files, deleted
 
 
 NAME = re.compile(r"(?<![\w./-])((?:scripts|\.github)/[\w./-]*\w)")
@@ -196,10 +205,24 @@ def ci_named():
     return runs, closure([offline_job], whole) - runs
 
 
+HELPER = re.compile(r"^(?:(?:private|fileprivate|public|internal|final|open)\s+)*"
+                    r"(extension|func|struct|enum|protocol|typealias|let|var|class|actor)\b", re.M)
+TEST_CLASS = re.compile(r"^(?:(?:final|private|fileprivate|public|internal|open)\s+)*class (\w+)\s*:\s*XCTestCase\b", re.M)
+
+
 def classes_of(path):
+    """The XCTestCase classes a UI test file declares; [] when it declares anything else at the top level (a helper
+    other tests may use), None when it is gone."""
     if not os.path.exists(path):
         return None
-    return re.findall(r"class (\w+)\s*:\s*XCTestCase", open(path).read())
+    return test_classes(open(path, errors="replace").read())
+
+
+def test_classes(text):
+    classes = TEST_CLASS.findall(text)
+    if len(HELPER.findall(text)) != len(classes):
+        return []
+    return classes
 
 
 def on_main():
@@ -306,9 +329,33 @@ def selftest():
          dict(**{"edited-ipad": "NewUITests", "edited-duo": ""})),
         ("a UI test helper: everything", ["GatefoldUITests/UITestHelpers.swift"], dict(full="true")),
         ("a UI test resource: everything (unmapped)", ["GatefoldUITests/Fixtures/book.epub"], dict(full="true")),
+        ("Markdown inside the app's folders: the app's rules, not 'not affected'", ["Gatefold/Resources/Help.md"],
+         dict(full="true")),
+        ("Markdown in the UI tests' folder: everything (unmapped)", ["GatefoldUITests/Notes.md"], dict(full="true")),
     ]
     for name, files, want in cases:
         check(name, files, **want)
+    gone = [
+        ("a removed CI script runs everything, though no scan can read it", ["scripts/ci-crashes.sh"],
+         {"scripts/ci-crashes.sh"}, "true"),
+        ("a removed unnamed script runs everything too", ["scripts/ci-old.py"], {"scripts/ci-old.py"}, "true"),
+        ("a removed cloud script is still not affected", ["scripts/cloud-old.py"], {"scripts/cloud-old.py"}, "false"),
+    ]
+    for name, files, deleted, want in gone:
+        got = plan(files, len(files), set(), sources.get, on, lambda d, cs: 20, set(), deleted)["full"]
+        assert got == want, f"{name}: full={got}"
+    helpers = [
+        ("one test class: that class", "import XCTest\nfinal class AUITests: XCTestCase {\n    func testA() {}\n}\n",
+         ["AUITests"]),
+        ("a class and a shared extension: a helper", "import XCTest\nextension XCUIApplication {\n    var x: Int { 1 }\n}"
+         "\nfinal class BUITests: XCTestCase {\n    func testB() {}\n}\n", []),
+        ("a class and a top-level func: a helper", "import XCTest\nfunc wait() {}\nclass CUITests: XCTestCase {}\n", []),
+        ("a private helper struct: a helper", "import XCTest\nprivate struct Page {}\nclass DUITests: XCTestCase {}\n",
+         []),
+        ("a helper only: a helper", "import XCTest\nextension XCUIElement {}\n", []),
+    ]
+    for name, text, want in helpers:
+        assert test_classes(text) == want, f"{name}: got {test_classes(text)}"
     hiddens = [
         ("an empty diff fails the run, never passes as not affected", [], 3),
         ("a diff with fewer files than the pull request fails the run", ["README.md"], 4),
@@ -316,7 +363,7 @@ def selftest():
     ]
     for name, files, expect in hiddens:
         hidden(name, files, expect)
-    print(f"ci-plan selftest: {len(cases) + len(hiddens)} cases pass")
+    print(f"ci-plan selftest: {len(cases) + len(hiddens) + len(gone) + len(helpers)} cases pass")
 
 
 def main(argv):
@@ -334,12 +381,10 @@ def main(argv):
         if a.event != "pull_request":
             out = everything(f"a {a.event} run tests everything")
         else:
-            files, entries = changed(a.base, a.head)
+            files, deleted = changed(a.base, a.head)
             print("\n".join(files))
-            if a.expect is not None and entries != a.expect:
-                raise Hidden(f"the diff lists {entries} files but the pull request changes {a.expect}")
             runs, offline = ci_named()
-            out = plan(files, None, runs, classes_of, on_main(), smoke, offline)
+            out = plan(files, a.expect, runs, classes_of, on_main(), smoke, offline, deleted)
     except Hidden as e:
         print(f"::error title=The plan can't see this change::{e}, so nothing is skipped as a pass: every required "
               "check fails. Rerun once the pull request's diff is readable (scripts/ci-plan.py).")
