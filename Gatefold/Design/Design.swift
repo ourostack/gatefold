@@ -102,6 +102,10 @@ enum LaunchOptions {
     /// Tests only: the first reflow after his first move waits 120 s for its page to answer its first script, as
     /// CI's landscape spread did while its chapter loaded (gatefold#94, #133); every restore of it waits.
     static var slowRestorePage: Bool { isUITest && defaults.bool(forKey: "GatefoldSlowRestorePage") }
+    /// Tests only: a new column count reaches Readium only once the reflow's restore has taken its first look at
+    /// the page, so the restore always finds it laid out in the old columns first, as CI's iPad did turned back
+    /// upright (runs 44216676480, 44223502491, 44237319799 and 44237824125, gatefold#482).
+    static var lateColumns: Bool { isUITest && defaults.bool(forKey: "GatefoldLateColumns") }
     /// Tests only, with `slowRestorePage`: the page shown unsettled is noted as Readium names it and never by
     /// its words, as on a device whose page scripts wait on the stalled install too (gatefold#133).
     static var shownPageWithoutWords: Bool { isUITest && defaults.bool(forKey: "GatefoldShownPageWithoutWords") }

@@ -203,8 +203,8 @@ final class RotationMidTransitionUITests: XCTestCase {
 
     /// The build 25 review's path: a fresh open in portrait at 0.31, counted, a Contents jump (entry 31), two pages
     /// read. Returns his page's words (compared, never printed).
-    private func readTwoPagesAfterAJump() -> String {
-        launch()
+    private func readTwoPagesAfterAJump(_ extra: [String] = []) -> String {
+        launch(extra)
         let pageCount = el("reader.pageCount")
         let counted = readsUntil(reads: 3000) { pageCount.exists && !((pageCount.value as? String) ?? "").isEmpty }
         XCTAssertTrue(counted.ok, "the book was counted before the turn (not in \(counted.reads) reads)")
@@ -272,9 +272,12 @@ final class RotationMidTransitionUITests: XCTestCase {
     /// about 1.4 s), and its margins are the ones the page was read in (build 25's open kept a phone's margins in
     /// portrait until the first turn on its side set the iPad's, so back upright his words fell a third of a page
     /// down another page: 16 became 17). Judged in reads: the page's loads, and his first words, by hash.
+    /// Each new column count reaches the page only after the restore's first look (`-GatefoldLateColumns`): back
+    /// upright, CI's iPad showed the page a second in the spread's two columns, his words in the left one, and a
+    /// restore that judged it then left him on the page before his once it became one (gatefold#482).
     func testTurnedOnItsSideAndBackHeIsOnHisPage() throws {
         try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .pad, "a spread on rotation is an iPad path")
-        let his = readTwoPagesAfterAJump()
+        let his = readTwoPagesAfterAJump(["-GatefoldLateColumns", "YES"])
         XCTAssertFalse(his.isEmpty, "his page's words are readable")
         let freshBefore = count("reader.reflowFreshPages"), beforeTurn = reflow.number
         XCUIDevice.shared.orientation = .landscapeLeft

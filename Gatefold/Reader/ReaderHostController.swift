@@ -771,13 +771,19 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         guard !closed else { return }
         // One page becoming two is the unfold: the right page swings open once it has laid out.
         unfolding = reflow && self.columns == 1 && columns == 2
+        let newColumns = self.columns != columns
         self.columns = columns
         self.preferences = preferences
         // A page laid out in the old type would be the wrong page, and its counts the wrong counts.
         dropStandby()
         stopCounting()
         if reflow { beginReflow(model.consumeReflowReason() ?? .typography) }
-        navigator.submitPreferences(preferences)
+        if LaunchOptions.lateColumns, reflow, newColumns {
+            lateColumns = preferences
+        } else {
+            lateColumns = nil
+            navigator.submitPreferences(preferences)
+        }
         if reflow { settleReflowSoon() }
         Task {
             _ = await Self.onSpread { () async throws -> Void? in
@@ -793,6 +799,15 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
                 await logTypography()
             }
         }
+    }
+
+    /// Tests only (`LaunchOptions.lateColumns`): preferences with a new column count, held until the restore's first look.
+    private var lateColumns: EPUBPreferences?
+    private func releaseLateColumns() {
+        guard let held = lateColumns else { return }
+        lateColumns = nil
+        readerLog.notice("reflow: the new columns reach Readium after the restore's first look (GatefoldLateColumns)")
+        navigator.submitPreferences(held)
     }
 
     // MARK: Reflow and the reading anchor
@@ -1152,17 +1167,22 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             while current(), !Task.isCancelled { try? await Task.sleep(for: .milliseconds(250)) }
             return
         }
-        // A slow device may still be paginating: judge the page only once it shows text. Each
-        // phase has its own budget, because a picture-only page never shows text.
+        // A slow device may still be paginating: judge the page only once it shows text, laid out in the
+        // reader's columns. Readium's new column count reaches the page a script's round trip later; turned
+        // back upright, the page stood a second in the spread's two columns with his words in the left one,
+        // and a restore that judged it then left him on the page before his once it became one (gatefold#482).
+        // Each phase has its own budget, because a picture-only page never shows text.
         func laidOutRange(within budget: Duration) async -> VisibleRange? {
             let deadline = ContinuousClock.now + budget
-            var range = await visibleRange()
-            while let r = range, r.text == nil, ContinuousClock.now < deadline,
-                  !Task.isCancelled, current() {
+            while true {
+                // The columns first: a page read after them is laid out in them (a count, once taken, stays).
+                let inColumns = await laidOutInColumns()
+                let range = await visibleRange()
+                releaseLateColumns()
+                guard let r = range, r.text == nil || !inColumns, ContinuousClock.now < deadline,
+                      !Task.isCancelled, current() else { return range }
                 try? await Task.sleep(for: .milliseconds(250))
-                range = await visibleRange()
             }
-            return range
         }
         let visible = await laidOutRange(within: .seconds(3))
         guard current() else { return }
@@ -1690,6 +1710,16 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             let end = try await navigator.answer(ReaderJS.pageEnd) as? Double
             return VisibleRange(href: location.href.string, start: start, end: max(start, min(1, end ?? start + 0.0001)), text: text)
         }
+    }
+
+    /// The page on screen is laid out in the reader's columns: its style has the count he asked Readium for, or sets
+    /// none (a scrolled page, a fixed layout). A page that doesn't answer isn't judged here: `visibleRange` says so.
+    private func laidOutInColumns() async -> Bool {
+        let shown = await Self.onSpread { () async throws -> Int? in
+            (try await self.navigator.answer(ReaderJS.styleColumns) as? NSNumber)?.intValue
+        }
+        guard let shown, shown > 0 else { return true }
+        return shown == columns
     }
 
     /// UI tests: the web view's own count of the text columns on screen (`ReaderJS.columns`).

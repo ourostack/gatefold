@@ -364,6 +364,10 @@ enum ReaderJS {
     static let isFresh = "window.gatefold ? 0 : 1"
 
     static func setColumns(_ n: Int) -> String { "window.gatefoldColumns = \(n); true" }
+    /// The text columns the page's own style lays out now (Readium's `column-count`), or 0 when it sets none
+    /// (a scrolled page, a fixed layout). A new count reaches the page a script's round trip after the reader
+    /// asks for it, so until then the page is still laid out the old way (gatefold#482).
+    static let styleColumns = "(function(){var n=parseInt(getComputedStyle(document.documentElement).columnCount,10);return isNaN(n)?0:n;})()"
 
     /// "CHAPTER XIX." reads as "Chapter XIX": shouting headings are softened, numerals kept.
     static func tidyHeading(_ s: String) -> String { Headings.tidy(s) }
