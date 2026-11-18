@@ -3433,6 +3433,7 @@ final class ReaderModel {
         backTrips += 1
         let trip = backTrips
         goingBack = trip
+        backTripWaited = 0
         // Released on every way out, and by the count if the jump never comes back (a load that hangs
         // must not leave Back dead for the rest of the session).
         defer { if goingBack == trip { goingBack = nil } }
@@ -3461,6 +3462,7 @@ final class ReaderModel {
                     return
                 }
                 guard budget.take(loading: self.page?.isLoadingChapter == true) else { break }
+                self.backTripWaited = budget.waited
                 await self.backBeat()
                 beats += 1
                 // Only while the trip still has reads to wait on the load: one about to give up says so instead.
@@ -3601,6 +3603,9 @@ final class ReaderModel {
         strayBack.map { $0.href == l.href } ?? strayJump.map { $0.href == l.href } ?? false
     }
     var isGoingBack: Bool { goingBack != nil }
+    /// Reads the Back trip under way (or the last one) has spent waiting on its chapter's load, for a test's
+    /// held load to know when the trip has waited past what it may without one.
+    @ObservationIgnored private(set) var backTripWaited = 0
     /// One beat of the wait for Back's jump (a sleep, counted as `JumpLanding` counts its reads):
     /// `JumpLanding.reads` of them free Back again.
     @ObservationIgnored var backBeat: () async -> Void = { try? await Task.sleep(for: .milliseconds(200)) }

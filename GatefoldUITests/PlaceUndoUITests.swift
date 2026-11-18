@@ -192,7 +192,9 @@ final class PlaceUndoUITests: XCTestCase {
     /// Back to a chapter still loading takes him back once it has loaded: on CI's iPad (job 129949744000,
     /// gatefold#170) Back gave up and he stayed where he had jumped to. Back's first 25 sends are each
     /// taken at its chapter's start, the chapter still loading meanwhile (`-GatefoldHoldBackSends`), as a
-    /// web view still loading takes a jump: past the 15 a trip of 150 plain reads makes (one each 10).
+    /// web view still loading takes a jump: past the 15 a trip of 150 plain reads makes (one each 10). The hold
+    /// ends sooner once the trip has waited on the load past those 150 reads, which a slow real load can do by
+    /// itself (run 44152627391: 100 s for the chapter, then the held sends had nothing left to wait on).
     /// The veil may let go at its limit meanwhile (the chapter shows its own loading); the trip goes on.
     /// Judged in samples of the held load.
     func testBackToAChapterStillLoadingWaitsForItAndTakesHimBack() {

@@ -2275,6 +2275,16 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         }
         if LaunchOptions.isUITest, let sends = LaunchOptions.holdBackSends, sends > 0, weakModel?.isGoingBack == true {
             if !heldSendsArmed { heldSendsArmed = true; heldSends = sends; holdLoadForTest(looks: 0) }
+            // The hold has proved its point once the trip has waited on the load for more reads than a trip may
+            // make without one: it lets the rest of its sends go. A real load slow enough to spend the trip's
+            // waiting reads first (100 s on CI's starved iPad, run 44152627391) left the held sends nothing to
+            // wait on, and the trip ran out of reads with the hold still up.
+            if heldSends > 0, let waited = weakModel?.backTripWaited, waited > JumpLanding.reads {
+                readerLog.notice("test: Back's trip has waited \(waited, privacy: .public) reads on the load; the \(self.heldSends, privacy: .public) held sends left go")
+                heldSends = 0
+                heldLoadMarker?.accessibilityValue = "0"
+                if heldLoadLooks == 0, !heldUntilCatchUp { heldLoadMarker?.removeFromSuperview(); heldLoadMarker = nil }
+            }
             if heldSends > 0 {
                 heldSends -= 1
                 // The sends still held, for the test to read (the log stream can drop lines).

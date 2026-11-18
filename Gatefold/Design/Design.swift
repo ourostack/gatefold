@@ -154,7 +154,8 @@ enum LaunchOptions {
     static var holdLeaveWrites: Bool { isUITest && defaults.bool(forKey: "GatefoldHoldLeaveWrites") }
     /// Debug only: Back's first this many sends are taken at their chapter's start, the chapter still
     /// loading meanwhile, as a web view still loading takes a jump (gatefold#170). Counted in sends, not
-    /// looks, so a Back that stops sending stays short. Armed once per launch, by its first Back.
+    /// looks, so a Back that stops sending stays short. Armed once per launch, by its first Back. The rest
+    /// go once the trip has waited on the load past `JumpLanding.reads`, however that waiting came.
     static var holdBackSends: Int? {
         #if DEBUG
         defaults.object(forKey: "GatefoldHoldBackSends") == nil ? nil : defaults.integer(forKey: "GatefoldHoldBackSends")
