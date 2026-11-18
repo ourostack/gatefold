@@ -584,7 +584,12 @@ final class NavigationPlaceUITests: XCTestCase {
         let row = app.buttons.matching(NSPredicate(format: "label CONTAINS[c] %@", "Chapter XXX")).firstMatch
         XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label CONTAINS[c] %@", "Chapter I")).firstMatch.waitForExistence(timeout: 10))
         XCTAssertTrue(ContentsRow.tap(row, in: app).ok, "the contents list chapter XXX")
-        var words = waitForWords(changingFrom: first, timeout: 20)
+        // The jump is waited for until it lands, in reads, as the contents jump above is: on a starved iPad chapter
+        // XXX took 51 s to load, past a 20 s clock and the place check's reads after it (gatefold#500).
+        let moved = readsUntilMoved(from: first)
+        print("REPRO jump contents: moved \(moved.ok) after \(moved.reads) reads\(moved.hung ? " (hang guard)" : "")")
+        XCTAssertTrue(moved.ok, "the contents jump never moved the page in \(moved.reads) reads\(moved.hung ? " (hang guard)" : "")")
+        var words = visibleText
         XCTAssertTrue(keptWhatIsShown(), "the jump kept a place other than the page shown")
         sleep(3)
         for _ in 0..<2 {
