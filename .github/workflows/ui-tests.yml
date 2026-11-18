@@ -1,7 +1,7 @@
 name: UI test shard
 
-# One shard of App's UI tests, called by app.yml. The job starts with the run (or, capped, when a slot frees;
-# gatefold#243), not after `build`: it boots its new simulator (alongside `Build for testing`, when it starts with the
+# One shard of App's UI tests, called by app.yml. The job starts with the run (or, on a pull request, when its lane
+# frees), not after `build`: it boots its new simulator (alongside `Build for testing`, when it starts with the
 # run), waits for that build's artifact (named by commit and Xcode version), and runs this shard's tests with
 # test-without-building (gatefold#39). The shards of one required check report through
 # that check's gate job in app.yml. scripts/ci-shards.py checks the lists in app.yml: every listed test exists, and
@@ -98,6 +98,8 @@ jobs:
         run: echo "JOB_START=$(date +%s)" >> "$GITHUB_ENV"
       - uses: actions/checkout@v4
       - uses: ./.github/actions/select-xcode
+        with:
+          xcode: "27.2"
       - name: Start the ${{ inputs.device }} booting
         run: python3 -I scripts/ci-simulator.py start "${{ inputs.sim }}" "${{ inputs.device }}"
       - name: Sample the runner's load every 20 s for the whole job (gatefold#39)

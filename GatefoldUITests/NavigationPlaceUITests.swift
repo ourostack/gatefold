@@ -608,13 +608,18 @@ final class NavigationPlaceUITests: XCTestCase {
         // still: counted in reads, never a fixed wait (gatefold#210, which a 45 s sleep let run out first).
         XCTAssertTrue(spreadCounted(after: portraitLayout), "the spread's page count finished")
         _ = steadyWords()
-        XCTAssertTrue(flat(visibleText).contains(his), "the spread shows his first words")
+        // The place he left: the saved place's words begin on a whole word, which the spread shows; the portrait
+        // opening can begin with the tail of a word the page cut, which it never shows (gatefold#434, run 43936540323).
+        let savedInPortrait = flat(savedWords)
+        let expected = savedInPortrait.isEmpty ? his.split(separator: " ").dropFirst().joined(separator: " ") : opening(savedInPortrait)
+        XCTAssertFalse(expected.isEmpty)
+        XCTAssertTrue(flat(visibleText).contains(expected), "the spread shows his first words")
         let spread = opening(visibleText)
         for round in 1...3 {
             leaveAndRelaunch()
             _ = waitForWords()
             sleep(6)
-            XCTAssertTrue(flat(visibleText).contains(his), "reopen \(round) after a rotation and no turn shows his first words")
+            XCTAssertTrue(flat(visibleText).contains(expected), "reopen \(round) after a rotation and no turn shows his first words")
             XCTAssertEqual(opening(visibleText), spread, "reopen \(round) is the spread he left, not one a page early")
         }
     }

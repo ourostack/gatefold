@@ -17,7 +17,7 @@ final class PageFurnitureUITests: XCTestCase {
         "-GatefoldSignedIn", "YES", "-GatefoldAllowReopen", "YES",
     ]
 
-    private var visibleText: String { (app.descendants(matching: .any)["reader.visibleText"].value as? String) ?? "" }
+    private var visibleText: String { app.readerVisibleText }
     private var pageNumber: XCUIElement { app.descendants(matching: .any)["reader.pageNumber"].firstMatch }
 
     private func openCounted() {

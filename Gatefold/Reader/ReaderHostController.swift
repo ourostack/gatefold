@@ -1188,18 +1188,21 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         }
         if case let .jump(anchor) = action,
            let locator = reapplied ?? model.locator(for: anchor) {
-            // A jump made while the book is still settling can land short of the place; try again.
+            // A jump made while the book is still settling can land short of the place; try again. One still
+            // landing is looked at again first (`RestoreLanding.looks`): on a slow host it lands late.
             let jumpBudget = ContinuousClock.now + .seconds(4)
-            for _ in 0..<3 {
-                _ = await navigator.go(to: locator, options: .init(animated: false))
-                try? await Task.sleep(for: .milliseconds(160))
-                guard current(), !Task.isCancelled else { return }
-                after = await laidOutRange(within: max(.zero, jumpBudget - ContinuousClock.now))
-                guard current() else { return }
-                if after?.contains(anchor) == true || ContinuousClock.now >= jumpBudget { break }
+            let landing = await RestoreLanding.land(
+                go: { _ = await self.navigator.go(to: locator, options: .init(animated: false)) },
+                read: { await laidOutRange(within: max(.zero, jumpBudget - ContinuousClock.now)) },
+                beat: { try? await Task.sleep(for: .milliseconds(160)) },
+                arrived: { $0.contains(anchor) },
+                current: { current() && !Task.isCancelled },
                 // The open's place is put back only while he hasn't touched the page or turned (gatefold#250).
-                if reapplied != nil, model.touchedSinceLocation || isTurning { break }
-            }
+                more: { ContinuousClock.now < jumpBudget && !(reapplied != nil && (model.touchedSinceLocation || self.isTurning)) })
+            guard current(), !Task.isCancelled else { return }
+            if landing.reads > 0 { after = landing.range }
+            // Numbers only (no book text), so a real unfold's restore can be followed from the log.
+            readerLog.notice("restore: jumped \(landing.jumps, privacy: .public) times, page read \(landing.reads, privacy: .public) times, at \(after?.start ?? -1, privacy: .public)..\(after?.end ?? -1, privacy: .public), his words \(after?.contains(anchor) == true, privacy: .public)")
         }
         // A spread keeps the reader's sentence on its left page, the page he was on.
         var target: ReadingAnchor? = held
