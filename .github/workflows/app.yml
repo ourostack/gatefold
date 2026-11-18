@@ -21,12 +21,13 @@ name: App
 # publishes right after the merge. Anything else on main (a push no such run passed, another tree, a red newest run,
 # an unreadable API) runs the full suite.
 #
-# A pull request that changes only Markdown still gets every required check: `changes` says so, the test shards skip,
-# and each gate job (`iPad (...)`, `Duo (the reviewers' checks)`, `Build and unit-test the app`) reports success
-# (gatefold#42). The jobs run unless `changes` said "only Markdown", and a failed `build` turns them red at the wait
-# instead of letting them skip, which would count as a pass. A failed `changes` leaves `full` empty, which runs the full
-# lists. A pull request that edits the CI runs the full lists; one that edits a UI test class runs it in the smoke shard
-# of each device main runs it on (`edited-ipad`, `edited-duo`).
+# Test once, fail closed (scripts/ci-plan.py). A pull request runs only what its files can affect: a change to the CI
+# that runs these tests, to what everything builds on, or to a file the plan doesn't map runs the full lists; one that
+# edits a UI test class runs it in the smoke shard of each device main runs it on (`edited-ipad`, `edited-duo`). A
+# change with no file that builds into the app (Markdown, docs, other workflows and tools) still gets every required
+# check: the jobs skip and each gate reports success as "not affected", which only the plan can say. A plan that can't
+# see the whole diff fails, and every required check fails with it. The merge queue always runs the full lists and is
+# the gate; main releases from its proof. A failed `build` turns the shards red at the wait instead of letting them skip.
 
 on:
   pull_request:
@@ -79,6 +80,8 @@ jobs:
       edited-duo: ${{ steps.diff.outputs.edited-duo }}
       smoke-ipad: ${{ steps.diff.outputs.smoke-ipad }}
       smoke-duo: ${{ steps.diff.outputs.smoke-duo }}
+      reason: ${{ steps.diff.outputs.reason }}
+      offline: ${{ steps.diff.outputs.offline }}
       tree: ${{ steps.tree.outputs.tree }}
       proven: ${{ steps.proof.outputs.proven }}
       proof: ${{ steps.proof.outputs.proof }}
@@ -107,70 +110,27 @@ jobs:
           python3 -I scripts/ci-proof.py --sha "$GITHUB_SHA" --workflow app.yml --prefix "Full suite passed on tree " \
             > proof.txt 2>&1 || echo "Not proven: the full suite runs." >> proof.txt
           cat proof.txt | tee -a "$GITHUB_STEP_SUMMARY"
+      # What this pull request can affect (scripts/ci-plan.py; its selftest is in `CI scripts, offline`). The merge
+      # queue, main and dispatch test everything. A diff the plan can't see in full fails this job, and every required
+      # check below fails with it, so a hidden change never passes as "not affected".
       - id: diff
+        name: Plan what this change can affect (anything shared, unmapped or unreadable runs everything)
         env:
           EVENT: ${{ github.event_name }}
           BASE: ${{ github.event.pull_request.base.sha }}
           HEAD: ${{ github.event.pull_request.head.sha }}
+          FILES: ${{ github.event.pull_request.changed_files }}
         run: |
-          set -eu
-          if [ "$EVENT" != pull_request ]; then printf 'app=true\nfull=true\nfired=\nedited-ipad=\nedited-duo=\nsmoke-ipad=0\nsmoke-duo=0\n' >> "$GITHUB_OUTPUT"; exit 0; fi
-          git diff --name-only "$BASE...$HEAD" > changed.txt
-          cat changed.txt
-          # The CI that runs the UI tests: the full lists.
-          if grep -qE '^(\.github/(workflows/(app|ui-tests)\.yml|scripts/|actions/)|scripts/ci-(simulator|shards)\.py|scripts/ci-shards\.(expect|times))' changed.txt; then
-            echo "::notice::This change edits the CI that runs the UI tests: the full lists run."
-            full=true
+          if [ "$EVENT" = pull_request ]; then
+            python3 -I scripts/ci-plan.py --base "$BASE" --head "$HEAD" --expect "$FILES"
           else
-            full=false
-          fi
-          # Which guards this change needs (the Gatefold agent's lists). Anything that builds into the app gets the smoke;
-          # a unit-test-only or Markdown-only change gets none.
-          place='^(Gatefold/Reader/(ReaderModel|ReaderHostController|ReaderScreen|LandingPlace|BookPositions|ReopenSnapshot|BookOpener|ReaderPage|ReaderJS|Highlights)\.swift|Packages/GatefoldCore/)'
-          taps='^(Gatefold/Reader/(ReaderChrome|CurlOverlay|ReaderMoments|ReaderSheets|SettingsPanel|ReaderScreen)\.swift|Gatefold/Reader/PageCurl\.metal|Gatefold/Design/)'
-          everything='^(project\.yml|Gatefold\.xcodeproj/|Package\.(swift|resolved)|Gatefold/Resources/|Gatefold/Support/)'
-          fired=""
-          if grep -qvE '(\.md$|^GatefoldTests/)' changed.txt; then fired="smoke"; fi
-          if grep -qE "$place|$everything|^Gatefold/App/" changed.txt; then fired="$fired place-undo"; fi
-          if grep -qE "$place|$everything" changed.txt; then fired="$fired place-jumps"; fi
-          if grep -qE "$taps|$everything" changed.txt; then fired="$fired taps"; fi
-          echo "::notice::Guards for this change: ${fired:-none}"
-          echo "fired=$fired" >> "$GITHUB_OUTPUT"
-          # A UI test class this change edits runs in the smoke shard of each device main runs it on (the iPad when main
-          # runs it nowhere yet), so a new or changed test proves itself here. An edited helper (a file with no test
-          # class) changes every test: the full lists.
-          python3 -I scripts/ci-shards.py check --list | cut -f1 | grep '^main|' | cut -d'|' -f2,3 | cut -d/ -f1 | sort -u > on-main.txt || true
-          ipad="" duo=""
-          for f in $(grep -E '^GatefoldUITests/[^/]+\.swift$' changed.txt || true); do
-            [ -f "$f" ] || continue
-            classes=$(grep -oE 'class [A-Za-z0-9_]+: XCTestCase' "$f" | awk '{print $2}' | tr -d ':')
-            if [ -z "$classes" ]; then echo "::notice::$f has no test class: the full lists run."; full=true; fi
-            for c in $classes; do
-              on_ipad=$(grep -cxF "iPad Pro 13-inch|$c" on-main.txt || true)
-              on_duo=$(grep -cxF "iPhone Duo|$c" on-main.txt || true)
-              if [ "$on_ipad" != 0 ] || [ "$on_duo" = 0 ]; then ipad="$ipad $c"; fi
-              if [ "$on_duo" != 0 ]; then duo="$duo $c"; fi
-            done
-          done
-          # The smoke shard that runs them gets their slowest passes too, by the shards' formula (gatefold#260); a class
-          # the times file doesn't know counts its tests at 10 min each.
-          # shellcheck disable=SC2086 # word splitting splits the class lists
-          smoke_ipad=$(python3 -I scripts/ci-shards.py smoke "iPad Pro 13-inch" $ipad) || smoke_ipad=180
-          # shellcheck disable=SC2086
-          smoke_duo=$(python3 -I scripts/ci-shards.py smoke "iPhone Duo" $duo) || smoke_duo=180
-          echo "::notice::Smoke shard limits with the edited classes: iPad $smoke_ipad min, Duo $smoke_duo min"
-          # shellcheck disable=SC2086 # word splitting trims the lists
-          { echo "full=$full"; set -- $ipad; echo "edited-ipad=$*"; set -- $duo; echo "edited-duo=$*"
-            echo "smoke-ipad=$smoke_ipad"; echo "smoke-duo=$smoke_duo"; } >> "$GITHUB_OUTPUT"
-          if grep -qv '\.md$' changed.txt; then echo "app=true" >> "$GITHUB_OUTPUT"; else
-            echo "::notice::Only Markdown changed: the app checks report success without running."
-            echo "app=false" >> "$GITHUB_OUTPUT"
+            python3 -I scripts/ci-plan.py --event "$EVENT"
           fi
 
   build:
     name: Build for testing
     needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.app != 'false' && needs.changes.outputs.proven != 'true' }}
+    if: ${{ !cancelled() && needs.changes.result == 'success' && needs.changes.outputs.app == 'true' && needs.changes.outputs.proven != 'true' }}
     runs-on: xcode-27
     timeout-minutes: 35
     outputs:
@@ -227,23 +187,27 @@ jobs:
     # `swift --version`, 2026-11-05).
     # It also stands for `ci-scripts` (the CI scripts' offline tests), so this required check fails when they do.
     needs: [changes, ci-scripts]
-    if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
+    if: ${{ !cancelled() && (needs.changes.outputs.app != 'false' || needs.changes.outputs.offline == 'true') }}
     runs-on: ubuntu-latest
     container: swift:6.2
     timeout-minutes: 20
     steps:
+      - name: The plan saw the whole change (a failed plan passes nothing as not affected; scripts/ci-plan.py)
+        env:
+          PLAN: ${{ needs.changes.result }}
+        run: '[ "$PLAN" = success ] || { echo "::error title=No plan::The job \"What this change touches\" ended $PLAN."; exit 1; }'
       - name: Passed by proof (a pull request or the merge queue passed this tree with the full lists)
         if: needs.changes.outputs.proven == 'true'
         env:
           PROOF: ${{ needs.changes.outputs.proof }}
         run: echo "::notice::GatefoldCore tests and the CI scripts passed on this tree in $PROOF; not run again."
       - uses: actions/checkout@v4
-        if: needs.changes.outputs.proven != 'true'
+        if: needs.changes.outputs.proven != 'true' && needs.changes.outputs.app != 'false'
       - name: Toolchain
-        if: needs.changes.outputs.proven != 'true'
+        if: needs.changes.outputs.proven != 'true' && needs.changes.outputs.app != 'false'
         run: swift --version
       - name: swift test
-        if: needs.changes.outputs.proven != 'true'
+        if: needs.changes.outputs.proven != 'true' && needs.changes.outputs.app != 'false'
         run: swift test --package-path Packages/GatefoldCore
       - name: The CI scripts' offline tests passed (job "CI scripts, offline"; gatefold#241)
         if: ${{ !cancelled() && needs.changes.outputs.proven != 'true' }}
@@ -257,7 +221,7 @@ jobs:
   ci-scripts:
     name: CI scripts, offline
     needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.app != 'false' && needs.changes.outputs.proven != 'true' }}
+    if: ${{ !cancelled() && (needs.changes.outputs.app != 'false' || needs.changes.outputs.offline == 'true') && needs.changes.outputs.proven != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -274,6 +238,8 @@ jobs:
           python3 -I scripts/ci-rerun-runner.py --selftest
       - name: A main commit skips the suite only on proof of its own tree (a mismatched tree or a red run proves nothing)
         run: python3 -I scripts/ci-proof.py --selftest
+      - name: A pull request runs what its files can affect; anything shared, unmapped or unreadable runs everything
+        run: python3 -I scripts/ci-plan.py --selftest
       - name: The TestFlight publish script's upload step, offline (a fake kit; no App Store Connect) (gatefold#337)
         run: bash scripts/test-ci-publish-testflight.sh
       - name: UI test lists (not GatefoldCore) match scripts/ci-shards.expect; fix with `python3 -I scripts/ci-shards.py write` (gatefold#39)
@@ -310,7 +276,7 @@ jobs:
   ipad-place:
     name: iPad place shard (${{ matrix.shard }})
     needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.app != 'false' && needs.changes.outputs.proven != 'true' }}
+    if: ${{ !cancelled() && needs.changes.result == 'success' && needs.changes.outputs.app == 'true' && needs.changes.outputs.proven != 'true' }}
     strategy:
       fail-fast: false
       matrix:
@@ -475,7 +441,7 @@ jobs:
   ipad-undo:
     name: iPad undo shard (${{ matrix.shard }})
     needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.app != 'false' && needs.changes.outputs.proven != 'true' }}
+    if: ${{ !cancelled() && needs.changes.result == 'success' && needs.changes.outputs.app == 'true' && needs.changes.outputs.proven != 'true' }}
     strategy:
       fail-fast: false
       matrix:
@@ -541,7 +507,7 @@ jobs:
   ipad-taps:
     name: iPad taps shard (${{ matrix.shard }})
     needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.app != 'false' && needs.changes.outputs.proven != 'true' }}
+    if: ${{ !cancelled() && needs.changes.result == 'success' && needs.changes.outputs.app == 'true' && needs.changes.outputs.proven != 'true' }}
     strategy:
       fail-fast: false
       matrix:
@@ -635,7 +601,7 @@ jobs:
   ipad-reviewer:
     name: iPad reviewer shard (${{ matrix.shard }})
     needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.app != 'false' && needs.changes.outputs.proven != 'true' }}
+    if: ${{ !cancelled() && needs.changes.result == 'success' && needs.changes.outputs.app == 'true' && needs.changes.outputs.proven != 'true' }}
     strategy:
       fail-fast: false
       matrix:
@@ -713,7 +679,7 @@ jobs:
   duo:
     name: Duo shard (${{ matrix.shard }})
     needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.app != 'false' && needs.changes.outputs.proven != 'true' }}
+    if: ${{ !cancelled() && needs.changes.result == 'success' && needs.changes.outputs.app == 'true' && needs.changes.outputs.proven != 'true' }}
     strategy:
       fail-fast: false
       matrix:
@@ -835,7 +801,8 @@ jobs:
       lane: ${{ matrix.lane }}
 
   ipad-place-gate:
-    # The required check for the iPad's place: green when every shard passed, or when only Markdown changed (gatefold#42).
+    # The required check for the iPad's place: green when every shard passed, or when the plan says no file builds into the app
+    # (gatefold#42, scripts/ci-plan.py).
     # Always runs, so the check reports on every pull request; a failed or cancelled shard turns it red.
     name: iPad (place)
     needs: [changes, ipad-place]
@@ -844,18 +811,22 @@ jobs:
     timeout-minutes: 2
     steps:
       - env:
+          PLAN: ${{ needs.changes.result }}
+          REASON: ${{ needs.changes.outputs.reason }}
           APP: ${{ needs.changes.outputs.app }}
           SHARDS: ${{ needs.ipad-place.result }}
           PROVEN: ${{ needs.changes.outputs.proven }}
           PROOF: ${{ needs.changes.outputs.proof }}
         run: |
-          if [ "$APP" = false ]; then echo "Only Markdown changed; nothing to test."; exit 0; fi
+          [ "$PLAN" = success ] || { echo "::error title=No plan::The job \"What this change touches\" ended $PLAN, so nothing here may pass as not affected (scripts/ci-plan.py)."; exit 1; }
+          if [ "$APP" = false ]; then echo "::notice::Not affected: $REASON"; exit 0; fi
           if [ "$PROVEN" = true ]; then echo "::notice::Passed by proof: every shard passed on this tree in $PROOF"; exit 0; fi
           echo "Shards: $SHARDS"
           [ "$SHARDS" = success ]
 
   ipad-undo-gate:
-    # The required check for one-tap undo: green when every shard passed, or when only Markdown changed (gatefold#42).
+    # The required check for one-tap undo: green when every shard passed, or when the plan says no file builds into the app
+    # (gatefold#42, scripts/ci-plan.py).
     # Always runs, so the check reports on every pull request; a failed or cancelled shard turns it red.
     name: iPad (undo)
     needs: [changes, ipad-undo]
@@ -864,18 +835,22 @@ jobs:
     timeout-minutes: 2
     steps:
       - env:
+          PLAN: ${{ needs.changes.result }}
+          REASON: ${{ needs.changes.outputs.reason }}
           APP: ${{ needs.changes.outputs.app }}
           SHARDS: ${{ needs.ipad-undo.result }}
           PROVEN: ${{ needs.changes.outputs.proven }}
           PROOF: ${{ needs.changes.outputs.proof }}
         run: |
-          if [ "$APP" = false ]; then echo "Only Markdown changed; nothing to test."; exit 0; fi
+          [ "$PLAN" = success ] || { echo "::error title=No plan::The job \"What this change touches\" ended $PLAN, so nothing here may pass as not affected (scripts/ci-plan.py)."; exit 1; }
+          if [ "$APP" = false ]; then echo "::notice::Not affected: $REASON"; exit 0; fi
           if [ "$PROVEN" = true ]; then echo "::notice::Passed by proof: every shard passed on this tree in $PROOF"; exit 0; fi
           echo "Shards: $SHARDS"
           [ "$SHARDS" = success ]
 
   ipad-taps-gate:
-    # The required check for the iPad's taps: green when every shard passed, or when only Markdown changed (gatefold#42).
+    # The required check for the iPad's taps: green when every shard passed, or when the plan says no file builds into the app
+    # (gatefold#42, scripts/ci-plan.py).
     # Always runs, so the check reports on every pull request; a failed or cancelled shard turns it red.
     name: iPad (taps)
     needs: [changes, ipad-taps]
@@ -884,19 +859,22 @@ jobs:
     timeout-minutes: 2
     steps:
       - env:
+          PLAN: ${{ needs.changes.result }}
+          REASON: ${{ needs.changes.outputs.reason }}
           APP: ${{ needs.changes.outputs.app }}
           SHARDS: ${{ needs.ipad-taps.result }}
           PROVEN: ${{ needs.changes.outputs.proven }}
           PROOF: ${{ needs.changes.outputs.proof }}
         run: |
-          if [ "$APP" = false ]; then echo "Only Markdown changed; nothing to test."; exit 0; fi
+          [ "$PLAN" = success ] || { echo "::error title=No plan::The job \"What this change touches\" ended $PLAN, so nothing here may pass as not affected (scripts/ci-plan.py)."; exit 1; }
+          if [ "$APP" = false ]; then echo "::notice::Not affected: $REASON"; exit 0; fi
           if [ "$PROVEN" = true ]; then echo "::notice::Passed by proof: every shard passed on this tree in $PROOF"; exit 0; fi
           echo "Shards: $SHARDS"
           [ "$SHARDS" = success ]
 
   ipad-reviewer-gate:
-    # The required check for the reviewers' checks on the iPad: green when every shard passed, or when only Markdown
-    # changed (gatefold#42). Always runs, so the check reports on every pull request; a failed or cancelled shard turns
+    # The required check for the reviewers' checks on the iPad: green when every shard passed, or when the plan says no
+    # file builds into the app (gatefold#42, scripts/ci-plan.py). Always runs, so the check reports on every pull request; a failed or cancelled shard turns
     # it red.
     name: iPad (reviewer)
     needs: [changes, ipad-reviewer]
@@ -905,19 +883,22 @@ jobs:
     timeout-minutes: 2
     steps:
       - env:
+          PLAN: ${{ needs.changes.result }}
+          REASON: ${{ needs.changes.outputs.reason }}
           APP: ${{ needs.changes.outputs.app }}
           SHARDS: ${{ needs.ipad-reviewer.result }}
           PROVEN: ${{ needs.changes.outputs.proven }}
           PROOF: ${{ needs.changes.outputs.proof }}
         run: |
-          if [ "$APP" = false ]; then echo "Only Markdown changed; nothing to test."; exit 0; fi
+          [ "$PLAN" = success ] || { echo "::error title=No plan::The job \"What this change touches\" ended $PLAN, so nothing here may pass as not affected (scripts/ci-plan.py)."; exit 1; }
+          if [ "$APP" = false ]; then echo "::notice::Not affected: $REASON"; exit 0; fi
           if [ "$PROVEN" = true ]; then echo "::notice::Passed by proof: every shard passed on this tree in $PROOF"; exit 0; fi
           echo "Shards: $SHARDS"
           [ "$SHARDS" = success ]
 
   duo-gate:
-    # The required check for the Duo's UI tests: green when every shard passed, or when only Markdown changed
-    # (gatefold#42). Always runs, so the check reports on every pull request; a failed or cancelled shard turns it red.
+    # The required check for the Duo's UI tests: green when every shard passed, or when the plan says no file
+    # builds into the app (gatefold#42, scripts/ci-plan.py). Always runs, so the check reports on every pull request; a failed or cancelled shard turns it red.
     name: Duo (the reviewers' checks)
     needs: [changes, duo]
     if: ${{ always() }}
@@ -925,12 +906,15 @@ jobs:
     timeout-minutes: 2
     steps:
       - env:
+          PLAN: ${{ needs.changes.result }}
+          REASON: ${{ needs.changes.outputs.reason }}
           APP: ${{ needs.changes.outputs.app }}
           SHARDS: ${{ needs.duo.result }}
           PROVEN: ${{ needs.changes.outputs.proven }}
           PROOF: ${{ needs.changes.outputs.proof }}
         run: |
-          if [ "$APP" = false ]; then echo "Only Markdown changed; nothing to test."; exit 0; fi
+          [ "$PLAN" = success ] || { echo "::error title=No plan::The job \"What this change touches\" ended $PLAN, so nothing here may pass as not affected (scripts/ci-plan.py)."; exit 1; }
+          if [ "$APP" = false ]; then echo "::notice::Not affected: $REASON"; exit 0; fi
           if [ "$PROVEN" = true ]; then echo "::notice::Passed by proof: every shard passed on this tree in $PROOF"; exit 0; fi
           echo "Shards: $SHARDS"
           [ "$SHARDS" = success ]
@@ -943,7 +927,7 @@ jobs:
   release:
     name: Release build for devices
     needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.app != 'false' && needs.changes.outputs.proven != 'true' }}
+    if: ${{ !cancelled() && needs.changes.result == 'success' && needs.changes.outputs.app == 'true' && needs.changes.outputs.proven != 'true' }}
     runs-on: xcode-27
     # PR lane (gatefold#286): see "macOS lanes" at the top of app.yml. Never cancel-in-progress.
     concurrency:
@@ -1001,7 +985,7 @@ jobs:
   unit:
     name: Unit tests (iPhone Duo)
     needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.app != 'false' && needs.changes.outputs.proven != 'true' }}
+    if: ${{ !cancelled() && needs.changes.result == 'success' && needs.changes.outputs.app == 'true' && needs.changes.outputs.proven != 'true' }}
     runs-on: xcode-27
     # PR lane (gatefold#286): see "macOS lanes" at the top of app.yml. Never cancel-in-progress.
     concurrency:
@@ -1099,8 +1083,8 @@ jobs:
           path: ${{ runner.temp }}/unit.xcresult
 
   app:
-    # The required check for the app's Release build and unit tests: green when both passed, or when only Markdown
-    # changed (gatefold#42). Always runs, so the check reports on every pull request; a failed or cancelled job turns
+    # The required check for the app's Release build and unit tests: green when both passed, or when the plan says no file
+    # builds into the app (gatefold#42, scripts/ci-plan.py). Always runs, so the check reports on every pull request; a failed or cancelled job turns
     # it red.
     name: Build and unit-test the app
     needs: [changes, release, unit]
@@ -1109,13 +1093,16 @@ jobs:
     timeout-minutes: 2
     steps:
       - env:
+          PLAN: ${{ needs.changes.result }}
+          REASON: ${{ needs.changes.outputs.reason }}
           APP: ${{ needs.changes.outputs.app }}
           RELEASE: ${{ needs.release.result }}
           UNIT: ${{ needs.unit.result }}
           PROVEN: ${{ needs.changes.outputs.proven }}
           PROOF: ${{ needs.changes.outputs.proof }}
         run: |
-          if [ "$APP" = false ]; then echo "Only Markdown changed; nothing to build."; exit 0; fi
+          [ "$PLAN" = success ] || { echo "::error title=No plan::The job \"What this change touches\" ended $PLAN, so nothing here may pass as not affected (scripts/ci-plan.py)."; exit 1; }
+          if [ "$APP" = false ]; then echo "::notice::Not affected: $REASON"; exit 0; fi
           if [ "$PROVEN" = true ]; then echo "::notice::Passed by proof: the Release build and the unit tests passed on this tree in $PROOF"; exit 0; fi
           echo "Release build: $RELEASE; unit tests: $UNIT"
           [ "$RELEASE" = success ] && [ "$UNIT" = success ]
