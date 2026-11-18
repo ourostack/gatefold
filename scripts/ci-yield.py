@@ -8,14 +8,21 @@ for it: the workflow's `yield` job (.github/workflows/yield.yml, on ubuntu) runs
     python3 -I scripts/ci-yield.py wait     # GITHUB_REPOSITORY, GITHUB_TOKEN
     python3 -I scripts/ci-yield.py --selftest
 
-Every POLL seconds it reads the repository's merge_group runs that haven't completed, and each one's jobs, newest run
-first, stopping at the first macOS job (a `macos-*` or `xcode-*` label) still queued. While there is one, it waits.
+Every POLL seconds it reads main's merge-group runs that haven't completed, keeps the newest of each workflow (an
+older one belongs to a group the queue replaced or will drop; scripts/ci-stuck.py cancels those), and reads their
+jobs, newest first, stopping at the first macOS job (a `macos-*` or `xcode-*` label) still queued. While there is one,
+it waits. A poll costs 1 call plus one per workflow read until the first hit: at most 1 plus the number of workflows
+with a merge-group run (about 4 today).
 It stops waiting, and the pull request's jobs start, when
   - no merge-group macOS job is queued,
   - it has waited CAP minutes (it never makes a job wait longer than that),
-  - any read fails, HTTP 403 and 429 included: an error never holds a job back.
-It always exits 0: yielding may delay a job, never skip or fail one. A waiting poll costs 2 API calls.
+  - any read fails, HTTP 403 and 429 included: an error never holds a job back,
+  - the token has fewer than FLOOR API calls left this hour: the budget is shared with every workflow's token, and
+    scripts/ci-proof.py fails closed (running main's whole suite on Macs) when it can't read.
+It always exits 0, and yield.yml's job has continue-on-error: yielding may delay a job, never skip or fail one.
 """
+import contextlib
+import io
 import json
 import os
 import re
@@ -24,20 +31,31 @@ import time
 import urllib.error
 import urllib.request
 
-POLL = 60  # seconds between reads: at most one a minute
+POLL = 120  # seconds between reads: under one a minute, so several waiting pull requests stay within the API budget
 CAP = 30 * 60  # seconds: never hold a job longer
+FLOOR = 300  # API calls left this hour below which it stops reading and lets the jobs start
 MACOS = re.compile(r"^(macos|xcode)-", re.I)
 
 
 def waiting(runs, jobs_of):
     """(run, count) for the newest unfinished merge-group run with a macOS job queued for a runner, or None."""
-    live = [r for r in runs if r.get("event") == "merge_group" and r.get("status") != "completed"]
-    for run in sorted(live, key=lambda r: r["id"], reverse=True):
+    newest = {}
+    for r in runs:
+        if (r.get("event") == "merge_group" and r.get("status") != "completed"
+                and (r.get("head_branch") or "").startswith("gh-readonly-queue/main/")):
+            w = r.get("workflow_id")
+            if w not in newest or r["id"] > newest[w]["id"]:
+                newest[w] = r
+    for run in sorted(newest.values(), key=lambda r: r["id"], reverse=True):
         queued = [j for j in jobs_of(run["id"])
                   if j.get("status") == "queued" and any(MACOS.match(l or "") for l in j.get("labels") or [])]
         if queued:
             return run, len(queued)
     return None
+
+
+class Low(Exception):
+    """The token's API budget is nearly spent."""
 
 
 class Api:
@@ -49,6 +67,9 @@ class Api:
             "Authorization": f"Bearer {self.token}", "Accept": "application/vnd.github+json",
             "X-GitHub-Api-Version": "2022-11-28"})
         with urllib.request.urlopen(req, timeout=30) as resp:
+            left = resp.headers.get("X-RateLimit-Remaining")
+            if left is not None and int(left) < FLOOR:
+                raise Low(f"{left} API calls left this hour, under {FLOOR}")
             return json.loads(resp.read())
 
     def runs(self):
@@ -117,8 +138,8 @@ class Fake:
 
 
 def selftest():
-    def run(i, status="in_progress", event="merge_group"):
-        return {"id": i, "status": status, "event": event, "name": "App"}
+    def run(i, status="in_progress", event="merge_group", workflow=1, branch="gh-readonly-queue/main/pr-469-" + "c" * 40):
+        return {"id": i, "status": status, "event": event, "name": "App", "workflow_id": workflow, "head_branch": branch}
 
     def job(status="queued", label="xcode-27"):
         return {"status": status, "labels": [label]}
@@ -133,14 +154,18 @@ def selftest():
         ("a completed merge-group run doesn't hold", ([run(1, "completed")], {1: [job()]}), False),
         ("a pull request's queued Mac job doesn't hold another", ([run(1, event="pull_request")], {1: [job()]}), False),
         ("no merge-group run at all: go", ([], {}), False),
+        ("an older group's run of the same workflow (an orphan) doesn't hold",
+         ([run(44261384475), run(44273931050)], {44261384475: [job()], 44273931050: [job("in_progress")]}), False),
+        ("another branch's queue doesn't hold", ([run(1, branch="gh-readonly-queue/release/pr-1-" + "c" * 40)], {1: [job()]}), False),
     ]
     for name, (runs, jobs), want in cases:
         got = waiting(runs, lambda i: jobs.get(i, []))
         assert bool(got) == want, f"{name}: got {got}"
-    got = waiting([run(1), run(2)], lambda i: [job()])
+    got = waiting([run(1, workflow=1), run(2, workflow=2)], lambda i: [job()])
     assert got[0]["id"] == 2, "newest run first"
     reads = []
-    waiting([run(1), run(2), run(3)], lambda i: reads.append(i) or ([job()] if i == 3 else []))
+    waiting([run(1, workflow=1), run(2, workflow=2), run(3, workflow=3)],
+            lambda i: reads.append(i) or ([job()] if i == 3 else []))
     assert reads == [3], f"it stops at the first run with a queued Mac job: read {reads}"
 
     out, os.environ["GITHUB_STEP_SUMMARY"] = os.environ.pop("GITHUB_STEP_SUMMARY", None), ""
@@ -151,14 +176,41 @@ def selftest():
             os.environ.pop("GITHUB_STEP_SUMMARY")
         else:
             os.environ["GITHUB_STEP_SUMMARY"] = out
-    n = len(cases) + 2 + loops
+    n = len(cases) + 2 + loops + budget()
     print(f"ci-yield selftest: {n} cases pass")
 
 
-def run_loops(front, clear):
-    import contextlib
-    import io
+def budget():
+    """Api.get raises Low under FLOOR calls left, and wait() then lets the jobs start."""
+    class Resp(io.BytesIO):
+        def __init__(self, left):
+            super().__init__(b'{"workflow_runs": []}')
+            self.headers = {"X-RateLimit-Remaining": str(left)}
 
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    real, api = urllib.request.urlopen, Api("ourostack/gatefold", "t")
+    try:
+        urllib.request.urlopen = lambda *a, **k: Resp(FLOOR - 1)
+        try:
+            api.runs()
+            raise AssertionError("under the floor must stop reading")
+        except Low:
+            pass
+        with contextlib.redirect_stdout(io.StringIO()):
+            assert wait(api, sleep=lambda s: None) == "error", "under the floor: the jobs start"
+        urllib.request.urlopen = lambda *a, **k: Resp(FLOOR)
+        assert api.runs() == [], "at the floor it still reads"
+    finally:
+        urllib.request.urlopen = real
+    return 3
+
+
+def run_loops(front, clear):
     def loop(states):
         t = [0.0]
         sleeps = []

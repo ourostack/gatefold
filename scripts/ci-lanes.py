@@ -260,7 +260,9 @@ def check_yield(files):
             if not re.search(r"^    uses: \./\.github/workflows/yield\.yml\s*$", y, re.M):
                 errors.append(f"{fname}: yield must call ./.github/workflows/yield.yml")
             m = re.search(r"^    if: (.*)$", y, re.M)
-            if not (m and "github.event_name == 'pull_request'" in m.group(1)):
+            cond = m.group(1) if m else ""
+            # Only `&&` terms, one of them the pull-request test: an `||` or another event test could let it run elsewhere.
+            if ("github.event_name == 'pull_request'" not in cond or "||" in cond or "github.event_name !=" in cond):
                 errors.append(f"{fname}: yield must run only on pull requests (its `if` holds "
                               "`github.event_name == 'pull_request'`), so a merge group, main and a release never wait")
     return errors
@@ -364,6 +366,9 @@ def selftest():
                            "must start with"),
         "yield on main too": ({**good, "app.yml": GOOD_JOB.replace(" && github.event_name == 'pull_request'", "") + GOOD_CALLER},
                               "only on pull requests"),
+        "yield with an escape": ({**good, "app.yml": GOOD_JOB.replace("github.event_name == 'pull_request' }}",
+                                  "github.event_name != 'pull_request' || github.event_name == 'pull_request' }}") + GOOD_CALLER},
+                                 "only on pull requests"),
         "yield runs something else": ({**good, "app.yml": GOOD_JOB.replace("/yield.yml", "/other.yml") + GOOD_CALLER},
                                       "must call"),
         "through its build": ({**good, "app.yml": GOOD_JOB + "  shots:\n    needs: [plan, unit]\n    runs-on: xcode-27\n"
