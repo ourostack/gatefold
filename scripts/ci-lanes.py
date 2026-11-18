@@ -11,7 +11,10 @@ every open pull request, first come first served. See "macOS lanes" at the top o
   - a lane applies outside pull requests: push and dispatch runs need a group of their own, from `github.run_id`,
   - two jobs share a lane name, so one would wait on the other's lanes,
   - a shard caller doesn't pass `lane: ${{ matrix.lane }}`, or a shard has no `lane` between 1 and SHARD_LANES,
-  - the lanes add up to more than BUDGET.
+  - the lanes add up to more than BUDGET,
+  - a macOS job that can run on a pull request doesn't need, directly or through another job, a `yield` job that
+    calls .github/workflows/yield.yml only on pull requests (the merge queue's Macs first, scripts/ci-yield.py), or
+    needs it directly without an `if` that starts with `!cancelled()` (a skipped or failed yield must never skip it).
 Reads only; no dependencies beyond python3. It runs in the job `CI scripts, offline`, which `GatefoldCore tests` (a
 required check) stands for.
 """
@@ -190,6 +193,7 @@ def check(files):
             names[name] = where
             total += lanes
     errors += check_shards(files.get("app.yml", ""), files.get("ui-tests.yml", ""))
+    errors += check_yield(files)
     if total > BUDGET:
         errors.append(f"the lanes add up to {total}, over the budget of {BUDGET} (see BUDGET in scripts/ci-lanes.py)")
     return errors
@@ -214,13 +218,67 @@ def check_shards(app, ui):
     return errors
 
 
+# Macos jobs that never run on a pull request: EXEMPT's with an `if` that keeps them off one, and testflight.yml's
+# publish (the check above holds testflight.yml to no pull_request trigger).
+OFF_PR = {k for k, v in EXEMPT.items() if v} | {("testflight.yml", "publish")}
+
+
+def needs(block):
+    m = re.search(r"^    needs: *(\[[^\]]*\]|\S+)\s*$", block, re.M)
+    return [n.strip() for n in m.group(1).strip("[]").split(",") if n.strip()] if m else []
+
+
+def is_macos(block):
+    return bool(MACOS.search(block) or (MATRIX_RUNS_ON.search(block) and re.search(r"\b(macos|xcode)-", block)))
+
+
+def check_yield(files):
+    """Every macOS job a pull request can run waits for the merge queue first, through the file's `yield` job."""
+    errors = []
+    for fname in sorted(files):
+        if fname in ("ui-tests.yml", "yield.yml"):
+            continue  # ui-tests.yml's job runs as its app.yml caller, which is checked here
+        table = dict(jobs(files[fname]))
+
+        def yields(job, seen=()):
+            return any(n == "yield" or (n in table and n not in seen and yields(n, seen + (job,)))
+                       for n in needs(table.get(job, "")))
+
+        for job, block in table.items():
+            caller = "uses: ./.github/workflows/ui-tests.yml" in block
+            if not (is_macos(block) or caller) or (fname, job) in OFF_PR:
+                continue
+            where = f"{fname}: {job}"
+            if not yields(job):
+                errors.append(f"{where} runs on macOS on pull requests but doesn't need `yield`, so it takes a Mac "
+                              "while the merge queue waits for one (see .github/workflows/yield.yml)")
+            elif "yield" in needs(block) and not re.search(r"^    if: \$\{\{ !cancelled\(\)", block, re.M):
+                errors.append(f"{where} needs `yield`: its `if` must start with `${{{{ !cancelled()`, or a skipped "
+                              "or failed yield skips it")
+        if "yield" in table:
+            y = table["yield"]
+            if not re.search(r"^    uses: \./\.github/workflows/yield\.yml\s*$", y, re.M):
+                errors.append(f"{fname}: yield must call ./.github/workflows/yield.yml")
+            m = re.search(r"^    if: (.*)$", y, re.M)
+            if not (m and "github.event_name == 'pull_request'" in m.group(1)):
+                errors.append(f"{fname}: yield must run only on pull requests (its `if` holds "
+                              "`github.event_name == 'pull_request'`), so a merge group, main and a release never wait")
+    return errors
+
+
 def read():
     return {n: open(os.path.join(WORKFLOWS, n), encoding="utf-8").read()
             for n in os.listdir(WORKFLOWS) if n.endswith((".yml", ".yaml"))}
 
 
+GOOD_YIELD = """  yield:
+    if: ${{ !cancelled() && github.event_name == 'pull_request' }}
+    uses: ./.github/workflows/yield.yml
+"""
 GOOD_JOB = """jobs:
   unit:
+    needs: yield
+    if: ${{ !cancelled() }}
     runs-on: xcode-27
     concurrency:
       group: >-
@@ -229,7 +287,7 @@ GOOD_JOB = """jobs:
         || format('app-unit-{0}-{1}', github.run_id, github.run_attempt) }}
       queue: max
     steps: []
-"""
+""" + GOOD_YIELD
 GOOD_UI = """on:
   workflow_call:
     inputs:
@@ -249,6 +307,8 @@ jobs:
 """
 GOOD_CALLER = """
   duo:
+    needs: [changes, yield]
+    if: ${{ !cancelled() && needs.changes.outputs.app != 'false' }}
     strategy:
       matrix:
         include:
@@ -291,9 +351,28 @@ def selftest():
         "off-PR joins a lane": ({**good, "app.yml": GOOD_JOB.replace("format('app-unit-{0}-{1}'", "format('gatefold-macos-pr-lane-unit-0'") + GOOD_CALLER}, "group of their own"),
         "condition in a step": ({**good, "real-unfold.yml": "jobs:\n  unfold:\n    if: always()\n    runs-on: xcode-27\n    steps:\n      - if: github.event_name != 'pull_request'\n"}, "exempt only while"),
         "testflight inline on": ({**good, "testflight.yml": "on: [workflow_run, pull_request]\njobs:\n  publish:\n    runs-on: xcode-27\n"}, "testflight.yml runs on pull requests"),
-        "exempt build": ({**good, "app.yml": GOOD_JOB + "  build:\n    runs-on: xcode-27\n" + GOOD_CALLER}, None),
+        "exempt build": ({**good, "app.yml": GOOD_JOB + "  build:\n    needs: [changes, yield]\n    if: ${{ !cancelled() }}\n    runs-on: xcode-27\n" + GOOD_CALLER}, None),
         "one shard set": ({**good, "ui-tests.yml": re.sub(r"format\('gatefold-macos-pr-lane-shard-\{0\}-\{1\}', inputs\.lane, .*\)\n", "format('gatefold-macos-pr-lane-shard-{0}-{1}', inputs.lane, '0')\n", GOOD_UI)}, "shard lane's {1}"),
         "linux": ({**good, "app.yml": GOOD_JOB + "  core:\n    runs-on: ubuntu-latest\n" + GOOD_CALLER}, None),
+        "Mac job doesn't yield": ({**good, "app.yml": GOOD_JOB.replace("    needs: yield\n", "") + GOOD_CALLER},
+                                  "doesn't need `yield`"),
+        "shard caller doesn't yield": ({**good, "app.yml": GOOD_JOB + GOOD_CALLER.replace("[changes, yield]", "changes")},
+                                       "duo runs on macOS on pull requests"),
+        "exempt build still yields": ({**good, "app.yml": GOOD_JOB + "  build:\n    runs-on: xcode-27\n" + GOOD_CALLER},
+                                      "build runs on macOS on pull requests"),
+        "yield skips it": ({**good, "app.yml": GOOD_JOB.replace("    if: ${{ !cancelled() }}\n", "") + GOOD_CALLER},
+                           "must start with"),
+        "yield on main too": ({**good, "app.yml": GOOD_JOB.replace(" && github.event_name == 'pull_request'", "") + GOOD_CALLER},
+                              "only on pull requests"),
+        "yield runs something else": ({**good, "app.yml": GOOD_JOB.replace("/yield.yml", "/other.yml") + GOOD_CALLER},
+                                      "must call"),
+        "through its build": ({**good, "app.yml": GOOD_JOB + "  shots:\n    needs: [plan, unit]\n    runs-on: xcode-27\n"
+                               "    concurrency:\n      group: >-\n        ${{ github.event_name == 'pull_request'\n"
+                               "        && 'gatefold-macos-pr-lane-shots-0'\n"
+                               "        || format('s-{0}-{1}', github.run_id, github.run_attempt) }}\n      queue: max\n"
+                               + GOOD_CALLER}, None),
+        "off pull requests": ({**good, "cloud-canary.yml": "jobs:\n  canary:\n    if: github.repository == 'x' && "
+                               "github.event_name != 'pull_request'\n    runs-on: xcode-27\n"}, None),
     }
     failed = 0
     for name, (files, want) in cases.items():
@@ -322,7 +401,7 @@ def main(argv):
         for e in errors:
             print(f"::error::{e}")
         if not errors:
-            print("Every pull-request macOS job waits in a lane, and the lanes fit the budget")
+            print("Every pull-request macOS job waits in a lane and for the merge queue, and the lanes fit the budget")
         return 1 if errors else 0
     print(__doc__)
     return 2
