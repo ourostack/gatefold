@@ -197,6 +197,8 @@ final class ReaderModel {
     var tabletBands: TabletPage.Bands?
     /// For UI tests: how the last turn landed: "landed <n> leaf <frames> page <frames> in place|moved".
     var turnPlacement = "none"
+    /// UI tests: a turn is under way, from its start until it lands or springs back (the host's `isTurning`).
+    var turningProbe = false
     /// UI tests: "<turn> <looks>": the newest turn, and how many looks it waited for the page beneath to paint.
     var turnWaitProbe = ""
     /// For UI tests: how far a spread's outer page ever strayed from its rest, frame by frame, from the
