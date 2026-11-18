@@ -1501,6 +1501,13 @@ final class ReaderModel {
         // Where the newest move left the page, noted the moment its jump is back: a jump overtaken
         // meanwhile (a Back freed by its count) that lands late is put back there.
         let tracked: () async -> Void = { [weak self] in
+            // PROBE: the first veiled jump comes back 50 s late, as chapter XXX's load did on CI's iPad.
+            let probeLate = UserDefaults.standard.double(forKey: "GatefoldProbeSlowJump")
+            if probeLate > 0, !ReaderModel.probeSlowedOnce {
+                ReaderModel.probeSlowedOnce = true
+                readerLog.notice("PROBE holding jump \(jump, privacy: .public) for \(probeLate, privacy: .public) s")
+                try? await Task.sleep(for: .seconds(probeLate))
+            }
             await body()
             watch.back = true
             guard let self else { return }
@@ -1621,6 +1628,7 @@ final class ReaderModel {
     /// alongside one still out is not taken as inside it. An unstructured `Task {}` started inside a veil
     /// inherits it too: a jump started from one would go unwatched and land on that veil's step.
     @TaskLocal private static var outerVeil: Int?
+    static var probeSlowedOnce = false
     /// Late jumps put back where his newest move left the page (tests read it).
     @ObservationIgnored private(set) var jumpsPutBack = 0
     /// A jump past its veil's limit, still out: its step and the chapter it goes to (if known). A swipe
