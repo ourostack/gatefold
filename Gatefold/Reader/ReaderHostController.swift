@@ -1945,6 +1945,12 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         }
         // Wait until the destination has painted and stopped changing (a spread lays out two
         // columns; caught halfway it ghosts).
+        // PROBE (gatefold#492): the first turn's page beneath is held 65 s, as chapter 1's load was on CI's iPad.
+        if !Self.probeHeldOnce, UserDefaults.standard.double(forKey: "GatefoldProbeSlowBeneath") > 0 {
+            Self.probeHeldOnce = true
+            readerLog.notice("PROBE holding the page beneath \(UserDefaults.standard.double(forKey: "GatefoldProbeSlowBeneath"), privacy: .public) s")
+            try? await Task.sleep(for: .seconds(UserDefaults.standard.double(forKey: "GatefoldProbeSlowBeneath")))
+        }
         curl.beneath = await renderedSnapshot(afterChange: true)
         beneathFrames = lastSnapshotFrames
         // Counted from the tap, not after it: a test's tap waits for the app to go idle, which hides the wait.
@@ -1963,6 +1969,8 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         #endif
         return true
     }
+
+    private static var probeHeldOnce = false
 
     private func finish(complete: Bool, velocity: CGFloat) async {
         if complete { weakModel?.turnCommitted() }

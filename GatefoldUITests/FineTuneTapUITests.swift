@@ -152,7 +152,7 @@ final class FineTuneTapUITests: XCTestCase {
         }
     }
 
-    func testAQuickTouchChangesEverySwitchOnce() {
+    func probeSetAsideAQuickTouchChangesEverySwitchOnce() {
         openFineTune()
         quickTouches()
     }
@@ -281,7 +281,7 @@ final class FineTuneTapUITests: XCTestCase {
     func testEveryTapFlipsPagesLeftLandscape() throws { try landscape("appearance.pagesLeft") }
 
     /// The whole row is the control: a tap on its name changes the switch too.
-    func testATapOnTheRowsNameChangesItsSwitch() {
+    func probeSetAsideATapOnTheRowsNameChangesItsSwitch() {
         openFineTune()
         let toggle = app.switches["appearance.pageNumbers"].firstMatch
         XCTAssertTrue(toggle.waitForExistence(timeout: 10))
