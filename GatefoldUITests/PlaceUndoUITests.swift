@@ -101,8 +101,14 @@ final class PlaceUndoUITests: XCTestCase {
             // GATEFOLD_COUNTERS=0 opens the same page with no counting behind it, for an A/B of what it costs.
             + (ProcessInfo.processInfo.environment["GATEFOLD_COUNTERS"].map { ["-GatefoldCounters", $0] } ?? [])
         app.launch()
-        XCTAssertTrue(el("reader.page").waitForExistence(timeout: 90))
-        return settledWords()
+        // Judged in reads and the reader's own ready report, never seconds: on a starved iPad the first page took
+        // 145 s, and the old 90 s + 60 s + 20 s of clock returned no words at all, so a test's later look at the page
+        // differed from "" and read as a move (job 134576859511). `settle` waits for the page to be ready and its
+        // words to hold still, and fails on its own if they never come.
+        XCTAssertNotNil(ReaderReads.opened(app, "the book") { print("UNDOOPEN \($0)") }, "the book opened")
+        let words = ReaderReads.settle(app, "the opened page") { print("UNDOOPEN \($0)") }.words
+        XCTAssertFalse(words.isEmpty, "the opened page showed words")
+        return words
     }
 
     private func showChrome() {
