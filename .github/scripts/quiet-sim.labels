@@ -29,3 +29,13 @@ com.apple.homed
 com.apple.geod
 com.apple.weatherd
 com.apple.triald
+# Next heaviest in #476's run (44227368725) once the posters were gone: mail, Screen Time, Game Center, App Store
+# engagement, Apple Intelligence's models, News and Family. Gatefold uses none of them.
+com.apple.icloudmailagent
+com.apple.ScreenTimeAgent
+com.apple.gamed
+com.apple.amsengagementd
+com.apple.intelligenceplatformd
+com.apple.modelmanagerd
+com.apple.newsd
+com.apple.familycircled
