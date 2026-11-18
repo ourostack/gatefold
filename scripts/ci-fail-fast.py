@@ -33,12 +33,12 @@ WAIT = 300   # seconds the dispatched workflow waits for the failed job to finis
 NAP = 5
 
 
-def targets(runs, sha, own, event):
+def targets(runs, sha, mine, event):
     """Other run ids to cancel: merge_group runs on this commit that aren't finished. Empty off the queue."""
     if event != "merge_group":
         return []
     return sorted(r["id"] for r in runs if r.get("event") == "merge_group" and r.get("head_sha") == sha
-                  and r.get("status") != "completed" and r["id"] != own)
+                  and r.get("status") != "completed" and r["id"] != mine)
 
 
 def ready(run, jobs):
@@ -88,8 +88,8 @@ def selftest():
         ("push and pull-request runs on the same commit are never touched", [run(5, "push"), run(6, "pull_request")],
          2, "merge_group", []),
     ]
-    for name, rs, own, event, want in cases:
-        got = targets(rs, sha, own, event)
+    for name, rs, mine, event, want in cases:
+        got = targets(rs, sha, mine, event)
         assert got == want, f"{name}: got {got}, want {want}"
     done, going = {"status": "completed", "conclusion": "failure"}, {"status": "in_progress", "conclusion": None}
     gates = [
@@ -102,7 +102,28 @@ def selftest():
     ]
     for name, r, jobs, want in gates:
         assert ready(r, jobs) == want, f"{name}: got {not want}"
-    print(f"ci-fail-fast selftest: {len(cases) + len(gates)} cases pass")
+    class Fake:  # answers each poll with the next (run, jobs) state, the last one repeating
+        def __init__(self, states):
+            self.states, self.posts, self.state = states, [], states[0]
+
+        def call(self, path, method="GET", body=None):
+            if method == "POST":
+                self.posts.append(path)
+                return {}
+            if path.endswith("/jobs?filter=latest&per_page=100"):
+                return {"jobs": self.state[1]}
+            self.state = self.states.pop(0) if len(self.states) > 1 else self.states[0]
+            return self.state[0]
+
+    global NAP, WAIT
+    NAP, WAIT = 0, 10
+    fake = Fake([(run(2), [going]), (run(2), [done, going])])
+    own(fake, 2)
+    assert fake.posts == ["actions/runs/2/cancel"], f"own cancels once its failed job has finished: {fake.posts}"
+    fake, WAIT = Fake([(run(2), [going])]), 0
+    own(fake, 2)
+    assert fake.posts == [], f"own gives up at its limit without cancelling: {fake.posts}"
+    print(f"ci-fail-fast selftest: {len(cases) + len(gates) + 2} cases pass")
 
 
 def own(api, run_id):
@@ -134,14 +155,14 @@ def main(argv):
         except Stop as e:
             print(f"::warning title=Fail-fast stopped::{e}; the run finishes on its own.")
         return 0
-    event, sha, own = env("GITHUB_EVENT_NAME", ""), env("GITHUB_SHA", ""), int(env("GITHUB_RUN_ID") or 0)
+    event, sha, mine = env("GITHUB_EVENT_NAME", ""), env("GITHUB_SHA", ""), int(env("GITHUB_RUN_ID") or 0)
     if event != "merge_group":
         print(f"ci-fail-fast: {event or 'no'} event, not the merge queue: nothing to cancel")
         return 0
     api = Api(env("GITHUB_REPOSITORY", ""), env("GITHUB_TOKEN", ""))
     try:
         runs = api.call(f"actions/runs?head_sha={sha}&event=merge_group&per_page=100").get("workflow_runs", [])
-        ids = targets(runs, sha, own, event)
+        ids = targets(runs, sha, mine, event)
         names = {r["id"]: r.get("name", "") for r in runs}
         for i in ids:
             print(f"::notice title=Merge queue fails fast::A job failed, so run {i} ({names.get(i)}) on {sha[:7]} "
@@ -149,8 +170,8 @@ def main(argv):
             api.call(f"actions/runs/{i}/cancel", "POST")
         # This run's own other jobs: a cancel from here would turn this job's failure into "cancelled".
         api.call("actions/workflows/fail-fast.yml/dispatches", "POST",
-                 {"ref": env("FAIL_FAST_REF", "main"), "inputs": {"run": str(own)}})
-        print(f"ci-fail-fast: asked fail-fast.yml to cancel the rest of run {own} once this job has finished")
+                 {"ref": env("FAIL_FAST_REF", "main"), "inputs": {"run": str(mine)}})
+        print(f"ci-fail-fast: asked fail-fast.yml to cancel the rest of run {mine} once this job has finished")
     except Stop as e:
         print(f"::warning title=Fail-fast stopped::{e}; the other runs finish on their own.")
     except Exception as e:  # never turn a failed job's cleanup into a second failure
