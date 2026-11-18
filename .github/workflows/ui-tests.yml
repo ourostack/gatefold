@@ -101,6 +101,7 @@ jobs:
         with:
           xcode: "27.2"
       - name: Turn off Spotlight indexing on the runner
+        timeout-minutes: 2
         # Nothing in a shard searches the Mac, and its indexer (mds, mds_stores) held runnable threads and CPU on this
         # 3-CPU runner through the tests. Only the runner's own indexing; the simulator's is in quiet-sim.labels.
         run: sudo -n mdutil -a -i off > /dev/null || echo "::warning::Spotlight indexing stays on (mdutil failed)"

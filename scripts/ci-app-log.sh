@@ -9,7 +9,8 @@
 #   place.log   the app's place lines (file and progression only)
 #   rb.log      runningboardd's lines about the app: why the system ended it, if it did
 #   reader.log  the reader's own lines (launch-jump landings among them), which ci-hang-sample.sh watches
-# Lines carrying the page's text are dropped from all three.
+# Lines carrying the page's text are dropped from the app's two (runningboardd's carry none), and so are a
+# multi-line message's later lines, which carry no subsystem to judge them by.
 set -u
 
 split() {
@@ -17,13 +18,13 @@ split() {
   : >> "$dir/place.log"; : >> "$dir/rb.log"; : >> "$dir/reader.log"
   awk -v place="$dir/place.log" -v rb="$dir/rb.log" -v reader="$dir/reader.log" '
     $4 ~ /^runningboardd\[/ {
-      if (tolower($0) ~ /termin|kill|jetsam|exit|reason|invalidat|memory|highwater|limit/) { print >> rb; fflush() }
+      if (tolower($0) ~ /termin|kill|jetsam|exit|reason|invalidat|memory|highwater|limit/) { print >> rb; fflush(rb) }
       next
     }
     $5 !~ /^\[bot\.ouro\.gatefold(:|\])/ || /text:/ { next }
-    $5 == "[bot.ouro.gatefold:reader]" { print >> reader; fflush() }
+    $5 == "[bot.ouro.gatefold:reader]" { print >> reader; fflush(reader) }
     /place (read|write)|place:|location |reflow|landing|landed|reopen|tapped|warm:|open:|first page|pages:|turn:|spread:|veil:|settle [0-9]|REPRO|snapshot:|back:/ \
-      && !/\] visible|\] anchor[: ]/ { print >> place; fflush() }'
+      && !/\] visible|\] anchor[: ]/ { print >> place; fflush(place) }'
 }
 
 selftest() {
