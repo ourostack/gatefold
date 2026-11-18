@@ -279,22 +279,25 @@ final class RotationMidTransitionUITests: XCTestCase {
         try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .pad, "a spread on rotation is an iPad path")
         let his = readTwoPagesAfterAJump(["-GatefoldLateColumns", "YES"])
         XCTAssertFalse(his.isEmpty, "his page's words are readable")
-        let freshBefore = count("reader.reflowFreshPages"), beforeTurn = reflow.number
-        XCUIDevice.shared.orientation = .landscapeLeft
-        _ = readsUntil(reads: 100) { el("reader.posture").label == "spread" }
-        _ = readsUntil(reads: 300) { settledSince(beforeTurn) }
-        let spread = settle(30), beforeBack = reflow.number
-        XCUIDevice.shared.orientation = .portrait
-        _ = readsUntil(reads: 100) { el("reader.posture").label == "single" }
-        _ = readsUntil(reads: 300) { settledSince(beforeBack) }
-        let back = settle(30)
-        let fresh = count("reader.reflowFreshPages") - freshBefore
-        let at = back.range(of: head(his)).map { back.distance(from: back.startIndex, to: $0.lowerBound) } ?? -1
-        print("TURNBACK hisHead=\(hash(head(his))) spreadHasHis=\(spread.contains(head(his))) backHead=\(hash(head(back))) hisStartAt=\(at) freshPages=\(fresh)")
-        XCTAssertEqual(fresh, 0, "the chapter's page was loaded again \(fresh) times across the two turns (a reload opens on its first page)")
-        XCTAssertTrue(spread.contains(head(his)), "on its side, the spread holds his page's first words")
-        // By hash: book text never goes into a log.
-        XCTAssertEqual(hash(head(back)), hash(head(his)), "back upright, his page opens on his first words (they start \(at) characters in)")
+        // PROBE ONLY (gatefold#482): five rounds of the turn and back, each its own trial of the race.
+        for round in 1...5 {
+            let freshBefore = count("reader.reflowFreshPages"), beforeTurn = reflow.number
+            XCUIDevice.shared.orientation = .landscapeLeft
+            _ = readsUntil(reads: 100) { el("reader.posture").label == "spread" }
+            _ = readsUntil(reads: 300) { settledSince(beforeTurn) }
+            let spread = settle(30), beforeBack = reflow.number
+            XCUIDevice.shared.orientation = .portrait
+            _ = readsUntil(reads: 100) { el("reader.posture").label == "single" }
+            _ = readsUntil(reads: 300) { settledSince(beforeBack) }
+            let back = settle(30)
+            let fresh = count("reader.reflowFreshPages") - freshBefore
+            let at = back.range(of: head(his)).map { back.distance(from: back.startIndex, to: $0.lowerBound) } ?? -1
+            print("MIDTURN TURNBACK round \(round) hisHead=\(hash(head(his))) spreadHasHis=\(spread.contains(head(his))) backHead=\(hash(head(back))) hisStartAt=\(at) freshPages=\(fresh)")
+            XCTAssertEqual(fresh, 0, "the chapter's page was loaded again \(fresh) times across the two turns (a reload opens on its first page)")
+            XCTAssertTrue(spread.contains(head(his)), "on its side, the spread holds his page's first words")
+            // By hash: book text never goes into a log.
+            XCTAssertEqual(hash(head(back)), hash(head(his)), "back upright, his page opens on his first words (they start \(at) characters in)")
+        }
     }
 
     func testTurningDuringAPageTurn() throws {
