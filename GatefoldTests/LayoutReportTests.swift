@@ -34,6 +34,12 @@ final class DriftingPage: ReaderPage {
         let anchor = ReadingAnchor(href: here.href.string, progression: here.locations.progression ?? 0, text: ReaderJS.normalize(words))
         return (anchor, here.copy(text: { $0 = Locator.Text(highlight: self.words) }))
     }
+
+    /// The words the model asked the page to look for again after a late layout (`keepWordsOnPage`).
+    var lookedForWords: [ReadingAnchor] = []
+    func keepWordsOnPage(_ anchor: ReadingAnchor, stillWanted: @escaping @MainActor () -> Bool) async {
+        lookedForWords.append(anchor)
+    }
 }
 
 /// His place is the page he sees. A report that only the layout brought (after a tap that only
@@ -108,6 +114,38 @@ final class DriftingPage: ReaderPage {
         try await Task.sleep(for: .milliseconds(300))
         #expect(f.model.runningHead == head, "the running head followed Readium's report, not his page")
         #expect(abs(f.model.totalProgression - here) < 0.0001, "here followed Readium's report, not his page")
+        f.model.close()
+    }
+
+    /// gatefold#482: after a move of his, a reflow's restore puts his words on screen; then Readium lays the page out
+    /// again in the new columns and reports its own place, another page with other words, with no move of his. His
+    /// words stay his, and the page is asked to put them back: inside the restore's 1.2 s window, and after it (on
+    /// CI's loaded iPad the report came 2 s late, and his words were read again from the wrong page).
+    @Test(arguments: [false, true]) func aLayoutReportAfterARestoreLooksForHisWordsAgain(late: Bool) async throws {
+        let f = try await Self.open()
+        // His move: a swipe brings his page.
+        f.model.noteInteraction()
+        let his = try Self.nextChapter(f)
+        f.page.words = Self.nextWords
+        f.page.currentLocation = his
+        await f.model.locationDidChange(his)
+        try await Task.sleep(for: .milliseconds(300))
+        let anchor = try #require(f.model.keeper.anchor)
+        try #require(anchor.text == ReaderJS.normalize(Self.nextWords), "the swipe's page is his")
+        // The iPad turns: a reflow whose restore finds his words on screen.
+        f.model.keeper.reflowWillBegin(.rotation)
+        f.model.reflowDidBegin()
+        f.model.keeper.restoreDidComplete()
+        f.model.reflowDidFinish(visible: await f.page.visibleRange())
+        if late { try await Task.sleep(for: .milliseconds(1300)) }
+        // Readium lays the page out again and keeps its own place: the page after his.
+        let after = Locator(href: his.href, mediaType: .xhtml, locations: .init(progression: 0.1, totalProgression: 0.335))
+        f.page.words = "the words that start the page after his in the new columns"
+        f.page.currentLocation = after
+        await f.model.locationDidChange(after)
+        for _ in 0..<40 where f.page.lookedForWords.isEmpty { try await Task.sleep(for: .milliseconds(25)) }
+        #expect(f.model.keeper.anchor == anchor, "his words were read again from the page the layout moved to")
+        #expect(f.page.lookedForWords == [anchor], "his words weren't looked for again on the page the layout moved")
         f.model.close()
     }
 

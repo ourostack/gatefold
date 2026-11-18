@@ -2345,6 +2345,7 @@ final class ReaderModel {
         reflowCount += 1
         reflowTouches = 0
         landingChecks = 0
+        restoredMove = nil
         anchorCheck = "settling \(reflowCount)"
         if LaunchOptions.isUITest { reflowProbe = "\(reflowCount) reflowing" }
     }
@@ -2352,18 +2353,32 @@ final class ReaderModel {
     private var reflowSettledAt: Date?
     @ObservationIgnored private var landingChecks = 0
 
+    /// The move whose reflow's restore last put his words on screen. A report with no move, jump or touch of
+    /// his since then is the layout's (`isLayoutAfterRestore`).
+    @ObservationIgnored private var restoredMove: Int?
+
+    /// A report after a reflow's restore put his words on screen, with no move, jump or touch of his since: only
+    /// the layout can have moved the page. Readium lays the page out again once the new column count reaches it,
+    /// and keeps its own place, which can come after the restore's last look; on CI's loaded iPad it left him a
+    /// page before or after his (gatefold#482).
+    private func isLayoutAfterRestore(hisMove: Bool, duringTurn: Bool) -> Bool {
+        restoredMove == moves && !hisMove && !duringTurn && !touchedSinceLocation && keeper.reflowing == nil
+    }
+
     /// A report that is the layout's, not his move, may mean the page moved under the restore (the
     /// navigator laying out again after the restore's last look; CI's reopen landed a page beside him).
-    /// Until he moves, his words are looked for on the left page again, a few times per reflow.
-    private func recheckLanding() {
-        guard !hasMoved, !touchedSinceLocation, !isClosed, !isWarming, keeper.reflowing == nil,
+    /// Until he moves, his words are looked for on his page again, a few times per reflow. `afterRestore`:
+    /// the report came after a reflow's restore with no move of his since, and his words are looked for even
+    /// after earlier moves of his, as the restore itself does (gatefold#482).
+    private func recheckLanding(afterRestore: Bool = false) {
+        guard !hasMoved || afterRestore, !touchedSinceLocation, !isClosed, !isWarming, keeper.reflowing == nil,
               let anchor = keeper.anchor, anchor.text != nil, landingChecks < 3 else { return }
         landingChecks += 1
         let movesNow = moves
         Task { [weak self] in
-            await self?.page?.keepWordsOnLeft(anchor, stillWanted: { [weak self] in
+            await self?.page?.keepWordsOnPage(anchor, stillWanted: { [weak self] in
                 guard let self else { return false }
-                return !self.isClosed && self.moves == movesNow && !self.hasMoved
+                return !self.isClosed && self.moves == movesNow && (afterRestore || !self.hasMoved)
                     && !self.touchedSinceLocation && self.keeper.reflowing == nil
             })
         }
@@ -2409,6 +2424,8 @@ final class ReaderModel {
             anchorDetail = "anchor \(anchor.href)@\(anchor.progression) [\(anchor.text?.prefix(40) ?? "-")] visible \(visible.href) \(visible.start)..\(visible.end) [\(visible.text?.prefix(60) ?? "nil")]"
             // The restore's verdict, numbers only (no book text), so a real unfold can be judged from the log.
             readerLog.notice("reflow check: \(self.anchorCheck, privacy: .public) columns \(self.layout.columns == .two ? 2 : 1, privacy: .public) anchor \(anchor.progression, privacy: .public) visible \(visible.start, privacy: .public)..\(visible.end, privacy: .public) same file \(visible.href == anchor.href, privacy: .public) words read \(visible.text != nil, privacy: .public)")
+            // His words are on screen as the restore ends: a later report with no move of his is the layout's.
+            if visible.contains(anchor), !placeOwed { restoredMove = moves }
         } else {
             anchorCheck = "no-anchor \(reflowCount)"
         }
@@ -2672,19 +2689,24 @@ final class ReaderModel {
             readerLog.notice("location of a move a reflow held; anchor just taken (reported \(Self.placeTag(locator), privacy: .public))")
         } else if let settled = reflowSettledAt, Date().timeIntervalSince(settled) < 1.2 {
             readerLog.notice("location after reflow; anchor kept (reported \(Self.placeTag(locator), privacy: .public))")
-            recheckLanding()
+            recheckLanding(afterRestore: isLayoutAfterRestore(hisMove: hisMove, duringTurn: duringTurn))
         } else if !readerMoved, keeper.anchor != nil {
+            let afterRestore = isLayoutAfterRestore(hisMove: hisMove, duringTurn: duringTurn)
             // Words read before this page's start were read on a page he has left (gatefold#143: a slow
             // launch landing read them on the chapter's first page). Kept, a reflow's restore or the
             // landing check would take the page back to them, so they are read again from his page.
-            if keeper.reflowing == nil, !openSettling, let words = anchorLocator, Self.lies(words, before: locator) {
+            // Not after a restore that put them on screen: then the layout moved the page off them, and
+            // reading them again from the page took the layout's page as his (gatefold#482).
+            if afterRestore {
+                readerLog.notice("location without a move, after a restore put his words on screen; anchor kept, his words looked for again (reported \(Self.placeTag(locator), privacy: .public))")
+            } else if keeper.reflowing == nil, !openSettling, let words = anchorLocator, Self.lies(words, before: locator) {
                 await captureAnchor()
                 let taken = anchorLocator.map { !Self.lies($0, before: locator) } == true
                 readerLog.notice("location without a move; his words were before this page, \(taken ? "anchor taken again" : "anchor read failed, kept", privacy: .public) at \(self.anchorLocator.map(Self.placeTag) ?? "none", privacy: .public) (reported \(Self.placeTag(locator), privacy: .public))")
             } else {
                 readerLog.notice("location without a move; anchor and place kept, anchor at \(self.anchorLocator.map(Self.placeTag) ?? "none", privacy: .public) (reported \(Self.placeTag(locator), privacy: .public))")
             }
-            recheckLanding()
+            recheckLanding(afterRestore: afterRestore)
         } else {
             let held = keeper.anchor, heldLocator = anchorLocator
             await captureAnchor()
