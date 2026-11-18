@@ -10,12 +10,18 @@ name: Stuck-run watchdog
 # merge queue entry's (the queue rebuilt that group) nor one of main's newest. On 2026-11-18 three such runs held 12
 # macOS runners while the queue's front group had 39 jobs queued for 76 min. A queue read that fails cancels nothing.
 # Every new merge group starts this workflow too, and that run does only this sweep, so the group it replaced is
-# cancelled within seconds of its rebuild, not at the next 5-min tick. This is not a required check.
+# cancelled within seconds of its rebuild (once it is 2 min old), not at the next 5-min tick. Not a required check.
+# A dispatch with `dry_run` lists what it would cancel and cancels nothing.
 on:
   merge_group:
   schedule:
     - cron: "*/5 * * * *"
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: List what it would cancel; cancel nothing
+        type: boolean
+        default: false
   pull_request:
     paths:
       - "scripts/ci-stuck.py"
@@ -49,7 +55,8 @@ jobs:
         if: github.event_name != 'pull_request' && github.event_name != 'merge_group' && github.repository == 'ourostack/gatefold'
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: python3 -I scripts/ci-stuck.py check --act
+          ACT: ${{ inputs.dry_run && 'no' || '--act' }}
+        run: python3 -I scripts/ci-stuck.py check "$ACT"
       - name: Cancel the merge-group runs this new group replaced
         if: github.event_name == 'merge_group' && github.repository == 'ourostack/gatefold'
         env:

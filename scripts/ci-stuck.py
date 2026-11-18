@@ -81,8 +81,8 @@ def stuck(runs, limits, jobs_of, now):
     groups first. `limits` maps a workflow path to its limit; `jobs_of(run id)` reads a run's jobs."""
     found = []
     for run in sorted(runs, key=lambda r: (ORDER.get(r.get("event"), 2), r["id"])):
-        if run.get("status") != "in_progress":
-            continue
+        if run.get("status") not in ("in_progress", "queued"):
+            continue  # a merge-group run can say `queued` while some of its jobs are in progress
         lim = limits.get(run.get("path", "").split("@")[0], DEFAULT)
         if minutes(run.get("run_started_at") or run["created_at"], now) < lim + GRACE:
             continue  # no job of it can be over yet: don't read its jobs
@@ -119,6 +119,7 @@ def orphans(runs, kept, now):
     if kept is None:
         return []
     return [r for r in runs if r.get("event") == "merge_group" and r.get("status") in LIVE
+            and (r.get("head_branch") or "").startswith("gh-readonly-queue/main/")
             and r.get("head_sha") not in kept and minutes(r["created_at"], now) >= MIN_AGE]
 
 
@@ -150,7 +151,10 @@ class Api:
             raise
 
     def runs(self):
-        return self.call("actions/runs?status=in_progress&per_page=100").get("workflow_runs", [])
+        # A run whose jobs have only partly started reports `queued` (merge-group run 44273931050 did, with 3 jobs
+        # in progress), so both lists are read.
+        return [r for status in ("in_progress", "queued")
+                for r in self.call(f"actions/runs?status={status}&per_page=100").get("workflow_runs", [])]
 
     def group_runs(self):
         return self.call("actions/runs?event=merge_group&per_page=100").get("workflow_runs", [])
@@ -231,8 +235,12 @@ def force(api, ids):
 
 def check(api, act, now=None, wait=time.sleep, stuck_too=True):
     now = now or datetime.datetime.now(datetime.timezone.utc)
-    lost = sweep(api, act, now)
     found = stuck(api.runs(), limits_here(), api.jobs, now) if stuck_too else []
+    try:
+        lost = sweep(api, act, now)
+    except (Stop, urllib.error.URLError, OSError, ValueError) as e:  # HTTPError is a URLError
+        summary(f"::warning title=Orphan sweep stopped::{e}; no orphaned run is cancelled this tick.")
+        lost = []
     found = [f for f in found if f[0]["id"] not in {r["id"] for r in lost}]
     if stuck_too and not found:
         summary("No run has a job past its timeout.")
@@ -291,6 +299,8 @@ def selftest():
         ("a completed run is left alone", [run(7, status="completed")], {7: [job(81)]}, []),
         ("an unknown workflow gets GitHub's 360-min default", [run(8, ".github/workflows/x.yml", age=400)],
          {8: [job(300)]}, []),
+        ("a merge-group run that says `queued` with a job in progress is still read",
+         [run(12, status="queued")], {12: [job(81)]}, [12]),
         ("merge groups first, then pull requests, then the rest",
          [run(9, event="push"), run(10, event="pull_request"), run(11)],
          {9: [job(90)], 10: [job(90)], 11: [job(90)]}, [11, 10, 9]),
@@ -312,6 +322,32 @@ def selftest():
     assert here[RU] == 75 and here[APP] >= 118, f"this repository's limits: {here}"
     print(f"ci-stuck selftest: {len(cases) + 6} cases pass")
     return len(cases) + 6 + selftest_orphans(now, ago)
+
+
+def queue_errors():
+    """Api.queue: HTTP 403 or 429 stops the tick (Stop); any other failure is an unread queue (None)."""
+    real = urllib.request.urlopen
+
+    def raising(err):
+        def urlopen(*a, **k):
+            raise err
+        return urlopen
+    api = Api("ourostack/gatefold", "t")
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            for code in (403, 429):
+                urllib.request.urlopen = raising(urllib.error.HTTPError("u", code, "x", {}, None))
+                try:
+                    api.queue()
+                    raise AssertionError(f"HTTP {code} must stop the tick")
+                except Stop:
+                    pass
+            for err in (urllib.error.HTTPError("u", 502, "x", {}, None), urllib.error.URLError("dns"), OSError("reset")):
+                urllib.request.urlopen = raising(err)
+                assert api.queue() is None, f"{err}: an unread queue"
+    finally:
+        urllib.request.urlopen = real
+    return 2
 
 
 FRONT, OLD_471, OLD_469, MAIN = "f2dcc8c1" + "0" * 32, "f3f2821d" + "0" * 32, "ed5f14c2" + "0" * 32, "cef8d590" + "0" * 32
@@ -367,6 +403,8 @@ def selftest_orphans(now, ago):
         ("a completed run is left alone", [grun(3, OLD_471, "completed")], kept, []),
         ("a pull-request run is never an orphan", [grun(4, OLD_471, event="pull_request")], kept, []),
         ("an unread queue cancels nothing", incident, None, []),
+        ("a run of another branch's queue is left alone",
+         [{**grun(5, OLD_471), "head_branch": "gh-readonly-queue/release/pr-1-" + "b" * 40}], kept, []),
     ]
     for name, runs, k, want in cases:
         got = [r["id"] for r in orphans(runs, k, now)]
@@ -393,7 +431,7 @@ def selftest_orphans(now, ago):
             os.environ.pop("GITHUB_STEP_SUMMARY")
         else:
             os.environ["GITHUB_STEP_SUMMARY"] = out
-    n = len(cases) + len(fail_closed) + 5
+    n = len(cases) + len(fail_closed) + 5 + queue_errors()
     print(f"ci-stuck selftest: {n} orphan cases pass")
     return n
 
@@ -411,6 +449,14 @@ def end_to_end(now, incident):
     api = FakeApi({"errors": [{"message": "Something went wrong"}]}, incident)
     check(api, True, now=now, wait=waits.append)
     assert api.posts == [], f"fail closed: an errored queue read cancels nothing, posted {api.posts}"
+    api = FakeApi(reply(), incident)
+
+    def stop():
+        raise Stop("HTTP 403 on the merge queue's GraphQL read")
+    api.queue, ran = stop, []
+    api.runs = lambda: ran.append(1) or []
+    check(api, True, now=now, wait=waits.append)
+    assert ran == [1] and api.posts == [], "a sweep that stops still lets the stuck check run, and cancels nothing"
     api = FakeApi(reply(), incident)
     check(api, False, now=now, wait=waits.append)
     assert api.posts == [], f"a dry run posts nothing: {api.posts}"
