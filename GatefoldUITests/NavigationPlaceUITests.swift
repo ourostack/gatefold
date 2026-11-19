@@ -190,7 +190,7 @@ final class NavigationPlaceUITests: XCTestCase {
             if start == nil, veil.exists { start = reads }
             let now = visibleText
             if move == nil, !now.isEmpty, opening(now) != opening(first) { move = reads; start = start ?? reads }
-            if back == nil, app.buttons["reader.back"].exists { back = reads }
+            if back == nil, app.descendants(matching: .any)["reader.back"].firstMatch.exists { back = reads }
             RunLoop.current.run(until: Date().addingTimeInterval(0.2))
         }
         let looks = marker.exists ? (marker.value as? String).flatMap { Int($0) } : nil
