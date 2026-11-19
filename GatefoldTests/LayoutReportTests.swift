@@ -37,8 +37,11 @@ final class DriftingPage: ReaderPage {
 
     /// The words the model asked the page to look for again after a late layout (`keepWordsOnPage`).
     var lookedForWords: [ReadingAnchor] = []
-    func keepWordsOnPage(_ anchor: ReadingAnchor, stillWanted: @escaping @MainActor () -> Bool) async -> VisibleRange? {
+    /// Whether each of those looks may place his words as a restore does.
+    var placingLooks: [Bool] = []
+    func keepWordsOnPage(_ anchor: ReadingAnchor, placing: Bool, stillWanted: @escaping @MainActor () -> Bool) async -> VisibleRange? {
         lookedForWords.append(anchor)
+        placingLooks.append(placing)
         return nil
     }
 }
@@ -147,6 +150,7 @@ final class DriftingPage: ReaderPage {
         for _ in 0..<40 where f.page.lookedForWords.isEmpty { try await Task.sleep(for: .milliseconds(25)) }
         #expect(f.model.keeper.anchor == anchor, "his words were read again from the page the layout moved to")
         #expect(f.page.lookedForWords == [anchor], "his words weren't looked for again on the page the layout moved")
+        #expect(f.page.placingLooks == [true], "the look after the restore couldn't place his words as the restore would")
         f.model.close()
     }
 

@@ -1297,14 +1297,16 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         return visible
     }
 
-    func keepWordsOnPage(_ anchor: ReadingAnchor, stillWanted: @escaping @MainActor () -> Bool) async -> VisibleRange? {
+    func keepWordsOnPage(_ anchor: ReadingAnchor, placing: Bool, stillWanted: @escaping @MainActor () -> Bool) async -> VisibleRange? {
         // A restore placing his words, or another late look, is already moving this page: the report
         // its moves brought is not a new reason to move it.
         guard stillWanted(), !lateSettling, placingGeneration == -1 else { return nil }
         lateSettling = true
         defer { lateSettling = false }
         if columns == 2 {
-            let moved = await keepOnLeft(anchor, purpose: .recheck, current: stillWanted)
+            // After a restore whose columns landed late, the break the restore would have put in at his words (and
+            // could not, on a page still in the old columns) goes in now, as a reopen at this size puts it in.
+            let moved = await keepOnLeft(anchor, purpose: placing ? .restore : .recheck, current: stillWanted)
             if moved != nil {
                 readerLog.notice("spread: a late layout had moved his words; put back on the left page")
             }

@@ -248,6 +248,11 @@ enum ReaderJS {
         // a break went in.
         pinToTop: function (quote) {
           if (document.getElementById("gatefold-pin")) { return 0; }
+          // Judged only on a page laid out in two columns: a break placed from one wide column's lines lands
+          // wherever those put it, and once two columns arrive the spread can open past his page's first words
+          // (gatefold#482, the columns reaching Readium after the restore).
+          const laidOut = parseInt(getComputedStyle(document.documentElement).columnCount, 10);
+          if (!isNaN(laidOut) && laidOut !== 2) { return 0; }
           const words = norm(quote).split(" ").slice(0, 8).map(function (w) { return w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); });
           if (!words.length || !words[0]) { return null; }
           const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
