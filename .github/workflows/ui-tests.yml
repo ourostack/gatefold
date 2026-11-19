@@ -108,7 +108,9 @@ jobs:
         && format('gatefold-macos-pr-lane-shard-{0}-{1}', inputs.lane, (endsWith(format('{0}', github.event.pull_request.number), '1') || endsWith(format('{0}', github.event.pull_request.number), '3') || endsWith(format('{0}', github.event.pull_request.number), '5') || endsWith(format('{0}', github.event.pull_request.number), '7') || endsWith(format('{0}', github.event.pull_request.number), '9')) && '1' || '0')
         || format('ui-tests-{0}-{1}-{2}', github.run_id, github.run_attempt, inputs.shard) }}
       queue: max
-    timeout-minutes: ${{ inputs.timeout }}
+    # In the merge queue a shard is capped at 50 min: 88 green merge-group test jobs (3 App runs) had p50 15.1, p95 33.4
+    # and max 38.2 min, so 50 leaves 30% over the max and fails a hang in minutes, not the 98 to 106 the matrix allows.
+    timeout-minutes: ${{ github.event_name == 'merge_group' && inputs.timeout > 50 && 50 || inputs.timeout }}
     permissions:
       contents: read
       actions: write
