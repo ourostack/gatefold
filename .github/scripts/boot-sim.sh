@@ -109,25 +109,57 @@ if [[ -r $quiet_labels ]]; then
 else
   echo "boot-sim.sh: no $quiet_labels; every first-boot job starts" >&2
 fi
-# quiet_now <udid> <stop file>: polls until the device's launchd answers, then quiets it. It stops polling once the stop
-# file exists (the boot's wait has ended); a quieting already under way finishes, each call bounded.
+# quiet_now <udid> <stop file>: asks the device's launchd until it answers, then quiets it. On a hosted runner launchd
+# answered 135 to 406 s into the boot (33 shards, 2026-11-19), and asks cut off at 10 s found none earlier: under the
+# burst one ask can take tens of seconds. So a new ask starts every ASK_EVERY s, each may take ASK_LIMIT s, at most
+# ASK_MAX at once, and the first to answer wins; simctl is resolved once, not through xcrun on every call. It stops
+# asking once the stop file exists (the boot's wait has ended); a quieting already under way finishes, each call bounded.
+ASK_EVERY="$(limit "${BOOT_SIM_ASK_EVERY:-}" 5)" || exit 2
+ASK_LIMIT="$(limit "${BOOT_SIM_ASK_LIMIT:-}" 90)" || exit 2
+ASK_MAX="$(limit "${BOOT_SIM_ASK_MAX:-}" 6)" || exit 2
 quiet_now() {
   # ${arr[@]+...}: macOS's bash 3.2 calls an empty array unbound under `set -u`.
   [[ -n ${QUIET_LABELS[*]+x} ]] || return 0
-  local began=$SECONDS rest label last=""
-  while :; do
-    rest=$(( QUIET_LIMIT - (SECONDS - began) ))
-    if (( rest < 1 )) || [[ -e $2 ]]; then
-      echo "$1: launchd did not answer in $(( SECONDS - began )) s; not quieted${last:+ (last: $last)}" >&2; return 0
+  local began=$SECONDS label simctl pid i code took="" asked=-999 errs="$2.err"
+  local pids=() starts=() keep_pids=() keep_starts=()
+  simctl="$(xcrun -f simctl 2>/dev/null)"; [[ -x $simctl ]] || simctl=""
+  while [[ -z $took ]]; do
+    # Reap the asks that ended, and end those past ASK_LIMIT.
+    keep_pids=(); keep_starts=()
+    for i in ${pids[@]+"${!pids[@]}"}; do
+      pid=${pids[$i]}
+      if kill -0 "$pid" 2>/dev/null; then
+        if (( SECONDS - ${starts[$i]} > ASK_LIMIT )); then kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null
+        else keep_pids+=("$pid"); keep_starts+=("${starts[$i]}"); fi
+      else
+        wait "$pid"; code=$?
+        if [[ $code == 0 ]]; then took=$(( SECONDS - ${starts[$i]} )); fi
+      fi
+    done
+    pids=(${keep_pids[@]+"${keep_pids[@]}"}); starts=(${keep_starts[@]+"${keep_starts[@]}"})
+    [[ -n $took ]] && break
+    if [[ -e $2 ]] || (( SECONDS - began >= QUIET_LIMIT )); then
+      for pid in ${pids[@]+"${pids[@]}"}; do kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; done
+      echo "$1: launchd did not answer in $(( SECONDS - began )) s; not quieted (last: $(tail -c 200 "$errs" 2>/dev/null | tr -s '\n' ' '))" >&2
+      return 0
     fi
-    last="$(within $(( rest < 10 ? rest : 10 )) xcrun simctl spawn "$1" launchctl print-disabled system 2>&1 >/dev/null)" && break
-    last="$(printf '%s' "$last" | tr -s '\n' ' ' | cut -c1-200)"
-    sleep 2
+    if (( SECONDS - asked >= ASK_EVERY && ${#pids[@]} < ASK_MAX )); then
+      if [[ -n $simctl ]]; then "$simctl" spawn "$1" launchctl print-disabled system >/dev/null 2>>"$errs" </dev/null &
+      else xcrun simctl spawn "$1" launchctl print-disabled system >/dev/null 2>>"$errs" </dev/null & fi
+      pids+=("$!"); starts+=("$SECONDS"); asked=$SECONDS
+    fi
+    sleep 0.5
   done
-  echo "$1: launchd answered $(( SECONDS - began )) s into its boot" >&2
+  for pid in ${pids[@]+"${pids[@]}"}; do kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; done
+  echo "$1: launchd answered $(( SECONDS - began )) s into its boot (that ask took $took s)" >&2
   for label in "${QUIET_LABELS[@]}"; do
-    ( within 20 xcrun simctl spawn "$1" launchctl disable "system/$label" >/dev/null 2>&1 &&
-      within 20 xcrun simctl spawn "$1" launchctl bootout "system/$label" >/dev/null 2>&1 ) &
+    if [[ -n $simctl ]]; then
+      ( within 60 "$simctl" spawn "$1" launchctl disable "system/$label" >/dev/null 2>&1 &&
+        within 60 "$simctl" spawn "$1" launchctl bootout "system/$label" >/dev/null 2>&1 ) &
+    else
+      ( within 60 xcrun simctl spawn "$1" launchctl disable "system/$label" >/dev/null 2>&1 &&
+        within 60 xcrun simctl spawn "$1" launchctl bootout "system/$label" >/dev/null 2>&1 ) &
+    fi
   done
   wait
   echo "$1: disabled ${#QUIET_LABELS[@]} first-boot jobs $(( SECONDS - began )) s into its boot (gatefold#404)" >&2
