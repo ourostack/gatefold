@@ -24,7 +24,7 @@ runtime that fails to mount ("Malformed bundle") can vanish after the boot, and 
 "runtime path not found" (gatefold#71). If not, it runs boot-sim.sh once more for a fresh device, on the time left.
 `erase <name> <udid>` is the cold step's erase: shutdown, erase, boot and bootstatus, each bounded, then the same
 check; if the runtime went, one fresh device erased the same way. It prints the UDID to test on.
-Every boot disables the first-boot jobs in .github/scripts/quiet-sim.labels (gatefold#404), and once a device passes
+boot-sim.sh disables the first-boot jobs in .github/scripts/quiet-sim.labels as each boot starts (gatefold#404), and once a device passes
 its check, `wait` and `erase` remove any still loaded (gatefold#209) on the step's time left, so XCUITest does not
 launch the app inside the first boot's load.
 Offline test: bash scripts/test-ci-simulator.sh (a fake xcrun and boot-sim.sh; no simulator).
@@ -401,9 +401,10 @@ def quiet_labels(labels=QUIET_LABELS):
         return []
 
 
-# The erase's boot keeps the first-boot jobs from starting at all, as boot-sim.sh's does (gatefold#404).
+# No boot flags: `simctl boot --disabledJob` disables nothing on iOS 27.2. The device boot-sim.sh booted had its
+# first-boot jobs disabled in its launchd, and a disable outlives the erase (gatefold#404).
 ERASE_STEPS = [(("shutdown",), setting("CI_SIMULATOR_SHUTDOWN_TIMEOUT", "120")), (("erase",), 300),
-               (("boot", *(f"--disabledJob={n}" for n in quiet_labels())), 300), (("bootstatus", "-b"), 420)]
+               (("boot",), 300), (("bootstatus", "-b"), 420)]
 
 
 def quiet(udid, labels=QUIET_LABELS):

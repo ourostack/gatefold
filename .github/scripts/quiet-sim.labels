@@ -1,7 +1,8 @@
 # The simulator's own launchd jobs that make a new device's first boot hold the runner's load at 500 to 900 for about
 # 15 min (gatefold#198): lock-screen posters, photo and media analysis, search, Siri, widgets, Home, maps, weather and
-# trial downloads. boot-sim.sh and the cold erase boot every device with them disabled (`simctl boot --disabledJob`,
-# gatefold#404: the load froze the runner for minutes and GitHub cancelled the job from outside), and
+# trial downloads. boot-sim.sh disables and stops them in each device's launchd about 2 s into its boot, and the
+# disable outlives the cold step's erase (gatefold#404: the load froze the runner for minutes and GitHub cancelled the
+# job from outside; `simctl boot --disabledJob` disables nothing on iOS 27.2), and
 # scripts/ci-simulator.py removes any still loaded once a device passes its check (gatefold#209: XCUITest timed out
 # launching the app inside that load). Heaviest first, as the removal stops at its time limit. Gatefold uses none of
 # them; never list a job XCUITest needs (accessibility, testmanagerd, runningboardd, SpringBoard).

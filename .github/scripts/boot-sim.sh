@@ -88,23 +88,48 @@ import json, sys
 try: print(next((d["state"] for v in json.load(sys.stdin)["devices"].values() for d in v if d["udid"] == sys.argv[1]), "Missing"))
 except ValueError: print("Unknown")' "$1"
 }
-# The first-boot jobs in quiet-sim.labels are kept from starting at all (`simctl boot --disabledJob`, gatefold#404):
-# started, they held the runner's load at 600 to 900 and froze it for 2 to 6 min, long enough that GitHub lost the
-# job and cancelled it from outside. ci-simulator.py still removes any that run (a retry's `bootstatus -b` boots
-# without these flags).
-QUIET_JOBS=()
+# The first-boot jobs in quiet-sim.labels are disabled and stopped in the device's launchd the moment it answers,
+# about 2 s into the boot, before they spread (gatefold#404: started, they held the runner's load at 600 to 900 and
+# froze it for minutes, long enough that GitHub lost the job and cancelled it from outside, run 44523983566). Not
+# `simctl boot --disabledJob`: on iOS 27.2 it disables nothing (a fresh iPad booted with all 23 flags ran every one,
+# and `launchctl print-disabled` listed none), while `launchctl disable` + `bootout` in the booted device took it from
+# 42 poster and widget processes to 1. A disable lasts for the device's life, so a reboot or the cold step's erase of
+# this device stays quiet. Each call bounded, all at once (one by one took 33 s on a laptop), QUIET_LIMIT in all; a
+# device that never answers is left to bootstatus to judge. ci-simulator.py still removes any that run once a device
+# passes its check (gatefold#209).
+QUIET_LIMIT="$(limit "${BOOT_SIM_QUIET_LIMIT:-}" 45)" || exit 2
+QUIET_LABELS=()
 quiet_labels="${BOOT_SIM_QUIET_LABELS:-$(dirname "$0")/quiet-sim.labels}"
 if [[ -r $quiet_labels ]]; then
   while IFS= read -r line || [[ -n $line ]]; do
     line="${line%%#*}"; line="${line//[[:space:]]/}"
-    if [[ -n $line ]]; then QUIET_JOBS+=("--disabledJob=$line"); fi
+    if [[ -n $line ]]; then QUIET_LABELS+=("$line"); fi
   done < "$quiet_labels"
 else
   echo "boot-sim.sh: no $quiet_labels; every first-boot job starts" >&2
 fi
-try_boot() {
+quiet_now() {
   # ${arr[@]+...}: macOS's bash 3.2 calls an empty array unbound under `set -u`.
-  xcrun simctl boot "$1" ${QUIET_JOBS[@]+"${QUIET_JOBS[@]}"} >&2 || true
+  [[ -n ${QUIET_LABELS[*]+x} ]] || return 0
+  local began=$SECONDS rest label
+  while :; do
+    rest=$(( QUIET_LIMIT - (SECONDS - began) ))
+    if (( rest < 1 )); then echo "$1: launchd did not answer within $QUIET_LIMIT s; not quieted" >&2; return 0; fi
+    within $(( rest < 10 ? rest : 10 )) xcrun simctl spawn "$1" launchctl print-disabled system >/dev/null 2>&1 && break
+    sleep 1
+  done
+  rest=$(( QUIET_LIMIT - (SECONDS - began) )); (( rest > 20 )) && rest=20; (( rest < 1 )) && rest=1
+  for label in "${QUIET_LABELS[@]}"; do
+    ( within "$rest" xcrun simctl spawn "$1" launchctl disable "system/$label" >/dev/null 2>&1 &&
+      within "$rest" xcrun simctl spawn "$1" launchctl bootout "system/$label" >/dev/null 2>&1 ) &
+  done
+  wait
+  echo "$1: disabled ${#QUIET_LABELS[@]} first-boot jobs $(( SECONDS - began )) s into its boot (gatefold#404)" >&2
+}
+try_boot() {
+  xcrun simctl boot "$1" >&2 || true
+  # Its own limit (QUIET_LIMIT), before bootstatus's, so the boot's tested limits are unchanged.
+  quiet_now "$1"
   # Every slice's output is kept: a "Failed" printed in a slice that was then cut off still fails the boot (#57).
   local began=$SECONDS code=124 rest slice asked="" all="" boot=-b
   while :; do
