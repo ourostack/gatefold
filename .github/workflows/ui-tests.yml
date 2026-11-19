@@ -169,6 +169,18 @@ jobs:
           mkdir -p "$RUNNER_TEMP/dd/Build"
           tar -xzf "$RUNNER_TEMP/products.tgz" -C "$RUNNER_TEMP/dd/Build"
           echo "XCTESTRUN=$(ls "$RUNNER_TEMP"/dd/Build/Products/*.xctestrun | head -1)" >> "$GITHUB_ENV"
+      - name: Fill the app's Metal shader cache before the tests (gatefold#487)
+        # A first draw compiles its shader on the app's main thread, waiting on the simulator's compiler service, which
+        # a busy runner left unrun for 40 s and more (main held up to 207 s, run 44292342494). One launch here draws the
+        # shelf, the open into a book, its controls and Fine-Tune; the tests then find those shaders cached. Before the
+        # logs below, so its holds take none of the hang sampler's rounds and a crash in it is never the tests'. Ends
+        # by its bound, which leaves setup inside the 30 min `left` allows, and never fails the job.
+        timeout-minutes: 4
+        continue-on-error: true
+        run: |
+          left=$((JOB_START + 30 * 60 - 60 - $(date +%s)))
+          sh scripts/ci-warm-metal.sh "$UDID" "$(ls -d "$RUNNER_TEMP"/dd/Build/Products/*-iphonesimulator/Gatefold.app | head -1)" \
+            "$RUNNER_TEMP/warm.log" "$((left < 180 ? left : 180))"
       - name: Keep the app's place log as it runs (file and progression only, never the book's words)
         run: |
           sh scripts/ci-crashes.sh mark
@@ -288,6 +300,7 @@ jobs:
             ${{ runner.temp }}/place.log
             ${{ runner.temp }}/rb.log
             ${{ runner.temp }}/reader.log
+            ${{ runner.temp }}/warm.log
             ${{ runner.temp }}/load.log
             ${{ runner.temp }}/crashes
             ${{ runner.temp }}/ui.log
