@@ -37,8 +37,9 @@ final class DriftingPage: ReaderPage {
 
     /// The words the model asked the page to look for again after a late layout (`keepWordsOnPage`).
     var lookedForWords: [ReadingAnchor] = []
-    func keepWordsOnPage(_ anchor: ReadingAnchor, stillWanted: @escaping @MainActor () -> Bool) async {
+    func keepWordsOnPage(_ anchor: ReadingAnchor, stillWanted: @escaping @MainActor () -> Bool) async -> VisibleRange? {
         lookedForWords.append(anchor)
+        return nil
     }
 }
 
