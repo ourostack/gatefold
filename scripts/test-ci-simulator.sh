@@ -240,7 +240,7 @@ real_case() {
   local began got code took; began=$(date +%s)
   got="$(PATH="$real/bin:$PATH" FAKE="$d/fake" FAKE_HANGS="$2" FAKE_NO_BOOT="$3" BOOT_SIM_BOOTSTATUS_LIMIT="${CASE_LIMIT:-2}" \
     BOOT_SIM_BOOTSTATUS_SLICE="${CASE_SLICE:-}" BOOT_SIM_NOBOOT_LIMIT="${CASE_NOBOOT:-}" BOOT_SIM_CONFIRM_LIMIT=2 \
-    BOOT_SIM_QUIET_LIMIT="${CASE_QUIET:-2}" BOOT_SIM_RECHECK_LIMIT=2 BOOT_SIM_LIST_LIMIT=2 "${BOOT_SIM_BASH:-/bin/bash}" "${BOOT_SIM_UNDER_TEST:-$here/../.github/scripts/boot-sim.sh}" gatefold-ipad iPad-Pro-13 iOS-27-1 2>"$d/err")"; code=$?
+    BOOT_SIM_QUIET_LIMIT="${CASE_QUIET:-30}" BOOT_SIM_RECHECK_LIMIT=2 BOOT_SIM_LIST_LIMIT=2 "${BOOT_SIM_BASH:-/bin/bash}" "${BOOT_SIM_UNDER_TEST:-$here/../.github/scripts/boot-sim.sh}" gatefold-ipad iPad-Pro-13 iOS-27-1 2>"$d/err")"; code=$?
   took=$(( $(date +%s) - began ))
   # The script's last background process is gone once it returns (nothing of a watchdog left to act).
   if [ "$code" = 0 ] && [ "$got" = "$4" ] && grep -qF -- "$5" "$d/err" && ! grep -qF -- "$6" "$d/err" \
@@ -329,7 +329,10 @@ if [ "$want_jobs" -gt 0 ] && [ "$(head -1 "$cb/fake/boots")" = "simctl boot dev1
 else echo "FAIL boot-sim.sh: the boot did not quiet the $want_jobs first-boot jobs: boot '$(head -1 "$cb/fake/boots")', $(grep -c disable "$cb/fake/spawns" 2>/dev/null) disables"; fails=$((fails + 1)); fi
 # A launchd that hangs: the quieting stops at its limit and the boot goes on to pass.
 FAKE_SPAWN_HANGS=1 CASE_QUIET=3 real_case "the device's launchd hangs: quieting stops at its limit, the device still passes" \
-  "" "" dev1 "dev1: launchd did not answer within 3 s; not quieted" "dev1: disabled"
+  "" "" dev1 "dev1: launchd did not answer in" "dev1: disabled"
+# Quieting runs beside bootstatus: a launchd that never answers stops it when the boot's wait ends, not at its limit.
+FAKE_SPAWN_HANGS=1 CASE_QUIET=600 real_case "the device's launchd hangs past the boot: quieting stops with the boot's wait" \
+  "" "" dev1 "dev1: launchd did not answer in" "dev1: disabled"
 # A device that never comes up is not quieted, and the boot logic decides as before.
 real_case "a device that never boots is not quieted" "1" "dev1" dev2 "dev1: launchd did not answer" "dev1: disabled"
 nl="$real/no-labels"; mkdir -p "$nl/fake"
