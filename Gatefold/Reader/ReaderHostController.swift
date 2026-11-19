@@ -1236,6 +1236,16 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         guard current() else { return }
         model.keeper.restoreDidComplete()
         model.reflowDidFinish(visible: after)
+        // Tests only: the held columns reach Readium now that the restore has finished.
+        releaseLateColumns()
+        // A page judged before its new columns had landed: the reflow isn't settled until they have, and his words
+        // have been looked for in them (gatefold#482: back upright, the restore read two narrow columns, and the
+        // reader called the reflow settled with his words 115 characters down a page about to be laid out again).
+        if await columnsLandedLate(generation: generation) {
+            guard generation == reflowGeneration, !Task.isCancelled else { return }
+            await model.lookAgainInNewColumns()
+            guard generation == reflowGeneration, !Task.isCancelled else { return }
+        }
         let shownNumber = model.reflowNumber
         // Settled now, not when the swing below has played: the 12 s watchdog took a slow, finished
         // restore whose swing was still running for a stalled one and started it again.
@@ -1279,6 +1289,33 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             cover?.removeFromSuperview()
             self?.weakModel?.reflowShown(shownNumber)
         }
+    }
+
+    /// Whether the page was still laid out in other columns than the reader's when the restore judged it. If so,
+    /// waits (8 s at most) for the new columns to land and the page to stand still in them. Meanwhile the 12 s
+    /// watchdog waits too, as it does for a restore placing his words.
+    private func columnsLandedLate(generation: Int) async -> Bool {
+        func css() async -> Int? { ((try? await navigator.answer(ReaderJS.cssColumns)) as? NSNumber)?.intValue }
+        guard let first = await css(), first != 0, first != columns else { return false }
+        placingGeneration = generation
+        defer { if placingGeneration == generation { placingGeneration = -1 } }
+        let start = ContinuousClock.now, deadline = start + .seconds(8)
+        func waiting() -> Bool { generation == reflowGeneration && !Task.isCancelled && ContinuousClock.now < deadline }
+        var landed = false
+        while waiting() {
+            try? await Task.sleep(for: .milliseconds(250))
+            if let n = await css(), n == 0 || n == columns { landed = true; break }
+        }
+        // Readium lays the page out again once the style has changed, and moves it after: two reads that agree.
+        var last = await liveVisibleRange().map { ($0.start, $0.end) }
+        while landed, waiting() {
+            try? await Task.sleep(for: .milliseconds(250))
+            let now = await liveVisibleRange().map { ($0.start, $0.end) }
+            if let now, let was = last, now == was { break }
+            last = now
+        }
+        readerLog.notice("reflow: the restore judged the page in \(first, privacy: .public) columns, before its \(self.columns, privacy: .public) landed; \(landed ? "landed" : "still not landed", privacy: .public) after \(String(format: "%.1f", (ContinuousClock.now - start) / .seconds(1)), privacy: .public) s")
+        return true
     }
 
     /// Moves the spread so `anchor`'s words start its left page: a blank verso before the file's first

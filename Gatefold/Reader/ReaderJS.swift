@@ -367,6 +367,8 @@ enum ReaderJS {
     static let removeVerso = "window.gatefold ? window.gatefold.removeVerso() : null"
     /// 1 on a page our script hasn't been installed on yet: one loaded since the last look.
     static let isFresh = "window.gatefold ? 0 : 1"
+    /// The column count the page's style lays it out in (Readium's), or 0 when the style leaves it to the width.
+    static let cssColumns = "(function(){var n=parseInt(getComputedStyle(document.documentElement).columnCount,10);return isNaN(n)?0:n;})()"
 
     static func setColumns(_ n: Int) -> String { "window.gatefoldColumns = \(n); true" }
 

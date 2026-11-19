@@ -2370,6 +2370,24 @@ final class ReaderModel {
     /// Until he moves, his words are looked for on his page again, a few times per reflow. `afterRestore`:
     /// the report came after a reflow's restore with no move of his since, and his words are looked for even
     /// after earlier moves of his, as the restore itself does (gatefold#482).
+    /// The restore found his words in a layout that wasn't yet the reader's (its new columns landed after): they are
+    /// looked for again in the page as it is now, placed the way the restore would have, and what's on screen is
+    /// recorded from it (gatefold#482).
+    func lookAgainInNewColumns() async {
+        guard let anchor = keeper.anchor, anchor.text != nil, !isClosed, keeper.reflowing == nil else { return }
+        let movesNow = moves
+        let stillWanted: @MainActor () -> Bool = { [weak self] in
+            guard let self else { return false }
+            return !self.isClosed && self.moves == movesNow && !self.touchedSinceLocation && self.keeper.reflowing == nil
+        }
+        let moved = await page?.keepWordsOnPage(anchor, placing: true, stillWanted: stillWanted)
+        guard stillWanted() else { return }
+        let shown: VisibleRange?
+        if let moved { shown = moved } else { shown = await page?.visibleRange() }
+        guard stillWanted() else { return }
+        refreshBookmarkState(shown)
+    }
+
     private func recheckLanding(afterRestore: Bool = false) {
         guard !hasMoved || afterRestore, !touchedSinceLocation, !isClosed, !isWarming, keeper.reflowing == nil,
               let anchor = keeper.anchor, anchor.text != nil, landingChecks < 3 else { return }
