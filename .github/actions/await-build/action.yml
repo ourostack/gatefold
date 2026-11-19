@@ -26,10 +26,16 @@ runs:
         api="repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
         started=$(date +%s)
         # One API call each 15 s while the build runs (about 27 jobs poll at once), the artifact list only once it ends.
-        # filter=latest: on "Re-run failed jobs" the build keeps its earlier, passing attempt.
+        # filter=latest: on "Re-run failed jobs" the build keeps its earlier, passing attempt. App's run has about 130
+        # jobs, and on a rerun the build is listed on the second page of 100 (run 44429770198, attempt 2: three shards
+        # read "null null" for 36 min and timed out), so the second page is read when the first lacks it.
         while :; do
-          build=$(gh api "$api/jobs?filter=latest&per_page=100" \
-            --jq '[.jobs[] | select(.name == "Build for testing")][0] | "\(.status) \(.conclusion)"' 2>/dev/null || echo unknown)
+          build=""
+          for page in 1 2 3; do
+            build=$(gh api "$api/jobs?filter=latest&per_page=100&page=$page" \
+              --jq '[.jobs[] | select(.name == "Build for testing")][0] | "\(.status) \(.conclusion)"' 2>/dev/null || echo unknown)
+            [ "$build" = "null null" ] || break
+          done
           case "$build" in
             "completed success") break ;;
             "completed "*) echo "::error::Build for testing ended ${build#completed }, so there is nothing to test"; exit 1 ;;
