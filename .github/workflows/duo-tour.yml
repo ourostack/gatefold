@@ -21,8 +21,21 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # The merge queue's Macs first: on a pull request, wait while a merge-group run has a macOS job queued (at most
+  # 30 min; an API error ends the wait). See .github/workflows/yield.yml. Off pull requests it skips, and the macOS
+  # job's `!cancelled()` runs it anyway.
+  yield:
+    name: Merge queue first
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+      actions: read
+    uses: ./.github/workflows/yield.yml
+
   duo-tour:
     name: Duo tour
+    needs: yield
+    if: ${{ !cancelled() }}
     runs-on: xcode-27
     # PR lane (gatefold#286): see "macOS lanes" at the top of app.yml. Never cancel-in-progress.
     concurrency:

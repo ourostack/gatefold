@@ -187,9 +187,20 @@ jobs:
             echo "app=false" >> "$GITHUB_OUTPUT"
           fi
 
+  # The merge queue's Macs first (scripts/ci-yield.py, .github/workflows/yield.yml). On a pull request with app changes,
+  # every macOS job below needs this: it waits on ubuntu while a merge-group run has a macOS job queued for a runner,
+  # reading every 2 min, for at most 30 min, and an API error ends the wait. On 2026-11-18 the front group's 39 xcode-27 jobs
+  # sat queued for 76 min while pull request jobs got runners. It never fails or skips a job: each macOS job's `if`
+  # starts with `!cancelled()`, so it runs whatever this ends as. A merge group, a push to main and a dispatch skip it.
+  yield:
+    name: Merge queue first
+    needs: changes
+    if: ${{ !cancelled() && github.event_name == 'pull_request' && needs.changes.outputs.app != 'false' }}
+    uses: ./.github/workflows/yield.yml
+
   build:
     name: Build for testing
-    needs: changes
+    needs: [changes, yield]
     if: ${{ !cancelled() && needs.changes.outputs.app != 'false' && needs.changes.outputs.proven != 'true' }}
     runs-on: xcode-27
     timeout-minutes: 35
@@ -316,10 +327,11 @@ jobs:
         run: |
           python3 -I scripts/ci-shards.py --selftest
           python3 -I scripts/ci-shards.py check --expect scripts/ci-shards.expect
-      - name: Every pull-request macOS job waits in a lane, within the budget (gatefold#286)
+      - name: Every pull-request macOS job waits in a lane, within the budget (gatefold#286), and for the merge queue's Macs
         run: |
           python3 -I scripts/ci-lanes.py --selftest
           python3 -I scripts/ci-lanes.py check
+          python3 -I scripts/ci-yield.py --selftest
 
   # UI tests run in shards, each on its own runner (.github/workflows/ui-tests.yml). A shard starts with the run, or
   # when its matrix has a free slot: it boots its new simulator (alongside `build`, when it starts with the run), then
@@ -345,7 +357,7 @@ jobs:
   # what scripts/ci-shards.times gives; each error names the test or the line to write, and the fix.
   ipad-place:
     name: iPad place shard (${{ matrix.shard }})
-    needs: changes
+    needs: [changes, yield]
     if: ${{ !cancelled() && needs.changes.outputs.app != 'false' && needs.changes.outputs.proven != 'true' }}
     strategy:
       fail-fast: false
@@ -514,7 +526,7 @@ jobs:
 
   ipad-undo:
     name: iPad undo shard (${{ matrix.shard }})
-    needs: changes
+    needs: [changes, yield]
     if: ${{ !cancelled() && needs.changes.outputs.app != 'false' && needs.changes.outputs.proven != 'true' }}
     strategy:
       fail-fast: false
@@ -584,7 +596,7 @@ jobs:
 
   ipad-taps:
     name: iPad taps shard (${{ matrix.shard }})
-    needs: changes
+    needs: [changes, yield]
     if: ${{ !cancelled() && needs.changes.outputs.app != 'false' && needs.changes.outputs.proven != 'true' }}
     strategy:
       fail-fast: false
@@ -682,7 +694,7 @@ jobs:
 
   ipad-reviewer:
     name: iPad reviewer shard (${{ matrix.shard }})
-    needs: changes
+    needs: [changes, yield]
     if: ${{ !cancelled() && needs.changes.outputs.app != 'false' && needs.changes.outputs.proven != 'true' }}
     strategy:
       fail-fast: false
@@ -764,7 +776,7 @@ jobs:
 
   duo:
     name: Duo shard (${{ matrix.shard }})
-    needs: changes
+    needs: [changes, yield]
     if: ${{ !cancelled() && needs.changes.outputs.app != 'false' && needs.changes.outputs.proven != 'true' }}
     strategy:
       fail-fast: false
@@ -998,7 +1010,7 @@ jobs:
   # Duo's position tests and Fine-Tune taps are Duo shards.
   release:
     name: Release build for devices
-    needs: changes
+    needs: [changes, yield]
     if: ${{ !cancelled() && needs.changes.outputs.app != 'false' && needs.changes.outputs.proven != 'true' }}
     runs-on: xcode-27
     # PR lane (gatefold#286): see "macOS lanes" at the top of app.yml. Never cancel-in-progress.
@@ -1063,7 +1075,7 @@ jobs:
 
   unit:
     name: Unit tests (iPhone Duo)
-    needs: changes
+    needs: [changes, yield]
     if: ${{ !cancelled() && needs.changes.outputs.app != 'false' && needs.changes.outputs.proven != 'true' }}
     runs-on: xcode-27
     # PR lane (gatefold#286): see "macOS lanes" at the top of app.yml. Never cancel-in-progress.

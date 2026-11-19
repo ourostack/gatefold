@@ -1,0 +1,35 @@
+name: Yield to the merge queue
+
+# Called by each workflow whose pull-request runs use macOS (app.yml, duo-tour.yml, cloud-package.yml,
+# screenshots.yml), as a job its macOS jobs need. On a pull request it waits, on ubuntu, while a merge-group run has a
+# macOS job queued for a runner, polling every 2 min, for at most 30 min (scripts/ci-yield.py). Main can't move until
+# its merge group runs: on 2026-11-18 the front group's 39 xcode-27 jobs sat queued for 76 min while pull request jobs
+# got runners. A read that fails, or the cap, lets the jobs start; this job never fails them or skips them. Callers
+# run it only on pull requests (its `if`), so a merge group, a push to main and a release never wait.
+# scripts/ci-lanes.py checks that every pull-request macOS job needs it.
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  wait:
+    name: Wait while the merge queue waits for a Mac
+    runs-on: ubuntu-latest
+    # A failed checkout or a timeout never turns the pull request's run red (scripts/ci-proof.py needs a green run).
+    continue-on-error: true
+    # The 30-min cap, then one last read of up to 5 calls at 30 s each, and the checkout.
+    timeout-minutes: 36
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: scripts/ci-yield.py
+          sparse-checkout-cone-mode: false
+      - name: Wait while a merge-group macOS job is queued (cap 30 min; an API error starts the jobs)
+        # Never fails the job: yielding may delay the macOS jobs, never skip or fail them.
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 -I scripts/ci-yield.py wait
