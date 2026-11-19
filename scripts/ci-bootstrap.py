@@ -17,19 +17,24 @@ scripts/ci-rerun-runner.py reads, and the shard runs again on a fresh runner. A 
 retried: its failure is the test's.
 """
 import datetime
+import importlib.util
 import json
+import os
 import re
 import sys
 
 STARTED = re.compile(r"^Test Case '-\[\S+ \S+\]' started\.", re.M)
 
-# What xcodebuild says when the runner never got going. Each seen on this repository's CI (run and job in gatefold#135).
-REASONS = [
-    ("the test runner could not be installed or launched", re.compile(r"Failed to install or launch the test runner")),
-    ("the test runner never finished starting", re.compile(r"never finished bootstrapping")),
-    ("the test runner timed out while starting", re.compile(r"timed out while preparing to run tests")),
-    ("the simulator was gone from xcodebuild's devices", re.compile(r"Unable to find a device matching the provided destination")),
-]
+# What xcodebuild says when the runner never got going: scripts/ci-runner-faults.py's XCODEBUILD, the one list.
+def _faults():
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ci-runner-faults.py")
+    spec = importlib.util.spec_from_file_location("ci_runner_faults", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+REASONS = _faults().XCODEBUILD
 
 
 def why(log):

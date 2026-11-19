@@ -1,0 +1,50 @@
+name: Re-enqueue what the runner failed
+
+# When a merge-queue entry's runs have all finished and the queue dropped it only because of its runners (a signature in
+# scripts/ci-runner-faults.py, and no test that failed), put the pull request back in the queue, once, and say so on
+# it. Anything else stays out, with a comment saying why (scripts/ci-requeue.py). It reads runs, job logs and the pull
+# request's timeline; it checks out this repository's default branch, never the entry's code.
+on:
+  workflow_run:
+    workflows: [App, Real unfold]
+    types: [completed]
+
+permissions:
+  actions: read
+  contents: read
+  pull-requests: write
+
+# App and Real unfold end at different times; the one that ends last decides, and a second one for the same commit
+# waits here, then finds the first one's comment.
+concurrency:
+  group: requeue-${{ github.event.workflow_run.head_sha }}
+  cancel-in-progress: false
+
+jobs:
+  requeue:
+    name: Re-enqueue a merge-queue entry the runner failed
+    # Every conclusion: when App fails first and Real unfold passes last, the passing one's end is what decides.
+    if: github.event.workflow_run.event == 'merge_group'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      # The Ouro Current app (contents and pull requests write, nothing more) enqueues: a token GitHub Actions minted
+      # for itself starts no merge_group run. Its token is scoped to this repository.
+      - name: Sign in as the Ouro Current app
+        id: app-token
+        if: vars.OURO_CURRENT_APP_ID != ''
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.OURO_CURRENT_APP_ID }}
+          private-key: ${{ secrets.OURO_CURRENT_PRIVATE_KEY }}
+          repositories: ${{ github.event.repository.name }}
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          # Enqueueing with GITHUB_TOKEN starts no merge_group run (scripts/ci-requeue.py); without the app, it only comments.
+          QUEUE_TOKEN: ${{ steps.app-token.outputs.token }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          python3 -I scripts/ci-requeue.py --selftest
+          python3 -I scripts/ci-requeue.py "$RUN_ID"

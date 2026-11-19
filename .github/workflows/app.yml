@@ -306,6 +306,8 @@ jobs:
         run: |
           python3 -I scripts/ci-bootstrap.py --selftest
           python3 -I scripts/ci-rerun-runner.py --selftest
+          python3 -I scripts/ci-runner-faults.py --selftest
+          python3 -I scripts/ci-requeue.py --selftest
       - name: A main commit skips the suite only on proof of its own tree (a mismatched tree or a red run proves nothing)
         run: python3 -I scripts/ci-proof.py --selftest
       - name: A merge-group failure cancels only the queue's other runs on its commit, never main's or a pull request's
