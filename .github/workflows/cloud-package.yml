@@ -50,7 +50,12 @@ jobs:
           import json, sys
           devices = json.load(sys.stdin)["devices"]
           ios = sorted((r for r in devices if ".iOS-27" in r), reverse=True)
-          print(next(d["udid"] for r in ios for d in devices[r] if d["name"].startswith("iPhone")))')
-          echo "Simulator: $udid"
+          print(next(d["udid"] + " " + r for r in ios for d in devices[r] if d["name"].startswith("iPhone")))')
+          read -r udid runtime <<<"$udid"
+          echo "Simulator: $udid on $runtime"
+          # Boot only once its runtime has settled, and finish the boot before the tests (scripts/ci-simulator.py, "settle").
+          python3 -I ../../scripts/ci-simulator.py settle "$runtime"
+          xcrun simctl boot "$udid" 2>/dev/null || true
+          xcrun simctl bootstatus "$udid" -b
           xcodebuild test -scheme GatefoldCloud-Package -destination "platform=iOS Simulator,id=$udid" \
             -derivedDataPath "$RUNNER_TEMP/dd" | tail -n 40

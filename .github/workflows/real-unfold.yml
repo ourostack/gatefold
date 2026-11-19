@@ -114,6 +114,8 @@ jobs:
         run: |
           set -euo pipefail
           runtime="$(xcrun simctl list runtimes --json | python3 -c 'import json,sys; r=[x for x in json.load(sys.stdin)["runtimes"] if x["platform"]=="iOS" and x["isAvailable"] and any(d["name"].startswith("iPhone Duo") for d in x.get("supportedDeviceTypes",[]))]; print(max(r, key=lambda x: [int(p) for p in x["version"].split(".")])["identifier"])')"
+          # A runtime mid-swap loses its booted device (scripts/ci-simulator.py, "settle").
+          python3 -I scripts/ci-simulator.py settle "$runtime"
           udid="$(.github/scripts/boot-sim.sh gatefold-duo com.apple.CoreSimulator.SimDeviceType.iPhone-Duo "$runtime")"
           echo "udid=$udid" >> "$GITHUB_OUTPUT"
       - name: Build and install the app
