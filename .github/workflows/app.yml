@@ -144,6 +144,7 @@ jobs:
           else
             full=false
           fi
+          full=false # Probe for gatefold#432 only, never merged: the edited workflow runs just the shards below.
           # Which guards this change needs (the Gatefold agent's lists). Anything that builds into the app gets the smoke;
           # a unit-test-only or Markdown-only change gets none.
           place='^(Gatefold/Reader/(ReaderModel|ReaderHostController|ReaderScreen|LandingPlace|BookPositions|ReopenSnapshot|BookOpener|ReaderPage|ReaderJS|Highlights)\.swift|Packages/GatefoldCore/)'
@@ -710,15 +711,51 @@ jobs:
             cold: false
             timeout: 118 # 30 + 2 x 35.2 + 5 + 12
             lane: 1
-          - shard: ipad-reviewer-numbers
-            # Main only: 926
+          - shard: ipad-reviewer-numbers-1
             tests: >-
               ReviewerChecksUITests/testPageNumbersAreOnOrOffInEveryBook
             skip: ""
-            pr_tests: none
+            pr_tests: ReviewerChecksUITests/testPageNumbersAreOnOrOffInEveryBook
+            pr_when: smoke
             cold: false
-            timeout: 84 # 30 + 2 x 18.5 + 5 + 12
+            timeout: 84
             lane: 5
+          - shard: ipad-reviewer-numbers-2
+            tests: >-
+              ReviewerChecksUITests/testPageNumbersAreOnOrOffInEveryBook
+            skip: ""
+            pr_tests: ReviewerChecksUITests/testPageNumbersAreOnOrOffInEveryBook
+            pr_when: smoke
+            cold: false
+            timeout: 84
+            lane: 6
+          - shard: ipad-reviewer-numbers-3
+            tests: >-
+              ReviewerChecksUITests/testPageNumbersAreOnOrOffInEveryBook
+            skip: ""
+            pr_tests: ReviewerChecksUITests/testPageNumbersAreOnOrOffInEveryBook
+            pr_when: smoke
+            cold: false
+            timeout: 84
+            lane: 7
+          - shard: ipad-reviewer-numbers-4
+            tests: >-
+              ReviewerChecksUITests/testPageNumbersAreOnOrOffInEveryBook
+            skip: ""
+            pr_tests: ReviewerChecksUITests/testPageNumbersAreOnOrOffInEveryBook
+            pr_when: smoke
+            cold: false
+            timeout: 84
+            lane: 9
+          - shard: ipad-reviewer-numbers-5
+            tests: >-
+              ReviewerChecksUITests/testPageNumbersAreOnOrOffInEveryBook
+            skip: ""
+            pr_tests: ReviewerChecksUITests/testPageNumbersAreOnOrOffInEveryBook
+            pr_when: smoke
+            cold: false
+            timeout: 84
+            lane: 10
           - shard: ipad-reviewer-spread
             # Main only: 358 + 99
             tests: >-

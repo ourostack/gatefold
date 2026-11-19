@@ -38,6 +38,7 @@ struct GatefoldApp: App {
                 #endif
         }
         .onChange(of: scenePhase) { _, phase in
+            readerLog.notice("DBG432 scenePhase \(String(describing: phase), privacy: .public)")
             switch phase {
             case .active:
                 ReopenSnapshot.setAside()
@@ -163,6 +164,7 @@ struct RootView: View {
     @State private var shelfShown = false
 
     var body: some View {
+        let _ = readerLog.notice("DBG432 body count \(app.library.books.filter(\.isOnDevice).count, privacy: .public) reader \(reader?.bookID ?? "none", privacy: .public) opening \(opening, privacy: .public)")
         ZStack {
             if app.hasOnboarded, let id = app.reopenBookID, !shelfShown {
                 // The book's paper until the shelf is built (under the picture, or alone if it has none).
@@ -230,7 +232,8 @@ struct RootView: View {
             // The zoom's swipe-to-dismiss would take edge drags meant for turning back a page.
             .interactiveDismissDisabled()
         }
-        .onChange(of: app.library.books.filter(\.isOnDevice).count, initial: true) { _, _ in
+        .onChange(of: app.library.books.filter(\.isOnDevice).count, initial: true) { _, count in
+            readerLog.notice("DBG432 onChange count \(count, privacy: .public) asked \(app.openBookID ?? "none", privacy: .public) emmaOn \(app.library.book("gutenberg-emma")?.isOnDevice ?? false, privacy: .public) reader \(reader?.bookID ?? "none", privacy: .public) opening \(opening, privacy: .public)")
             if reader == nil, !opening, let id = app.openBookID, let book = app.library.book(id), book.isOnDevice {
                 open(book)
             }
