@@ -747,6 +747,33 @@ jobs:
             cold: false
             timeout: 84
             lane: 9
+          - shard: ipad-reviewer-numbers-6
+            tests: >-
+              ReviewerChecksUITests/testPageNumbersAreOnOrOffInEveryBook
+            skip: ""
+            pr_tests: ReviewerChecksUITests/testPageNumbersAreOnOrOffInEveryBook
+            pr_when: smoke
+            cold: false
+            timeout: 84
+            lane: 11
+          - shard: ipad-reviewer-numbers-7
+            tests: >-
+              ReviewerChecksUITests/testPageNumbersAreOnOrOffInEveryBook
+            skip: ""
+            pr_tests: ReviewerChecksUITests/testPageNumbersAreOnOrOffInEveryBook
+            pr_when: smoke
+            cold: false
+            timeout: 84
+            lane: 12
+          - shard: ipad-reviewer-numbers-8
+            tests: >-
+              ReviewerChecksUITests/testPageNumbersAreOnOrOffInEveryBook
+            skip: ""
+            pr_tests: ReviewerChecksUITests/testPageNumbersAreOnOrOffInEveryBook
+            pr_when: smoke
+            cold: false
+            timeout: 84
+            lane: 13
           - shard: ipad-reviewer-numbers-5
             tests: >-
               ReviewerChecksUITests/testPageNumbersAreOnOrOffInEveryBook
