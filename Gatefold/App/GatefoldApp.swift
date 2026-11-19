@@ -163,6 +163,7 @@ struct RootView: View {
     @State private var shelfShown = false
 
     var body: some View {
+        let _ = noteAskedOpen()
         ZStack {
             if app.hasOnboarded, let id = app.reopenBookID, !shelfShown {
                 // The book's paper until the shelf is built (under the picture, or alone if it has none).
@@ -230,7 +231,8 @@ struct RootView: View {
             // The zoom's swipe-to-dismiss would take edge drags meant for turning back a page.
             .interactiveDismissDisabled()
         }
-        .onChange(of: app.library.books.filter(\.isOnDevice).count, initial: true) { _, _ in
+        .onChange(of: app.library.books.filter(\.isOnDevice).count, initial: true) { _, count in
+            readerLog.notice("ASKED-OPEN onChange count \(count, privacy: .public) asked \(app.openBookID ?? "none", privacy: .public) on device \(app.openBookID.flatMap { app.library.book($0) }?.isOnDevice ?? false, privacy: .public) reader \(reader?.bookID ?? "none", privacy: .public) opening \(opening, privacy: .public)")
             if reader == nil, !opening, let id = app.openBookID, let book = app.library.book(id), book.isOnDevice {
                 open(book)
             }
@@ -240,6 +242,20 @@ struct RootView: View {
         } message: {
             Text(openError ?? "")
         }
+    }
+
+    /// The last state `noteAskedOpen` logged.
+    private static var askedOpenNoted = ""
+
+    /// Logs this view's redraw whenever what decides the launch's asked-for open has changed since the last one, never
+    /// once per redraw: with `ASKED-OPEN onChange`, a book that landed but never opened says whether this view stopped
+    /// redrawing or its change handler's action was lost (gatefold#432).
+    private func noteAskedOpen() -> Bool {
+        let note = "count \(app.library.books.filter(\.isOnDevice).count) reader \(reader?.bookID ?? "none") opening \(opening)"
+        guard note != Self.askedOpenNoted else { return true }
+        Self.askedOpenNoted = note
+        readerLog.notice("ASKED-OPEN body \(note, privacy: .public)")
+        return true
     }
 
     /// The first layout: if a book is being reopened, find its picture for this window and theme.

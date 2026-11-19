@@ -235,6 +235,7 @@ final class LibraryStore {
             // The Cloud keeps its verified copy; a hard link shares it instead of doubling the space.
             do { try FileManager.default.linkItem(at: temp, to: target) } catch { try FileManager.default.copyItem(at: temp, to: target) }
             update(book.id) { $0.fileName = name }
+            readerLog.notice("ASKED-OPEN downloaded \(book.id, privacy: .public) on device now \(self.books.filter(\.isOnDevice).count, privacy: .public)")
             downloads[book.id] = nil
             if covers[book.id] == nil, let meta = try? await BookOpener.shared.metadata(of: target), let cover = meta.cover {
                 storeCover(cover, id: book.id)
