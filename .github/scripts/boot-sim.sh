@@ -87,8 +87,23 @@ import json, sys
 try: print(next((d["state"] for v in json.load(sys.stdin)["devices"].values() for d in v if d["udid"] == sys.argv[1]), "Missing"))
 except ValueError: print("Unknown")' "$1"
 }
+# The first-boot jobs in quiet-sim.labels are kept from starting at all (`simctl boot --disabledJob`, gatefold#404):
+# started, they held the runner's load at 600 to 900 and froze it for 2 to 6 min, long enough that GitHub lost the
+# job and cancelled it from outside. ci-simulator.py still removes any that run (a retry's `bootstatus -b` boots
+# without these flags).
+QUIET_JOBS=()
+quiet_labels="${BOOT_SIM_QUIET_LABELS:-$(dirname "$0")/quiet-sim.labels}"
+if [[ -r $quiet_labels ]]; then
+  while IFS= read -r line || [[ -n $line ]]; do
+    line="${line%%#*}"; line="${line//[[:space:]]/}"
+    if [[ -n $line ]]; then QUIET_JOBS+=("--disabledJob=$line"); fi
+  done < "$quiet_labels"
+else
+  echo "boot-sim.sh: no $quiet_labels; every first-boot job starts" >&2
+fi
 try_boot() {
-  xcrun simctl boot "$1" >&2 || true
+  # ${arr[@]+...}: macOS's bash 3.2 calls an empty array unbound under `set -u`.
+  xcrun simctl boot "$1" ${QUIET_JOBS[@]+"${QUIET_JOBS[@]}"} >&2 || true
   # Every slice's output is kept: a "Failed" printed in a slice that was then cut off still fails the boot (#57).
   local began=$SECONDS code=124 rest slice asked="" all="" boot=-b
   while :; do
