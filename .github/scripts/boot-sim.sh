@@ -87,23 +87,94 @@ import json, sys
 try: print(next((d["state"] for v in json.load(sys.stdin)["devices"].values() for d in v if d["udid"] == sys.argv[1]), "Missing"))
 except ValueError: print("Unknown")' "$1"
 }
-# The first-boot jobs in quiet-sim.labels are kept from starting at all (`simctl boot --disabledJob`, gatefold#404):
-# started, they held the runner's load at 600 to 900 and froze it for 2 to 6 min, long enough that GitHub lost the
-# job and cancelled it from outside. ci-simulator.py still removes any that run (a retry's `bootstatus -b` boots
-# without these flags).
-QUIET_JOBS=()
+# The first-boot jobs in quiet-sim.labels are disabled and stopped in the device's launchd the moment it answers,
+# before they spread (gatefold#404: started, they held the runner's load at 600 to 900 and froze it for minutes, long
+# enough that GitHub lost the job and cancelled it from outside, run 44523983566). Not `simctl boot --disabledJob`: on
+# iOS 27.2 it disables nothing (a fresh iPad booted with all 23 flags ran every one, and `launchctl print-disabled`
+# listed none), while `launchctl disable` + `bootout` in the booted device took it from 42 poster and widget processes
+# to 1. A disable lasts for the device's life, so a reboot or the cold step's erase of this device stays quiet.
+# It runs beside bootstatus, not before it: launchd answered 1.6 s into a laptop's boot, but on a hosted runner none of
+# about 20 shards' devices answered within 45 s (run 44532557052; their boots took 116 to 417 s). Each call bounded,
+# all labels at once (one by one took 33 s on a laptop), QUIET_LIMIT in all, and it stops polling when the boot's
+# wait ends. ci-simulator.py still removes any that run once a device passes its check (gatefold#209).
+QUIET_LIMIT="$(limit "${BOOT_SIM_QUIET_LIMIT:-}" 600)" || exit 2
+QUIET_LABELS=()
 quiet_labels="${BOOT_SIM_QUIET_LABELS:-$(dirname "$0")/quiet-sim.labels}"
 if [[ -r $quiet_labels ]]; then
   while IFS= read -r line || [[ -n $line ]]; do
     line="${line%%#*}"; line="${line//[[:space:]]/}"
-    if [[ -n $line ]]; then QUIET_JOBS+=("--disabledJob=$line"); fi
+    if [[ -n $line ]]; then QUIET_LABELS+=("$line"); fi
   done < "$quiet_labels"
 else
   echo "boot-sim.sh: no $quiet_labels; every first-boot job starts" >&2
 fi
-try_boot() {
+# quiet_now <udid> <stop file>: asks the device's launchd until it answers, then quiets it. On a hosted runner launchd
+# answered 135 to 406 s into the boot (33 shards, 2026-11-19), and asks cut off at 10 s found none earlier: under the
+# burst one ask can take tens of seconds. So a new ask starts every ASK_EVERY s, each may take ASK_LIMIT s, at most
+# ASK_MAX at once, and the first to answer wins; simctl is resolved once, not through xcrun on every call. It stops
+# asking once the stop file exists (the boot's wait has ended); a quieting already under way finishes, each call bounded.
+ASK_EVERY="$(limit "${BOOT_SIM_ASK_EVERY:-}" 5)" || exit 2
+ASK_LIMIT="$(limit "${BOOT_SIM_ASK_LIMIT:-}" 90)" || exit 2
+ASK_MAX="$(limit "${BOOT_SIM_ASK_MAX:-}" 6)" || exit 2
+quiet_now() {
   # ${arr[@]+...}: macOS's bash 3.2 calls an empty array unbound under `set -u`.
-  xcrun simctl boot "$1" ${QUIET_JOBS[@]+"${QUIET_JOBS[@]}"} >&2 || true
+  [[ -n ${QUIET_LABELS[*]+x} ]] || return 0
+  local began=$SECONDS label simctl pid i code took="" asked=-999 errs="$2.err"
+  local pids=() starts=() keep_pids=() keep_starts=()
+  simctl="$(xcrun -f simctl 2>/dev/null)"; [[ -x $simctl ]] || simctl=""
+  while [[ -z $took ]]; do
+    # Reap the asks that ended, and end those past ASK_LIMIT.
+    keep_pids=(); keep_starts=()
+    for i in ${pids[@]+"${!pids[@]}"}; do
+      pid=${pids[$i]}
+      if kill -0 "$pid" 2>/dev/null; then
+        if (( SECONDS - ${starts[$i]} > ASK_LIMIT )); then kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null
+        else keep_pids+=("$pid"); keep_starts+=("${starts[$i]}"); fi
+      else
+        wait "$pid"; code=$?
+        if [[ $code == 0 ]]; then took=$(( SECONDS - ${starts[$i]} )); fi
+      fi
+    done
+    pids=(${keep_pids[@]+"${keep_pids[@]}"}); starts=(${keep_starts[@]+"${keep_starts[@]}"})
+    [[ -n $took ]] && break
+    if [[ -e $2 ]] || (( SECONDS - began >= QUIET_LIMIT )); then
+      for pid in ${pids[@]+"${pids[@]}"}; do kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; done
+      echo "$1: launchd did not answer in $(( SECONDS - began )) s; not quieted (last: $(tail -c 200 "$errs" 2>/dev/null | tr -s '\n' ' '))" >&2
+      return 0
+    fi
+    if (( SECONDS - asked >= ASK_EVERY && ${#pids[@]} < ASK_MAX )); then
+      if [[ -n $simctl ]]; then "$simctl" spawn "$1" launchctl print-disabled system >/dev/null 2>>"$errs" </dev/null &
+      else xcrun simctl spawn "$1" launchctl print-disabled system >/dev/null 2>>"$errs" </dev/null & fi
+      pids+=("$!"); starts+=("$SECONDS"); asked=$SECONDS
+    fi
+    sleep 0.5
+  done
+  for pid in ${pids[@]+"${pids[@]}"}; do kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; done
+  echo "$1: launchd answered $(( SECONDS - began )) s into its boot (that ask took $took s)" >&2
+  for label in "${QUIET_LABELS[@]}"; do
+    if [[ -n $simctl ]]; then
+      ( within 60 "$simctl" spawn "$1" launchctl disable "system/$label" >/dev/null 2>&1 &&
+        within 60 "$simctl" spawn "$1" launchctl bootout "system/$label" >/dev/null 2>&1 ) &
+    else
+      ( within 60 xcrun simctl spawn "$1" launchctl disable "system/$label" >/dev/null 2>&1 &&
+        within 60 xcrun simctl spawn "$1" launchctl bootout "system/$label" >/dev/null 2>&1 ) &
+    fi
+  done
+  wait
+  echo "$1: disabled ${#QUIET_LABELS[@]} first-boot jobs $(( SECONDS - began )) s into its boot (gatefold#404)" >&2
+}
+try_boot() {
+  xcrun simctl boot "$1" >&2 || true
+  local stop qpid code
+  stop="$(mktemp -u "$WITHIN_DIR/quiet-stop.XXXXXX")"
+  quiet_now "$1" "$stop" &
+  qpid=$!
+  wait_boot "$1"; code=$?
+  : > "$stop"
+  wait "$qpid"
+  return $code
+}
+wait_boot() {
   # Every slice's output is kept: a "Failed" printed in a slice that was then cut off still fails the boot (#57).
   local began=$SECONDS code=124 rest slice asked="" all="" boot=-b
   while :; do
