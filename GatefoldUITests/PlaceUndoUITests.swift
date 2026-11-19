@@ -18,6 +18,9 @@ final class PlaceUndoUITests: XCTestCase {
     ]
 
     private func el(_ id: String) -> XCUIElement { app.descendants(matching: .any)[id] }
+    /// A control by its id at any type: a SwiftUI button can come up typed PopUpButton, and then a Button
+    /// lookup finds nothing (gatefold#165, #361). At any type an absence check is only stricter.
+    private func control(_ id: String) -> XCUIElement { app.descendants(matching: .any)[id].firstMatch }
     private var visibleText: String { (el("reader.visibleText").value as? String) ?? "" }
     /// The words that open the page, as a number: enough to tell two pages apart, nothing to quote.
     private func opening(_ text: String) -> Int {
@@ -119,7 +122,7 @@ final class PlaceUndoUITests: XCTestCase {
         // Already up (a jump made from them leaves them up), or fading in or out: wait for one or the
         // other and never tap them down. 2 s of wall time ran out on a starved runner while they were
         // up, and the tap that followed put them down.
-        let contents = app.buttons["reader.contents"]
+        let contents = control("reader.contents")
         if contents.exists {
             _ = readsUntil(reads: 30) { !contents.exists || contents.isHittable }
             if contents.exists {
@@ -134,7 +137,7 @@ final class PlaceUndoUITests: XCTestCase {
 
     private func contentsJump(to chapter: String) {
         showChrome()
-        app.buttons["reader.contents"].tap()
+        control("reader.contents").tap()
         let row = app.buttons.matching(NSPredicate(format: "label CONTAINS[c] %@", chapter)).firstMatch
         // The list opens centred on the current chapter, so the first rows are not built yet.
         XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label BEGINSWITH[c] %@", "Chapter")).firstMatch.waitForExistence(timeout: 10),
@@ -156,13 +159,13 @@ final class PlaceUndoUITests: XCTestCase {
         XCTAssertTrue(keptAtChapterXL(), "the jump didn't keep the chapter he chose")
         // A jump made from the controls leaves them up, perhaps still fading in: once they are, a tap in
         // the middle puts them down.
-        let contents = app.buttons["reader.contents"]
+        let contents = control("reader.contents")
         let up = readsUntil(reads: 20) { contents.exists && contents.isHittable }
         if up.ok { el("reader.page").coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap() }
         let hidden = readsUntil(reads: 50) { !contents.exists }
         print("UNDO controls up=\(up.ok) after \(up.reads) reads; hidden after \(hidden.reads) reads")
         XCTAssertTrue(hidden.ok, "the controls are hidden")
-        let back = app.buttons["reader.back"]
+        let back = control("reader.back")
         let shown = readsUntil(reads: 50) { back.exists }
         print("UNDO back shown after \(shown.reads) reads")
         XCTAssertTrue(shown.ok, "no way back on the page without opening the controls")
@@ -176,7 +179,7 @@ final class PlaceUndoUITests: XCTestCase {
         XCTAssertEqual(opening(returned.words), opening(first), "Back did not return to his page")
         XCTAssertTrue(returned.ok, "Back's veil lifts")
         // And Back itself is one tap to undo.
-        let again = readsUntil(reads: 50) { app.buttons["reader.back"].exists }
+        let again = readsUntil(reads: 50) { control("reader.back").exists }
         XCTAssertTrue(again.ok, "going back can't be undone")
         // And the page still answers: a tap in its middle brings the controls up.
         XCTAssertFalse(contents.exists, "the controls stayed down through Back")
@@ -201,8 +204,8 @@ final class PlaceUndoUITests: XCTestCase {
         XCTAssertTrue(veil.waitForExistence(timeout: 10) && veil.waitForNonExistence(timeout: 240), "the jump's veil lifts")
         let jumped = waitForWords(changingFrom: first, timeout: 30)
         XCTAssertNotEqual(opening(jumped), opening(first), "the jump moved the page")
-        if app.buttons["reader.contents"].exists { el("reader.page").coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap() }
-        let back = app.buttons["reader.back"]
+        if control("reader.contents").exists { el("reader.page").coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap() }
+        let back = control("reader.back")
         XCTAssertTrue(back.waitForExistence(timeout: 10), "a way back")
         back.tap()
         XCTAssertTrue(held.waitForExistence(timeout: 30), "Back's chapter load is held open")
@@ -240,8 +243,8 @@ final class PlaceUndoUITests: XCTestCase {
         let shown = waitForWords()
         XCTAssertEqual(opening(shown), opening(first), "the jump that never came back moved the page")
         // His taps reach the page again: one brings the controls up.
-        if !app.buttons["reader.contents"].exists { el("reader.page").coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap() }
-        XCTAssertTrue(app.buttons["reader.contents"].waitForExistence(timeout: 10), "a tap on the page after the veil let go brought no controls")
+        if !control("reader.contents").exists { el("reader.page").coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap() }
+        XCTAssertTrue(control("reader.contents").waitForExistence(timeout: 10), "a tap on the page after the veil let go brought no controls")
     }
 
     /// A touch resting on the scrubber, and a short wobble on it, never move the page.
@@ -261,7 +264,7 @@ final class PlaceUndoUITests: XCTestCase {
     func testATapAboveYourPageClosesItAndKeepsThePage() {
         let first = openFresh()
         showChrome()
-        app.buttons["reader.appearance"].tap()
+        control("reader.appearance").tap()
         let panel = el("appearance.panel")
         XCTAssertTrue(panel.waitForExistence(timeout: 10))
         // In the page's right margin, below the top bar: the turn zone, where a tap that got through would turn.
@@ -283,7 +286,7 @@ final class PlaceUndoUITests: XCTestCase {
         window.coordinate(withNormalizedOffset: CGVector(dx: 0.03, dy: 0.5)).tap()
         let back = waitForWords(changingFrom: ahead, timeout: 15)
         XCTAssertEqual(opening(back), opening(first), "a tap at x 0.03 on the spread didn't turn back")
-        XCTAssertFalse(app.buttons["reader.contents"].exists, "the tap showed the controls instead of turning")
+        XCTAssertFalse(control("reader.contents").exists, "the tap showed the controls instead of turning")
         // Again a little higher, where the old switches sat on a tall iPad (0.45 of the page down): the
         // strip is gone at every height, not only at mid-height on a short one.
         window.coordinate(withNormalizedOffset: CGVector(dx: 0.97, dy: 0.5)).tap()
@@ -292,7 +295,7 @@ final class PlaceUndoUITests: XCTestCase {
         window.coordinate(withNormalizedOffset: CGVector(dx: 0.03, dy: 0.47)).tap()
         let back2 = waitForWords(changingFrom: ahead2, timeout: 15)
         XCTAssertEqual(opening(back2), opening(first), "a tap at x 0.03, 0.47 down, on the spread didn't turn back")
-        XCTAssertFalse(app.buttons["reader.contents"].exists, "the higher tap showed the controls instead of turning")
+        XCTAssertFalse(control("reader.contents").exists, "the higher tap showed the controls instead of turning")
     }
 
     /// A tap at the left edge turns back as promptly as one at the right edge turns forward: the
@@ -359,14 +362,14 @@ final class PlaceUndoUITests: XCTestCase {
         _ = waitForWords(changingFrom: first, timeout: 30)
         XCTAssertTrue(el("reader.veil").waitForNonExistence(timeout: 60), "the veil lifts")
         XCTAssertTrue(keptAtChapterXL(), "the jump didn't keep the chapter he chose")
-        if app.buttons["reader.contents"].exists { el("reader.page").coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap() }
-        XCTAssertTrue(app.buttons["reader.contents"].waitForNonExistence(timeout: 5), "the controls are hidden")
+        if control("reader.contents").exists { el("reader.page").coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap() }
+        XCTAssertTrue(control("reader.contents").waitForNonExistence(timeout: 5), "the controls are hidden")
         let start = settledWords()
         let page = el("reader.page")
         page.coordinate(withNormalizedOffset: CGVector(dx: 0.06, dy: 0.5)).tap()
         let before = waitForWords(changingFrom: start, timeout: 15)
         XCTAssertNotEqual(opening(before), opening(start), "a tap at the left edge of a chapter's first page didn't turn back")
-        XCTAssertFalse(app.buttons["reader.contents"].exists, "the tap showed the controls instead of turning")
+        XCTAssertFalse(control("reader.contents").exists, "the tap showed the controls instead of turning")
         page.coordinate(withNormalizedOffset: CGVector(dx: 0.97, dy: 0.5)).tap()
         let again = waitForWords(changingFrom: before, timeout: 15)
         XCTAssertEqual(opening(again), opening(start), "the forward turn didn't come back to the chapter's first page")
@@ -385,7 +388,7 @@ final class PlaceUndoUITests: XCTestCase {
         let first = openFresh(["-GatefoldHoldChapterLoad", "800"])
         contentsJump(to: "Chapter XL")
         let veil = el("reader.veil")
-        let contents = app.buttons["reader.contents"]
+        let contents = control("reader.contents")
         let up = readsUntil(reads: 100) { veil.exists }
         print("UNDO tapped jump: veil up after \(up.reads) reads")
         XCTAssertTrue(up.ok, "the jump's veil is up")
@@ -403,7 +406,7 @@ final class PlaceUndoUITests: XCTestCase {
         // file's first page (an earlier chapter) was kept as his place (gatefold#166, #254).
         XCTAssertTrue(keptAtChapterXL(), "the tapped jump didn't keep the chapter he chose")
         // The same jump again, untouched, from his first page: the page it lands on is where he chose.
-        app.buttons["reader.back"].tap()
+        control("reader.back").tap()
         let back = landed(from: chosen, reads: 1200)
         print("UNDO back landed after \(back.reads) reads")
         XCTAssertTrue(back.ok, "Back's veil lifts")
