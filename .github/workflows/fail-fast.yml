@@ -1,0 +1,30 @@
+name: Merge queue fails fast
+
+# Dispatched by a failed merge-group job (.github/actions/fail-fast): waits until that job has finished as "failure",
+# then cancels the rest of its run, so the queue drops the entry at once (scripts/ci-fail-fast.py). The job can't
+# cancel its own run, because the cancel would turn its failure into "cancelled".
+on:
+  workflow_dispatch:
+    inputs:
+      run:
+        description: The merge-group run to cancel once its failed job has finished
+        required: true
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  cancel:
+    name: Cancel the rest of a failed merge-group run
+    runs-on: ubuntu-latest
+    timeout-minutes: 7
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: scripts/ci-fail-fast.py
+          sparse-checkout-cone-mode: false
+      - env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RUN: ${{ inputs.run }}
+        run: python3 -I scripts/ci-fail-fast.py own "$RUN"

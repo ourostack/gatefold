@@ -55,12 +55,16 @@ jobs:
         name: The tree this run tests (the proof job names it)
         run: echo "tree=$(git rev-parse 'HEAD^{tree}')" >> "$GITHUB_OUTPUT"
       - id: proof
-        name: Has the merge queue or a pull request already unfolded this tree? (main pushes only)
-        if: github.event_name == 'push'
+        name: Has the merge queue or a pull request already unfolded this tree? (main pushes and the merge queue)
+        if: github.event_name == 'push' || github.event_name == 'merge_group'
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          TREE: ${{ steps.tree.outputs.tree }}
         run: |
-          python3 -I scripts/ci-proof.py --sha "$GITHUB_SHA" --workflow real-unfold.yml --prefix "Real unfold passed on tree " \
+          # The merge queue: another group's run that passed on this very tree (a re-enqueue after a runner fault).
+          if [ "$EVENT" = merge_group ]; then where=(--tree "$TREE" --run "$GITHUB_RUN_ID"); else where=(--sha "$GITHUB_SHA"); fi
+          python3 -I scripts/ci-proof.py "${where[@]}" --workflow real-unfold.yml --prefix "Real unfold passed on tree " \
             > proof.txt 2>&1 || echo "Not proven: the unfolds run." >> proof.txt
           cat proof.txt | tee -a "$GITHUB_STEP_SUMMARY"
       - id: diff
@@ -89,6 +93,9 @@ jobs:
     timeout-minutes: 75
     env:
       APP: bot.ouro.gatefold
+    permissions:
+      contents: read
+      actions: write
     steps:
       # The unfolds stop in time for their verdicts and the upload, counted from here (gatefold#391).
       - run: echo "JOB_START=$(date +%s)" >> "$GITHUB_ENV"
@@ -373,6 +380,10 @@ jobs:
             ${{ runner.temp }}/unfold/marks.log
             ${{ runner.temp }}/unfold/shots
             ${{ runner.temp }}/unfold/stall
+      # Merge queue only: a failed job cancels the other runs on this commit, so the queue drops it now
+      # (.github/actions/fail-fast). Last, so the logs above are uploaded first.
+      - if: failure() && github.event_name == 'merge_group'
+        uses: ./.github/actions/fail-fast
 
   # The required check. Never skipped, so it always reports.
   real-unfold:
@@ -398,7 +409,8 @@ jobs:
   proof:
     name: Real unfold passed on tree ${{ needs.changes.outputs.tree }}
     needs: [changes, unfold]
-    if: ${{ needs.unfold.result == 'success' && needs.changes.outputs.tree != '' && github.event_name != 'workflow_dispatch' }}
+    # A run that passed by proof (its unfolds skipped) ends with it too, so main's push finds it on the merged commit.
+    if: ${{ !cancelled() && (needs.unfold.result == 'success' || needs.changes.outputs.proven == 'true') && needs.changes.outputs.tree != '' && github.event_name != 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:

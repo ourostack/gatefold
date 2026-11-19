@@ -7,6 +7,8 @@ The tree is `git rev-parse HEAD^{tree}` of what the run tested: the pull request
 commit. Equal trees are equal files, so the workflows, the test lists and the app are the ones that passed.
 
     python3 -I scripts/ci-proof.py --sha <main commit> --workflow app.yml --prefix "Full suite passed on tree "
+    python3 -I scripts/ci-proof.py --tree <tree> --run <this run id> --workflow app.yml --prefix "Full suite passed on tree "
+    python3 -I scripts/ci-proof.py --shards --tree <tree> --run <this run id> --workflow app.yml
     python3 -I scripts/ci-proof.py --selftest
 
 Where it looks, for the workflow's runs of event pull_request or merge_group (never push, never dispatch), taking
@@ -14,12 +16,29 @@ only the newest such run on each commit:
   - the main commit itself (a merge queue fast-forwards main to the commit its group tested; a pull request's head
     pushed to main as it is has its own runs there), and
   - the head of each pull request GitHub says was merged as this commit (merge_commit_sha == the main commit).
+In the merge queue (--tree), it looks instead at the workflow's other merge_group runs that concluded success, newest
+first, whose own commit has this tree (a group's commit is what its run tested, so the run's head_commit.tree_id is
+the tree it tested). A pull request re-enqueued after a runner fault is often tested again on the very same tree (#469:
+four groups on tree 9c4ddc91, of which App passed in full in run 44223501154 and Real unfold in run 44252229893); the
+second time its required checks pass by that proof. A run on another tree, a red or cancelled one, one whose proof job
+skipped or names another tree, and this run itself never count. A proven run still ends with its proof job, so main's
+push finds the proof on the commit the queue merged.
+
+Per shard (--shards, the merge queue only): the UI shards that already passed on this very tree in another of the
+workflow's merge_group runs, whatever that run's end (a run that lost one shard to its runner still passed the
+others). It writes `shards=<names>` (space-separated, in a space on each side) to $GITHUB_OUTPUT, and each of those
+shards reports "Passed on this tree" instead of running again (ui-tests.yml); the gates and the proof job then pass
+only when every shard has passed on this tree, here or before. A shard counts only for its own job "<...> (<shard>) /
+Tests" that ended success, in any attempt of a run whose own commit has this tree. Any trouble reading GitHub writes
+an empty list, and every shard runs.
+
 Exit 0 and `proven=true`, `proof=<run url>` in $GITHUB_OUTPUT when one run proves the main commit's tree; exit 1 and
 `proven=false` otherwise: a push no such run passed, a tree that differs, a red or unfinished run, a proof job that skipped. Exit 2
 and `proven=false` when GitHub can't be read. Anything but 0 runs the full suite: it fails closed.
 """
 import json
 import os
+import re
 import sys
 import urllib.request
 
@@ -48,6 +67,21 @@ class Api:
 
     def runs(self, workflow, head_sha):
         return self.get(f"actions/workflows/{workflow}/runs?head_sha={head_sha}&per_page=100")["workflow_runs"]
+
+    def all_group_runs(self, workflow):
+        return self.get(f"actions/workflows/{workflow}/runs?event=merge_group&per_page=100")["workflow_runs"]
+
+    def all_jobs(self, run_id):
+        out, page = [], 1
+        while True:
+            body = self.get(f"actions/runs/{run_id}/jobs?filter=all&per_page=100&page={page}")
+            out += body.get("jobs", [])
+            if len(out) >= body.get("total_count", 0) or not body.get("jobs"):
+                return out
+            page += 1
+
+    def group_runs(self, workflow):
+        return self.get(f"actions/workflows/{workflow}/runs?event=merge_group&status=success&per_page=100")["workflow_runs"]
 
     def jobs(self, run_id):
         out, page = [], 1
@@ -92,6 +126,60 @@ def prove(api, sha, workflow, prefix):
     return None, lines
 
 
+LOOK = 5  # same-tree runs whose jobs it reads, newest first
+
+
+def proven_by(api, run, want):
+    """(url or None, line) for one run: it proves `want` when it concluded success and its job `want` passed."""
+    where = f"run {run['id']} ({run.get('event')})"
+    if run.get("status") != "completed" or run.get("conclusion") != "success":
+        return None, f"{where}: {run.get('status')} {run.get('conclusion')}, not a proof"
+    job = {j.get("name"): j for j in api.jobs(run["id"])}.get(want)
+    if job is None or job.get("status") != "completed" or job.get("conclusion") != "success":
+        return None, f"{where}: green, but its job {want!r} {'is missing' if job is None else 'ended ' + str(job.get('conclusion'))}"
+    url = run.get("html_url") or f"run {run['id']}"
+    return url, f"{where}: proves it: {url}"
+
+
+def prove_tree(api, tree, run_id, workflow, prefix):
+    """The merge queue's proof: another merge_group run of `workflow` that passed in full on this very tree.
+    (run url or None, lines). Raises on API trouble; the caller fails closed."""
+    want = prefix + tree
+    lines = [f"merge group tree {tree[:12]}; looking for a passed job named {want!r} in another merge-queue run"]
+    same = sorted((r for r in api.group_runs(workflow) if r.get("event") == "merge_group"
+                   and (r.get("head_commit") or {}).get("tree_id") == tree and str(r["id"]) != str(run_id)),
+                  key=lambda r: r["id"], reverse=True)
+    if not same:
+        lines.append("no other green merge-queue run tested this tree: the full suite runs")
+        return None, lines
+    for run in same[:LOOK]:
+        url, line = proven_by(api, run, want)
+        lines.append(line)
+        if url:
+            return url, lines
+    lines.append("no run proves this tree: the full suite runs")
+    return None, lines
+
+
+SHARD_JOB = re.compile(r"\(([a-z0-9-]+)\) / Tests$")
+
+
+def passed_shards(api, tree, run_id, workflow):
+    """(sorted shard names that passed on this tree in another merge_group run, lines). Raises on API trouble."""
+    same = [r for r in api.all_group_runs(workflow) if r.get("event") == "merge_group"
+            and (r.get("head_commit") or {}).get("tree_id") == tree and str(r["id"]) != str(run_id)]
+    lines = [f"merge group tree {tree[:12]}: {len(same)} other merge-queue run(s) tested it"]
+    found = {}
+    for run in sorted(same, key=lambda r: r["id"]):
+        for job in api.all_jobs(run["id"]):
+            m = SHARD_JOB.search(job.get("name") or "")
+            if m and job.get("status") == "completed" and job.get("conclusion") == "success":
+                found.setdefault(m.group(1), run["id"])
+    for shard, rid in sorted(found.items()):
+        lines.append(f"{shard}: passed on this tree in run {rid}")
+    return sorted(found), lines
+
+
 class Fake:
     """An API whose answers the selftest writes."""
 
@@ -109,6 +197,21 @@ class Fake:
 
     def runs(self, workflow, head):
         return [r for r in self.runs_ if r["head"] == head and r["workflow"] == workflow]
+
+    def all_group_runs(self, workflow):
+        if self.broken:
+            raise OSError("HTTP 502")
+        return [dict(r, head_commit={"tree_id": r.get("tree")}) for r in self.runs_
+                if r["workflow"] == workflow and r["event"] == "merge_group"]
+
+    def all_jobs(self, run_id):
+        return self.jobs_.get(run_id, [])
+
+    def group_runs(self, workflow):
+        if self.broken:
+            raise OSError("HTTP 502")
+        return [dict(r, head_commit={"tree_id": r.get("tree")}) for r in self.runs_
+                if r["workflow"] == workflow and r["event"] == "merge_group" and r["conclusion"] == "success"]
 
     def jobs(self, run_id):
         return self.jobs_.get(run_id, [])
@@ -171,7 +274,76 @@ def selftest():
         raise AssertionError("an unreadable API must raise")
     except OSError:
         pass
-    print(f"ci-proof selftest: {len(cases) + 1} cases pass")
+    # The merge queue: another group's run on the same tree (#469's groups, all on tree 9c4ddc91).
+    def grun(i, t=tree, concl="success", wf="app.yml", event="merge_group"):
+        return dict(run(i, event, concl, h=f"g{i}", wf=wf), tree=t)
+
+    group = {
+        "another group's green full run on the same tree proves it":
+            (Fake({}, {}, [grun(21)], {21: [job(P + tree)]}), proven),
+        "a green run on another tree does not, even with its proof job named for this tree":
+            (Fake({}, {}, [grun(22, t=other)], {22: [job(P + tree)]}), not_proven),
+        "a green run on this tree whose proof job names another tree does not":
+            (Fake({}, {}, [grun(23)], {23: [job(P + other)]}), not_proven),
+        "a red run on this tree does not":
+            (Fake({}, {}, [grun(24, concl="failure")], {24: [job(P + tree)]}), not_proven),
+        "a green run whose proof job skipped (some shards passed, not all) does not":
+            (Fake({}, {}, [grun(25)], {25: [job(P + tree, "skipped")]}), not_proven),
+        "a green run with no proof job (a partial record) does not":
+            (Fake({}, {}, [grun(26)], {26: [job("iPad (place)")]}), not_proven),
+        "this run itself does not":
+            (Fake({}, {}, [grun(99)], {99: [job(P + tree)]}), not_proven),
+        "another workflow's run does not":
+            (Fake({}, {}, [grun(27, wf="real-unfold.yml")], {27: [job(P + tree)]}), not_proven),
+        "a pull request's run on the same tree is not looked at here":
+            (Fake({}, {}, [grun(28, event="pull_request")], {28: [job(P + tree)]}), not_proven),
+        "an older proving run behind a newer one without proof still proves it":
+            (Fake({}, {}, [grun(29), grun(30)], {29: [job(P + tree)], 30: [job("iPad (place)")]}), proven),
+        "no run at all does not":
+            (Fake({}, {}, [], {}), not_proven),
+    }
+    for name, (api, want) in group.items():
+        url, lines = prove_tree(api, tree, 99, "app.yml", P)
+        assert (url is not None) == want, f"{name}: got {url}\n  " + "\n  ".join(lines)
+    try:
+        prove_tree(Fake({}, {}, [], {}, broken=True), tree, 99, "app.yml", P)
+        raise AssertionError("an unreadable API must raise")
+    except OSError:
+        pass
+    # Per shard: #469's groups, each losing a different shard to its runner on the same tree.
+    T = " / Tests"
+    shards = {
+        "a shard that passed on this tree in a red run counts":
+            (Fake({}, {}, [grun(41, concl="failure")], {41: [job("iPad place shard (ipad-place-jumps)" + T),
+                job("iPad undo shard (ipad-undo-rest)" + T, "failure")]}), ["ipad-place-jumps"]),
+        "a shard that passed on a different tree does not count":
+            (Fake({}, {}, [grun(42, t=other)], {42: [job("iPad place shard (ipad-place-jumps)" + T)]}), []),
+        "a shard that failed, was cancelled or skipped does not count":
+            (Fake({}, {}, [grun(43, concl="cancelled")], {43: [job("Duo shard (duo-scroll)" + T, "failure"),
+                job("Duo shard (duo-position)" + T, "cancelled"), job("Duo shard (duo-turnback)" + T, "skipped")]}), []),
+        "passes add up across runs and attempts on the same tree":
+            (Fake({}, {}, [grun(44, concl="failure"), grun(45, concl="cancelled")],
+                  {44: [job("Duo shard (duo-scroll)" + T), job("Duo shard (duo-position)" + T, "failure")],
+                   45: [job("Duo shard (duo-position)" + T)]}), ["duo-position", "duo-scroll"]),
+        "this run's own passes do not count":
+            (Fake({}, {}, [grun(99)], {99: [job("Duo shard (duo-scroll)" + T)]}), []),
+        "a gate, a Main only job or a shard reported by proof is not a shard pass":
+            (Fake({}, {}, [grun(46)], {46: [job("iPad (place)"), job("iPad place shard (ipad-place-jumps) / Main only"),
+                job("iPad place shard (ipad-place-shelf) / Passed on this tree")]}), []),
+        "a pull request's run does not count":
+            (Fake({}, {}, [grun(47, event="pull_request")], {47: [job("Duo shard (duo-scroll)" + T)]}), []),
+        "another workflow's run does not count":
+            (Fake({}, {}, [grun(48, wf="real-unfold.yml")], {48: [job("Duo shard (duo-scroll)" + T)]}), []),
+    }
+    for name, (api, want) in shards.items():
+        got, lines = passed_shards(api, tree, 99, "app.yml")
+        assert got == want, f"{name}: got {got}, want {want}\n  " + "\n  ".join(lines)
+    try:
+        passed_shards(Fake({}, {}, [], {}, broken=True), tree, 99, "app.yml")
+        raise AssertionError("an unreadable API must raise")
+    except OSError:
+        pass
+    print(f"ci-proof selftest: {len(cases) + 1 + len(group) + 1 + len(shards) + 1} cases pass")
 
 
 def write(proven, proof=""):
@@ -181,19 +353,50 @@ def write(proven, proof=""):
             fh.write(f"proven={'true' if proven else 'false'}\nproof={proof}\n")
 
 
+def write_shards(names):
+    out = os.environ.get("GITHUB_OUTPUT")
+    if out:
+        with open(out, "a") as fh:
+            fh.write(f"shards= {' '.join(names)} \n")
+
+
+def shards_main(tree, run_id, workflow):
+    repo, token = os.environ.get("GITHUB_REPOSITORY", ""), os.environ.get("GITHUB_TOKEN", "")
+    if not (tree and run_id and workflow and repo and token):
+        print("ci-proof --shards: needs --tree, --run, --workflow, GITHUB_REPOSITORY and GITHUB_TOKEN", file=sys.stderr)
+        write_shards([])
+        return 2
+    try:
+        names, lines = passed_shards(Api(repo, token), tree, run_id, workflow)
+    except Exception as exc:  # GitHub unreadable: every shard runs
+        print(f"ci-proof --shards: could not read GitHub ({exc}); every shard runs", file=sys.stderr)
+        write_shards([])
+        return 2
+    print("\n".join(lines) if names else "\n".join(lines + ["no shard passed on this tree before: every shard runs"]))
+    write_shards(names)
+    return 0
+
+
 def main(argv):
     if "--selftest" in argv:
         selftest()
         return 0
     arg = lambda k: argv[argv.index(k) + 1] if k in argv else ""
+    if "--shards" in argv:
+        return shards_main(arg("--tree"), arg("--run"), arg("--workflow"))
     sha, workflow, prefix = arg("--sha"), arg("--workflow"), arg("--prefix")
+    tree, run_id = arg("--tree"), arg("--run")
     repo, token = os.environ.get("GITHUB_REPOSITORY", ""), os.environ.get("GITHUB_TOKEN", "")
-    if not (sha and workflow and prefix and repo and token):
-        print("ci-proof: needs --sha, --workflow, --prefix, GITHUB_REPOSITORY and GITHUB_TOKEN", file=sys.stderr)
+    if not ((sha or (tree and run_id)) and workflow and prefix and repo and token):
+        print("ci-proof: needs --sha (or --tree and --run), --workflow, --prefix, GITHUB_REPOSITORY and GITHUB_TOKEN",
+              file=sys.stderr)
         write(False)
         return 2
     try:
-        url, lines = prove(Api(repo, token), sha, workflow, prefix)
+        if tree:
+            url, lines = prove_tree(Api(repo, token), tree, run_id, workflow, prefix)
+        else:
+            url, lines = prove(Api(repo, token), sha, workflow, prefix)
     except Exception as exc:  # GitHub unreadable: never guess proven
         print(f"ci-proof: could not read GitHub ({exc}); the full suite runs", file=sys.stderr)
         write(False)

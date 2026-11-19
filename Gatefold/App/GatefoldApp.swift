@@ -230,8 +230,15 @@ struct RootView: View {
             // The zoom's swipe-to-dismiss would take edge drags meant for turning back a page.
             .interactiveDismissDisabled()
         }
-        .onChange(of: app.library.books.filter(\.isOnDevice).count, initial: true) { _, _ in
-            if reader == nil, !opening, let id = app.openBookID, let book = app.library.book(id), book.isOnDevice {
+        .onChange(of: app.library.books.filter(\.isOnDevice).count, initial: true) { _, count in
+            let id = app.openBookID
+            let book = id.flatMap { app.library.book($0) }
+            // Every firing while a book is asked for, with what the open below checks (gatefold#432: a launch's
+            // asked-for book never opened, and the logs could not tell a firing that never came from an open that hung).
+            if let id {
+                readerLog.notice("open: on-device count \(count, privacy: .public); asked \(id, privacy: .public), listed \(book != nil, privacy: .public), on device \(book?.isOnDevice ?? false, privacy: .public), reader \(reader?.bookID ?? "none", privacy: .public), opening \(opening, privacy: .public)")
+            }
+            if reader == nil, !opening, let book, book.isOnDevice {
                 open(book)
             }
         }
@@ -349,6 +356,7 @@ struct RootView: View {
             readerLog.notice("first tap after launch: \(book.id, privacy: .public) at \(LaunchClock.processStarted.map { Date().timeIntervalSince($0) } ?? -1, privacy: .public) s after launch; warm \(ready != nil, privacy: .public), page ready \(ready?.pageReady ?? false, privacy: .public); warm set \(warm.map(\.bookID).joined(separator: ","), privacy: .public)")
         }
         if let ready = warm.first(where: { $0.bookID == book.id }), !ready.isClosed {
+            readerLog.notice("open: \(book.id, privacy: .public) from its warm page (page ready \(ready.pageReady, privacy: .public))")
             warm.removeAll { $0 === ready }
             reader = ready
             app.activeReader = ready
@@ -358,6 +366,8 @@ struct RootView: View {
         }
         opening = true
         WebWarmup.bookIsOpening = true
+        // Its start and its end, so an open that hangs in the parse is told from one that never began (gatefold#432).
+        readerLog.notice("open: \(book.id, privacy: .public) parsing (no warm page)")
         Task {
             defer { opening = false }
             do {
@@ -389,6 +399,7 @@ struct RootView: View {
                 app.activeReader = model
                 app.openBookID = book.id
             } catch {
+                readerLog.notice("open: \(book.id, privacy: .public) failed after \(Date().timeIntervalSince(asked), privacy: .public) s: \(String(describing: type(of: error)), privacy: .public)")
                 openError = FriendlyError.message(for: error)
             }
         }
