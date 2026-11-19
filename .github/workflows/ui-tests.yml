@@ -300,7 +300,6 @@ jobs:
         with:
           name: ${{ inputs.shard }}-xcresults-${{ github.run_attempt }}
           path: ${{ runner.temp }}/ui.xcresult
-      # Merge queue only: a failed job cancels the other runs on this commit, so the queue drops it now
-      # (.github/actions/fail-fast). Last, so the logs above are uploaded first.
-      - if: failure() && github.event_name == 'merge_group'
-        uses: ./.github/actions/fail-fast
+      # No fail-fast here, even in the merge queue: a UI-test shard's failure must not cancel its siblings. Each
+      # sibling that finishes leaves a pass on this tree, so a re-enqueue reruns only the shard that failed
+      # (scripts/ci-proof.py). Cancelling them threw those passes away, and the rerun gave every flake a new chance.
