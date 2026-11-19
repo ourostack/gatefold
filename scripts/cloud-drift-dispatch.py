@@ -196,6 +196,11 @@ LABELS = {FIXING: ("1D76DB", "Copilot's coding agent is fixing this cloud-drift 
           HUMAN: ("B60205", "The cloud-drift agent gave up; a person needs to look (cloud-drift-dispatch.py)")}
 
 
+def requesters(assignees):
+    """Logins GitHub added next to Copilot: the token's owner, who must not get the issue in their inbox."""
+    return [a["login"] for a in assignees or [] if a.get("login") not in COPILOT]
+
+
 def label(kind, n, name):
     color, about = LABELS[name]
     gh("label", "create", name, "-R", REPO, "--color", color, "--description", about, check=False)
@@ -209,6 +214,10 @@ def do(act):
                 "agent_assignment": {"target_repo": REPO, "base_branch": "main",
                                      "custom_instructions": INSTRUCTIONS.replace("{issue}", str(n))}}
         gh("api", "-X", "POST", f"repos/{REPO}/issues/{n}/assignees", "--input", "-", input=json.dumps(body))
+        # Assigning with a person's token also assigns that person; the drain owns the issue, so take them off.
+        extra = requesters((ghj("api", f"repos/{REPO}/issues/{n}") or {}).get("assignees"))
+        if extra:
+            gh("api", "-X", "DELETE", f"repos/{REPO}/issues/{n}/assignees", "--input", "-", input=json.dumps({"assignees": extra}))
         label("issue", n, FIXING)
         gh("issue", "comment", str(n), "-R", REPO, "--body",
            "Handed to Copilot's coding agent (`scripts/cloud-drift-dispatch.py`). Its pull request runs "
@@ -278,6 +287,8 @@ def selftest():
     L = lambda *ns: [{"name": x} for x in ns]
     issue = {"number": 50, "labels": L(DRIFT), "assignees": []}
     assert plan_([issue], [], {}) == [("assign", 50, None)]
+    assert requesters([{"login": "Copilot"}, {"login": "arimendelow"}, {"login": "copilot-swe-agent[bot]"}]) == ["arimendelow"]
+    assert requesters(None) == []
     assert plan_([dict(issue, labels=L(DRIFT, FIXING))], [], {}) == []
     assert plan_([dict(issue, assignees=[{"login": "Copilot"}])], [], {}) == []
     wip = {"number": 60, "title": "[WIP] Tolerate the new shape", "isDraft": True, "headRefOid": "a1",
