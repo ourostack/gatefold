@@ -604,6 +604,35 @@ final class ScriptedPage: ReaderPage {
         f.model.close()
     }
 
+    /// The same two steps with the second never coming, as on CI's starved iPad (run 44110357660): the scrubber
+    /// jump's file start was reported 7 s into the jump and dropped as a step on the way, the page then showed the
+    /// place and the veil lifted, and Readium never reported it. Nothing was kept for 42 minutes: the saved place,
+    /// the page number and the words a test reads all stayed on the page he had left. Once the jump is back with
+    /// its place on the page shown, that place is kept.
+    @Test func aJumpsStartReportWithNoPlaceReportAfterItKeepsThePlaceShown() async throws {
+        let f = try await Self.make(remote: { _, _ in nil })
+        await f.model.load()
+        f.page.reportsOnGo = false
+        f.page.holdsJumps = true
+        let jump = Task { await f.model.go(toProgression: 0.5, rememberBack: false) }
+        for _ in 0..<10_000 where f.page.heldJumps == 0 { await Task.yield() }
+        try #require(f.page.heldJumps == 1, "the jump never went out")
+        let target = try #require(f.page.jumps.last)
+        // While the chapter loads, Readium names its file's start, and only that.
+        let start = Self.boundary(of: target)
+        f.page.currentLocation = start
+        await f.model.locationDidChange(start)
+        f.page.holdsJumps = false
+        f.page.releaseJumps()
+        await jump.value
+        let saved = try #require(f.app.library.book(Self.frankenstein.fastHash)?.locatorJSON.flatMap { try? Locator(jsonString: $0) })
+        #expect(saved.href == target.href && (saved.locations.progression ?? 0) > 0,
+                "the jump's place, on screen, was never kept (saved \(saved.href) @\(saved.locations.progression ?? -1))")
+        #expect(f.model.location?.href == target.href && (f.model.location?.locations.progression ?? 0) > 0,
+                "the page still names the jump's file start")
+        f.model.close()
+    }
+
     /// A landing whose first words couldn't be captured (a reflow that wouldn't settle) keeps Readium's
     /// boundary only until the layout is still: then the page he sees is the place (build 20's loop
     /// kept the chapter's start under a stalled reflow and reopened a page before him).
