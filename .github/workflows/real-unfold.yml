@@ -369,6 +369,17 @@ jobs:
             done
             return 0
           }
+          # A screenshot of the inner screen, for the record only (no verdict reads it). It has 120 s, as a press does:
+          # on a host with a load average near 674, one never returned and held the job 19 min until it was cancelled
+          # (run 44415915341). A late one is named and the unfolds go on.
+          shot() {
+            local t0 status=0
+            t0=$(date +%s)
+            perl -e 'alarm shift; exec @ARGV' 120 xcrun simctl io "$udid" screenshot --display=3 "$1" >/dev/null 2>&1 || status=$?
+            [ "$status" != 142 ] || echo "::warning::screenshot $(basename "$1") gave no answer in 120 s; the unfolds go on without it"
+            [ $(( $(date +%s) - t0 )) -lt 30 ] || echo "::warning::screenshot $(basename "$1") took $(( $(date +%s) - t0 )) s"
+            return 0
+          }
           # A press, then `settled` for the layout it should bring.
           move() {
             local before
@@ -403,7 +414,7 @@ jobs:
               in_time || return 1
               echo "UNFOLD place $place round $round" | tee -a "$out/marks.log"
               move "Open" spread 14 || return 1
-              xcrun simctl io "$udid" screenshot --display=3 "$out/shots/$place-$round-open.png" >/dev/null 2>&1 || true
+              shot "$out/shots/$place-$round-open.png"
               move "Closed" single 12 || return 1
             done
             # Half open: tabletop on the inner screen, then flat again and folded.
@@ -411,7 +422,7 @@ jobs:
             echo "HALF OPEN place $place" | tee -a "$out/marks.log"
             move "Open" spread 12 || return 1
             move "Partially Open" tabletop 14 || return 1
-            xcrun simctl io "$udid" screenshot --display=3 "$out/shots/$place-half.png" >/dev/null 2>&1 || true
+            shot "$out/shots/$place-half.png"
             move "Open" spread 12 || return 1
             move "Closed" single 12 || return 1
           done
@@ -430,7 +441,7 @@ jobs:
             echo "EARLY UNFOLD place $place (page ready in $took s)" | tee -a "$out/marks.log"
             echo "EARLY UNFOLD place $place" >> "$out/reader.log"
             move "Open" spread 16 || return 1
-            xcrun simctl io "$udid" screenshot --display=3 "$out/shots/early-$place-$(grep -c "" "$out/marks.log")-$took.png" >/dev/null 2>&1 || true
+            shot "$out/shots/early-$place-$(grep -c "" "$out/marks.log")-$took.png"
           done
           }
           # The flags carry how it ended; the verdicts below print either way.
