@@ -82,6 +82,7 @@ jobs:
       tree: ${{ steps.tree.outputs.tree }}
       proven: ${{ steps.proof.outputs.proven }}
       proof: ${{ steps.proof.outputs.proof }}
+      shards: ${{ steps.shards.outputs.shards }}
     # Its own token scope: the proof reads which pull request was merged as this commit.
     permissions:
       contents: read
@@ -97,16 +98,35 @@ jobs:
       # Don't test the same tree twice. A main push whose tree a pull request's or the merge queue's run already passed
       # with the full lists (its job "Full suite passed on tree <tree>") runs no shard: every required check reports
       # success by that proof, naming the run. A direct push, another tree, a red run or an unreadable API runs the full
-      # suite, as before (scripts/ci-proof.py; it fails closed).
+      # suite, as before (scripts/ci-proof.py; it fails closed). In the merge queue, another group's run that passed in
+      # full on this very tree is the proof: a pull request re-enqueued after a runner fault isn't tested twice.
       - id: proof
-        name: Has a pull request or the merge queue already passed this tree? (main pushes only)
-        if: github.event_name == 'push'
+        name: Has a pull request or the merge queue already passed this tree? (main pushes and the merge queue)
+        if: github.event_name == 'push' || github.event_name == 'merge_group'
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          TREE: ${{ steps.tree.outputs.tree }}
         run: |
-          python3 -I scripts/ci-proof.py --sha "$GITHUB_SHA" --workflow app.yml --prefix "Full suite passed on tree " \
+          # The merge queue: another group's run that passed on this very tree (a re-enqueue after a runner fault).
+          if [ "$EVENT" = merge_group ]; then where=(--tree "$TREE" --run "$GITHUB_RUN_ID"); else where=(--sha "$GITHUB_SHA"); fi
+          python3 -I scripts/ci-proof.py "${where[@]}" --workflow app.yml --prefix "Full suite passed on tree " \
             > proof.txt 2>&1 || echo "Not proven: the full suite runs." >> proof.txt
           cat proof.txt | tee -a "$GITHUB_STEP_SUMMARY"
+      # Per shard, in the merge queue: a shard that passed on this very tree in another group's run reports "Passed on
+      # this tree" instead of running again, so a group re-enqueued after a runner fault reruns only what hasn't passed
+      # on its tree. The gates, and the proof job, still pass only when every shard has (scripts/ci-proof.py --shards;
+      # trouble reading GitHub runs every shard).
+      - id: shards
+        name: Which UI shards already passed on this tree? (the merge queue only)
+        if: github.event_name == 'merge_group' && steps.proof.outputs.proven != 'true'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          TREE: ${{ steps.tree.outputs.tree }}
+        run: |
+          python3 -I scripts/ci-proof.py --shards --tree "$TREE" --run "$GITHUB_RUN_ID" --workflow app.yml \
+            > shards.txt 2>&1 || echo "Not read: every shard runs." >> shards.txt
+          cat shards.txt | tee -a "$GITHUB_STEP_SUMMARY"
       - id: diff
         env:
           EVENT: ${{ github.event_name }}
@@ -175,6 +195,9 @@ jobs:
     timeout-minutes: 35
     outputs:
       artifact: ${{ steps.name.outputs.artifact }}
+    permissions:
+      contents: read
+      actions: write
     steps:
       - uses: actions/checkout@v4
       # Here, not in `changes` (not required): a red build turns every required check red.
@@ -218,6 +241,10 @@ jobs:
           name: build-log
           path: ${{ runner.temp }}/build.log
           overwrite: true
+      # Merge queue only: a failed job cancels the other runs on this commit, so the queue drops it now
+      # (.github/actions/fail-fast). Last, so the logs above are uploaded first.
+      - if: failure() && github.event_name == 'merge_group'
+        uses: ./.github/actions/fail-fast
 
   core:
     name: GatefoldCore tests
@@ -231,6 +258,9 @@ jobs:
     runs-on: ubuntu-latest
     container: swift:6.2
     timeout-minutes: 20
+    permissions:
+      contents: read
+      actions: write
     steps:
       - name: Passed by proof (a pull request or the merge queue passed this tree with the full lists)
         if: needs.changes.outputs.proven == 'true'
@@ -251,6 +281,10 @@ jobs:
           RESULT: ${{ needs.ci-scripts.result }}
         run: |
           [ "$RESULT" = success ] || { echo "::error title=CI scripts%2C offline::The job \"CI scripts, offline\" ended $RESULT: see its log (simulator helper, TestFlight publish script or UI test lists, not GatefoldCore)"; exit 1; }
+      # Merge queue only: a failed job cancels the other runs on this commit, so the queue drops it now
+      # (.github/actions/fail-fast). Last, so the logs above are uploaded first.
+      - if: failure() && github.event_name == 'merge_group'
+        uses: ./.github/actions/fail-fast
 
   # The CI scripts' offline tests, on the runner image itself, where python3 is installed: in the Swift container they
   # had to fetch it with apt-get, and a DNS blip failed the required check before any test ran (gatefold#241).
@@ -274,6 +308,8 @@ jobs:
           python3 -I scripts/ci-rerun-runner.py --selftest
       - name: A main commit skips the suite only on proof of its own tree (a mismatched tree or a red run proves nothing)
         run: python3 -I scripts/ci-proof.py --selftest
+      - name: A merge-group failure cancels only the queue's other runs on its commit, never main's or a pull request's
+        run: python3 -I scripts/ci-fail-fast.py --selftest
       - name: The TestFlight publish script's upload step, offline (a fake kit; no App Store Connect) (gatefold#337)
         run: bash scripts/test-ci-publish-testflight.sh
       - name: UI test lists (not GatefoldCore) match scripts/ci-shards.expect; fix with `python3 -I scripts/ci-shards.py write` (gatefold#39)
@@ -456,6 +492,9 @@ jobs:
             cold: true
             timeout: 98 # 30 + 2 x 25.3 + 5 + 12
             lane: 17
+    permissions:
+      contents: read
+      actions: write
     uses: ./.github/workflows/ui-tests.yml
     with:
       device: "iPad Pro 13-inch"
@@ -466,6 +505,7 @@ jobs:
       pr_tests: ${{ matrix.pr_tests }}
       pr_when: ${{ matrix.pr_when || '' }}
       fired: ${{ needs.changes.outputs.fired }}
+      passed: ${{ needs.changes.outputs.shards }}
       extra: ${{ needs.changes.outputs.edited-ipad }}
       full: ${{ needs.changes.outputs.full }}
       cold: ${{ matrix.cold }}
@@ -522,6 +562,9 @@ jobs:
             cold: false
             timeout: 73 # 30 + 2 x 13.0 + 5 + 12
             lane: 15
+    permissions:
+      contents: read
+      actions: write
     uses: ./.github/workflows/ui-tests.yml
     with:
       device: "iPad Pro 13-inch"
@@ -532,6 +575,7 @@ jobs:
       pr_tests: ${{ matrix.pr_tests }}
       pr_when: ${{ matrix.pr_when || '' }}
       fired: ${{ needs.changes.outputs.fired }}
+      passed: ${{ needs.changes.outputs.shards }}
       extra: ${{ needs.changes.outputs.edited-ipad }}
       full: ${{ needs.changes.outputs.full }}
       cold: ${{ matrix.cold }}
@@ -616,6 +660,9 @@ jobs:
             cold: false
             timeout: 68 # 30 + 2 x 10.4 + 5 + 12
             lane: 8
+    permissions:
+      contents: read
+      actions: write
     uses: ./.github/workflows/ui-tests.yml
     with:
       device: "iPad Pro 13-inch"
@@ -626,6 +673,7 @@ jobs:
       pr_tests: ${{ matrix.pr_tests }}
       pr_when: ${{ matrix.pr_when || '' }}
       fired: ${{ needs.changes.outputs.fired }}
+      passed: ${{ needs.changes.outputs.shards }}
       extra: ${{ needs.changes.outputs.edited-ipad }}
       full: ${{ needs.changes.outputs.full }}
       cold: ${{ matrix.cold }}
@@ -682,15 +730,19 @@ jobs:
             lane: 8
           - shard: ipad-reviewer-rest
             # Main only, the catch-all for new reviewer checks: 842 + 88, about 240 for one column on a portrait page (#303),
-            # and about 90 for the pages behind the shelf staying out of accessibility (#357)
+            # about 90 for the pages behind the shelf staying out of accessibility (#357), and about 20 for the shelf
+            # reading no reader words
             tests: >-
-              ReviewerChecksUITests SingleColumnUITests ShelfAccessibilityUITests
+              ReviewerChecksUITests SingleColumnUITests ShelfAccessibilityUITests ReaderVisibleTextUITests
             skip: >-
               ReviewerChecksUITests/testTheLastPagesNumberIsTheCount ReviewerChecksUITests/testPageNumbersAreOnOrOffInEveryBook
             pr_tests: none
             cold: false
-            timeout: 110 # 30 + 2 x 31.4 + 5 + 12
+            timeout: 111 # 30 + 2 x 31.9 + 5 + 12
             lane: 2
+    permissions:
+      contents: read
+      actions: write
     uses: ./.github/workflows/ui-tests.yml
     with:
       device: "iPad Pro 13-inch"
@@ -701,6 +753,7 @@ jobs:
       pr_tests: ${{ matrix.pr_tests }}
       pr_when: ${{ matrix.pr_when || '' }}
       fired: ${{ needs.changes.outputs.fired }}
+      passed: ${{ needs.changes.outputs.shards }}
       extra: ${{ needs.changes.outputs.edited-ipad }}
       full: ${{ needs.changes.outputs.full }}
       cold: ${{ matrix.cold }}
@@ -815,6 +868,9 @@ jobs:
             cold: false
             timeout: 114 # 30 + 2 x 33.2 + 5 + 12
             lane: 3
+    permissions:
+      contents: read
+      actions: write
     uses: ./.github/workflows/ui-tests.yml
     with:
       device: "iPhone Duo"
@@ -825,6 +881,7 @@ jobs:
       pr_tests: ${{ matrix.pr_tests }}
       pr_when: ${{ matrix.pr_when || '' }}
       fired: ${{ needs.changes.outputs.fired }}
+      passed: ${{ needs.changes.outputs.shards }}
       extra: ${{ needs.changes.outputs.edited-duo }}
       full: ${{ needs.changes.outputs.full }}
       cold: ${{ matrix.cold }}
@@ -954,6 +1011,9 @@ jobs:
     # Up to 27 min measured in the old `app` job (Metal 5.1, xcodegen 4.4, Release build 16.6, and the setup;
     # runs 42570370853 to 42675099629): / 0.7 keeps 30% headroom.
     timeout-minutes: 39
+    permissions:
+      contents: read
+      actions: write
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/select-xcode
@@ -996,6 +1056,10 @@ jobs:
             exit 1
           fi
           echo "No launch jump in the Release app"
+      # Merge queue only: a failed job cancels the other runs on this commit, so the queue drops it now
+      # (.github/actions/fail-fast). Last, so the logs above are uploaded first.
+      - if: failure() && github.event_name == 'merge_group'
+        uses: ./.github/actions/fail-fast
 
   unit:
     name: Unit tests (iPhone Duo)
@@ -1012,6 +1076,9 @@ jobs:
     # The shards' formula: 30 min of setup (the simulator wait step's own limit; gatefold#198), twice the slowest green
     # unit step (7.8 min, run 42746464846; median 4.8 on main), and 12 for the logs after the tests (gatefold#141).
     timeout-minutes: 58 # 30 + 2 x 7.8 + 12
+    permissions:
+      contents: read
+      actions: write
     steps:
       - name: Note when the job began, so each test step can stop in time to upload its logs (gatefold#126)
         run: echo "JOB_START=$(date +%s)" >> "$GITHUB_ENV"
@@ -1096,6 +1163,10 @@ jobs:
         with:
           name: unit-xcresults-${{ github.run_attempt }}
           path: ${{ runner.temp }}/unit.xcresult
+      # Merge queue only: a failed job cancels the other runs on this commit, so the queue drops it now
+      # (.github/actions/fail-fast). Last, so the logs above are uploaded first.
+      - if: failure() && github.event_name == 'merge_group'
+        uses: ./.github/actions/fail-fast
 
   app:
     # The required check for the app's Release build and unit tests: green when both passed, or when only Markdown
@@ -1121,11 +1192,12 @@ jobs:
 
   # The proof that main reads (scripts/ci-proof.py): this job passes only when the full lists ran and every required
   # check of this run passed, and its name carries the tree it tested. A run of the PR lists skips it, so it proves
-  # nothing; a main push that was itself proven doesn't need it.
+  # nothing. A run that passed by proof ends with it too (the proof it relied on is of this same tree), so main's push
+  # after a merge group that passed by proof finds it on the commit the queue merged.
   proof:
     name: Full suite passed on tree ${{ needs.changes.outputs.tree }}
     needs: [changes, core, app, ipad-place-gate, ipad-undo-gate, ipad-taps-gate, ipad-reviewer-gate, duo-gate]
-    if: ${{ success() && needs.changes.outputs.full == 'true' && needs.changes.outputs.app == 'true' && needs.changes.outputs.proven != 'true' && needs.changes.outputs.tree != '' }}
+    if: ${{ success() && needs.changes.outputs.full == 'true' && needs.changes.outputs.app == 'true' && needs.changes.outputs.tree != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
