@@ -190,7 +190,8 @@ cat > "$real/bin/xcrun" <<'FAKE'
 state() { cat "$FAKE/state-$1" 2>/dev/null || echo Shutdown; }
 case "$1 $2" in
   "simctl create") n=$(( $(cat "$FAKE/created" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$FAKE/created"; echo "dev$n" ;;
-  "simctl boot") for u in ${FAKE_NO_BOOT:-}; do [ "$u" = "$3" ] && exit 0; done
+  "simctl boot") echo "$*" >> "$FAKE/boots"
+    for u in ${FAKE_NO_BOOT:-}; do [ "$u" = "$3" ] && exit 0; done
     for u in ${FAKE_BOOTING:-}; do [ "$u" = "$3" ] && { echo Booting > "$FAKE/state-$3"; exit 0; }; done
     echo Booted > "$FAKE/state-$3" ;;
   "simctl shutdown") [ "$3" = all ] || echo Shutdown > "$FAKE/state-$3"; echo "shutdown $3" >> "$FAKE/calls" ;;
@@ -308,6 +309,28 @@ if [ "$code" = 2 ] && grep -q "a limit must be a number of seconds, not 'soon'" 
 else echo "FAIL boot-sim.sh: a non-number limit override: exit $code (want 2)"; tail -3 "$fr/bad/err"; fails=$((fails + 1)); fi
 # The watchdog of a bootstatus that finished must not wake: the old one logged a false hang on most boots.
 for n in 1 2 3 4 5; do real_case "a clean boot logs no hang (run $n of 5)" "" "" dev1 "Device already booted" "hung"; done
+
+# Every boot keeps quiet-sim.labels' first-boot jobs from starting (gatefold#404): one --disabledJob per label.
+labels="$here/../.github/scripts/quiet-sim.labels"
+want_jobs=$(grep -cvE '^[[:space:]]*(#|$)' "$labels")
+boots="$real/a-clean-boot-logs-no-hang--run-1-of-5-/fake/boots"
+if [ "$want_jobs" -gt 0 ] && [ "$(head -1 "$boots" 2>/dev/null | grep -o -- '--disabledJob=[^ ]*' | wc -l | tr -d ' ')" = "$want_jobs" ] \
+   && grep -qF -- "--disabledJob=com.apple.PosterBoard" "$boots"; then
+  echo "ok   boot-sim.sh: the boot disables all $want_jobs first-boot jobs (gatefold#404)"
+else echo "FAIL boot-sim.sh: the boot did not disable the $want_jobs first-boot jobs: $(head -1 "$boots" 2>/dev/null | cut -c1-200)"; fails=$((fails + 1)); fi
+nl="$real/no-labels"; mkdir -p "$nl/fake"
+if got="$(PATH="$real/bin:$PATH" FAKE="$nl/fake" BOOT_SIM_QUIET_LABELS="$nl/none" BOOT_SIM_BOOTSTATUS_LIMIT=2 BOOT_SIM_LIST_LIMIT=2 \
+   "${BOOT_SIM_BASH:-/bin/bash}" "${BOOT_SIM_UNDER_TEST:-$here/../.github/scripts/boot-sim.sh}" gatefold-ipad iPad-Pro-13 iOS-27-1 2>"$nl/err")" \
+   && [ "$got" = dev1 ] && [ "$(head -1 "$nl/fake/boots")" = "simctl boot dev1" ] && grep -qF "every first-boot job starts" "$nl/err"; then
+  echo "ok   boot-sim.sh: with no labels file it still boots, plainly, and says so"
+else echo "FAIL boot-sim.sh: with no labels file: printed '$got', boot '$(head -1 "$nl/fake/boots" 2>/dev/null)'"; tail -3 "$nl/err"; fails=$((fails + 1)); fi
+# The cold step's erase boots the same way.
+if python3 -I -c 'import importlib.util, sys
+s = importlib.util.spec_from_file_location("m", sys.argv[1]); m = importlib.util.module_from_spec(s); s.loader.exec_module(m)
+boot = next(a for a, _ in m.ERASE_STEPS if a[0] == "boot")
+assert "--disabledJob=com.apple.PosterBoard" in boot and len(boot) == 1 + int(sys.argv[2]), boot' "$here/ci-simulator.py" "$want_jobs"; then
+  echo "ok   ci-simulator.py: the erase's boot disables the first-boot jobs too"
+else echo "FAIL ci-simulator.py: the erase's boot does not disable the first-boot jobs"; fails=$((fails + 1)); fi
 
 # No retry or service restart shuts down every simulator on the Mac; other agents' simulators share it.
 if grep -rqxF "shutdown all" "$real" --include=calls; then
