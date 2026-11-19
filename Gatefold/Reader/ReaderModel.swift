@@ -2548,6 +2548,20 @@ final class ReaderModel {
         return true
     }
 
+    /// A two-step jump back with only its first step reported: Readium named the file's start, dropped as a step
+    /// on the way, and never the place, though the page shows it. Waiting for that report kept nothing, ever: on
+    /// CI's starved iPad the saved place, the page number and the words on screen stayed on the page he had left
+    /// for 42 minutes (run 44110357660). Its target on the page shown is his place, as a leave would keep it.
+    private func keepPlaceNeverReported() async {
+        guard let jump = jumpOnItsWay, let reported = lastReported, isJumpsFileStart(reported) else { return }
+        let target = ReadingAnchor(href: jump.target.href.string, progression: jump.target.locations.progression ?? 0, text: nil)
+        let shown = await page?.pageRange()
+        guard jumpOnItsWay?.move == jump.move, jump.move == moves, recordedMoves != moves, !isClosed,
+              lastReported.map({ Self.samePage($0, reported) }) == true, shown?.contains(target) == true else { return }
+        readerLog.notice("place: a jump back with only its file's start reported; its place on screen kept at \(Self.placeTag(jump.target), privacy: .public)")
+        await locationDidChange(jump.target, hisMove: true)
+    }
+
     func locationDidChange(_ locator: Locator, duringTurn: Bool = false, hisMove: Bool = false, placeOnly: Bool = false,
                            leaving: Bool = false) async {
         guard !isClosed || leaving else { return }
@@ -3137,6 +3151,7 @@ final class ReaderModel {
             let jump = await veiled(toward: locator.href) { _ = await self.page?.go(to: locator) }
             isJumpingToPlace = false
             if endedQuietly(jump, back: back) { return true }
+            await keepPlaceNeverReported()
             await captureAnchor()
             // Behind the cover nothing hides a chapter still loading, so keep the cover up until the
             // words are there.
