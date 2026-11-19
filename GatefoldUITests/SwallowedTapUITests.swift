@@ -37,6 +37,23 @@ final class SwallowedTapUITests: XCTestCase {
             return words.first == "landed" && words.count > 1 ? Int(words[1]) ?? 0 : 0
         }
         func at(_ x: CGFloat, _ y: CGFloat) -> XCUICoordinate { screen(x, y) }
+        // The app's own report that a turn is under way (`reader.turning`), from its start until it lands.
+        let turning = el("reader.turning")
+        func isTurning() -> Bool { (turning.value as? String) == "1" }
+        /// A swipe's turn, waited for as the app reports it: heard (under way or landed) within the reads, then
+        /// followed to its end while its page beneath loads. Swipe 1 leaves the cover for chapter 1,
+        /// whose file loads first: on CI's iPad that took 938 looks, about 58 s, past a 300-read wait (gatefold#492).
+        /// The app bounds that load itself (`ReaderHostController.loadingLooks`), and `turnReads` follows its bound.
+        func swipeLands(after before: Int) -> (ok: Bool, reads: Int, ended: Bool) {
+            let heard = readsUntil(reads: Self.reads, "a swipe's turn starts") { landed() > before || isTurning() }
+            guard heard.ok else { return (false, heard.reads, true) }
+            // A turn whose finger was never heard lifting (#321) stays under way: it fails here, in the app's own bound.
+            let ended = readsUntil(reads: Self.turnReads, "the swipe's turn ends") { !isTurning() }
+            guard ended.ok else { return (false, heard.reads + ended.reads, false) }
+            // The landing is reported once the turn has ended and the page is snapshotted, within the reads a swipe always had.
+            let landedNow = readsUntil(reads: Self.reads, "the swipe's turn lands") { landed() > before }
+            return (landedNow.ok, heard.reads + ended.reads + landedNow.reads, true)
+        }
 
         let slip = el("banner"), tab = el("banner.tab")
         var answered = 0, asked = 0
@@ -89,10 +106,12 @@ final class SwallowedTapUITests: XCTestCase {
         for (i, forward) in [true, true, true, true, false].enumerated() {
             let before = landed()
             if forward { at(0.75, 0.5).press(forDuration: 0.05, thenDragTo: at(0.25, 0.5)) } else { at(0.25, 0.5).press(forDuration: 0.05, thenDragTo: at(0.75, 0.5)) }
-            let turned = readsUntil(reads: Self.reads, "swipe \(i + 1) turns") { landed() > before }
+            let turned = swipeLands(after: before)
             print("SWALLOWED swipe \(i + 1) turned=\(turned.ok) after \(turned.reads) reads (landed \(landed()))")
             // The first swipe leaves the cover for the first chapter: that is the swipe whose finger was never heard lifting.
             if i == 0 { XCTAssertTrue(turned.ok, "swipe 1 turns into the first chapter") }
+            // A turn still under way past the app's own bound is #321's: the later swipes would only wait it out again.
+            guard turned.ended else { XCTFail("swipe \(i + 1)'s turn ends"); break }
         }
         round("after the swipes")
 
@@ -122,6 +141,11 @@ final class SwallowedTapUITests: XCTestCase {
 
     /// The reads a wait may take. Each read waits at least 0.1 s.
     private static let reads = 300
+    /// The reads a turn under way may take: the app's own bound on its wait for the page beneath, 1200 looks of at
+    /// least 50 ms (`ReaderHostController.loadingLooks`). It holds while a look takes no more than half as long as a
+    /// read: on CI's iPad a look took about 62 ms (938 in 58 s, gatefold#492) and a read about 0.18 s, so 600 reads are
+    /// about 108 s against the app's 75 s.
+    private static let turnReads = 600
     /// The reads a tap's answer may take: a tap the page heard answers within a few reads (#304's probes: 1 to 3).
     private static let answerReads = 50
 
