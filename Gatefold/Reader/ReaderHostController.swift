@@ -771,13 +771,19 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         guard !closed else { return }
         // One page becoming two is the unfold: the right page swings open once it has laid out.
         unfolding = reflow && self.columns == 1 && columns == 2
+        let newColumns = self.columns != columns
         self.columns = columns
         self.preferences = preferences
         // A page laid out in the old type would be the wrong page, and its counts the wrong counts.
         dropStandby()
         stopCounting()
         if reflow { beginReflow(model.consumeReflowReason() ?? .typography) }
-        navigator.submitPreferences(preferences)
+        if LaunchOptions.lateColumns, reflow, newColumns {
+            lateColumns = preferences
+        } else {
+            lateColumns = nil
+            navigator.submitPreferences(preferences)
+        }
         if reflow { settleReflowSoon() }
         Task {
             _ = await Self.onSpread { () async throws -> Void? in
@@ -793,6 +799,15 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
                 await logTypography()
             }
         }
+    }
+
+    /// Tests only (`LaunchOptions.lateColumns`): preferences with a new column count, held until the restore has finished.
+    private var lateColumns: EPUBPreferences?
+    private func releaseLateColumns() {
+        guard let held = lateColumns else { return }
+        lateColumns = nil
+        readerLog.notice("reflow: the new columns reach Readium after the restore has finished (GatefoldLateColumns)")
+        navigator.submitPreferences(held)
     }
 
     // MARK: Reflow and the reading anchor
@@ -960,7 +975,10 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             try? await Task.sleep(for: .milliseconds(550))
             guard !Task.isCancelled, let self, self.weakModel != nil else { return }
             await self.restoreAnchor(generation: generation)
-            if generation == self.reflowGeneration { self.settledGeneration = generation; self.reflowRetries = 0 }
+            if generation == self.reflowGeneration {
+                self.settledGeneration = generation; self.reflowRetries = 0
+                self.releaseLateColumns()
+            }
         }
         // Begun before the book's web view had loaded (a spread opened cold): its first script can wait
         // forever, and counting waits on the reflow. Once the web view has loaded, give it a second to
@@ -1218,6 +1236,16 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         guard current() else { return }
         model.keeper.restoreDidComplete()
         model.reflowDidFinish(visible: after)
+        // Tests only: the held columns reach Readium now that the restore has finished.
+        releaseLateColumns()
+        // A page judged before its new columns had landed: the reflow isn't settled until they have, and his words
+        // have been looked for in them (gatefold#482: back upright, the restore read two narrow columns, and the
+        // reader called the reflow settled with his words 115 characters down a page about to be laid out again).
+        if await columnsLandedLate(generation: generation) {
+            guard generation == reflowGeneration, !Task.isCancelled else { return }
+            await model.lookAgainInNewColumns()
+            guard generation == reflowGeneration, !Task.isCancelled else { return }
+        }
         let shownNumber = model.reflowNumber
         // Settled now, not when the swing below has played: the 12 s watchdog took a slow, finished
         // restore whose swing was still running for a stalled one and started it again.
@@ -1263,6 +1291,33 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         }
     }
 
+    /// Whether the page was still laid out in other columns than the reader's when the restore judged it. If so,
+    /// waits (8 s at most) for the new columns to land and the page to stand still in them. Meanwhile the 12 s
+    /// watchdog waits too, as it does for a restore placing his words.
+    private func columnsLandedLate(generation: Int) async -> Bool {
+        func css() async -> Int? { ((try? await navigator.answer(ReaderJS.cssColumns)) as? NSNumber)?.intValue }
+        guard let first = await css(), first != 0, first != columns else { return false }
+        placingGeneration = generation
+        defer { if placingGeneration == generation { placingGeneration = -1 } }
+        let start = ContinuousClock.now, deadline = start + .seconds(8)
+        func waiting() -> Bool { generation == reflowGeneration && !Task.isCancelled && ContinuousClock.now < deadline }
+        var landed = false
+        while waiting() {
+            try? await Task.sleep(for: .milliseconds(250))
+            if let n = await css(), n == 0 || n == columns { landed = true; break }
+        }
+        // Readium lays the page out again once the style has changed, and moves it after: two reads that agree.
+        var last = await liveVisibleRange().map { ($0.start, $0.end) }
+        while landed, waiting() {
+            try? await Task.sleep(for: .milliseconds(250))
+            let now = await liveVisibleRange().map { ($0.start, $0.end) }
+            if let now, let was = last, now == was { break }
+            last = now
+        }
+        readerLog.notice("reflow: the restore judged the page in \(first, privacy: .public) columns, before its \(self.columns, privacy: .public) landed; \(landed ? "landed" : "still not landed", privacy: .public) after \(String(format: "%.1f", (ContinuousClock.now - start) / .seconds(1)), privacy: .public) s")
+        return true
+    }
+
     /// Moves the spread so `anchor`'s words start its left page: a blank verso before the file's first
     /// page shifts every page one side over. Returns what's on screen after a move, nil when none was needed.
     /// The moves are `SpreadSettler`'s: each is judged by measuring the page again once it stands still.
@@ -1279,15 +1334,44 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         return visible
     }
 
-    func keepWordsOnLeft(_ anchor: ReadingAnchor, stillWanted: @escaping @MainActor () -> Bool) async {
+    func keepWordsOnPage(_ anchor: ReadingAnchor, placing: Bool, stillWanted: @escaping @MainActor () -> Bool) async -> VisibleRange? {
         // A restore placing his words, or another late look, is already moving this page: the report
         // its moves brought is not a new reason to move it.
-        guard columns == 2, stillWanted(), !lateSettling, placingGeneration == -1 else { return }
+        guard stillWanted(), !lateSettling, placingGeneration == -1 else { return nil }
         lateSettling = true
         defer { lateSettling = false }
-        if await keepOnLeft(anchor, purpose: .recheck, current: stillWanted) != nil {
-            readerLog.notice("spread: a late layout had moved his words; put back on the left page")
+        if columns == 2 {
+            // After a restore whose columns landed late, the break the restore would have put in at his words (and
+            // could not, on a page still in the old columns) goes in now, as a reopen at this size puts it in.
+            let moved = await keepOnLeft(anchor, purpose: placing ? .restore : .recheck, current: stillWanted)
+            if moved != nil {
+                readerLog.notice("spread: a late layout had moved his words; put back on the left page")
+            }
+            return moved
         }
+        // One page: his words are on it, or the restore's jump to them is made again. Back upright on CI's loaded
+        // iPad, Readium laid the page out in one column after the restore had found his words, and kept its own
+        // place, the page before his (gatefold#482).
+        let beat: () async -> Void = { try? await Task.sleep(for: .milliseconds(160)) }
+        let (shown, _) = await LaidOutPage.read({ await self.liveVisibleRange() }, beat: beat, current: stillWanted)
+        guard stillWanted(), let shown, shown.text != nil, !shown.contains(anchor),
+              let locator = weakModel?.locator(for: anchor) else { return nil }
+        // On a page he can see, the jump is held behind a picture of it and shown as one change, as the restore's is.
+        var picture: UIView?
+        if !pageCovered, settlePicture == nil {
+            if holdSettlePicture() { picture = settlePicture } else { noteVisibleMove("late look, one page") }
+        }
+        let landing = await RestoreLanding.land(
+            go: { _ = await self.navigator.go(to: locator, options: .init(animated: false)) },
+            read: { await self.liveVisibleRange() },
+            beat: beat,
+            arrived: { $0.contains(anchor) },
+            current: { stillWanted() && !Task.isCancelled })
+        if let picture, settlePicture === picture {
+            if stillWanted() { await releaseSettlePicture() } else { dropSettlePicture() }
+        }
+        readerLog.notice("page: a late layout had moved his words off the page; jumped back \(landing.jumps, privacy: .public) times, page read \(landing.reads, privacy: .public) times, his words \(landing.range?.contains(anchor) == true, privacy: .public)")
+        return landing.range
     }
 
     /// A jump to a place with words (the Cloud's, his own offered back) lands where Readium puts its
