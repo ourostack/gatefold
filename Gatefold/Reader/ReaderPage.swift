@@ -39,9 +39,10 @@ protocol ReaderPage: AnyObject {
     func countPages(_ hrefs: [String], record: @escaping @MainActor (String, Int) -> Void, finished: @escaping @MainActor () -> Void)
     func stopCounting()
     /// Puts `anchor`'s words back on his page if a late layout moved them: a spread's left page, or the one page
-    /// on screen; `stillWanted` turns false once the reader has moved or the page is gone. Returns the page on screen
-    /// after a move, nil when nothing moved.
-    func keepWordsOnPage(_ anchor: ReadingAnchor, stillWanted: @escaping @MainActor () -> Bool) async -> VisibleRange?
+    /// on screen; `stillWanted` turns false once the reader has moved or the page is gone. `placing`: the layout a
+    /// restore placed his words in has only now landed, so the look may do the restore's placing (a column break at
+    /// his words) the way a reopen at this size would. Returns the page on screen after a move, nil when nothing moved.
+    func keepWordsOnPage(_ anchor: ReadingAnchor, placing: Bool, stillWanted: @escaping @MainActor () -> Bool) async -> VisibleRange?
     /// A jump's landing put on the spread a restore of its place would show (`SpreadSettler`, `.restore`).
     func settleLanding(_ anchor: ReadingAnchor, stillWanted: @escaping @MainActor () -> Bool) async
     /// A standby swap retired the page an open reflow was laying out: that reflow's cover, retries and
@@ -55,7 +56,7 @@ protocol ReaderPage: AnyObject {
 }
 
 extension ReaderPage {
-    func keepWordsOnPage(_ anchor: ReadingAnchor, stillWanted: @escaping @MainActor () -> Bool) async -> VisibleRange? { nil }
+    func keepWordsOnPage(_ anchor: ReadingAnchor, placing: Bool, stillWanted: @escaping @MainActor () -> Bool) async -> VisibleRange? { nil }
     func settleLanding(_ anchor: ReadingAnchor, stillWanted: @escaping @MainActor () -> Bool) async {}
     var isLoadingChapter: Bool { false }
     var isTurning: Bool { false }

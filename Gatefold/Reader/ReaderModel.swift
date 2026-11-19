@@ -2381,7 +2381,7 @@ final class ReaderModel {
                 && !self.touchedSinceLocation && self.keeper.reflowing == nil
         }
         Task { [weak self] in
-            guard let after = await self?.page?.keepWordsOnPage(anchor, stillWanted: stillWanted),
+            guard let after = await self?.page?.keepWordsOnPage(anchor, placing: afterRestore, stillWanted: stillWanted),
                   let self, stillWanted() else { return }
             // The page as the look left it: its last move (a verso put in or taken out) may bring no report, and the
             // bookmark and what's on screen stayed the page from before it (gatefold#482, probe 44389433156).
