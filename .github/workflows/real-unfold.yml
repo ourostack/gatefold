@@ -3,8 +3,9 @@ name: Real unfold
 # Opens and shuts an iPhone Duo simulator's hinge through DeviceHub (the Duo tour's helper) with a book
 # open, and judges each unfold from the app's own "reflow check" log line: did the spread keep his words?
 # It drives a window; it is the posture gate (the UI test can't move a hinge, and a spread forced on the folded cover
-# is no reader's layout). It runs on every pull request that touches the reader or the app shell (`changes`), in the
-# merge queue, on every push to main and on demand. A red main is fixed as AGENTS.md says ("CI").
+# is no reader's layout). It runs on every pull request, merge-queue group and push to main that touches the reader or
+# the app shell (`changes`; one that touches none skips, which reports success), and on demand. A red main is fixed as
+# AGENTS.md says ("CI").
 #
 # One build, five places at once (gatefold#39's pattern): `Build for testing` builds the app for the simulator once and
 # uploads it; each place's job boots its own iPhone Duo and opens DeviceHub while that build runs, waits for it
@@ -78,12 +79,12 @@ jobs:
       - id: diff
         env:
           EVENT: ${{ github.event_name }}
-          BASE: ${{ github.event.pull_request.base.sha }}
-          HEAD: ${{ github.event.pull_request.head.sha }}
+          BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
+          HEAD: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.event.after }}
         run: |
           set -eu
-          if [ "$EVENT" != pull_request ]; then echo "reader=true" >> "$GITHUB_OUTPUT"; exit 0; fi
-          git diff --name-only "$BASE...$HEAD" > changed.txt
+          # A dispatch, a new branch (no base) or a base the checkout can't read unfolds, as before.
+          if [ "$EVENT" = workflow_dispatch ] || [ -z "${BASE//0/}" ] || ! git diff --name-only "$BASE...$HEAD" > changed.txt; then echo "reader=true" >> "$GITHUB_OUTPUT"; exit 0; fi
           # The reader, the fold and the app shell it runs in; GatefoldCore; the Readium link; the project; the hinge driver.
           if grep -E '^(\.github/(workflows/real-unfold\.yml|scripts/duo/|scripts/boot-sim\.sh|actions/)|Gatefold/(Reader|Duo|App)/|Packages/GatefoldCore/|Packages/GatefoldCloud/(Package\.(swift|resolved)$|Sources/GatefoldCloudReadium/)|project\.yml$)' changed.txt; then
             echo "reader=true" >> "$GITHUB_OUTPUT"
@@ -510,7 +511,7 @@ jobs:
           PROOF: ${{ needs.changes.outputs.proof }}
         run: |
           if [ "$PROVEN" = true ]; then echo "::notice::Passed by proof: every unfold passed on this tree in $PROOF"; exit 0; fi
-          if [ "$EVENT" = pull_request ] && [ "$READER" = false ]; then echo "This pull request doesn't touch the reader; the merge queue and main unfold it."; exit 0; fi
+          if [ "$READER" = false ]; then echo "This change doesn't touch the reader, so the unfolds have nothing to judge."; exit 0; fi
           echo "Build: $BUILD; unfolds at every place: $UNFOLD"
           [ "$BUILD" = success ] && [ "$UNFOLD" = success ]
 
