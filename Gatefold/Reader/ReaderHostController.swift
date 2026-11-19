@@ -1297,17 +1297,18 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         return visible
     }
 
-    func keepWordsOnPage(_ anchor: ReadingAnchor, stillWanted: @escaping @MainActor () -> Bool) async {
+    func keepWordsOnPage(_ anchor: ReadingAnchor, stillWanted: @escaping @MainActor () -> Bool) async -> VisibleRange? {
         // A restore placing his words, or another late look, is already moving this page: the report
         // its moves brought is not a new reason to move it.
-        guard stillWanted(), !lateSettling, placingGeneration == -1 else { return }
+        guard stillWanted(), !lateSettling, placingGeneration == -1 else { return nil }
         lateSettling = true
         defer { lateSettling = false }
         if columns == 2 {
-            if await keepOnLeft(anchor, purpose: .recheck, current: stillWanted) != nil {
+            let moved = await keepOnLeft(anchor, purpose: .recheck, current: stillWanted)
+            if moved != nil {
                 readerLog.notice("spread: a late layout had moved his words; put back on the left page")
             }
-            return
+            return moved
         }
         // One page: his words are on it, or the restore's jump to them is made again. Back upright on CI's loaded
         // iPad, Readium laid the page out in one column after the restore had found his words, and kept its own
@@ -1315,7 +1316,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         let beat: () async -> Void = { try? await Task.sleep(for: .milliseconds(160)) }
         let (shown, _) = await LaidOutPage.read({ await self.liveVisibleRange() }, beat: beat, current: stillWanted)
         guard stillWanted(), let shown, shown.text != nil, !shown.contains(anchor),
-              let locator = weakModel?.locator(for: anchor) else { return }
+              let locator = weakModel?.locator(for: anchor) else { return nil }
         // On a page he can see, the jump is held behind a picture of it and shown as one change, as the restore's is.
         var picture: UIView?
         if !pageCovered, settlePicture == nil {
@@ -1331,6 +1332,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             if stillWanted() { await releaseSettlePicture() } else { dropSettlePicture() }
         }
         readerLog.notice("page: a late layout had moved his words off the page; jumped back \(landing.jumps, privacy: .public) times, page read \(landing.reads, privacy: .public) times, his words \(landing.range?.contains(anchor) == true, privacy: .public)")
+        return landing.range
     }
 
     /// A jump to a place with words (the Cloud's, his own offered back) lands where Readium puts its

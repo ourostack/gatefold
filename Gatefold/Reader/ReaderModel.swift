@@ -2375,12 +2375,17 @@ final class ReaderModel {
               let anchor = keeper.anchor, anchor.text != nil, landingChecks < 3 else { return }
         landingChecks += 1
         let movesNow = moves
+        let stillWanted: @MainActor () -> Bool = { [weak self] in
+            guard let self else { return false }
+            return !self.isClosed && self.moves == movesNow && (afterRestore || !self.hasMoved)
+                && !self.touchedSinceLocation && self.keeper.reflowing == nil
+        }
         Task { [weak self] in
-            await self?.page?.keepWordsOnPage(anchor, stillWanted: { [weak self] in
-                guard let self else { return false }
-                return !self.isClosed && self.moves == movesNow && (afterRestore || !self.hasMoved)
-                    && !self.touchedSinceLocation && self.keeper.reflowing == nil
-            })
+            guard let after = await self?.page?.keepWordsOnPage(anchor, stillWanted: stillWanted),
+                  let self, stillWanted() else { return }
+            // The page as the look left it: its last move (a verso put in or taken out) may bring no report, and the
+            // bookmark and what's on screen stayed the page from before it (gatefold#482, probe 44389433156).
+            self.refreshBookmarkState(after)
         }
     }
 
