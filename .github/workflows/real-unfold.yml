@@ -176,14 +176,14 @@ jobs:
         && format('gatefold-macos-pr-lane-unfold-{0}', matrix.lane)
         || format('real-unfold-{0}-{1}-{2}', github.run_id, github.run_attempt, strategy.job-index) }}
       queue: max
-    # 36 for the boot, DeviceHub and the build wait (await-build's own limit), up to 12 for a slow download and the
-    # install, twice a place's slowest unfolds (about 9.5 min: 43 min for five places and eight early unfolds in run
-    # 44019735528), and the last 10 for the verdicts and the upload, when no new unfold starts (stop_at below). A late
-    # build eats into the unfolds' share first; a place that runs out is red, never shortened.
-    timeout-minutes: 77
+    # About twice a place's slowest measured job (26.1 min, run 44429770089; 20 to 26 min there and in 44122659961):
+    # twice the slowest setup before the unfolds (boot, DeviceHub, build wait and install: 13 min), twice the slowest
+    # unfolds (12.3 min), and a few for the verdicts and the upload. No new unfold starts in the last 10 (stop_at
+    # below). A late build eats into the unfolds' share first; a place that runs out is red, never shortened.
+    timeout-minutes: 55
     env:
       APP: bot.ouro.gatefold
-      LIMIT: "77" # the job's timeout-minutes, for the unfold step's own stop (scripts/ci-lanes.py checks they agree)
+      LIMIT: "55" # the job's timeout-minutes, for the unfold step's own stop (scripts/ci-lanes.py checks they agree)
     # Read: the build's artifact (await-build). Write: the merge queue's fail-fast cancels (.github/actions/fail-fast).
     permissions:
       contents: read
