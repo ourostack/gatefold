@@ -21,15 +21,26 @@ cancelled because a newer push replaced it (app.yml's cancel-in-progress) is lef
 A test that failed next to them leaves the run as it is, for a person. Adapted from ouro-ui-apple's
 scripts/ci-rerun-broken-runner.py (#196, #202): annotations are read before logs, which GitHub stores late.
 """
+import importlib.util
 import json
+import os
 import re
 import subprocess
 import sys
 
-MARK = re.compile(r"No app code ran|The hosted runner lost communication with the server|The runner's disk failed"
-                  r"|The simulator's runtime disk disappeared|simulator runtime is not available\. runtime path not found")
+def _faults():
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ci-runner-faults.py")
+    spec = importlib.util.spec_from_file_location("ci_runner_faults", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+# The marks of a runner fault: scripts/ci-runner-faults.py's MARKS, the one list.
+FAULTS = _faults()
+MARK = re.compile("|".join(p.pattern for _, p in FAULTS.MARKS))
 # Jobs that fail only because a job they wait for failed (app.yml's summary checks).
-SUMMARIES = {"iPad (place)", "iPad (reviewer)", "iPad (taps)", "iPad (undo)", "Duo (the reviewers' checks)"}
+SUMMARIES = FAULTS.SUMMARIES
 
 
 def decide(failed):
