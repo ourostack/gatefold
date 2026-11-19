@@ -46,6 +46,12 @@ on:
         description: needs.changes.outputs.fired, the groups this pull request's paths touch, space-separated
         type: string
         default: ""
+      passed:
+        description: >-
+          needs.changes.outputs.shards: in the merge queue, the shards that already passed on this very tree in another
+          group's run (scripts/ci-proof.py --shards), space-separated; this shard reports instead of running if it's one
+        type: string
+        default: ""
       extra:
         description: needs.changes.outputs.edited-ipad or edited-duo, the UI test classes this pull request edits that run on this device; a smoke shard runs them too
         type: string
@@ -79,9 +85,19 @@ jobs:
     steps:
       - run: echo "Nothing in this shard guards what this pull request touches; it runs on main."
 
+  # In the merge queue, a shard that already passed on this very tree in another group's run (inputs.passed) reports
+  # success naming that, rather than running again on a fresh runner (scripts/ci-proof.py --shards).
+  passed:
+    name: Passed on this tree
+    if: ${{ contains(format(' {0} ', inputs.passed), format(' {0} ', inputs.shard)) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - run: echo "::notice::Shard ${{ inputs.shard }} passed on this tree in another merge-queue run; not run again."
+
   run:
     name: Tests
-    if: ${{ inputs.full != 'false' || (inputs.pr_tests != 'none' && contains(format(' {0} ', inputs.fired), format(' {0} ', inputs.pr_when))) }}
+    if: ${{ (inputs.full != 'false' || (inputs.pr_tests != 'none' && contains(format(' {0} ', inputs.fired), format(' {0} ', inputs.pr_when)))) && !contains(format(' {0} ', inputs.passed), format(' {0} ', inputs.shard)) }}
     runs-on: xcode-27
     # PR lane (gatefold#286): each caller's matrix entry names one of 18 shard lanes (`lane`), and odd and even pull
     # requests each get their own set of the 18, so 36 in all; see "macOS lanes" at the top of app.yml. Never
@@ -93,6 +109,9 @@ jobs:
         || format('ui-tests-{0}-{1}-{2}', github.run_id, github.run_attempt, inputs.shard) }}
       queue: max
     timeout-minutes: ${{ inputs.timeout }}
+    permissions:
+      contents: read
+      actions: write
     steps:
       - name: Note when the job began, so each test step can stop in time to upload its logs (gatefold#126)
         run: echo "JOB_START=$(date +%s)" >> "$GITHUB_ENV"
@@ -277,3 +296,7 @@ jobs:
         with:
           name: ${{ inputs.shard }}-xcresults-${{ github.run_attempt }}
           path: ${{ runner.temp }}/ui.xcresult
+      # Merge queue only: a failed job cancels the other runs on this commit, so the queue drops it now
+      # (.github/actions/fail-fast). Last, so the logs above are uploaded first.
+      - if: failure() && github.event_name == 'merge_group'
+        uses: ./.github/actions/fail-fast

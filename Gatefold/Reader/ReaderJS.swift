@@ -248,6 +248,11 @@ enum ReaderJS {
         // a break went in.
         pinToTop: function (quote) {
           if (document.getElementById("gatefold-pin")) { return 0; }
+          // Judged only on a page laid out in two columns: a break placed from one wide column's lines lands
+          // wherever those put it, and once two columns arrive the spread can open past his page's first words
+          // (gatefold#482, the columns reaching Readium after the restore).
+          const laidOut = parseInt(getComputedStyle(document.documentElement).columnCount, 10);
+          if (!isNaN(laidOut) && laidOut !== 2) { return 0; }
           const words = norm(quote).split(" ").slice(0, 8).map(function (w) { return w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); });
           if (!words.length || !words[0]) { return null; }
           const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
@@ -362,6 +367,8 @@ enum ReaderJS {
     static let removeVerso = "window.gatefold ? window.gatefold.removeVerso() : null"
     /// 1 on a page our script hasn't been installed on yet: one loaded since the last look.
     static let isFresh = "window.gatefold ? 0 : 1"
+    /// The column count the page's style lays it out in (Readium's), or 0 when the style leaves it to the width.
+    static let cssColumns = "(function(){var n=parseInt(getComputedStyle(document.documentElement).columnCount,10);return isNaN(n)?0:n;})()"
 
     static func setColumns(_ n: Int) -> String { "window.gatefoldColumns = \(n); true" }
 
