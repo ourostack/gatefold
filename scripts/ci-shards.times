@@ -110,4 +110,10 @@ iPad Pro 13-inch|RotationMidTransitionUITests/testAColdTurnOnItsSideOpensAWholeS
 iPhone Duo|ScrollModeUITests/testASidewaysSwipeInScrollKeepsThePlace	120	# estimate: 40 locally at load 900, until CI has run it
 iPhone Duo|ScrollModeUITests/testATapOnTheStatusBarKeepsThePlace	90	# estimate: 32 locally at load 900, until CI has run it
 iPhone Duo|ScrollModeUITests/testScrollingPastAChaptersEndAndBackLandsWhereHeWas	300	# estimate: 100 locally at load 900, until CI has run it
+iPhone Duo|FeelReaderUITests/testClosedScroll	300	# an estimate until CI has timed it (Ouro Feel over the reader, 2026-11-15)
+iPhone Duo|FeelReaderUITests/testClosedPaged	300	# an estimate until CI has timed it (Ouro Feel over the reader, 2026-11-15)
+iPhone Duo|FeelReaderUITests/testOpenPortraitScroll	360	# an estimate until CI has timed it (Ouro Feel over the reader, 2026-11-15)
+iPhone Duo|FeelReaderUITests/testOpenPortraitPaged	360	# an estimate until CI has timed it (Ouro Feel over the reader, 2026-11-15)
+iPhone Duo|FeelReaderUITests/testOpenLandscapeScroll	360	# an estimate until CI has timed it (Ouro Feel over the reader, 2026-11-15)
+iPhone Duo|FeelReaderUITests/testOpenLandscapePaged	360	# an estimate until CI has timed it (Ouro Feel over the reader, 2026-11-15)
 iPad Pro 13-inch|ReaderVisibleTextUITests/testTheShelfReadsNoWords	30	# estimate (16 on a Mac)

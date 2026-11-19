@@ -77,6 +77,12 @@ main|iPad Pro 13-inch|SpreadTurnSettleUITests/testSpreadTurnsLandWithoutSliding
 main|iPad Pro 13-inch|SwallowedTapUITests/testTapsAfterSwipesAndAJumpAreAnswered
 main|iPad Pro 13-inch|WindowFitUITests/testOnItsSide
 main|iPad Pro 13-inch|WindowFitUITests/testUpright
+main|iPhone Duo|FeelReaderUITests/testClosedPaged
+main|iPhone Duo|FeelReaderUITests/testClosedScroll
+main|iPhone Duo|FeelReaderUITests/testOpenLandscapePaged
+main|iPhone Duo|FeelReaderUITests/testOpenLandscapeScroll
+main|iPhone Duo|FeelReaderUITests/testOpenPortraitPaged
+main|iPhone Duo|FeelReaderUITests/testOpenPortraitScroll
 main|iPhone Duo|FineTuneTapUITests/testAQuickTouchChangesEverySwitchOnce
 main|iPhone Duo|FineTuneTapUITests/testAQuickTouchChangesEverySwitchOnceInLandscape
 main|iPhone Duo|FineTuneTapUITests/testATapOnTheRowsNameChangesItsSwitch
