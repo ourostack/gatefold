@@ -42,7 +42,7 @@ def app_shards(text):
     entries, prefixes = [], {}
     for job, lines in ci.jobs(text).items():
         body = "\n".join(lines)
-        if "uses: ./.github/workflows/ui-tests.yml" not in body:
+        if "uses: ./.github/workflows/ui-tests.yml" not in body or job == "retry":
             continue
         name = re.search(r"^\s+name:\s*(.+?) shard \(\$\{\{ matrix\.shard \}\}\)\s*$", body, re.M)
         sim = re.search(r"^\s+sim:\s*(.+)$", body, re.M)
