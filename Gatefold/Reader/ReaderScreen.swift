@@ -36,6 +36,10 @@ struct ReaderScreen: View {
     @State private var slipHeight: CGFloat = 0
     /// Where the line the bottom paper would reach begins (global points), when there is one.
     @State private var footerLine: CGFloat?
+    /// Where each floating control stands (global points), as `ReaderChrome` reports them.
+    @State private var chromePieces: [String: CGRect] = [:]
+    /// UI tests only: how many lines of text show under a control with no paper behind them, once measured.
+    @State private var chromeOverText = ""
 
     var body: some View {
         GeometryReader { proxy in
@@ -105,14 +109,15 @@ struct ReaderScreen: View {
                     .animation(reduceMotion ? .easeOut(duration: 0.2) : .spring(duration: 0.4, bounce: 0.1), value: push)
 
                 scrims(proxy: proxy, layout: layout, safeTop: safeTop, barTop: barTop)
-                    .task(id: "\(footerNeed(proxy: proxy, layout: layout))-\(model.totalProgression)-\(model.location?.href.string ?? "")-\(model.location?.locations.progression ?? -1)-\(proxy.size.width)x\(proxy.size.height)-\(model.pageReady)") {
+                    .task(id: "\(footerNeed(proxy: proxy, layout: layout))-\(columnKey(layout))-\(model.totalProgression)-\(model.location?.href.string ?? "")-\(model.location?.locations.progression ?? -1)-\(proxy.size.width)x\(proxy.size.height)-\(model.pageReady)") {
                         // Let a turn or a reflow settle before reading where the lines are; then again
                         // as a jump's veil lifts and its page settles on the words (the lines move, or
                         // were hidden at the first look), so the paper never ends across a line.
-                        for wait in [120, 600, 1400] {
+                        if LaunchOptions.chromeBackingProbe { chromeOverText = "" }
+                        for (pass, wait) in [120, 600, 1400].enumerated() {
                             try? await Task.sleep(for: .milliseconds(wait))
                             guard !Task.isCancelled else { return }
-                            await measureFooterLine(proxy: proxy, layout: layout)
+                            await measureFooterLine(proxy: proxy, layout: layout, pass: pass + 1)
                         }
                     }
 
@@ -141,6 +146,14 @@ struct ReaderScreen: View {
                 // Above the opening cover while the first page loads: a tap on the cover brings them up,
                 // and Close works however long the load takes (#104; a stuck load took every tap for a minute).
                 // They stay above it through its fade, so controls already up don't blink under it.
+                .onPreferenceChange(ChromePieces.self) { pieces in
+                    MainActor.assumeIsolated {
+                        // The paper needs only the column, to the point; the UI tests' probe reads every piece.
+                        let kept = (LaunchOptions.chromeBackingProbe ? pieces : pieces.filter { $0.key == ReaderChrome.column })
+                            .mapValues { $0.integral }
+                        if kept != chromePieces { chromePieces = kept }
+                    }
+                }
                 .zIndex(controlsOverCover ? 3.5 : 0)
 
                 if showAppearance {
@@ -371,14 +384,56 @@ struct ReaderScreen: View {
     }
 
     /// Measures the line the bottom paper would reach, whenever the paper or the page changes.
-    private func measureFooterLine(proxy: GeometryProxy, layout: ReaderLayout) async {
+    private func measureFooterLine(proxy: GeometryProxy, layout: ReaderLayout, pass: Int = 0) async {
         let bottom = footerNeed(proxy: proxy, layout: layout)
-        guard bottom > 0 else { footerLine = nil; return }
+        guard bottom > 0 else { footerLine = nil; chromeOverText = ""; return }
         let global = proxy.frame(in: .global)
         let need = global.minY + proxy.size.height - bottom
-        let line = await model.host?.lineTop(crossing: (need - 1)...(need + 1))
+        var line = await model.host?.lineTop(crossing: (need - 1)...(need + 1))
+        // The trailing column (Contents, Share, Your Page, Search) stands far taller than the bottom bar. Where
+        // the page runs under it (the folded Duo's cover screen, whose page has no margin beside it), the paper
+        // reaches above the first line it would stand on, as it does for the bar (gatefold#538). On a page inset
+        // to a book's measure (the iPad) the column stands in the margin and no line reaches it.
+        if let column = chromeColumn(layout), column.minY < need {
+            if let above = await model.host?.lineTop(crossing: column.minY...need, across: column.minX...column.maxX) {
+                line = min(line ?? above, above)
+            }
+        }
         readerLog.notice("footer paper: needs \(need, privacy: .public), line measured at \(line.map { "\($0)" } ?? "none", privacy: .public)")
         withAnimation(.easeOut(duration: 0.15)) { footerLine = line }
+        if LaunchOptions.chromeBackingProbe {
+            await measureChromeOverText(proxy: proxy, layout: layout, paperTop: min(need, line ?? need), pass: pass)
+        }
+    }
+
+    /// The trailing column's frame (global points) while the controls are up, if it is on screen.
+    private func chromeColumn(_ layout: ReaderLayout) -> CGRect? {
+        guard model.chromeVisible, layout.deck == nil, let column = chromePieces[ReaderChrome.column], !column.isEmpty else { return nil }
+        return column
+    }
+
+    /// The column's frame to the point, so the paper is measured again once it settles.
+    private func columnKey(_ layout: ReaderLayout) -> String {
+        chromeColumn(layout).map { "\(Int($0.minX)),\(Int($0.minY)),\(Int($0.width)),\(Int($0.height))" } ?? "none"
+    }
+
+    /// UI tests only (`reader.chromeOverText`): for each control, the lines of text under it, and those of them
+    /// that show with nothing behind them, neither the top paper (solid down to the top bar's foot) nor the bottom
+    /// paper (from `paperTop` down), as `name under/bare`, with the measuring pass. `paperTop` is the paper as
+    /// measured here, the value `scrims` draws from, not read back from the screen.
+    private func measureChromeOverText(proxy: GeometryProxy, layout: ReaderLayout, paperTop: CGFloat, pass: Int) async {
+        guard model.chromeVisible, layout.deck == nil, let host = model.host else { chromeOverText = ""; return }
+        let global = proxy.frame(in: .global)
+        let clearance = ChromeClearance.resolve(container: proxy.size, occlusions: FoldReader.occlusions(in: proxy))
+        let topPaper = global.minY + max(ReaderChrome.safeTop(proxy.safeAreaInsets), clearance.top) + ReaderChrome.topBarHeight
+        var pieces: [String] = []
+        for (name, frame) in chromePieces.sorted(by: { $0.key < $1.key }) where !frame.isEmpty {
+            let lines = await host.textLines(in: frame)
+            let shown = lines.filter { $0.maxY > topPaper + 0.5 && $0.minY < paperTop - 0.5 }
+            pieces.append("\(name) \(lines.count)/\(shown.count)")
+        }
+        chromeOverText = "pass \(pass): " + pieces.joined(separator: ", ")
+        readerLog.notice("chrome backing: \(self.chromeOverText, privacy: .public)")
     }
 
     @ViewBuilder
@@ -420,6 +475,12 @@ struct ReaderScreen: View {
                 .opacity(0.01)
                 .accessibilityIdentifier("reader.columns")
                 .accessibilityValue(model.columnsProbe)
+                .allowsHitTesting(false)
+            Text("chrome over text")
+                .font(.system(size: 1))
+                .opacity(0.01)
+                .accessibilityIdentifier("reader.chromeOverText")
+                .accessibilityValue(chromeOverText)
                 .allowsHitTesting(false)
             Text("turn wait")
                 .font(.system(size: 1))
