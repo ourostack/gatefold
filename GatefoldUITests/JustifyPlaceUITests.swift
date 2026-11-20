@@ -125,6 +125,30 @@ final class JustifyPlaceUITests: XCTestCase {
         }
     }
 
+    /// Justify on, then the app ended from the Home Screen and opened again: the page he comes back to starts with the
+    /// words the flip left him on. Build 47's Duo run came back on the page from before its Fine-Tune changes: the
+    /// screen had been laid out with other margins than the place was saved against.
+    func testJustifyThenReopenKeepsHisPage() {
+        let before = open(at: "0.47")
+        let his = Array(words(before).dropFirst().prefix(6))
+        let justify = openJustify()
+        let flipped = flip(justify, "Justify on before a reopen")
+        let at = wordsBefore(his, in: flipped)
+        XCTAssertNotNil(at, "the flip kept his first whole words on the page (\(hash(before)) to \(hash(flipped)))")
+        // What the flip left on screen is his place now: its first whole words are what a reopen must start with.
+        let left = Array(words(flipped).dropFirst().prefix(6))
+        XCUIDevice.shared.press(.home)
+        RunLoop.current.run(until: Date().addingTimeInterval(3))
+        app.quit()
+        app.launchArguments = common + ["-GatefoldOpenBook", "gutenberg-pride-and-prejudice"]
+        app.relaunch()
+        let back = ReaderReads.settle(app, "the page reopened") { say($0) }.words
+        let backAt = wordsBefore(left, in: back)
+        say("reopen after Justify: \(hash(flipped)) -> \(hash(back)); his first words \(backAt.map { "\($0) words down" } ?? "off the page")")
+        XCTAssertNotNil(backAt, "the reopen kept his first whole words on the page (\(hash(flipped)) to \(hash(back)))")
+        if let backAt { XCTAssertLessThanOrEqual(backAt, 1, "the reopened page starts \(backAt) words before his (\(hash(flipped)) to \(hash(back)))") }
+    }
+
     // One place a test, each about 2 min, so each fits a shard's 5 min.
     func testJustifyKeepsHisPageAtAnEighth() { flipKeepsHisPage(at: "0.12") }
     func testJustifyKeepsHisPageAtAThird() { flipKeepsHisPage(at: "0.31") }

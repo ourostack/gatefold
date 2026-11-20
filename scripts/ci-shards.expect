@@ -18,6 +18,7 @@ main|iPad Pro 13-inch|JustifyPlaceUITests/testJustifyKeepsHisPageAtAThird
 main|iPad Pro 13-inch|JustifyPlaceUITests/testJustifyKeepsHisPageAtAnEighth
 main|iPad Pro 13-inch|JustifyPlaceUITests/testJustifyKeepsHisPageAtTheMiddle
 main|iPad Pro 13-inch|JustifyPlaceUITests/testJustifyKeepsHisPageAtThreeQuarters
+main|iPad Pro 13-inch|JustifyPlaceUITests/testJustifyThenReopenKeepsHisPage
 main|iPad Pro 13-inch|MarginTapUITests/testABrushNeverTurnsInPortrait
 main|iPad Pro 13-inch|MarginTapUITests/testABrushNeverTurnsOnItsSide
 main|iPad Pro 13-inch|MarginTapUITests/testAnEdgeTapAlwaysTurnsInPortrait
@@ -103,6 +104,7 @@ main|iPhone Duo|JustifyPlaceUITests/testJustifyKeepsHisPageAtAThird
 main|iPhone Duo|JustifyPlaceUITests/testJustifyKeepsHisPageAtAnEighth
 main|iPhone Duo|JustifyPlaceUITests/testJustifyKeepsHisPageAtTheMiddle
 main|iPhone Duo|JustifyPlaceUITests/testJustifyKeepsHisPageAtThreeQuarters
+main|iPhone Duo|JustifyPlaceUITests/testJustifyThenReopenKeepsHisPage
 main|iPhone Duo|PageNumberUITests/testEveryTurnMovesOnAPageAndAReopenKeepsTheNumbers
 main|iPhone Duo|PlaceUndoUITests/testATapAtTheLeftEdgeTurnsBackPromptly
 main|iPhone Duo|PlaceUndoUITests/testATapAtTheLeftEdgeTurnsBackPromptlyWithinAChapter
