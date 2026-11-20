@@ -98,6 +98,109 @@ struct GatefoldDownloadTapTelemetryTests {
     }
 }
 
+/// Place sync telemetry is counts-only too: why a place did or didn't reach the e-reader, never the place.
+struct GatefoldPlaceTelemetryTests {
+    static let allowedPush: Set<String> = [
+        "result", "reason", "app_phase", "has_cfi", "http_status", "error_domain", "error_code", "error_kind", "remote_newer",
+        "remote_ahead", "remote_source", "trigger", "sign_in_renewed", "signed_in_again", "sign_in_expired", "background_expired",
+        "attempts", "seconds_since_turn", "queued",
+    ]
+    static let config = GatefoldTelemetry.Configuration(apiKey: "phc_test", captureURL: URL(string: "https://example.invalid/e/")!)
+
+    static func event(_ request: URLRequest?) throws -> (name: String?, properties: [String: Any]) {
+        let body = try #require(request?.httpBody)
+        let json = try #require(try JSONSerialization.jsonObject(with: body) as? [String: Any])
+        return (json["event"] as? String, json["properties"] as? [String: Any] ?? [:])
+    }
+
+    @Test func aFailedPushSendsWhyAndHowButNotWhat() {
+        var report = PlaceReport(direction: .push, result: .failed, reason: .willRetry, trigger: .background, attempts: 3,
+                                 hasCFI: true, ageSeconds: 40, queued: 1)
+        report.note(CloudError.http(status: 422, message: "position: File not found."))
+        let p = GatefoldTelemetry.properties(of: report, phase: "background")
+        #expect(Set(p.keys).isSubset(of: Self.allowedPush))
+        #expect(p["result"] == .string("failed"))
+        #expect(p["reason"] == .string("will_retry"))
+        #expect(p["trigger"] == .string("background"))
+        #expect(p["app_phase"] == .string("background"))
+        #expect(p["http_status"] == .int(422))
+        #expect(p["attempts"] == .int(3))
+        #expect(p["seconds_since_turn"] == .int(60))
+        #expect(p["background_expired"] == .bool(false))
+        #expect(!p.values.contains { if case let .string(s) = $0 { s.contains("position") || s.contains("epubcfi") } else { false } })
+    }
+
+    @Test func anExpiredSignInSaysSo() {
+        var report = PlaceReport(direction: .push, result: .failed, reason: .signInNeeded)
+        report.note(CloudError.authenticationRequired)
+        let p = GatefoldTelemetry.properties(of: report, phase: "active")
+        #expect(p["sign_in_expired"] == .bool(true))
+        #expect(p["error_kind"] == .string("authenticationRequired"))
+    }
+
+    @Test func aPullSaysWhoWroteTheCloudsPlaceAndWhetherItIsNewer() throws {
+        let book = LibraryBook(id: "b", title: "T", author: "A", origin: .cloud, totalProgression: 0.40, lastOpened: Date(timeIntervalSince1970: 1000),
+                               added: Date(timeIntervalSince1970: 0))
+        let remote = ReadingPosition(cfi: "epubcfi(/6/8!/4/2/1:0)", pointer: "pbr:/webkit?##epubcfi(/6/8!/4/2/1:0)", totalProgression: 0.55,
+                                     updated: Date(timeIntervalSince1970: 2000), source: .pocketBookNative)
+        let report = LibraryStore.pullReport(remote: remote, local: book)
+        let p = GatefoldTelemetry.properties(of: report, phase: "active")
+        #expect(GatefoldTelemetry.eventName(of: report) == "gatefold_place_pull")
+        #expect(p["result"] == .string("received"))
+        #expect(p["remote_source"] == .string("e_reader"))
+        #expect(p["remote_newer"] == .bool(true))
+        #expect(p["remote_ahead"] == .bool(true))
+        #expect(p["has_cfi"] == .bool(true))
+        #expect(p["trigger"] == nil)
+        #expect(!p.values.contains { if case let .string(s) = $0 { s.contains("epubcfi") || s.contains("pbr:") } else { false } })
+    }
+
+    @Test func aPullWithNoCloudPlaceIsSkipped() {
+        let book = LibraryBook(id: "b", title: "T", author: "A", origin: .cloud, added: Date(timeIntervalSince1970: 0))
+        let report = LibraryStore.pullReport(remote: nil, local: book)
+        #expect(report.result == .skipped)
+        #expect(report.reason == .noPlace)
+    }
+
+    @Test func aPushIsSentAsItsOwnEvent() throws {
+        let sent = Box()
+        let defaults = try #require(UserDefaults(suiteName: "telemetry-place-\(UUID().uuidString)"))
+        let telemetry = GatefoldTelemetry(configuration: Self.config, defaults: defaults, send: { sent.requests.append($0) })
+        telemetry.appPhase = "inactive"
+        telemetry.capture(PlaceReport(direction: .push, result: .sent, trigger: .debounce))
+        let event = try Self.event(sent.requests.first)
+        #expect(event.name == "gatefold_place_push")
+        #expect(event.properties["result"] as? String == "sent")
+        #expect(event.properties["app_phase"] as? String == "inactive")
+    }
+
+    @Test func anExpiredBackgroundSendIsKeptForTheNextLaunchAndSentOnce() throws {
+        let sent = Box()
+        let defaults = try #require(UserDefaults(suiteName: "telemetry-later-\(UUID().uuidString)"))
+        let telemetry = GatefoldTelemetry(configuration: Self.config, defaults: defaults, send: { sent.requests.append($0) })
+        telemetry.captureLater(PlaceReport(direction: .push, result: .failed, reason: .backgroundExpired, trigger: .background))
+        #expect(sent.requests.isEmpty, "nothing gets out while iOS is ending the app's time")
+
+        let nextLaunch = GatefoldTelemetry(configuration: Self.config, defaults: defaults, send: { sent.requests.append($0) })
+        nextLaunch.sendDeferred()
+        nextLaunch.sendDeferred()
+        #expect(sent.requests.count == 1)
+        let event = try Self.event(sent.requests.first)
+        #expect(event.name == "gatefold_place_push")
+        #expect(event.properties["reason"] as? String == "background_expired")
+        #expect(event.properties["background_expired"] as? Bool == true)
+        #expect(event.properties["app_phase"] as? String == "background")
+    }
+
+    @Test func nothingIsKeptWithoutAConfiguration() throws {
+        let sent = Box()
+        let defaults = try #require(UserDefaults(suiteName: "telemetry-off-\(UUID().uuidString)"))
+        let telemetry = GatefoldTelemetry(configuration: nil, defaults: defaults, send: { sent.requests.append($0) })
+        telemetry.captureLater(PlaceReport(direction: .push, result: .failed, reason: .backgroundExpired))
+        #expect(defaults.data(forKey: GatefoldTelemetry.deferredKey) == nil)
+    }
+}
+
 private final class Box: @unchecked Sendable {
     var count = 0
     var requests: [URLRequest] = []

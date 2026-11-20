@@ -367,7 +367,7 @@ final class LibraryStore {
         done.source = .gatefold
         await sync.push(done, for: cloud)
         await sync.markRead(cloud)
-        await sync.flushOutbox()
+        await sync.flushOutbox(trigger: .finished)
     }
 
     /// Sends waiting places now (the app is going to the background).
@@ -377,10 +377,10 @@ final class LibraryStore {
 
     /// Hands every waiting place to the sync service and asks it to send at once (book closed, app
     /// leaving). Returns when the service has tried.
-    func sendPendingPushes() async {
+    func sendPendingPushes(trigger: PlaceReport.Trigger = .other) async {
         flushPushes()
         for push in Array(pushes.values) { await push.task.value }
-        await sync.flushOutbox()
+        await sync.flushOutbox(trigger: trigger)
     }
 
     /// The place waiting to go to the Cloud for a book (tests).
@@ -404,9 +404,18 @@ final class LibraryStore {
         })
     }
 
-    func remotePosition(for book: LibraryBook) async -> ReadingPosition? {
+    func remotePosition(for book: LibraryBook, telemetry: GatefoldTelemetry = .shared) async -> ReadingPosition? {
         guard let cloud = book.cloud else { return nil }
-        let remote = try? await sync.remotePosition(for: cloud)
+        let remote: ReadingPosition?
+        do {
+            remote = try await sync.remotePosition(for: cloud)
+            telemetry.capture(Self.pullReport(remote: remote, local: book))
+        } catch {
+            var report = PlaceReport(direction: .pull, result: .failed, reason: .error)
+            report.note(error)
+            telemetry.capture(report)
+            remote = nil
+        }
         if let remote {
             update(book.id) {
                 $0.remote = remote
@@ -414,6 +423,17 @@ final class LibraryStore {
             }
         }
         return remote
+    }
+
+    /// The counts-only report of one place fetch: who wrote the Cloud's place, and whether it is newer
+    /// or further on than the place here. Never the place itself.
+    nonisolated static func pullReport(remote: ReadingPosition?, local book: LibraryBook) -> PlaceReport {
+        guard let remote else { return PlaceReport(direction: .pull, result: .skipped, reason: .noPlace) }
+        var report = PlaceReport(direction: .pull, result: .received, hasCFI: remote.parsedCFI != nil,
+                                 remoteSource: PlaceReport.sourceName(remote.source))
+        report.remoteNewer = book.lastOpened.map { remote.updated > $0 } ?? true
+        report.remoteAhead = remote.wholePercent > ReadingPercent.whole(book.totalProgression)
+        return report
     }
 
     /// What the shelf shows when the Cloud can't be reached. Always in the reader's words (`FriendlyError`).

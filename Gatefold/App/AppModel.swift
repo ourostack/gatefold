@@ -288,8 +288,8 @@ final class AppModel {
     }
 
     /// Leaving the app or closing a book: send the place now rather than after the debounce.
-    func sendPlaceNow() async {
-        await library.sendPendingPushes()
+    func sendPlaceNow(trigger: PlaceReport.Trigger = .other) async {
+        await library.sendPendingPushes(trigger: trigger)
     }
 
     private func savePreferences() {
