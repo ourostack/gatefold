@@ -29,6 +29,9 @@ runs:
         xcrun --sdk iphonesimulator --show-sdk-version
         xcode_version="$(xcodebuild -version)"
         printf '%s\n' "$xcode_version"
+        # The build's artifact name takes this; await-build reads it here, so it never starts xcodebuild while the
+        # simulator boots (gatefold#404: shards cancelled after 10 min silent in await-build's first line).
+        echo "GATEFOLD_XCODE_ID=$(printf '%s\n' "$xcode_version" | tr -s ' \n' '-' | sed 's/-$//; s/^Xcode-//; s/-Build-version-/-/')" >> "$GITHUB_ENV"
         first_line="$(printf '%s\n' "$xcode_version" | sed -n '1p')"
         minimum_xcode_version="27.1"
         version="${first_line#Xcode }"

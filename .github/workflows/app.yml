@@ -6,8 +6,9 @@ name: App
 # Two tiers (gatefold#39, #198). A pull request runs the build, the unit tests, GatefoldCore and at most five UI shards,
 # picked by the paths it touches: an iPad and a Duo smoke on every app change, and the place and taps guards when it
 # touches that code (`changes` output `fired`; the lists are the Gatefold agent's). Every push to main runs the full UI
-# suite and is never cancelled; a red main is fixed as AGENTS.md says ("CI"). Each new simulator's first boot holds the
-# runner's load at 500 to 760 for about 15 min (#198), so fewer shards per pull request is the lever, not more.
+# suite, in batches (a started run is never cancelled; gatefold#246); a red main is fixed as AGENTS.md says ("CI").
+# Each new simulator's first boot holds the runner's load at 500 to 760 for about 15 min (#198), so fewer shards per
+# pull request is the lever, not more.
 #
 # Build once: `build` makes the app and its tests for the simulator (build-for-testing) and uploads them, named by
 # commit and Xcode version; no simulator job compiles the app again (gatefold#39: each job spent 10 to 16 min building).
@@ -40,10 +41,16 @@ on:
       - "**/*.md"
   workflow_dispatch:
 
-# A newer push to a pull request cancels its older run. Pushes to main keep one group per commit and are never
-# cancelled.
+# A newer push to a pull request cancels its older run. Pushes to main share one group: a started run is never
+# cancelled, and at most one more waits, the newest, which replaces any older waiting push (gatefold#246; #326 lost
+# this on 2026-11-13, and one full run per merged commit then left main's runs two hours behind on 2026-11-20). Its run
+# tests every merge since the last one; the central auto-revert (ourostack/.github tools/red-main) attributes a red
+# across that range. A manual run and a re-run keep a group of their own, so a re-run never replaces the waiting push.
+# The merge queue keeps one group per commit. TestFlight is its own workflow, outside this group.
 concurrency:
-  group: app-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  group: >-
+    app-${{ github.event_name == 'pull_request' && github.ref
+    || github.event_name == 'push' && github.run_attempt == 1 && 'main' || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # macOS lanes (gatefold#286). The Ouro Labs enterprise has 50 macOS slots, shared by every org in it (spoonjoy too).
@@ -54,7 +61,8 @@ concurrency:
 #     even pull requests (last digit) each get their own 18, so 36 shard lanes in all.
 #   - Release build and Unit tests: 3 lanes each, by the pull request number's last digit.
 #   - Duo tour, the cloud package, and the screenshots' build and shots: 1 lane each.
-# That is 46 lanes, a hard cap, plus one Build for testing per pull request being pushed (not laned: the shards and
+# Real unfold's five places wait in 5 more lanes of their own (real-unfold.yml).
+# That is 51 lanes, a hard cap, plus one Build for testing per pull request being pushed (not laned: the shards and
 # Unit tests wait for its artifact inside their own jobs). Since 2026-11-13 spoonjoy is outside the enterprise, so
 # ourostack has all 50 slots and main still gets its share through the hosted queue; with 28 lanes 12 open pull
 # requests left about 27 Macs idle. If spoonjoy rejoins, go back to one shard set (SHARD_SETS and BUDGET in
@@ -375,10 +383,13 @@ jobs:
         run: |
           python3 -I scripts/ci-simulator.py --selftest
           bash scripts/test-ci-simulator.sh
+          sh scripts/ci-app-log.sh --selftest
       - name: A shard whose test runner never started is told from one whose test failed (gatefold#135)
         run: |
           python3 -I scripts/ci-bootstrap.py --selftest
           python3 -I scripts/ci-rerun-runner.py --selftest
+          python3 -I scripts/ci-runner-faults.py --selftest
+          python3 -I scripts/ci-requeue.py --selftest
       - name: A main commit skips the suite only on proof of its own tree (a mismatched tree or a red run proves nothing)
         run: python3 -I scripts/ci-proof.py --selftest
       - name: A merge-group failure cancels only the queue's other runs on its commit, never main's or a pull request's
@@ -890,6 +901,16 @@ jobs:
             cold: false
             timeout: 64 # 30 + 2 x 8.4 + 5 + 12
             lane: 10
+          - shard: duo-sheets
+            # A sheet closed without choosing keeps his place (gatefold#535): Contents pulled away or closed after a
+            # scroll, Fine-Tune closed after Justify (estimates until CI has run them)
+            tests: >-
+              SheetDismissPlaceUITests
+            skip: ""
+            pr_tests: none
+            cold: false
+            timeout: 70 # 30 + 2 x 11.5 + 5 + 12
+            lane: 9
           - shard: duo-scroll
             # Scroll mode keeps the place: a sideways swipe, a status-bar tap, a chapter's end and back (estimates until CI has run them)
             tests: >-

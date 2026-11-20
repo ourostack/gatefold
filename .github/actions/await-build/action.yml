@@ -18,7 +18,10 @@ runs:
       run: |
         set -eu
         # The name `build` gives it; this job must have selected the same Xcode, so it names what it needs itself.
-        want="gatefold-tests-$GITHUB_SHA-xcode-$(xcodebuild -version | tr -s ' \n' '-' | sed 's/-$//; s/^Xcode-//; s/-Build-version-/-/')"
+        # select-xcode names the Xcode before the simulator boots; xcodebuild is only the fallback.
+        id="${GATEFOLD_XCODE_ID:-$(xcodebuild -version | tr -s ' \n' '-' | sed 's/-$//; s/^Xcode-//; s/-Build-version-/-/')}"
+        want="gatefold-tests-$GITHUB_SHA-xcode-$id"
+        echo "$(date -u +%T) waiting for Build for testing ($want)"
         echo "artifact=$want" >> "$GITHUB_OUTPUT"
         api="repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
         started=$(date +%s)
