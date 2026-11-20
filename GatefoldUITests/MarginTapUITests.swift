@@ -93,6 +93,10 @@ final class MarginTapUITests: XCTestCase {
             return words.first == "landed" && words.count > 1 ? Int(words[1]) ?? 0 : 0
         }
         func place() -> String { (el("reader.shownPlace").value as? String) ?? "" }
+        /// The place last written (`reader.savedPlace`), what a reopen shows, and its words (`reader.savedWords`):
+        /// empty when it was written with none.
+        func savedPlace() -> String { (el("reader.savedPlace").value as? String) ?? "" }
+        func savedWords() -> String { (el("reader.savedWords").value as? String) ?? "" }
     }
 
     private func open(_ orientation: UIDeviceOrientation, posture expected: String) throws -> Reader {
@@ -118,19 +122,40 @@ final class MarginTapUITests: XCTestCase {
     }
 
     /// The spazz run's brush, both ways: pressed for 0.05 s, then dragged 20 pt across the middle of the window and
-    /// let go still moving, at `brushSpeed`. Given more reads than a committed swipe takes to land, neither the place
-    /// nor the turn count moves.
+    /// let go still moving, at `brushSpeed`. Given more reads than a committed swipe takes to land, neither the turn
+    /// count nor the place moves, and the page's opening words stay as they were.
+    ///
+    /// A place written with no words is judged against the page he sees. A brush lifts the leaf and lays it back
+    /// (`finish(complete: false)`), and Readium then reports the page shown. A wordless place was not taken from that
+    /// page: on a starved runner the launch jump to 0.12 runs out of reads, and its target is kept as the place
+    /// (`ReaderModel.load`). The spread showed 0.125 of the chapter, the place said 0.16, and the brush's report
+    /// wrote his first words in its stead, on the same page (run 44699693594, gatefold#536). That is the place
+    /// catching up with his page, not a move: a written place must then name words on the page he saw.
     private func brush(_ orientation: UIDeviceOrientation, posture: String) throws {
         let r = try open(orientation, posture: posture)
         for dx in [-20, 20] as [CGFloat] {
-            let before = (landed: r.landed(), place: r.place())
+            let shown = ReaderReads.settle(r.app, "the page before the \(dx)-pt brush") { print("BRUSH \($0)") }.words
+            let before = (landed: r.landed(), place: r.place(), saved: r.savedPlace(), words: r.savedWords())
             r.at(0.5, 0.5).press(forDuration: 0.05, thenDragTo: r.at(0.5, 0.5).withOffset(CGVector(dx: dx, dy: 0)),
                                  withVelocity: Self.brushSpeed, thenHoldForDuration: 0)
             let moved = readsUntil(reads: Self.brushReads, "the \(dx)-pt brush") { r.landed() > before.landed || r.place() != before.place }
             _ = readsUntil(reads: Self.reads, "the page stands still after the \(dx)-pt brush") { (r.el("reader.turning").value as? String) == "0" }
-            print("BRUSH \(dx) pt: landed \(before.landed)->\(r.landed()) place \(before.place)->\(r.place()) after \(moved.reads) reads")
+            let after = ReaderReads.settle(r.app, "the page after the \(dx)-pt brush") { print("BRUSH \($0)") }.words
+            print("BRUSH \(dx) pt: landed \(before.landed)->\(r.landed()) place \(before.place)->\(r.place()) words \(before.words.isEmpty ? "none" : "his")->\(r.savedWords().isEmpty ? "none" : "his") page same \(Self.opening(after) == Self.opening(shown)) after \(moved.reads) reads")
             XCTAssertEqual(r.landed(), before.landed, "a \(dx)-pt brush turns no page")
-            XCTAssertEqual(r.place(), before.place, "a \(dx)-pt brush leaves the place where it was")
+            XCTAssertEqual(Self.opening(after), Self.opening(shown), "a \(dx)-pt brush leaves the page he sees where it was")
+            if before.words.isEmpty {
+                // The catch-up's write comes after its words are read, which a starved runner can hold for seconds.
+                let caught = readsUntil(reads: Self.brushReads, "a place for the page after the \(dx)-pt brush") { !r.savedWords().isEmpty }
+                print("BRUSH \(dx) pt: wordless place \(before.saved)->\(r.savedPlace()), words written \(caught.ok) after \(caught.reads) reads")
+                if r.savedPlace() != before.saved {
+                    let words = Self.opening(r.savedWords())
+                    XCTAssertFalse(words.isEmpty, "a \(dx)-pt brush wrote a place with no words over one with none")
+                    XCTAssertTrue(Self.flat(shown).contains(words), "a \(dx)-pt brush moved the place off the page he saw")
+                }
+            } else {
+                XCTAssertEqual(r.place(), before.place, "a \(dx)-pt brush leaves the place where it was")
+            }
             XCTAssertFalse(r.close.exists, "a \(dx)-pt brush brings up no controls")
         }
         // A quick flick a little longer than a fingertip still turns, as does half the window (the spazz run's swipes).
@@ -143,6 +168,10 @@ final class MarginTapUITests: XCTestCase {
         r.at(0.75, 0.5).press(forDuration: 0.05, thenDragTo: r.at(0.25, 0.5))
         XCTAssertTrue(readsUntil(reads: Self.reads, "a full swipe turns") { r.landed() > before }.ok, "a full swipe still turns the page")
     }
+
+    private static func flat(_ text: String) -> String { text.split(whereSeparator: \.isWhitespace).joined(separator: " ") }
+    /// The words that open a page or a place: enough to tell two pages apart.
+    private static func opening(_ text: String) -> String { flat(text).split(separator: " ").prefix(12).joined(separator: " ") }
 
     /// The spazz run's edge taps, forward at 97% then back at 3% of the window, twice.
     private func edgeTaps(_ orientation: UIDeviceOrientation, posture: String) throws {
