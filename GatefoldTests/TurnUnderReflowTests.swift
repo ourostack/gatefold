@@ -167,4 +167,80 @@ import Testing
         #expect(!model.keeper.restoreMayMove(move: model.hisMoves), "the restore would put the page before the turn back under it")
         model.close()
     }
+
+    /// The start of the chapter after the one on screen: where a tap forward from its last screen lands.
+    private func nextChapterStart(_ model: ReaderModel, _ page: TwoStepJumpPage) throws -> Locator {
+        let here = try #require(page.currentLocation)
+        let order = model.readingOrderHrefs
+        let i = try #require(order.firstIndex(of: here.href.string))
+        let next = try #require(AnyURL(string: order[i + 1]))
+        return Locator(href: next, mediaType: here.mediaType, locations: .init(progression: 0))
+    }
+
+    /// A tap into the next chapter, its page still loading, so no words are read before the reflow overtakes the read
+    /// (build 47's review at 0.73): the restore puts back the chapter's start, and the turn's landing is the turn it
+    /// puts back, never a move it gives way to. Build 47 gave way, and Readium's report of the chapter he left was kept.
+    @Test func aTurnIntoTheNextChapterWithNoWordsReadPutsBackItsStart() async throws {
+        let (model, page, _, _) = try await open()
+        let start = try nextChapterStart(model, page)
+        page.currentLocation = start
+        model.turnMovedBeneath(reaching: start)
+        beginReflow(model)
+        await model.beneathRead?.value
+        model.takeTurnUnderReflow()
+        #expect(model.keeper.anchor?.href == start.href.string, "the restore puts back another chapter")
+        #expect(model.keeper.anchor?.progression == 0, "the restore puts back a page past the chapter's start")
+        model.userTurnedPage()
+        #expect(model.keeper.restoreMayMove(move: model.hisMoves), "the restore gave way to the turn it puts back")
+        model.close()
+    }
+
+    /// The same tap with the iPad turned before the turn has moved (build 47's review at 0.47): the reflow began with no
+    /// turn under way, and the turn moves under it. Its chapter's start is still the page put back. Build 47's restore
+    /// put back the page he tapped from, then gave way to the turn landing on it.
+    @Test func aTurnIntoTheNextChapterMovedUnderAReflowPutsBackItsStart() async throws {
+        let (model, page, _, _) = try await open()
+        let start = try nextChapterStart(model, page)
+        beginReflow(model)
+        page.currentLocation = start
+        model.turnMovedBeneath(reaching: start)
+        model.takeTurnUnderReflow()
+        #expect(model.keeper.anchor?.href == start.href.string, "the restore puts back the chapter he turned from")
+        #expect(model.keeper.anchor?.progression == 0)
+        model.userTurnedPage()
+        #expect(model.keeper.restoreMayMove(move: model.hisMoves), "the restore gave way to the turn it puts back")
+        model.close()
+    }
+
+    /// The same tap read while the chapter he left is still on screen, the next one loading: those words are not the
+    /// page he turned to, and its chapter's start stays the page the restore puts back.
+    @Test func aTurnIntoTheNextChapterNeverTakesTheWordsOfTheChapterHeLeft() async throws {
+        let (model, page, _, _) = try await open()
+        let start = try nextChapterStart(model, page)
+        model.turnMovedBeneath(reaching: start)
+        await model.beneathRead?.value
+        beginReflow(model)
+        model.takeTurnUnderReflow()
+        #expect(model.keeper.anchor?.href == start.href.string, "the restore puts back the page he turned from")
+        #expect(model.keeper.anchor?.progression == 0)
+        model.close()
+    }
+
+    /// A tap's turn within the chapter, the iPad turned before the page beneath answered (main's run for #565, on a
+    /// hosted runner: the reflow began 170 ms after the turn moved): its words, read before it moved in the layout he
+    /// turned in, are the page put back. Main gave way to the landing, back on the page he turned from.
+    @Test func aTurnWhosePageAnsweredLateIsPutBackByItsWordsReadBeforeItMoved() async throws {
+        let (model, page, publication, _) = try await open()
+        let next = try #require(await ReaderSyncTests.locate(publication, 0.205))
+        let words = next.copy(text: { $0 = .init(highlight: "the first words of the page he turned to") })
+        page.currentLocation = next
+        model.turnMovedBeneath(reaching: words)
+        beginReflow(model)
+        await model.beneathRead?.value
+        model.takeTurnUnderReflow()
+        #expect(model.keeper.anchor?.text == "the first words of the page he turned to", "the restore gave way, or put back other words")
+        model.userTurnedPage()
+        #expect(model.keeper.restoreMayMove(move: model.hisMoves), "the restore gave way to the turn it puts back")
+        model.close()
+    }
 }

@@ -2000,6 +2000,34 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         }
     }
 
+    /// The page a tap's turn reaches, read before the turn moves, in the layout he turns in: its first words (as a
+    /// turn's own read of them), or, turning forward from the chapter's last screen, the next chapter's start, which
+    /// is the same place in any layout (`ScreenPageGeometry.chapterOpened`). Nil when the page can't say, or the
+    /// layout changed under the read. A turn of the iPad straight after the tap can begin its reflow before the
+    /// page beneath has answered (a slow runner, a chapter still loading): this is what the restore puts back then.
+    private func pageTurnedTo(forward: Bool, width: CGFloat) async -> Locator? {
+        guard let model = weakModel, model.keeper.reflowing == nil, let here = navigator.currentLocation else { return nil }
+        let chapter = here.href.string.split(separator: "#", maxSplits: 1).first.map(String.init) ?? here.href.string
+        _ = try? await navigator.answer(ReaderJS.install)
+        let anchors = model.contents.fragments(in: here.href.string)
+        struct Words: Decodable { var highlight: String; var s: Double; var w: Double; var doc: String }
+        if let json = try? await navigator.answer(ReaderJS.screenWords(forward ? 1 : -1, contentsAnchors: anchors)) as? String,
+           let found = json.data(using: .utf8).flatMap({ try? JSONDecoder().decode(Words.self, from: $0) }),
+           abs(found.w - width) < 1, model.keeper.reflowing == nil, navigator.view.bounds.width == width,
+           ScreenPageGeometry.document(found.doc, isChapter: chapter) {
+            return here.copy(locations: { $0 = .init(progression: found.s) }, text: { $0 = .init(highlight: found.highlight) })
+        }
+        guard forward, let json = try? await navigator.answer(ReaderJS.geometry) as? String,
+              let data = json.data(using: .utf8) else { return nil }
+        struct Geometry: Decodable { var w: Double; var l: Double; var v: Double; var doc: String }
+        guard let found = try? JSONDecoder().decode(Geometry.self, from: data),
+              ScreenPageGeometry.document(found.doc, isChapter: chapter),
+              let next = ScreenPageGeometry.chapterOpened(after: chapter, scrollWidth: found.w, scrollLeft: abs(found.l),
+                                                          viewportWidth: found.v, readingOrder: model.readingOrderHrefs),
+              let url = AnyURL(string: next) else { return nil }
+        return Locator(href: url, mediaType: here.mediaType, locations: .init(progression: 0))
+    }
+
     func wordsOnPage() async -> Locator? {
         await Self.onSpread { try await self.readAnchor(publish: false) }?.1
     }
@@ -2172,6 +2200,8 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         isTurning = true
         let t0 = ContinuousClock.now
         let size = navigator.view.bounds.size
+        // The page a tap's turn reaches, read before the turn moves, while the page is pictured.
+        let turnedTo = committed ? Task { await pageTurnedTo(forward: forward, width: size.width) } : nil
         // The page on screen now; a black or bare capture (seen in spreads) is retried.
         let top = await renderedSnapshot(afterChange: false)
         readerLog.notice("turn: \(forward ? "forward" : "back", privacy: .public) page pictured at \(ReaderModel.ms(since: t0), privacy: .public) ms")
@@ -2193,6 +2223,10 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         await nextFrame()
 
         let chapterBefore = navigator.currentLocation?.href.string.split(separator: "#").first
+        let reached = await turnedTo?.value
+        if committed {
+            readerLog.notice("turn: the page it reaches read before it moves: \(reached == nil ? "none" : reached?.text.highlight != nil ? "its words" : "the next chapter's start", privacy: .public)")
+        }
         let moved = forward
             ? await navigator.goForward(options: .init(animated: false))
             : await navigator.goBackward(options: .init(animated: false))
@@ -2207,7 +2241,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             return false
         }
         // A tap's turn is his from here: Readium is on the page beneath, laid out as he turned it.
-        if committed { weakModel?.turnMovedBeneath() }
+        if committed { weakModel?.turnMovedBeneath(reaching: reached) }
         // UI tests: the leaf waits before it falls, so a turn of the iPad sent straight after the tap begins while
         // the turn is under way, every time (gatefold#534).
         if committed, let hold = LaunchOptions.holdTapTurnLanding { try? await Task.sleep(for: .seconds(hold)) }
