@@ -22,6 +22,9 @@ jobs:
     name: Warm simulator (${{ matrix.device }})
     if: ${{ github.event_name != 'pull_request' }}
     runs-on: xcode-27
+    # Its failure only means shards boot new devices until it next succeeds: it must never read as a red main (the
+    # central red-main check reads every push run on main, and auto-revert acts on it).
+    continue-on-error: true
     timeout-minutes: 40
     concurrency:
       group: warm-sim-${{ matrix.sim }}

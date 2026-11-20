@@ -222,7 +222,7 @@ try_warm() {
   out="$(within "$LIST_LIMIT" xcrun simctl --set "$WARM_SET" clone "$u" "$name" "$DEVICES")"
   if [[ $? != 0 || ! $out =~ ^[0-9A-Za-z-]+$ ]]; then
     echo "warm: cloning $u failed ('$out'); a new device" >&2
-    # A clone that printed more than its UDID still made a device: delete it by the name this attempt gave it.
+    # A clone that printed more than its UDID still made a device: delete it by the UDID in its output.
     [[ $out =~ [0-9A-Fa-f-]{36} ]] && within "$LIST_LIMIT" xcrun simctl delete "${BASH_REMATCH[0]}" >&2
     return 1
   fi
