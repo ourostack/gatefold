@@ -105,6 +105,11 @@ iPhone Duo|PositionUITests/testRotationKeepsThePlace	116	# p95 of 106, slowest 1
 iPhone Duo|PositionUITests/testTabletopDeckTurnsAndResizes	259	# p95 of 112, slowest 444
 iPhone Duo|QuickLeaveUITests/testTurnsThenAQuickLeaveReopenOnTheLastTurnsPage	115	# p95 of 2, slowest 115
 iPhone Duo|QuickLeaveUITests/testALeaveUnderTheReopensCoverAfterTheWatchdogKeepsHisPlace	10	# skipped: iPad only (gatefold#366)
+iPhone Duo|DuoLayoutUITests/testScrollingTextRunsToTheTopWithNoHeadOverIt	150	# an estimate until CI has timed it (about 60 s locally)
+iPhone Duo|DuoLayoutUITests/testScrollingSpreadRunsToTheTopWithNoHeadOverIt	150	# an estimate until CI has timed it (about 20 s locally)
+iPhone Duo|DuoLayoutUITests/testTheChromeHoldsStillBesideAStatusColumnScrolling	150	# an estimate until CI has timed it (about 60 s locally)
+iPhone Duo|DuoLayoutUITests/testTheChromeHoldsStillBesideAStatusColumnTurningPages	150	# an estimate until CI has timed it (about 60 s locally)
+iPhone Duo|DuoLayoutUITests/testContentsOpenedAndClosedLeavesThePageWhereItWas	150	# an estimate until CI has timed it
 iPhone Duo|SheetDismissPlaceUITests/testPullingContentsAwayAfterScrollingKeepsThePage	200	# estimate until CI has run it: 86 s locally (gatefold#535)
 iPhone Duo|SheetDismissPlaceUITests/testClosingContentsAfterScrollingKeepsThePage	210	# estimate until CI has run it: 104 s locally (gatefold#535)
 iPhone Duo|SheetDismissPlaceUITests/testClosingFineTuneAfterJustifyKeepsHisWords	280	# estimate until CI has run it: 175 s locally (gatefold#535)

@@ -75,6 +75,9 @@ public struct ReaderLayout: Equatable, Sendable {
     public var columns: ColumnCount
     /// 0...1, a shadow at the spine that deepens as the device bends. Effect only.
     public var spineShadow: Double
+    /// Room a scrolling page keeps clear above its first line inside itself (`PageSafeArea.placing`), on top of
+    /// `PageSafeArea.textTopInset`: a scrolling page stays at the screen's top so its text runs there.
+    public var textTopClearance: CGFloat = 0
 }
 
 public enum ReaderLayoutResolver {
@@ -204,6 +207,18 @@ public enum PageSafeArea {
         let up = (1 - plain.scale) * centre
         let k = (down + up) / (height - textTop)
         return Lift(scale: 1 - k, anchorY: 1 - up / (k * height))
+    }
+
+    /// The page cleared of what sits above its first line by `shift` points. A page of pages moves down by it,
+    /// keeping its foot. A scrolling page stays where it is, so its text runs up to the screen's top as it scrolls
+    /// (Ari, build 39: "on closed duo let the text go to the top"), and carries the room inside it instead, so a
+    /// chapter's first line still rests below the camera.
+    public static func placing(_ layout: ReaderLayout, shift: CGFloat, scrolling: Bool) -> ReaderLayout {
+        guard scrolling else { return shifted(layout, by: shift) }
+        guard shift > 0 else { return layout }
+        var out = layout
+        out.textTopClearance = shift
+        return out
     }
 
     /// The page moved down by `shift` points, keeping its foot.

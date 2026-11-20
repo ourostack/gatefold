@@ -135,8 +135,12 @@ final class SingleColumnUITests: XCTestCase {
         // only the current row: a page the scrub left between chapters marks none.
         let listed = contentsRows.firstMatch
         XCTAssertTrue(listed.waitForExistence(timeout: 10), "the contents opened")
-        app.swipeDown(velocity: .fast)
-        _ = readsUntil(reads: 50) { !contentsRows.firstMatch.exists }
+        // Closed by its close button, as in DuoLayoutUITests: a swipe down starts on a row, and a slow simulator takes
+        // it for a tap and jumps there, so the sheet stays up and the turn below lands nowhere.
+        let done = app.buttons["contents.close"].firstMatch
+        XCTAssertTrue(done.exists, "Contents has its close button")
+        done.tap()
+        XCTAssertTrue(readsUntil(reads: 50) { !done.exists && !contentsRows.firstMatch.exists }.ok, "Contents closed")
         hideControls()
         expectOneColumn("Contents opened and closed")
         turn()

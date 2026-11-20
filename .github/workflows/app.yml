@@ -902,14 +902,15 @@ jobs:
             timeout: 62 # 30 + 2 x 7.5 + 5 + 12
             lane: 13
           - shard: duo-position-rest
-            # The catch-all for new position tests: 66, rotation and posture, and the quick leave (gatefold#301)
+            # The catch-all for new position tests: 66, rotation and posture, the quick leave (gatefold#301), and the
+            # reader's layout holding still on the Duo (build 39)
             tests: >-
-              PositionUITests QuickLeaveUITests
+              PositionUITests QuickLeaveUITests DuoLayoutUITests
             skip: >-
               PositionUITests/testTabletopDeckTurnsAndResizes PositionUITests/testFontChangeKeepsThePlace
             pr_tests: none
             cold: false
-            timeout: 64 # 30 + 2 x 8.4 + 5 + 12
+            timeout: 89 # 30 + 2 x 20.9 + 5 + 12
             lane: 10
           - shard: duo-sheets
             # A sheet closed without choosing keeps his place (gatefold#535): Contents pulled away or closed after a

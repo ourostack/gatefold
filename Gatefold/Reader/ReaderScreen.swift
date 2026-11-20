@@ -33,6 +33,13 @@ struct ReaderScreen: View {
     @State private var leafFolding = false
     /// On the cover screen the status column sits on the page's trailing edge; it stays hidden there.
     @State private var coverScreen = false
+    /// A status column sat under the controls as last seen (a frame behind the report, unlike `coverScreen`, which
+    /// remembers one per size). Only a page with none is bare: the folded Duo's column changes height as sheets come
+    /// and go, and a page that followed it reflowed under him (`ReaderScreen.placed`).
+    @State private var columnTaken = false
+    /// The status bar as last drawn, for the UI tests' stand-in status column (`LaunchOptions.fakeStatusColumn`),
+    /// which, like the system's own report, follows the status bar a frame behind.
+    @State private var statusBarDrawn = false
     @State private var slipHeight: CGFloat = 0
     /// Where the line the bottom paper would reach begins (global points), when there is one.
     @State private var footerLine: CGFloat?
@@ -51,8 +58,12 @@ struct ReaderScreen: View {
                 // Shut, the inner screen keeps what it shows until the app moves to the cover (no unfold as it closes).
                 shown: model.layout.posture
             )
-            let layout = Self.placed(input, fontScale: model.preferences.fontScale, proxy: proxy, bare: !model.chromeVisible && !coverScreen)
-            let clearance = ChromeClearance.resolve(container: proxy.size, occlusions: FoldReader.occlusions(in: proxy))
+            let clearance = ChromeClearance.resolve(container: proxy.size, occlusions: occlusions(in: proxy))
+            // Bare: the controls are down and no status column was under them as last seen (`columnTaken`). The
+            // remembered column (`StatusColumn`) keeps the status bar down but doesn't stop the open screen's page
+            // settling its top; the folded Duo's page settles on its first frame, before its column is seen, and
+            // holds there when the column grows under Contents and shrinks again (gatefold#415's CI).
+            let layout = Self.placed(input, fontScale: model.preferences.fontScale, proxy: proxy, occlusions: occlusions(in: proxy), bare: !model.chromeVisible && !columnTaken, scrolling: model.scrollsReflowable)
             let safeTop = ReaderChrome.safeTop(proxy.safeAreaInsets)
             // Where the top bar starts: below a band across the window's top, as ReaderChrome sets it.
             let barTop = max(safeTop, clearance.top)
@@ -65,7 +76,7 @@ struct ReaderScreen: View {
             // also keeps below the status bar's room as last seen in portrait.
             let slipWidth = min(proxy.size.width - 32 - clearance.leading - clearance.trailing, 460)
             let slipX = layout.gutter.map { g in g.maxX + (proxy.size.width - g.maxX - slipWidth) / 2 } ?? (proxy.size.width - slipWidth) / 2
-            let slipTop = PageSafeArea.slipTop(safeTop: ReaderChrome.StatusRoom.slipSafeTop(safeTop, size: proxy.size), occlusions: FoldReader.occlusions(in: proxy), span: slipX...(slipX + max(1, slipWidth)))
+            let slipTop = PageSafeArea.slipTop(safeTop: ReaderChrome.StatusRoom.slipSafeTop(safeTop, size: proxy.size), occlusions: occlusions(in: proxy), span: slipX...(slipX + max(1, slipWidth)))
             let push: CGFloat = aheadOpen
                 ? max(0, slipTop + slipHeight + 14 - (layout.pageFrame.minY + pageTopClearance(layout, clearance: clearance)))
                 : 0
@@ -235,7 +246,17 @@ struct ReaderScreen: View {
                 probes(layout)
             }
             .sensoryFeedback(.success, trigger: model.slipCount) { _, _ in model.slipKind == .landed }
-            .onChange(of: clearance.bookmarkLeading, initial: true) { _, taken in coverScreen = taken }
+            // Once a status column has sat under the controls at this size, the status bar stays hidden with
+            // the controls up there. Without the memory, hiding it took the column away, which brought the
+            // status bar back, which brought the column back, several times a second (Ari, build 39).
+            .onChange(of: StatusColumn.Reading(taken: clearance.bookmarkLeading, size: proxy.size), initial: true) { _, now in
+                if now.taken { StatusColumn.saw(at: now.size) }
+                columnTaken = now.taken
+                coverScreen = now.taken || StatusColumn.seen(at: now.size)
+            }
+            .onChange(of: occlusions(in: proxy), initial: true) { _, new in
+                readerLog.notice("occlusions \(new.map { "\($0)" }.joined(separator: " "), privacy: .public) safe top \(proxy.safeAreaInsets.top, privacy: .public) status bar \(statusBarHidden ? "hidden" : "shown", privacy: .public) size \(proxy.size.width, privacy: .public)x\(proxy.size.height, privacy: .public)")
+            }
             .onChange(of: input, initial: true) { _, new in
                 readerLog.notice("layout input \(new.containerSize.width, privacy: .public)x\(new.containerSize.height, privacy: .public) fold \(new.division.map { "\($0.frame) active \($0.isActive)" } ?? "none", privacy: .public) hinge \(String(describing: new.hinge), privacy: .public)")
             }
@@ -261,6 +282,9 @@ struct ReaderScreen: View {
         // the status bar stays hidden, chrome or not, the way Apple Books keeps its page top clear
         // (build 14 printed the time over "InkPad +56" on the iPad).
         .statusBarHidden(statusBarHidden)
+        .onChange(of: statusBarHidden, initial: true) { _, hidden in
+            if LaunchOptions.fakeStatusColumn { statusBarDrawn = !hidden }
+        }
         .persistentSystemOverlays(model.chromeVisible ? .automatic : .hidden)
         .animation(reduceMotion ? .easeOut(duration: 0.2) : Motion.open, value: showAppearance)
         .onChange(of: showAppearance, initial: true) { _, open in model.tuning = open }
@@ -429,7 +453,7 @@ struct ReaderScreen: View {
     private func measureChromeOverText(proxy: GeometryProxy, layout: ReaderLayout, paperTop: CGFloat, pass: Int) async {
         guard model.chromeVisible, layout.deck == nil, let host = model.host else { chromeOverText = ""; return }
         let global = proxy.frame(in: .global)
-        let clearance = ChromeClearance.resolve(container: proxy.size, occlusions: FoldReader.occlusions(in: proxy))
+        let clearance = ChromeClearance.resolve(container: proxy.size, occlusions: occlusions(in: proxy))
         let topPaper = global.minY + max(ReaderChrome.safeTop(proxy.safeAreaInsets), clearance.top) + ReaderChrome.topBarHeight
         var pieces: [String] = []
         for (name, frame) in chromePieces.sorted(by: { $0.key < $1.key }) where !frame.isEmpty {
@@ -637,6 +661,18 @@ struct ReaderScreen: View {
         }
     }
 
+    /// What the system covers, as `FoldReader` reports it; in UI tests that ask, the open Duo's status column.
+    private func occlusions(in proxy: GeometryProxy) -> [CGRect] {
+        Self.occlusions(in: proxy, statusBarDrawn: statusBarDrawn)
+    }
+
+    static func occlusions(in proxy: GeometryProxy, statusBarDrawn: Bool) -> [CGRect] {
+        guard LaunchOptions.fakeStatusColumn else { return FoldReader.occlusions(in: proxy) }
+        // In place of the screen's own report, so a test on the closed Duo (whose cover screen reports its
+        // status column with the status bar hidden too) sees the open screen's.
+        return statusBarDrawn ? [CGRect(x: proxy.size.width - 144, y: 0, width: 144, height: 82)] : []
+    }
+
     /// A single page on a wide screen keeps a book's measure (about 66 characters) with side margins.
     static func measured(_ layout: ReaderLayout, fontScale: Double) -> ReaderLayout {
         guard layout.posture == .single else { return layout }
@@ -654,8 +690,9 @@ struct ReaderScreen: View {
     /// never under it.
     /// Why the running head is or isn't up, for the log.
     private func headState(layout: ReaderLayout, proxy: GeometryProxy, clearance: ChromeClearance, hidden: Bool) -> String {
-        let camera = FoldReader.occlusions(in: proxy).filter { $0.height <= 120 && $0.minY < 80 }.min { $0.minY < $1.minY }
+        let camera = occlusions(in: proxy).filter { $0.height <= 120 && $0.minY < 80 }.min { $0.minY < $1.minY }
         let textTop = layout.pageFrame.minY + pageTopClearance(layout, clearance: clearance)
+        if model.pageTurn == .scroll { return "none (scrolling)" }
         guard layout.deck == nil, let camera else { return "none (no camera band)" }
         if textTop - camera.maxY < -camera.height / 2 || textTop < 40 { return "none (text top \(Int(textTop)), camera \(Int(camera.minY))-\(Int(camera.maxY)))" }
         if hidden { return "hidden (chrome or slip)" }
@@ -665,10 +702,13 @@ struct ReaderScreen: View {
 
     @ViewBuilder
     private func runningHead(layout: ReaderLayout, proxy: GeometryProxy, clearance: ChromeClearance, hidden: Bool) -> some View {
-        let camera = FoldReader.occlusions(in: proxy).filter { $0.height <= 120 && $0.minY < 80 }.min { $0.minY < $1.minY }
+        let camera = occlusions(in: proxy).filter { $0.height <= 120 && $0.minY < 80 }.min { $0.minY < $1.minY }
         let textTop = layout.pageFrame.minY + pageTopClearance(layout, clearance: clearance)
         let side: CGFloat = 24
-        if layout.deck == nil, let camera, textTop - camera.maxY >= -camera.height / 2, textTop >= 40,
+        // Scrolling text runs up through the top band, so nothing is drawn over it there.
+        if model.pageTurn == .scroll {
+            EmptyView()
+        } else if layout.deck == nil, let camera, textTop - camera.maxY >= -camera.height / 2, textTop >= 40,
            let words = model.runningHead ?? Optional(model.title) {
             // Clear of the folded "read on" tab, which hangs at the page's leading edge in this band.
             let tab: CGFloat = model.aheadTab != nil && model.slipFolded && model.slip != nil ? 16 + 112 : 0
@@ -792,20 +832,24 @@ struct ReaderScreen: View {
     private var statusBarHidden: Bool { !model.chromeVisible || coverScreen || catchUpTabShowing }
 
     func pageTopClearance(_ layout: ReaderLayout, clearance: ChromeClearance) -> CGFloat {
-        PageSafeArea.textTopInset
+        PageSafeArea.textTopInset + layout.textTopClearance
     }
 
     /// The resolved layout, measured, with its first line clear of the status bar and camera.
     /// `bare` is a page with the status bar hidden: only then does the system report the page's own
     /// clearance (with the status bar up, the folded Duo's status column reaches twice as far down).
-    static func placed(_ input: LayoutInput, fontScale: Double, proxy: GeometryProxy, bare: Bool) -> ReaderLayout {
+    /// `scrolling`: a scrolling page stays at the screen's top and carries the clearance for its text inset instead,
+    /// so the text runs up to the top as it scrolls (`PageSafeArea.placing`).
+    static func placed(_ input: LayoutInput, fontScale: Double, proxy: GeometryProxy, occlusions: [CGRect], bare: Bool, scrolling: Bool) -> ReaderLayout {
         let layout = measured(ReaderLayoutResolver.resolve(input), fontScale: fontScale)
         guard layout.deck == nil else { return layout }
         // The status column's taller report belongs to the status bar, which a bare page hides.
-        let occlusions = FoldReader.occlusions(in: proxy).filter { $0.height <= 120 }
+        let occlusions = occlusions.filter { $0.height <= 120 }
         let fresh = PageSafeArea.clearingTop(layout, safeTop: proxy.safeAreaInsets.top, occlusions: occlusions).pageFrame.minY - layout.pageFrame.minY
         let shift = PageTop.settled(fresh, known: bare && !occlusions.isEmpty, size: proxy.size, posture: layout.posture)
-        return PageSafeArea.shifted(layout, by: shift)
+        // Only where nothing but the camera sits above the text: under a phone's status bar and island the
+        // scrolling page keeps its place below them.
+        return PageSafeArea.placing(layout, shift: shift, scrolling: scrolling && proxy.safeAreaInsets.top < 1)
     }
 
     private func ribbonX(_ layout: ReaderLayout, clearance: ChromeClearance) -> CGFloat {
@@ -973,7 +1017,7 @@ struct WarmPage: View {
         GeometryReader { proxy in
             let input = LayoutInput(containerSize: proxy.size, division: FoldReader.division(in: proxy), hinge: hinge, forced: LaunchOptions.forcedPosture,
                                     shown: model.layout.posture)
-            let layout = ReaderScreen.placed(input, fontScale: model.preferences.fontScale, proxy: proxy, bare: false)
+            let layout = ReaderScreen.placed(input, fontScale: model.preferences.fontScale, proxy: proxy, occlusions: FoldReader.occlusions(in: proxy), bare: false, scrolling: model.scrollsReflowable)
             ZStack(alignment: .topLeading) {
                 if let host = model.hostController {
                     ReaderHostView(controller: host)
@@ -997,6 +1041,44 @@ struct WarmPage: View {
         }
         .allowsHitTesting(false)
         .accessibilityHidden(true)
+    }
+}
+
+/// Where a status column has been seen under the reader's controls (the open Duo held upright reports one only
+/// while the status bar is up). Remembered per screen size across launches, so the status bar stays hidden with
+/// the controls up there from the first frame, and never comes and goes with the column.
+@MainActor
+enum StatusColumn {
+    struct Reading: Equatable {
+        var taken: Bool
+        var size: CGSize
+    }
+    private static var seenSizes: Set<String>?
+    private static let defaultsKey = "GatefoldStatusColumnSizes"
+
+    private static func key(_ size: CGSize) -> String { "\(Int(size.width))x\(Int(size.height))" }
+    private static var sizes: Set<String> {
+        if let seenSizes { return seenSizes }
+        let stored = Set(UserDefaults.standard.stringArray(forKey: defaultsKey) ?? [])
+        seenSizes = stored
+        return stored
+    }
+
+    static func seen(at size: CGSize) -> Bool { sizes.contains(key(size)) }
+
+    /// Only while Gatefold is in front: iOS lays it out again at passing sizes for the app switcher (`PageTop`).
+    static func saw(at size: CGSize, active: Bool = UIApplication.shared.applicationState == .active) {
+        guard active, size.width > 0, size.height > 0, !seen(at: size) else { return }
+        var all = sizes
+        all.insert(key(size))
+        seenSizes = all
+        UserDefaults.standard.set(all.sorted(), forKey: defaultsKey)
+    }
+
+    /// A clean start (`-GatefoldReset`).
+    static func forgetEverything() {
+        seenSizes = []
+        UserDefaults.standard.removeObject(forKey: defaultsKey)
     }
 }
 

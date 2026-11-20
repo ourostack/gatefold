@@ -90,6 +90,10 @@ enum LaunchOptions {
     static var postureSwitches: Bool { isUITest && defaults.bool(forKey: "GatefoldPostureSwitches") }
     /// UI tests only: `reader.columns` reports the web view's own count of the text columns on screen.
     static var columnsProbe: Bool { isUITest && defaults.bool(forKey: "GatefoldColumnsProbe") }
+    /// UI tests only: the reader is told of a status column at its top trailing corner (144 x 82 pt) while the status
+    /// bar is up, and of nothing covered while it is hidden, in place of the screen's own report: what the open Duo
+    /// held upright reports, so the reader's answer to it is tested without a hinge (`DuoLayoutUITests`).
+    static var fakeStatusColumn: Bool { isUITest && defaults.bool(forKey: "GatefoldStatusColumn") }
     /// UI tests only: `reader.chromeOverText` counts the lines of text that show under a control with no paper behind them.
     static var chromeBackingProbe: Bool { isUITest && defaults.bool(forKey: "GatefoldChromeBackingProbe") }
     static var resetState: Bool { defaults.bool(forKey: "GatefoldReset") }
