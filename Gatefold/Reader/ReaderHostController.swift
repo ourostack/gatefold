@@ -73,6 +73,11 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     /// Under test, each turn's frames: whether a count behind the page costs the turn any.
     private let frames = FrameWatch()
     private var panStart: CGPoint = .zero
+    /// Where the swipe's finger went down (`shouldReceive`): the pan begins only after the finger has already
+    /// moved some way, and its translation starts from there.
+    private var panTouchDown: CGPoint = .zero
+    /// The page's own swipe (curl and fade), told apart from every other recognizer this controller delegates.
+    private weak var pagePan: UIPanGestureRecognizer?
     private var panForward = true
     /// Set when the pan ends before the turn is ready; the preparing task finishes with it.
     private var panEnded: Bool?
@@ -161,6 +166,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         let pan = UIPanGestureRecognizer(target: self, action: #selector(handlePan(_:)))
         pan.delegate = self
         view.addGestureRecognizer(pan)
+        pagePan = pan
 
         wire(navigator)
         model.host = self
@@ -1953,6 +1959,13 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
 
     // MARK: Taps
 
+    /// A tap in the margin beside the page (`ReaderScreen`'s side strips), at `point` in the page's coordinates:
+    /// outside its bounds, so it never reaches the page's own tap observer (gatefold#536).
+    func marginTapped(at point: CGPoint) {
+        weakModel?.noteInteraction() // as a touch on the page counts (`TouchNoticer`)
+        _ = handleTap(at: point)
+    }
+
     private func handleTap(at point: CGPoint) -> Bool {
         let width = navigator.view.bounds.width
         // While a jump's veil is up the page beneath is on its way somewhere: a tap then would turn
@@ -1962,9 +1975,8 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             readerLog.notice("tap: under a jump's veil at x \(Int(point.x), privacy: .public) of \(Int(width), privacy: .public); no turn, no controls")
             return true
         }
-        let edge = TapZones.edge(viewWidth: width, spread: model.layout.columns == .two)
-        let zone = point.x < edge ? "back" : point.x > width - edge ? "forward" : "middle"
-        readerLog.notice("tap: \(zone, privacy: .public) at x \(Int(point.x), privacy: .public) of \(Int(width), privacy: .public), controls \(self.model.chromeVisible, privacy: .public)")
+        let zone = TapZones.zone(x: point.x, viewWidth: width, spread: model.layout.columns == .two)
+        readerLog.notice("tap: \(zone.rawValue, privacy: .public) at x \(Int(point.x), privacy: .public) of \(Int(width), privacy: .public), controls \(self.model.chromeVisible, privacy: .public)")
         if model.chromeVisible {
             model.controlsTapped(visible: false)
             return true
@@ -1973,12 +1985,10 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             model.controlsTapped(visible: true)
             return true
         }
-        if point.x < edge {
-            turn(forward: false)
-        } else if point.x > width - edge {
-            turn(forward: true)
-        } else {
-            model.controlsTapped(visible: true)
+        switch zone {
+        case .back: turn(forward: false)
+        case .forward: turn(forward: true)
+        case .middle: model.controlsTapped(visible: true)
         }
         return true
     }
@@ -2198,16 +2208,11 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             updateFinger(point)
         case .ended, .cancelled:
             let v = pan.velocity(in: view).x
-            let dx = point.x - panStart.x
-            let width = view.bounds.width
-            let complete: Bool
-            if pan.state == .cancelled {
-                complete = false
-            } else if panForward {
-                complete = v < -250 || (v < 250 && dx < -width * 0.25)
-            } else {
-                complete = v > 250 || (v > -250 && dx > width * 0.25)
-            }
+            let travel = point.x - panTouchDown.x
+            // A quick brush shorter than a fingertip turns nothing (gatefold#536).
+            let complete = pan.state != .cancelled
+                && PageSwipe.turns(forward: panForward, travel: travel, velocity: v, width: view.bounds.width)
+            readerLog.notice("swipe: \(self.panForward ? "forward" : "back", privacy: .public) travelled \(Int(travel), privacy: .public) pt at \(Int(v), privacy: .public) pt/s; turns \(complete, privacy: .public)")
             guard curl.isActive, curl.top != nil, curl.beneath != nil else {
                 panEnded = complete
                 return
@@ -2228,6 +2233,14 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         let delta = CGPoint(x: point.x - panStart.x, y: point.y - panStart.y)
         // The corner follows the finger; a little vertical travel tilts the fold like paper.
         curl.finger = CGPoint(x: curl.corner.x + delta.x, y: curl.corner.y + delta.y * 0.6 - (curl.corner.y > 0 ? min(40, abs(delta.x) * 0.08) : -min(40, abs(delta.x) * 0.08)))
+    }
+
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+        // The page's own swipe: note where each finger goes down, for how far a swipe has travelled when it lifts.
+        if gestureRecognizer === pagePan, gestureRecognizer.numberOfTouches == 0 {
+            panTouchDown = touch.location(in: view)
+        }
+        return true
     }
 
     func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
