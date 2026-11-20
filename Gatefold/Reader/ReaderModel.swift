@@ -3083,6 +3083,15 @@ final class ReaderModel {
         let putBack = beneathOpen && keeper.reflowing == nil && turnTakenByReflow?.turn == beneathTurns
             && turnTakenByReflow.map { $0.hisMoves + 1 == hisMoves } == true
             ? anchorLocator.flatMap { $0.text.highlight != nil ? $0 : nil } : nil
+        // Landed with no reflow under way: the page's first words, read on the page beneath once the turn moved, are his
+        // anchor now, not once this landing's own read has come back. A turn of the iPad straight after the landing
+        // begins its reflow at once, and its restore put back the page he turned from while that read waited on a busy
+        // main thread (build 47's driver, a tap then on its side at 0.73). Not the words read before the turn moved:
+        // they stand in only for a reflow under way, and as his lasting anchor one was lost turning upright.
+        if beneathOpen, keeper.reflowing == nil, putBack == nil, let words = beneathWordsRead, let text = words.text.highlight {
+            keeper.userSettled(on: ReadingAnchor(href: words.href.string, progression: words.locations.progression ?? 0,
+                                                 text: ReaderJS.normalize(text)))
+        }
         beneathOpen = false
         turnFalling = false
         lastTurnMove = moves
@@ -3159,6 +3168,7 @@ final class ReaderModel {
         beneathTurns += 1
         beneathOpen = true
         beneathWords = reaching.map { page in page.copy(locations: { $0.totalProgression = self.totalProgression(of: page) }) }
+        beneathWordsRead = nil
         let turn = beneathTurns, reflow = reflowSerial
         let chapters = readingOrderHrefs
         // A turn begun while a reflow lays out reads a page still changing under it: no words. Its page read before it
@@ -3177,6 +3187,7 @@ final class ReaderModel {
             // Words from the chapter he left, its page still on screen as the next one loads, are not that page's.
             if let reaching, read.href.string != reaching.href.string { return }
             self.beneathWords = read.copy(locations: { $0.totalProgression = self.totalProgression(of: read) ?? $0.totalProgression })
+            self.beneathWordsRead = self.beneathWords
         }
     }
 
@@ -3240,6 +3251,8 @@ final class ReaderModel {
     @ObservationIgnored private var beneathOpen = false
     /// The first words on the page beneath his latest tap's turn, read as it moved, and that read.
     @ObservationIgnored private(set) var beneathWords: Locator?
+    /// `beneathWords` when read on the page beneath after the turn moved, not before it.
+    @ObservationIgnored private var beneathWordsRead: Locator?
     @ObservationIgnored private(set) var beneathRead: Task<Void, Never>?
     /// The tap turn under way when the latest reflow began (`reflowMove`), until its restore takes it or not, and
     /// whether it has landed under that reflow meanwhile.

@@ -243,4 +243,33 @@ import Testing
         #expect(model.keeper.restoreMayMove(move: model.hisMoves), "the restore gave way to the turn it puts back")
         model.close()
     }
+
+    /// A turn that landed just before the iPad turned, its landing's own read not yet back (a busy main thread): the
+    /// reflow's restore puts back the page he turned to, by the words read as the turn moved, never the page he
+    /// turned from. Build 47's driver lost such a turn at 0.73.
+    @Test func aTurnThatLandedJustBeforeTheReflowIsThePagePutBack() async throws {
+        let (model, page, publication, _) = try await open()
+        let next = try await tapTurn(to: 0.205, model, page, publication)
+        model.userTurnedPage()
+        beginReflow(model)
+        model.takeTurnUnderReflow()
+        #expect(model.keeper.anchor?.progression == next.locations.progression, "the restore puts back the page he turned from")
+        #expect(model.keeper.anchor?.text != nil)
+        model.close()
+    }
+
+    /// The words read before a turn moved stand in only for a reflow under way: landed with none, the page's own read
+    /// decides his anchor. Made his anchor at the landing, such words were lost turning upright (build 47's driver).
+    @Test func wordsReadBeforeATurnMovedAreNeverHisAnchorOnceItLands() async throws {
+        let (model, page, publication, _) = try await open()
+        let before = model.keeper.anchor
+        let next = try #require(await ReaderSyncTests.locate(publication, 0.205))
+        page.currentLocation = next
+        model.turnMovedBeneath(reaching: next.copy(text: { $0 = .init(highlight: "words read before the turn moved") }))
+        model.beneathRead?.cancel()
+        model.userTurnedPage()
+        #expect(model.keeper.anchor?.text != "words read before the turn moved")
+        #expect(model.keeper.anchor?.text == before?.text)
+        model.close()
+    }
 }
