@@ -4,6 +4,7 @@
     python3 -I scripts/ci-simulator.py start <name> "<device name prefix>"   # e.g. "iPad Pro 13-inch", "iPhone Duo"
     python3 -I scripts/ci-simulator.py wait <name> "<device name prefix>" [s] # wait for it (default 1200 s)
     python3 -I scripts/ci-simulator.py settle <runtime identifier> [s]        # wait for its image to settle (900 s)
+    python3 -I scripts/ci-simulator.py key "<device name prefix>"            # key=<its warm device's cache key>
     python3 -I scripts/ci-simulator.py --selftest
 
 `start` picks the newest iOS runtime the image already has that offers that device and is no newer than the selected
@@ -43,8 +44,13 @@ cryptex from the start and stayed one for 25 min, so there it does not wait. It 
 time, up to 900 s, and then fails as "The runner, not the app", before any boot, so the job doesn't spend its test
 time on a runtime that is about to move. A listing that doesn't answer never holds the boot.
 
+`key` prints the Actions cache key of the warm device for what `start` would boot (its device type, runtime build, the
+Xcode build, the CPU, the first-boot jobs boot-sim.sh disables and the ISO week), and that device type and runtime. A job that restored that device passes its set to boot-sim.sh as $BOOT_SIM_WARM_SET, and
+boot-sim.sh clones and boots it first (gatefold#533); a fresh device from `wait` or `erase` never uses it.
+
 A prefix that is a whole device name ("iPhone Duo") picks that device only, never a sibling such as "iPhone Duo Pro".
 """
+import hashlib
 import json
 import os
 import platform
@@ -164,6 +170,30 @@ def start(name, prefix):
          str(BOOT_SIM), name, kind, runtime, str(d / name), sys.executable, str(Path(__file__).resolve())],
         stdout=open(d / f"{name}.log", "ab"), stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
         start_new_session=True)
+
+
+def warm_key(runtimes, prefix, sdk, xcode, machine, labels, week):
+    """The Actions cache key of the warm device (gatefold#533), and the device type and runtime it is: the device
+    `start` would boot, by its runtime build, the Xcode build and the CPU, so a new runner image misses and boots fresh;
+    by the first-boot jobs boot-sim.sh disables (`labels`, a hash of quiet-sim.labels), which shape the seed; and by
+    the ISO week, so a bad seed is replaced within a week."""
+    runtime, kind = pick(runtimes, prefix, sdk)
+    build = next(r.get("buildversion") or "" for r in runtimes if r.get("identifier") == runtime)
+    if not build or not xcode:
+        raise SystemExit(f"ci-simulator: no build to key the warm {prefix!r} by (runtime {build!r}, Xcode {xcode!r})")
+    return f"warm-sim-1-{machine}-{kind}-{build}-xcode-{xcode}-quiet-{labels}-{week}", kind, runtime
+
+
+def key(prefix):
+    sdk = subprocess.run(["xcrun", "--sdk", "iphonesimulator", "--show-sdk-version"], capture_output=True, text=True,
+                         check=True, timeout=60).stdout.strip()
+    listing = subprocess.run(["xcrun", "simctl", "list", "runtimes", "-j"], capture_output=True, text=True,
+                             check=True, timeout=120).stdout
+    version = subprocess.run(["xcodebuild", "-version"], capture_output=True, text=True, check=True, timeout=60).stdout
+    xcode = next((line.split()[-1] for line in version.splitlines() if line.startswith("Build version")), "")
+    labels = hashlib.sha256(QUIET_LABELS.read_bytes()).hexdigest()[:12] if QUIET_LABELS.exists() else "none"
+    return warm_key(json.loads(listing)["runtimes"], prefix, sdk, xcode, platform.machine(), labels,
+                    time.strftime("%G-W%V", time.gmtime()))
 
 
 def wait_boot(name, limit, clock=time.time, nap=time.sleep):
@@ -332,8 +362,10 @@ def again(name, limit):
     log = d / f"{name}-2.log"
     with open(log, "ab") as err:
         # Its own process group, so a timeout ends its bootstatus and watchdog too, not only its bash.
+        # Never the warm device again: this is the fresh one (gatefold#533).
+        env = {k: v for k, v in os.environ.items() if k != "BOOT_SIM_WARM_SET"}
         proc = subprocess.Popen([str(BOOT_SIM), f"{name}-2", kind, runtime], stdout=subprocess.PIPE, stderr=err,
-                                stdin=subprocess.DEVNULL, start_new_session=True)
+                                stdin=subprocess.DEVNULL, start_new_session=True, env=env)
         try:
             stdout, _ = proc.communicate(timeout=timeout)
         except subprocess.TimeoutExpired:
@@ -440,6 +472,12 @@ def main(argv):
             d = state_dir()
             (d / f"{argv[1]}.log").open("a").write(f"ci-simulator start failed: {e!r}\n")
             (d / f"{argv[1]}.status").write_text("97\n")
+        return 0
+    if len(argv) == 2 and argv[0] == "key":
+        # For $GITHUB_OUTPUT: the key, and the device type and runtime it names (app.yml's warm-sim boots those). A
+        # failure prints nothing to it, and the job boots a new device as before.
+        k, kind, runtime = key(argv[1])
+        print(f"key={k}\nkind={kind}\nruntime={runtime}")
         return 0
     if len(argv) in (2, 3) and argv[0] == "settle":
         return 0 if settle(argv[1], float(argv[2]) if len(argv) == 3 else None) is not None else 1
@@ -592,6 +630,19 @@ def selftest():
         now[0] = 0.0
         assert settle("iOS-27-0", 30, lambda: None, clock, nap) == 0, "an unanswered listing never holds the boot"
     assert outcome(UNSETTLED, "", 1200).startswith("the runtime never settled"), "an unsettled runtime says so"
+    builds = [dict(r, buildversion=f"24B{r['version']}") for r in runtimes]
+    k = lambda rts, sdk="27.2", xcode="27B52", labels="abc", week="2026-W47": \
+        warm_key(rts, "iPhone Duo", sdk, xcode, "arm64", labels, week)
+    assert k(builds) == ("warm-sim-1-arm64-iPhone-Duo-24B27.2-xcode-27B52-quiet-abc-2026-W47", "iPhone-Duo", "iOS-27-2"), \
+        "the warm device is keyed by the device and runtime start would boot"
+    for other in (dict(sdk="27.1"), dict(xcode="27C10"), dict(labels="def"), dict(week="2026-W48")):
+        assert k(builds, **other)[0] != k(builds)[0], f"{other} must change the key"
+    for bad in ((runtimes, "27B52"), (builds, "")):
+        try:
+            k(bad[0], xcode=bad[1])
+            raise AssertionError("no build to key by must fail, so the job boots a new device")
+        except SystemExit:
+            pass
     print("ci-simulator: selftest passed")
     return 0
 

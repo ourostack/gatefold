@@ -36,6 +36,9 @@ EXEMPT = {
     # The shards and Unit tests wait for this run's build inside their own jobs, so a laned build would spend their
     # setup budget. One runs per pull request being pushed.
     ("app.yml", "build"): None,
+    # Pushes to main and dispatch only (its `on` and `if`): it saves the warm devices the UI shards boot from
+    # (gatefold#533).
+    ("warm-sim.yml", "warm-sim"): "github.event_name != 'pull_request'",
     # Real unfold's one build, for the same reason as App's: its five places wait for it inside their own jobs. One runs
     # per pull request being pushed that touches the reader.
     ("real-unfold.yml", "build"): None,
