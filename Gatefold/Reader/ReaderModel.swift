@@ -377,6 +377,9 @@ final class ReaderModel {
     var systemIsDark = false
     var theme: ReaderTheme { preferences.resolvedTheme(systemIsDark: systemIsDark) }
     var reduceMotion = false
+    /// The device has a hinge or a fold (a Duo), or a posture is forced: its spread opens with the unfold and shuts
+    /// with the fold. Without one (an iPad) a new layout comes from turning the device, and fades in (gatefold#537).
+    @ObservationIgnored var hasFold = false
     var pageTurn: PageTurnStyle { preferences.effectivePageTurn(reduceMotion: reduceMotion) }
     var totalProgression: Double { location?.locations.totalProgression ?? 0 }
     /// The heading above the first line on screen, for books without contents.
@@ -503,6 +506,12 @@ final class ReaderModel {
     var slotBlankProbe = 0
     /// UI tests: display frames an unfold's leaf stood risen, waiting on its spread (gatefold#302).
     var leafStoodFramesProbe = 0
+    /// UI tests: display frames, from a turn of the device until its reflow is shown, that showed a page other than
+    /// whole: a picture cut off, short of the page or out of its own proportions, a leaf over it, or the page itself
+    /// mid-layout ("3 broken (cover squeezed, leaf)", gatefold#537). Never set outside UI tests.
+    var turnFramesProbe = ""
+    /// UI tests: the fold's leaf (`UnfoldLeaf`) is on screen.
+    @ObservationIgnored var foldLeafUp = false
     /// UI tests: reflows that found their page loaded anew (the chapter thrown away and reloaded; gatefold#302).
     var reflowFreshPagesProbe = 0
     /// UI tests: counters that stopped answering and were replaced by fresh ones (gatefold#378).

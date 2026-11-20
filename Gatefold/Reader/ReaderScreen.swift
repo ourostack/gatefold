@@ -240,10 +240,13 @@ struct ReaderScreen: View {
                 readerLog.notice("layout input \(new.containerSize.width, privacy: .public)x\(new.containerSize.height, privacy: .public) fold \(new.division.map { "\($0.frame) active \($0.isActive)" } ?? "none", privacy: .public) hinge \(String(describing: new.hinge), privacy: .public)")
             }
             .onChange(of: layout, initial: true) { old, new in
+                // Set from the input this very layout came from, before anything reads it (gatefold#537).
+                model.hasFold = input.hasFold
                 let reason: ReflowReason = old.posture != new.posture ? .posture : .rotation
                 withAnimation(Motion.reflow) { model.updateLayout(new, reason: reason) }
                 if old.posture != .spread, new.posture == .spread { unfold() }
-                if old.posture == .spread, new.posture != .spread { fold() }
+                // Folding shuts the right page over the left; a turned iPad has no leaf to shut (gatefold#537).
+                if old.posture == .spread, new.posture != .spread, model.hasFold { fold() }
             }
         }
         .ignoresSafeArea()
@@ -324,6 +327,8 @@ struct ReaderScreen: View {
                 UnfoldLeaf(theme: model.theme, angle: leafAngle, opacity: leafOpacity)
                     .frame(width: layout.pageFrame.width / 2, height: layout.pageFrame.height)
                     .offset(x: layout.pageFrame.midX, y: layout.pageFrame.minY)
+                    .onAppear { if LaunchOptions.isUITest { model.foldLeafUp = true } }
+                    .onDisappear { if LaunchOptions.isUITest { model.foldLeafUp = false } }
             }
 
             Ribbon(isOn: model.isBookmarked, color: model.theme.accent) {
@@ -511,6 +516,12 @@ struct ReaderScreen: View {
                 .opacity(0.01)
                 .accessibilityIdentifier("reader.leafStoodFrames")
                 .accessibilityValue(String(model.leafStoodFramesProbe))
+                .allowsHitTesting(false)
+            Text("turn frames")
+                .font(.system(size: 1))
+                .opacity(0.01)
+                .accessibilityIdentifier("reader.turnFrames")
+                .accessibilityValue(model.turnFramesProbe)
                 .allowsHitTesting(false)
             Text("fresh pages")
                 .font(.system(size: 1))
@@ -970,7 +981,10 @@ struct WarmPage: View {
                         .offset(x: layout.pageFrame.minX, y: layout.pageFrame.minY)
                 }
             }
-            .onChange(of: layout, initial: true) { _, new in model.updateLayout(new, reason: .rotation) }
+            .onChange(of: layout, initial: true) { _, new in
+                model.hasFold = input.hasFold
+                model.updateLayout(new, reason: .rotation)
+            }
         }
         .ignoresSafeArea()
         .observingHinge($hinge)
@@ -1024,4 +1038,10 @@ enum PageTop {
         settledShift = [:]
         UserDefaults.standard.removeObject(forKey: defaultsKey)
     }
+}
+
+extension LayoutInput {
+    /// A device with a hinge or a fold (or a posture the bell or a test forces) opens and shuts like a book; one
+    /// without only turns, and a turn fades between whole pages (gatefold#537).
+    var hasFold: Bool { hinge != .none || division != nil || forced != nil }
 }
