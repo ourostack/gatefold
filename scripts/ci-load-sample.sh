@@ -15,6 +15,9 @@ echo "== cpus $(sysctl -n hw.ncpu) ($(sysctl -n hw.physicalcpu) physical), memor
 while :; do
   {
     echo "== $(date -u +%T) $(sysctl -n vm.loadavg)"
+    # Memory beside the load (gatefold#404): a 7 GB runner that swaps looks like a frozen CPU. Free memory (percent,
+    # the system's own figure), swap in use, the pages compressed and swapped out so far, and the processes' total RSS.
+    echo "memory: free $(sysctl -n kern.memorystatus_level 2>/dev/null || echo ?)%, swap $(sysctl -n vm.swapusage 2>/dev/null | sed 's/.*used = \([0-9.]*M\).*/\1/'), $(vm_stat 2>/dev/null | awk '/Pages occupied by compressor/ { c = $NF + 0 } /Swapouts/ { s = $NF + 0 } END { printf "compressor %d pages, swapouts %d", c, s }'), rss $(ps -Ao rss= | awk '{ t += $1 } END { printf "%d MB", t / 1024 }')"
     ps -Aceo pcpu=,rss=,comm= -r | head -8
     ps -Ao pid=,pcpu=,comm= > "$tmp/procs"
     # One line per thread; its last two fields are the process and the thread's state (R runnable, U blocked).
