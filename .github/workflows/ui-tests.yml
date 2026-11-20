@@ -145,6 +145,10 @@ jobs:
         with:
           path: ~/warm-sim
           key: ${{ steps.warm-key.outputs.key }}
+      - name: Keep the runner's agent ahead of the simulator's boot (gatefold#404)
+        # A first boot freezes this 3-CPU runner for 10 min and more (load 500 to 760); GitHub then loses the agent and
+        # cancels the job from outside. scripts/ci-runner-priority.py raises the agent's priority and lowers the simulator's.
+        run: nohup python3 -I scripts/ci-runner-priority.py 1500 > /dev/null 2>&1 &
       - name: Start the ${{ inputs.device }} booting
         env:
           BOOT_SIM_WARM_SET: ${{ steps.warm.outputs.cache-hit == 'true' && '~/warm-sim' || '' }}
