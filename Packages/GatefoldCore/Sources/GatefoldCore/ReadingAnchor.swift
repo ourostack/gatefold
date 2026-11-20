@@ -85,6 +85,27 @@ public struct AnchorKeeper: Sendable {
         reflowing != nil && move == reflowMove
     }
 
+    /// His turn had let go, and not landed, when this reflow began: the page it turned to is his, by its first words
+    /// read in the layout he turned in. The restore puts them back (gatefold#534).
+    public mutating func turnUnderReflow(_ page: ReadingAnchor) {
+        guard reflowing != nil else { return }
+        anchor = page
+    }
+
+    /// That turn landed under this reflow: its move is the turn the restore puts back, made before the reflow began,
+    /// not a move since. The restore goes on.
+    public mutating func turnUnderReflowLanded() {
+        guard reflowing != nil else { return }
+        reflowMove += 1
+    }
+
+    /// That turn, landed, turned out to have no words read: its landing is a move since, which the restore gives
+    /// way to, as any other.
+    public mutating func turnUnderReflowUnread() {
+        guard reflowing != nil else { return }
+        reflowMove -= 1
+    }
+
     /// The restore gave way to his move: the reflow ends without it, and his own place is taken again.
     public mutating func restoreGaveWay() {
         reflowing = nil

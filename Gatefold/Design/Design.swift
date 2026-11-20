@@ -148,6 +148,12 @@ enum LaunchOptions {
     /// position), as on a device that suspends or ends Gatefold a moment after he leaves, before the write it
     /// had under way lands (gatefold#301). Other writes (the launch jump's) land as ever.
     static var holdTurnWrites: Bool { isUITest && defaults.bool(forKey: "GatefoldHoldTurnWrites") }
+    /// UI tests only: a tap's turn holds this many seconds once Readium is on the page beneath, before its leaf
+    /// falls and it lands, so a turn of the iPad straight after the tap always begins under the turn (gatefold#534).
+    static var holdTapTurnLanding: Double? {
+        guard isUITest, defaults.object(forKey: "GatefoldHoldTapTurnLanding") != nil else { return nil }
+        return defaults.double(forKey: "GatefoldHoldTapTurnLanding")
+    }
     /// UI tests only: the leave's ordinary place write never lands (it holds before it maps its position), as
     /// when the jump's chapter still loading holds that write's read of the page until iOS has ended Gatefold
     /// (gatefold#309). Only what leaving writes at once reaches the reopen.
