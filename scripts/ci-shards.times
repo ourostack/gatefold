@@ -113,6 +113,14 @@ iPhone Duo|DuoLayoutUITests/testContentsOpenedAndClosedLeavesThePageWhereItWas	1
 iPhone Duo|SheetDismissPlaceUITests/testPullingContentsAwayAfterScrollingKeepsThePage	200	# estimate until CI has run it: 86 s locally (gatefold#535)
 iPhone Duo|SheetDismissPlaceUITests/testClosingContentsAfterScrollingKeepsThePage	210	# estimate until CI has run it: 104 s locally (gatefold#535)
 iPhone Duo|SheetDismissPlaceUITests/testClosingFineTuneAfterJustifyKeepsHisWords	280	# estimate until CI has run it: 175 s locally (gatefold#535)
+iPad Pro 13-inch|ContentsCloseUITests/testAFastSwipeDownFromTheHeaderClosesContents	120	# estimate until CI has run it: 49 s locally
+iPad Pro 13-inch|ContentsCloseUITests/testAFastSwipeDownInTheListAtItsTopClosesContents	180	# estimate until CI has run it: 86 s locally
+iPad Pro 13-inch|ContentsCloseUITests/testAPullPastTheTopOfTheListClosesContents	180	# estimate until CI has run it: 88 s locally
+iPad Pro 13-inch|ContentsCloseUITests/testFlickingThroughTheListKeepsContentsUp	250	# estimate until CI has run it: 123 s locally
+iPhone Duo|ContentsCloseUITests/testAFastSwipeDownFromTheHeaderClosesContents	200	# estimate until CI has run it: 133 s locally, on a new simulator
+iPhone Duo|ContentsCloseUITests/testAFastSwipeDownInTheListAtItsTopClosesContents	200	# estimate until CI has run it: 133 s locally
+iPhone Duo|ContentsCloseUITests/testAPullPastTheTopOfTheListClosesContents	200	# estimate until CI has run it: 100 s locally
+iPhone Duo|ContentsCloseUITests/testFlickingThroughTheListKeepsContentsUp	340	# estimate until CI has run it: 169 s locally
 iPhone Duo|ReviewerChecksUITests/testACounterThatNeverHearsBackStillCounts	420	# an estimate (an open, a count and a stalled counter's wait) until CI has timed it
 iPhone Duo|ReviewerChecksUITests/testEveryReopenReturnsTheSameWords	895	# p95 of 103, slowest 1362
 iPhone Duo|ReviewerChecksUITests/testPageNumbersAreOnOrOffInEveryBook	1075	# p95 of 97, slowest 1160
@@ -136,3 +144,4 @@ iPhone Duo|JustifyPlaceUITests/testJustifyKeepsHisPageAtTheMiddle	200	# estimate
 iPhone Duo|JustifyPlaceUITests/testJustifyKeepsHisPageAtThreeQuarters	200	# estimate until CI has run it: 66 to 125 s locally (build 47 Justify)
 iPad Pro 13-inch|JustifyPlaceUITests/testJustifyThenReopenKeepsHisPage	200	# estimate until CI has run it: 90 to 124 s locally (build 47 Duo reopen)
 iPhone Duo|JustifyPlaceUITests/testJustifyThenReopenKeepsHisPage	200	# estimate until CI has run it: 90 to 124 s on the iPad locally (build 47 Duo reopen)
+iPad Pro 13-inch|RotationMidTransitionUITests/testATurnIntoTheNextChapterThenUprightAtOnceKeepsTheChapterHeTurnedTo	150	# estimate (new, build 47 review): 74 s locally, twice that for a hosted runner; replace once CI has timed it

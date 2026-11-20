@@ -1,6 +1,10 @@
 # Every UI test CI runs, as tier|device|test (gatefold#39). scripts/ci-shards.py check --expect fails unless the
 # shards in .github/workflows/app.yml run exactly this set; after adding or removing a test, rewrite it with
 # python3 -I scripts/ci-shards.py write (it keeps these comment lines).
+main|iPad Pro 13-inch|ContentsCloseUITests/testAFastSwipeDownFromTheHeaderClosesContents
+main|iPad Pro 13-inch|ContentsCloseUITests/testAFastSwipeDownInTheListAtItsTopClosesContents
+main|iPad Pro 13-inch|ContentsCloseUITests/testAPullPastTheTopOfTheListClosesContents
+main|iPad Pro 13-inch|ContentsCloseUITests/testFlickingThroughTheListKeepsContentsUp
 main|iPad Pro 13-inch|CountingPlaceholderUITests/testAFreshOpenNeverLeavesTheNumbersSlotBlank
 main|iPad Pro 13-inch|CountingPlaceholderUITests/testAFreshOpenOnItsSideNeverLeavesTheNumbersSlotBlank
 main|iPad Pro 13-inch|FineTuneTapUITests/testAQuickTouchChangesEverySwitchOnce
@@ -70,6 +74,7 @@ main|iPad Pro 13-inch|ReviewerChecksUITests/testTheLastPagesNumberIsTheCount
 main|iPad Pro 13-inch|RotationFrameUITests/testATurnOnItsSideAndBackShowsOnlyWholePages
 main|iPad Pro 13-inch|RotationMidTransitionUITests/testAColdTurnOnItsSideOpensAWholeSpreadWithNoStandingLeaf
 main|iPad Pro 13-inch|RotationMidTransitionUITests/testARestoreThatNeverSettlesStillShowsTheSpread
+main|iPad Pro 13-inch|RotationMidTransitionUITests/testATurnIntoTheNextChapterThenUprightAtOnceKeepsTheChapterHeTurnedTo
 main|iPad Pro 13-inch|RotationMidTransitionUITests/testATurnOfThePageThenOnItsSideAtOnceKeepsThePageHeTurnedTo
 main|iPad Pro 13-inch|RotationMidTransitionUITests/testTurnedOnItsSideAndBackHeIsOnHisPage
 main|iPad Pro 13-inch|RotationMidTransitionUITests/testTurningDuringAContentsJump
@@ -78,8 +83,8 @@ main|iPad Pro 13-inch|RotationRepro/testRotateThenLeaveWhileTheRestoreWaitsOnHis
 main|iPad Pro 13-inch|RotationRepro/testRotateThenLeaveWhileTheRestoreWaitsOnItsPage
 main|iPad Pro 13-inch|RotationRepro/testRotateThenLeaveWhileTheRestoreWaitsOnItsPageWithoutItsWords
 main|iPad Pro 13-inch|RotationRepro/testRotateThenLeaveWhileTheRestoreWaitsWithItsSpanReadLate
-main|iPad Pro 13-inch|RotationRepro/testRotateThenLeaveWithoutItsWordsAndReopenOnTheChapterStart
 main|iPad Pro 13-inch|RotationRepro/testRotateThenLeaveWithItsSpanReadLateAndReopenOnTheChapterStart
+main|iPad Pro 13-inch|RotationRepro/testRotateThenLeaveWithoutItsWordsAndReopenOnTheChapterStart
 main|iPad Pro 13-inch|RotationRepro/testRotateThenLeaveWithoutTurning
 main|iPad Pro 13-inch|RotationRepro/testRotateThenLeaveWithoutTurningAfterStalledReflows
 main|iPad Pro 13-inch|ShelfAccessibilityUITests/testNoPageBehindTheShelfReachesAccessibility
@@ -89,6 +94,10 @@ main|iPad Pro 13-inch|SwallowedTapUITests/testTapsAfterSwipesAndAJumpAreAnswered
 main|iPad Pro 13-inch|WindowFitUITests/testOnItsSide
 main|iPad Pro 13-inch|WindowFitUITests/testUpright
 main|iPhone Duo|ChromeBackingUITests/testTheControlsNeverStandOnBareText
+main|iPhone Duo|ContentsCloseUITests/testAFastSwipeDownFromTheHeaderClosesContents
+main|iPhone Duo|ContentsCloseUITests/testAFastSwipeDownInTheListAtItsTopClosesContents
+main|iPhone Duo|ContentsCloseUITests/testAPullPastTheTopOfTheListClosesContents
+main|iPhone Duo|ContentsCloseUITests/testFlickingThroughTheListKeepsContentsUp
 main|iPhone Duo|DuoLayoutUITests/testContentsOpenedAndClosedLeavesThePageWhereItWas
 main|iPhone Duo|DuoLayoutUITests/testScrollingSpreadRunsToTheTopWithNoHeadOverIt
 main|iPhone Duo|DuoLayoutUITests/testScrollingTextRunsToTheTopWithNoHeadOverIt

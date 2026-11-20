@@ -39,8 +39,11 @@ struct FontChip: View {
 /// The tabs and Close sit in a header above the list, never in a navigation bar over it. The list scrolled under that
 /// bar, and a pull down that started on the bar scrolled the list back instead of closing the sheet. The list opens on
 /// his chapter, part way down, so on the folded Duo's cover screen Contents stayed up after his pull, and a tap meant
-/// for the page then chose a chapter (gatefold#535). A pull that starts on the header closes the sheet; one that
-/// starts on the list scrolls it first, as any list does.
+/// for the page then chose a chapter (gatefold#535). A pull or swipe down that starts on the header closes the sheet,
+/// as does one on the list once it is at its top. One that starts lower in the list scrolls it first, as any list
+/// does, and closes the sheet when it carries the list on past its top and his finger lifts there, as Apple Books'
+/// Contents does (`ContentsPull`); the sheet's own pull never takes over a drag the list began. A flick that coasts
+/// into the top never closes it.
 struct ContentsSheet: View {
     let model: ReaderModel
     @Environment(\.dismiss) private var dismiss
@@ -120,6 +123,11 @@ struct ContentsSheet: View {
             }
             .onAppear {
                 if let current = model.toc.first(where: isCurrent) { scroller.scrollTo(current.id, anchor: .center) }
+            }
+            .onScrollPhaseChange { old, new, context in
+                let lifted = old == .interacting && new != .interacting
+                let g = context.geometry
+                if ContentsPull.closes(fingerLifted: lifted, offset: g.contentOffset.y, insetTop: g.contentInsets.top) { dismiss() }
             }
             }
             .listStyle(.plain)
