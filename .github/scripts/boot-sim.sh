@@ -195,12 +195,14 @@ restart_service() {
 # A warm device first, when the job restored one (gatefold#533): a device that booted once on a runner like this one,
 # was shut down cleanly and saved with actions/cache by app.yml's `warm-sim` job, restored by the shard into
 # $BOOT_SIM_WARM_SET. That set's warm.txt names its UDID, device type and runtime. `simctl --set <warm set> clone`
-# copies it into the default set, which CoreSimulatorService already has loaded, so no service restart, and the clone
-# boots in seconds instead of a first boot's 3 to 7 min. It is tried once, with its own short bootstatus limit; if
+# copies it into the default set, which CoreSimulatorService already has loaded, so no service restart (3 to 8 s). On
+# the probe runners its clone booted in 39 to 205 s (iPad) and 133 to 269 s (Duo), where a first boot took 177 to 297 s
+# and 338 to 396 s (runs 44664827545, 44667405350, 44670666912). It is tried once, with its own bootstatus limit; if
 # there is none for this device type and runtime, the clone fails, or it doesn't boot in time, it is deleted and the
-# attempts below run exactly as they would with no cache.
+# attempts below run exactly as they would with no cache. At worst that costs the limit, the listing and the recheck
+# (about 400 s), and one full attempt still fits the wait step's 1200 s after it.
 WARM_SET="${BOOT_SIM_WARM_SET:-}"
-WARM_LIMIT="$(limit "${BOOT_SIM_WARM_LIMIT:-}" 120)" || exit 2
+WARM_LIMIT="$(limit "${BOOT_SIM_WARM_LIMIT:-}" 240)" || exit 2
 DEVICES="${BOOT_SIM_DEVICES:-$HOME/Library/Developer/CoreSimulator/Devices}"
 warm=""
 try_warm() {

@@ -45,7 +45,7 @@ time, up to 900 s, and then fails as "The runner, not the app", before any boot,
 time on a runtime that is about to move. A listing that doesn't answer never holds the boot.
 
 `key` prints the Actions cache key of the warm device for what `start` would boot (its device type, runtime build, the
-Xcode build and the CPU). A job that restored that device passes its set to boot-sim.sh as $BOOT_SIM_WARM_SET, and
+Xcode build and the CPU), and that device type and runtime. A job that restored that device passes its set to boot-sim.sh as $BOOT_SIM_WARM_SET, and
 boot-sim.sh clones and boots it first (gatefold#533); a fresh device from `wait` or `erase` never uses it.
 
 A prefix that is a whole device name ("iPhone Duo") picks that device only, never a sibling such as "iPhone Duo Pro".
@@ -178,7 +178,7 @@ def warm_key(runtimes, prefix, sdk, xcode, machine):
     build = next(r.get("buildversion") or "" for r in runtimes if r.get("identifier") == runtime)
     if not build or not xcode:
         raise SystemExit(f"ci-simulator: no build to key the warm {prefix!r} by (runtime {build!r}, Xcode {xcode!r})")
-    return f"warm-sim-1-{machine}-{kind}-{build}-xcode-{xcode}"
+    return f"warm-sim-1-{machine}-{kind}-{build}-xcode-{xcode}", kind, runtime
 
 
 def key(prefix):
@@ -469,8 +469,10 @@ def main(argv):
             (d / f"{argv[1]}.status").write_text("97\n")
         return 0
     if len(argv) == 2 and argv[0] == "key":
-        # For $GITHUB_OUTPUT. A failure prints nothing to it, and the job boots a new device as before.
-        print(f"key={key(argv[1])}")
+        # For $GITHUB_OUTPUT: the key, and the device type and runtime it names (app.yml's warm-sim boots those). A
+        # failure prints nothing to it, and the job boots a new device as before.
+        k, kind, runtime = key(argv[1])
+        print(f"key={k}\nkind={kind}\nruntime={runtime}")
         return 0
     if len(argv) in (2, 3) and argv[0] == "settle":
         return 0 if settle(argv[1], float(argv[2]) if len(argv) == 3 else None) is not None else 1
@@ -624,7 +626,8 @@ def selftest():
         assert settle("iOS-27-0", 30, lambda: None, clock, nap) == 0, "an unanswered listing never holds the boot"
     assert outcome(UNSETTLED, "", 1200).startswith("the runtime never settled"), "an unsettled runtime says so"
     builds = [dict(r, buildversion=f"24B{r['version']}") for r in runtimes]
-    assert warm_key(builds, "iPhone Duo", "27.2", "27B52", "arm64") == "warm-sim-1-arm64-iPhone-Duo-24B27.2-xcode-27B52", \
+    assert warm_key(builds, "iPhone Duo", "27.2", "27B52", "arm64") == \
+        ("warm-sim-1-arm64-iPhone-Duo-24B27.2-xcode-27B52", "iPhone-Duo", "iOS-27-2"), \
         "the warm device is keyed by the device and runtime start would boot"
     assert warm_key(builds, "iPhone Duo", "27.1", "27B52", "arm64") != warm_key(builds, "iPhone Duo", "27.2", "27B52", "arm64")
     assert warm_key(builds, "iPhone Duo", "27.2", "27B52", "arm64") != warm_key(builds, "iPhone Duo", "27.2", "27C10", "arm64")

@@ -125,8 +125,9 @@ jobs:
         # 3-CPU runner through the tests. Only the runner's own indexing; the simulator's is in quiet-sim.labels.
         run: sudo -n mdutil -a -i off > /dev/null || echo "::warning::Spotlight indexing stays on (mdutil failed)"
       # A warm device (gatefold#533): one that booted once on this runner image, saved by app.yml's `warm-sim` job on
-      # main. Its clone boots in seconds, not a first boot's 3 to 7 min. Not for the rotation shards, which need a device
-      # at least as cold as an erased one. A miss, or any trouble here, boots a new device as before (boot-sim.sh).
+      # main. Its clone boots in about half a first boot's time (boot-sim.sh has the numbers). Not for the rotation
+      # shards, which need a device at least as cold as an erased one. A miss, or any trouble here, boots a new device
+      # as before (boot-sim.sh).
       - id: warm-key
         name: The warm ${{ inputs.device }}'s cache key
         if: ${{ !inputs.cold }}
