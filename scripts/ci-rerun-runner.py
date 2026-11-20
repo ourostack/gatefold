@@ -18,6 +18,9 @@ A run with a cancelled job ends "cancelled", not "failure" (main's App run 44021
 stopped from outside, and the rerun workflow skipped it twice), so both conclusions come here. A pull request's run
 cancelled because a newer push replaced it (app.yml's cancel-in-progress) is left alone: its newer run is the one.
 
+A run whose `proof` job passed is left alone: its cancelled shards already ran again and passed in the same run
+(app.yml's `retry` job, scripts/ci-retry.py), so only its conclusion, "cancelled", is stale.
+
 A test that failed next to them leaves the run as it is, for a person. Adapted from ouro-ui-apple's
 scripts/ci-rerun-broken-runner.py (#196, #202): annotations are read before logs, which GitHub stores late.
 """
@@ -101,6 +104,9 @@ def main(run_id):
             return
     jobs = job_lines(gh("api", "--paginate", f"{repo}/actions/runs/{run_id}/attempts/1/jobs",
                         "--jq", ".jobs[]|{id, name, conclusion}|tojson"))
+    if any(j["name"].startswith("Full suite passed on tree ") and j["conclusion"] == "success" for j in jobs):
+        print("Not rerunning: the cancelled shards already passed on their retries in this run (scripts/ci-retry.py)")
+        return
     failed = [(j["name"], j["conclusion"], evidence(repo, j["id"]) if j["conclusion"] == "failure" else "")
               for j in jobs if j["conclusion"] in ("failure", "cancelled", "timed_out")]
     rerun, why = decide(failed)

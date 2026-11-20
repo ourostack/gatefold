@@ -324,6 +324,7 @@ jobs:
         run: |
           python3 -I scripts/ci-bootstrap.py --selftest
           python3 -I scripts/ci-rerun-runner.py --selftest
+          python3 -I scripts/ci-retry.py --selftest
           python3 -I scripts/ci-runner-faults.py --selftest
           python3 -I scripts/ci-requeue.py --selftest
       - name: A main commit skips the suite only on proof of its own tree (a mismatched tree or a red run proves nothing)
@@ -972,11 +973,81 @@ jobs:
       timeout: ${{ needs.changes.outputs.full == 'false' && matrix.pr_when == 'smoke' && needs.changes.outputs.edited-duo != '' && fromJSON(needs.changes.outputs.smoke-duo) || matrix.timeout }}
       lane: ${{ matrix.lane }}
 
+  # A shard GitHub cancelled from outside (about 1 in 12, during the simulator's first boot; gatefold#404) runs again in
+  # this run, on a fresh runner, as soon as every shard has ended; rerun-runner.yml could only rerun it after the whole
+  # run ended, an hour later. A run with a cancelled job still ends "cancelled" whatever else passes (probe run
+  # 44714274715), so the run's own conclusion says nothing here: the gates read `retry-verdict`, and each is green when
+  # every shard of its group passed, or was cancelled and passed on its retry. A shard that failed is never retried
+  # (scripts/ci-retry.py has the rule and its self-test).
+  retry-plan:
+    name: Which shards were cancelled
+    needs: [changes, ipad-place, ipad-undo, ipad-taps, ipad-reviewer, duo]
+    if: ${{ !cancelled() && needs.changes.outputs.native != 'false' && needs.changes.outputs.app != 'false' && needs.changes.outputs.proven != 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      count: ${{ steps.plan.outputs.count }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          python3 -I scripts/ci-retry.py --selftest
+          python3 -I scripts/ci-retry.py plan
+
+  retry:
+    name: Retry (${{ matrix.shard }})
+    needs: [changes, retry-plan]
+    if: ${{ !cancelled() && needs.retry-plan.outputs.count != '' && needs.retry-plan.outputs.count != '0' }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.retry-plan.outputs.matrix) }}
+    permissions:
+      contents: read
+      actions: write
+    uses: ./.github/workflows/ui-tests.yml
+    with:
+      device: ${{ matrix.device }}
+      sim: ${{ matrix.sim }}
+      shard: ${{ matrix.shard }}
+      tests: ${{ matrix.tests }}
+      skip: ${{ matrix.skip }}
+      full: ${{ needs.changes.outputs.full }}
+      cold: ${{ matrix.cold }}
+      timeout: ${{ matrix.timeout }}
+      lane: ${{ matrix.lane }}
+      try: "-retry"
+
+  retry-verdict:
+    name: Judge the shards after their retries
+    needs: [changes, retry-plan, retry]
+    if: ${{ !cancelled() && needs.changes.outputs.native != 'false' && needs.changes.outputs.app != 'false' && needs.changes.outputs.proven != 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      ipad-place: ${{ steps.verdict.outputs.ipad-place }}
+      ipad-undo: ${{ steps.verdict.outputs.ipad-undo }}
+      ipad-taps: ${{ steps.verdict.outputs.ipad-taps }}
+      ipad-reviewer: ${{ steps.verdict.outputs.ipad-reviewer }}
+      duo: ${{ steps.verdict.outputs.duo }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: verdict
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+        run: python3 -I scripts/ci-retry.py verdict
+
   ipad-place-gate:
     # The required check for the iPad's place: green when every shard passed, or when only Markdown changed (gatefold#42).
     # Always runs, so the check reports on every pull request; a failed or cancelled shard turns it red.
     name: iPad (place)
-    needs: [changes, ipad-place]
+    needs: [changes, ipad-place, retry-verdict]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 2
@@ -984,6 +1055,7 @@ jobs:
       - env:
           APP: ${{ needs.changes.outputs.app }}
           SHARDS: ${{ needs.ipad-place.result }}
+          RETRIED: ${{ needs.retry-verdict.outputs.ipad-place }}
           NATIVE: ${{ needs.changes.outputs.native }}
           PROVEN: ${{ needs.changes.outputs.proven }}
           PROOF: ${{ needs.changes.outputs.proof }}
@@ -991,14 +1063,15 @@ jobs:
           if [ "$NATIVE" = false ]; then echo "The macOS checks run on main after the merge, not on a pull request or in the merge queue."; exit 0; fi
           if [ "$APP" = false ]; then echo "Only Markdown changed; nothing to test."; exit 0; fi
           if [ "$PROVEN" = true ]; then echo "::notice::Passed by proof: every shard passed on this tree in $PROOF"; exit 0; fi
-          echo "Shards: $SHARDS"
-          [ "$SHARDS" = success ]
+          echo "Shards: $SHARDS; after retrying the cancelled ones: ${RETRIED:-not judged}"
+          # A shard GitHub cancelled and the `retry` job ran again counts as passed; a failed shard never does.
+          [ "$SHARDS" = success ] || { [ "$RETRIED" = ok ] && [ "$SHARDS" != skipped ]; }
 
   ipad-undo-gate:
     # The required check for one-tap undo: green when every shard passed, or when only Markdown changed (gatefold#42).
     # Always runs, so the check reports on every pull request; a failed or cancelled shard turns it red.
     name: iPad (undo)
-    needs: [changes, ipad-undo]
+    needs: [changes, ipad-undo, retry-verdict]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 2
@@ -1006,6 +1079,7 @@ jobs:
       - env:
           APP: ${{ needs.changes.outputs.app }}
           SHARDS: ${{ needs.ipad-undo.result }}
+          RETRIED: ${{ needs.retry-verdict.outputs.ipad-undo }}
           NATIVE: ${{ needs.changes.outputs.native }}
           PROVEN: ${{ needs.changes.outputs.proven }}
           PROOF: ${{ needs.changes.outputs.proof }}
@@ -1013,14 +1087,15 @@ jobs:
           if [ "$NATIVE" = false ]; then echo "The macOS checks run on main after the merge, not on a pull request or in the merge queue."; exit 0; fi
           if [ "$APP" = false ]; then echo "Only Markdown changed; nothing to test."; exit 0; fi
           if [ "$PROVEN" = true ]; then echo "::notice::Passed by proof: every shard passed on this tree in $PROOF"; exit 0; fi
-          echo "Shards: $SHARDS"
-          [ "$SHARDS" = success ]
+          echo "Shards: $SHARDS; after retrying the cancelled ones: ${RETRIED:-not judged}"
+          # A shard GitHub cancelled and the `retry` job ran again counts as passed; a failed shard never does.
+          [ "$SHARDS" = success ] || { [ "$RETRIED" = ok ] && [ "$SHARDS" != skipped ]; }
 
   ipad-taps-gate:
     # The required check for the iPad's taps: green when every shard passed, or when only Markdown changed (gatefold#42).
     # Always runs, so the check reports on every pull request; a failed or cancelled shard turns it red.
     name: iPad (taps)
-    needs: [changes, ipad-taps]
+    needs: [changes, ipad-taps, retry-verdict]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 2
@@ -1028,6 +1103,7 @@ jobs:
       - env:
           APP: ${{ needs.changes.outputs.app }}
           SHARDS: ${{ needs.ipad-taps.result }}
+          RETRIED: ${{ needs.retry-verdict.outputs.ipad-taps }}
           NATIVE: ${{ needs.changes.outputs.native }}
           PROVEN: ${{ needs.changes.outputs.proven }}
           PROOF: ${{ needs.changes.outputs.proof }}
@@ -1035,15 +1111,16 @@ jobs:
           if [ "$NATIVE" = false ]; then echo "The macOS checks run on main after the merge, not on a pull request or in the merge queue."; exit 0; fi
           if [ "$APP" = false ]; then echo "Only Markdown changed; nothing to test."; exit 0; fi
           if [ "$PROVEN" = true ]; then echo "::notice::Passed by proof: every shard passed on this tree in $PROOF"; exit 0; fi
-          echo "Shards: $SHARDS"
-          [ "$SHARDS" = success ]
+          echo "Shards: $SHARDS; after retrying the cancelled ones: ${RETRIED:-not judged}"
+          # A shard GitHub cancelled and the `retry` job ran again counts as passed; a failed shard never does.
+          [ "$SHARDS" = success ] || { [ "$RETRIED" = ok ] && [ "$SHARDS" != skipped ]; }
 
   ipad-reviewer-gate:
     # The required check for the reviewers' checks on the iPad: green when every shard passed, or when only Markdown
     # changed (gatefold#42). Always runs, so the check reports on every pull request; a failed or cancelled shard turns
     # it red.
     name: iPad (reviewer)
-    needs: [changes, ipad-reviewer]
+    needs: [changes, ipad-reviewer, retry-verdict]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 2
@@ -1051,6 +1128,7 @@ jobs:
       - env:
           APP: ${{ needs.changes.outputs.app }}
           SHARDS: ${{ needs.ipad-reviewer.result }}
+          RETRIED: ${{ needs.retry-verdict.outputs.ipad-reviewer }}
           NATIVE: ${{ needs.changes.outputs.native }}
           PROVEN: ${{ needs.changes.outputs.proven }}
           PROOF: ${{ needs.changes.outputs.proof }}
@@ -1058,14 +1136,15 @@ jobs:
           if [ "$NATIVE" = false ]; then echo "The macOS checks run on main after the merge, not on a pull request or in the merge queue."; exit 0; fi
           if [ "$APP" = false ]; then echo "Only Markdown changed; nothing to test."; exit 0; fi
           if [ "$PROVEN" = true ]; then echo "::notice::Passed by proof: every shard passed on this tree in $PROOF"; exit 0; fi
-          echo "Shards: $SHARDS"
-          [ "$SHARDS" = success ]
+          echo "Shards: $SHARDS; after retrying the cancelled ones: ${RETRIED:-not judged}"
+          # A shard GitHub cancelled and the `retry` job ran again counts as passed; a failed shard never does.
+          [ "$SHARDS" = success ] || { [ "$RETRIED" = ok ] && [ "$SHARDS" != skipped ]; }
 
   duo-gate:
     # The required check for the Duo's UI tests: green when every shard passed, or when only Markdown changed
     # (gatefold#42). Always runs, so the check reports on every pull request; a failed or cancelled shard turns it red.
     name: Duo (the reviewers' checks)
-    needs: [changes, duo]
+    needs: [changes, duo, retry-verdict]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 2
@@ -1073,6 +1152,7 @@ jobs:
       - env:
           APP: ${{ needs.changes.outputs.app }}
           SHARDS: ${{ needs.duo.result }}
+          RETRIED: ${{ needs.retry-verdict.outputs.duo }}
           NATIVE: ${{ needs.changes.outputs.native }}
           PROVEN: ${{ needs.changes.outputs.proven }}
           PROOF: ${{ needs.changes.outputs.proof }}
@@ -1080,8 +1160,9 @@ jobs:
           if [ "$NATIVE" = false ]; then echo "The macOS checks run on main after the merge, not on a pull request or in the merge queue."; exit 0; fi
           if [ "$APP" = false ]; then echo "Only Markdown changed; nothing to test."; exit 0; fi
           if [ "$PROVEN" = true ]; then echo "::notice::Passed by proof: every shard passed on this tree in $PROOF"; exit 0; fi
-          echo "Shards: $SHARDS"
-          [ "$SHARDS" = success ]
+          echo "Shards: $SHARDS; after retrying the cancelled ones: ${RETRIED:-not judged}"
+          # A shard GitHub cancelled and the `retry` job ran again counts as passed; a failed shard never does.
+          [ "$SHARDS" = success ] || { [ "$RETRIED" = ok ] && [ "$SHARDS" != skipped ]; }
 
   # xcode-27 is the only hosted image with Xcode 27.1: the first SDK with the iPhone Duo fold APIs, the iOS 27
   # deployment target and the iPhone Duo simulator. macos-latest (macOS 26) has only Xcode 26, so these jobs cannot
