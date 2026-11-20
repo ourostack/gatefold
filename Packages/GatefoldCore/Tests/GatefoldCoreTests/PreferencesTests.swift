@@ -201,4 +201,31 @@ struct PageDensityTests {
         #expect(store.defaults.margins == .wide)
         #expect(store.defaults.fontScale == 1.3)
     }
+
+    /// Justify spreads a line's words; it never makes the lines taller. Build 47's iPad run flipped it and the page came
+    /// back starting 661 characters before his words: it had also set the line height, so the book was cut into pages
+    /// again. Every font and spacing has one line height whichever way Justify is set.
+    @Test func justifyNeverChangesTheLineHeight() {
+        for font in ReaderFont.allCases {
+            for spacing in LineSpacing.allCases {
+                var plain = ReaderPreferences()
+                plain.font = font
+                plain.lineSpacing = spacing
+                var justified = plain
+                justified.justify = true
+                #expect(justified.lineHeight == plain.lineHeight, "\(font) \(spacing)")
+            }
+        }
+    }
+
+    /// The book keeps its own line height until he chooses a font or a spacing of his own.
+    @Test func theBooksLineHeightStandsUntilHeChoosesOne() {
+        #expect(ReaderPreferences().lineHeight == nil)
+        var spaced = ReaderPreferences()
+        spaced.lineSpacing = .relaxed
+        #expect(spaced.lineHeight == LineSpacing.relaxed.lineHeight)
+        var font = ReaderPreferences()
+        font.font = .georgia
+        #expect(font.lineHeight == LineSpacing.normal.lineHeight)
+    }
 }

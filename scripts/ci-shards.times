@@ -121,3 +121,7 @@ iPhone Duo|ScrollModeUITests/testATapOnTheStatusBarKeepsThePlace	90	# estimate: 
 iPhone Duo|ScrollModeUITests/testScrollingPastAChaptersEndAndBackLandsWhereHeWas	300	# estimate: 100 locally at load 900, until CI has run it
 iPad Pro 13-inch|ReaderVisibleTextUITests/testTheShelfReadsNoWords	30	# estimate (16 on a Mac)
 iPad Pro 13-inch|RotationMidTransitionUITests/testATurnOfThePageThenOnItsSideAtOnceKeepsThePageHeTurnedTo	250	# estimate (new in gatefold#534), as the slowest RotationMidTransition test; replace once CI has timed it
+iPad Pro 13-inch|JustifyPlaceUITests/testJustifyKeepsHisPageAtAnEighth	270	# estimate until CI has run it: 157 s locally (build 47 Justify)
+iPad Pro 13-inch|JustifyPlaceUITests/testJustifyKeepsHisPageAtAThird	270	# estimate until CI has run it: 157 s locally (build 47 Justify)
+iPad Pro 13-inch|JustifyPlaceUITests/testJustifyKeepsHisPageAtTheMiddle	270	# estimate until CI has run it: 157 s locally (build 47 Justify)
+iPad Pro 13-inch|JustifyPlaceUITests/testJustifyKeepsHisPageAtThreeQuarters	270	# estimate until CI has run it: 157 s locally (build 47 Justify)

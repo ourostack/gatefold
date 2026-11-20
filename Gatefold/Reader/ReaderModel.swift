@@ -4026,7 +4026,6 @@ final class ReaderModel {
     }
 
     static func epubPreferences(_ prefs: ReaderPreferences, theme: ReaderTheme, columns: GatefoldCore.ColumnCount, viewWidth: CGFloat, tabletop: Bool = false, language: Language? = nil, fixedLayout: Bool = false) -> EPUBPreferences {
-        let custom = prefs.font != .original || prefs.lineSpacing != .normal || prefs.justify
         // Each choice keeps a share of the page's width (Classic Apple Books' measure on an iPad page),
         // a spread's pages included; tabletop's half-height page keeps no more than Classic.
         let choice: PageMargins = tabletop && prefs.margins == .wide ? .normal : prefs.margins
@@ -4043,7 +4042,7 @@ final class ReaderModel {
             // else (every other user setting stays nil unless chosen).
             hyphens: true,
             language: language,
-            lineHeight: custom ? prefs.lineSpacing.lineHeight : nil,
+            lineHeight: prefs.lineHeight,
             // Facing pages give their width to the line, not the margins (the spine is margin enough),
             // so each page keeps a book's measure.
             pageMargins: margins,

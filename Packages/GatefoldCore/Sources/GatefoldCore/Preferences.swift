@@ -209,6 +209,14 @@ public struct ReaderPreferences: Codable, Equatable, Sendable {
         showsPagesLeft = try c.decodeIfPresent(Bool.self, forKey: .showsPagesLeft) ?? false
     }
 
+    /// The line height the page is given, or nil for the book's own: set once he chooses a font or a spacing.
+    /// Never by Justify, which spreads a line's words and leaves its height alone. Justify used to set it too, so
+    /// its switch cut the book into pages again, and on one page his words came back halfway down a page he had
+    /// read (build 47).
+    public var lineHeight: Double? {
+        font != .original || lineSpacing != .normal ? lineSpacing.lineHeight : nil
+    }
+
     /// Steps the font size; returns false at either end so the caller can skip the haptic.
     @discardableResult
     public mutating func stepFont(up: Bool) -> Bool {
