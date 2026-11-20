@@ -35,13 +35,20 @@ struct FontChip: View {
 }
 
 /// Contents and bookmarks.
+///
+/// The tabs and Close sit in a header above the list, never in a navigation bar over it. The list scrolled under that
+/// bar, and a pull down that started on the bar scrolled the list back instead of closing the sheet. The list opens on
+/// his chapter, part way down, so on the folded Duo's cover screen Contents stayed up after his pull, and a tap meant
+/// for the page then chose a chapter (gatefold#535). A pull that starts on the header closes the sheet; one that
+/// starts on the list scrolls it first, as any list does.
 struct ContentsSheet: View {
     let model: ReaderModel
     @Environment(\.dismiss) private var dismiss
     @State private var tab = 0
 
     var body: some View {
-        NavigationStack {
+        VStack(spacing: 0) {
+            header
             ScrollViewReader { scroller in
             List {
                 if tab == 0 {
@@ -117,25 +124,34 @@ struct ContentsSheet: View {
             }
             .listStyle(.plain)
             .scrollContentBackground(.hidden)
-            .navigationTitle(model.title)
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .principal) {
-                    Picker("Show", selection: $tab) {
-                        Text("Contents").tag(0)
-                        Text("Bookmarks").tag(1)
-                        Text("Highlights").tag(2)
-                    }
-                    .pickerStyle(.segmented)
-                    .frame(maxWidth: 320)
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done", systemImage: "xmark") { dismiss() }
-                        .labelStyle(.iconOnly)
-                }
-            }
         }
         .presentationDetents([.large])
+        .presentationDragIndicator(.visible)
+    }
+
+    /// The tabs and Close, with nothing that scrolls beneath them: a pull down from here takes the sheet away.
+    private var header: some View {
+        HStack(spacing: 12) {
+            Picker("Show", selection: $tab) {
+                Text("Contents").tag(0)
+                Text("Bookmarks").tag(1)
+                Text("Highlights").tag(2)
+            }
+            .pickerStyle(.segmented)
+            .frame(maxWidth: 320)
+            .frame(maxWidth: .infinity)
+            Button("Close", systemImage: "xmark") { dismiss() }
+                .labelStyle(.iconOnly)
+                .buttonStyle(.glassProminent)
+                .buttonBorderShape(.circle)
+                .controlSize(.large)
+                .accessibilityIdentifier("contents.close")
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 20)
+        .padding(.bottom, 8)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("contents.header")
     }
 
     private func isCurrent(_ entry: TOCEntry) -> Bool {

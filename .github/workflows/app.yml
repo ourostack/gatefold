@@ -828,6 +828,16 @@ jobs:
             cold: false
             timeout: 64 # 30 + 2 x 8.4 + 5 + 12
             lane: 10
+          - shard: duo-sheets
+            # A sheet closed without choosing keeps his place (gatefold#535): Contents pulled away or closed after a
+            # scroll, Fine-Tune closed after Justify (estimates until CI has run them)
+            tests: >-
+              SheetDismissPlaceUITests
+            skip: ""
+            pr_tests: none
+            cold: false
+            timeout: 70 # 30 + 2 x 11.5 + 5 + 12
+            lane: 9
           - shard: duo-scroll
             # Scroll mode keeps the place: a sideways swipe, a status-bar tap, a chapter's end and back (estimates until CI has run them)
             tests: >-
