@@ -1,0 +1,74 @@
+name: Warm simulators
+
+# The warm devices App's UI shards boot from (gatefold#533). A new simulator's first boot took 155 to 393 s on the
+# xcode-27 runner (296 s at the median, run 44603453975); a clone of a device that has booted once and shut down
+# cleanly boots in about half that (.github/scripts/boot-sim.sh has the probe numbers). On each push to main this
+# looks for the warm iPad and Duo for this runner's Xcode and runtime builds in the Actions cache (the key is
+# `ci-simulator.py key`); if one is missing, it boots that device once, shuts it down and saves it. Caches saved on
+# main are read by every branch. Its own workflow, so App's run, TestFlight and the next main run never wait for it;
+# a shard that misses boots a new device as before, so nothing depends on it. Never on a pull request or in the
+# merge queue (scripts/ci-lanes.py exempts it only while its `if` holds that).
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  warm-sim:
+    name: Warm simulator (${{ matrix.device }})
+    if: ${{ github.event_name != 'pull_request' }}
+    runs-on: xcode-27
+    timeout-minutes: 40
+    concurrency:
+      group: warm-sim-${{ matrix.sim }}
+      cancel-in-progress: false
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - device: "iPad Pro 13-inch"
+            sim: gatefold-ipad
+          - device: "iPhone Duo"
+            sim: gatefold-duo
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/select-xcode
+        with:
+          xcode: "27.2"
+      - id: key
+        timeout-minutes: 3
+        run: python3 -I scripts/ci-simulator.py key "${{ matrix.device }}" | tee -a "$GITHUB_OUTPUT"
+      - id: have
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/warm-sim
+          key: ${{ steps.key.outputs.key }}
+          lookup-only: true
+      # Booted by boot-sim.sh (the runtime settled first) and shut down as soon as bootstatus finishes: no idle and no
+      # `wait` (its `quiet` removes first-boot jobs from the running device). Probe run 44670666912 measured that seed:
+      # its clones booted by a shard's path in 93 s (iPad) and 146 s (Duo); a seed left to idle and quieted, run
+      # 44667405350, gave 205 s and 269 s.
+      - name: Boot the ${{ matrix.device }} once and keep it as the warm device
+        if: steps.have.outputs.cache-hit != 'true'
+        timeout-minutes: 30
+        env:
+          KIND: ${{ steps.key.outputs.kind }}
+          RUNTIME: ${{ steps.key.outputs.runtime }}
+        run: |
+          set -eu
+          python3 -I scripts/ci-simulator.py settle "$RUNTIME"
+          udid=$(bash .github/scripts/boot-sim.sh "${{ matrix.sim }}" "$KIND" "$RUNTIME")
+          xcrun simctl shutdown "$udid"
+          mkdir -p ~/warm-sim
+          cp -Rp "$HOME/Library/Developer/CoreSimulator/Devices/$udid" ~/warm-sim/
+          echo "$udid $KIND $RUNTIME" > ~/warm-sim/warm.txt
+          du -sh ~/warm-sim
+      - if: steps.have.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/warm-sim
+          key: ${{ steps.key.outputs.key }}

@@ -124,24 +124,24 @@ jobs:
         # Nothing in a shard searches the Mac, and its indexer (mds, mds_stores) held runnable threads and CPU on this
         # 3-CPU runner through the tests. Only the runner's own indexing; the simulator's is in quiet-sim.labels.
         run: sudo -n mdutil -a -i off > /dev/null || echo "::warning::Spotlight indexing stays on (mdutil failed)"
-      # A warm device (gatefold#533): one that booted once on this runner image, saved by app.yml's `warm-sim` job on
-      # main. Its clone boots in about half a first boot's time (boot-sim.sh has the numbers). Not for the rotation
+      # A warm device (gatefold#533): one that booted once on this runner image, saved by warm-sim.yml on main. Its clone boots in about half a first boot's time (boot-sim.sh has the numbers). Not for the rotation
       # shards, which need a device at least as cold as an erased one. A miss, or any trouble here, boots a new device
       # as before (boot-sim.sh).
       - id: warm-key
         name: The warm ${{ inputs.device }}'s cache key
         if: ${{ !inputs.cold }}
         continue-on-error: true
-        timeout-minutes: 3
+        timeout-minutes: 2
         run: python3 -I scripts/ci-simulator.py key "${{ inputs.device }}" | tee -a "$GITHUB_OUTPUT"
       - id: warm
         name: Restore the warm ${{ inputs.device }}
         if: ${{ steps.warm-key.outputs.key != '' }}
+        # 14 to 26 s on the probe runners; a stalled one gives up well inside the 30 min of setup.
         continue-on-error: true
-        timeout-minutes: 4
+        timeout-minutes: 2
         uses: actions/cache/restore@v4
         env:
-          SEGMENT_DOWNLOAD_TIMEOUT_MINS: "3"
+          SEGMENT_DOWNLOAD_TIMEOUT_MINS: "1"
         with:
           path: ~/warm-sim
           key: ${{ steps.warm-key.outputs.key }}
@@ -169,6 +169,9 @@ jobs:
         env:
           CI_SIMULATOR_BUDGET: "1740" # the step's 30 min less one: it ends with its own message, never killed
         run: python3 -I scripts/ci-simulator.py wait "${{ inputs.sim }}" "${{ inputs.device }}" 1200
+      - name: Free the warm device's copy (its clone, if any, is booted)
+        if: ${{ !cancelled() && steps.warm.outputs.cache-hit == 'true' }}
+        run: rm -rf ~/warm-sim
       - id: fetch
         # Usually 4 s, but 13 of 144 took over 2 min and one 10.6 min (gatefold#144), in bunches across jobs: the
         # artifact store, not the runner. A download cut off at 4 min tries once more, rather than eating the tests' time.
