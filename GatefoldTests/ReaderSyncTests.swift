@@ -653,6 +653,38 @@ final class ScriptedPage: ReaderPage {
         f.model.close()
     }
 
+    /// The same two steps with the second never taken: the page stays on the file's start, not his place in it, and
+    /// Readium reports nothing more (run 44820376573: the scrubber jump's page showed the chapter file's first words,
+    /// at 2 % of it, for 30 minutes, with nothing kept and the words a test reads still the page he had left). Once
+    /// the jump is back with its place not on the page shown, the place is sent again, and where it lands is kept.
+    @Test func aJumpLeftOnItsFilesStartIsSentToItsPlaceAgain() async throws {
+        let f = try await Self.make(remote: { _, _ in nil })
+        await f.model.load()
+        f.page.reportsOnGo = false
+        f.page.holdsJumps = true
+        // The web view, still loading the file, opens its first page and drops the place in it.
+        f.page.dropsPlaceInFile = 1
+        let jump = Task { await f.model.go(toProgression: 0.5, rememberBack: false) }
+        for _ in 0..<10_000 where f.page.heldJumps == 0 { await Task.yield() }
+        try #require(f.page.heldJumps == 1, "the jump never went out")
+        let target = try #require(f.page.jumps.last)
+        try #require((target.locations.progression ?? 0) > 0, "the jump's place is inside its file")
+        let start = Self.boundary(of: target)
+        f.page.currentLocation = start
+        await f.model.locationDidChange(start)
+        f.page.holdsJumps = false
+        f.page.releaseJumps()
+        await jump.value
+        #expect(f.page.jumps.count == 2, "the jump's place was never sent again (\(f.page.jumps.count) jumps)")
+        let saved = try #require(f.app.library.book(Self.frankenstein.fastHash)?.locatorJSON.flatMap { try? Locator(jsonString: $0) },
+                                 "nothing was kept for the jump")
+        #expect(saved.href == target.href && (saved.locations.progression ?? 0) > 0,
+                "the jump's place was never kept (saved \(saved.href) @\(saved.locations.progression ?? -1))")
+        #expect(f.model.location?.href == target.href && (f.model.location?.locations.progression ?? 0) > 0,
+                "the page still names the jump's file start")
+        f.model.close()
+    }
+
     /// A landing whose first words couldn't be captured (a reflow that wouldn't settle) keeps Readium's
     /// boundary only until the layout is still: then the page he sees is the place (build 20's loop
     /// kept the chapter's start under a stalled reflow and reopened a page before him).
