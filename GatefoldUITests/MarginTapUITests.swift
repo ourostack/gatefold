@@ -136,7 +136,7 @@ final class MarginTapUITests: XCTestCase {
         // A quick flick a little longer than a fingertip still turns, as does half the window (the spazz run's swipes).
         var before = r.landed()
         r.at(0.6, 0.5).press(forDuration: 0.05, thenDragTo: r.at(0.6, 0.5).withOffset(CGVector(dx: -60, dy: 0)),
-                             withVelocity: Self.brushSpeed, thenHoldForDuration: 0)
+                             withVelocity: Self.flickSpeed, thenHoldForDuration: 0)
         XCTAssertTrue(readsUntil(reads: Self.reads, "a quick 60-pt flick turns") { r.landed() > before }.ok, "a quick 60-pt flick turns the page")
         _ = readsUntil(reads: Self.reads, "the page stands still after the flick") { (r.el("reader.turning").value as? String) == "0" }
         before = r.landed()
@@ -171,6 +171,12 @@ final class MarginTapUITests: XCTestCase {
     /// and 600 pt/s a 20-pt drag often began no swipe at all. At 300 pt/s with no hold, main's page turned on all four
     /// brushes of a calibration run (gatefold#536).
     private static let brushSpeed = XCUIGestureVelocity(300)
+
+    /// The flick's speed: 600 pt/s, twice `brushSpeed`. At `brushSpeed` two of nine local runs of the 60-pt flick
+    /// lifted under `PageSwipe.flickSpeed` (234 and 237 pt/s; another at 253), so they were slow 60-pt drags, which
+    /// rightly turn nothing. The warning above about 450 and 600 pt/s is about 20-pt drags: at 600 the 60-pt flick began
+    /// its swipe, lifted at 611 to 668 pt/s and turned in six of six local runs.
+    private static let flickSpeed = XCUIGestureVelocity(600)
 
     /// The reads a brush gets to move the page: more than a committed swipe takes to land (the spazz run's moved
     /// within its step).
