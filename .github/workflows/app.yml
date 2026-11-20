@@ -318,6 +318,7 @@ jobs:
         run: |
           python3 -I scripts/ci-simulator.py --selftest
           bash scripts/test-ci-simulator.sh
+          sh scripts/ci-app-log.sh --selftest
       - name: A shard whose test runner never started is told from one whose test failed (gatefold#135)
         run: |
           python3 -I scripts/ci-bootstrap.py --selftest

@@ -119,13 +119,15 @@ jobs:
       - uses: ./.github/actions/select-xcode
         with:
           xcode: "27.2"
+      - name: Turn off Spotlight indexing on the runner
+        timeout-minutes: 2
+        # Nothing in a shard searches the Mac, and its indexer (mds, mds_stores) held runnable threads and CPU on this
+        # 3-CPU runner through the tests. Only the runner's own indexing; the simulator's is in quiet-sim.labels.
+        run: sudo -n mdutil -a -i off > /dev/null || echo "::warning::Spotlight indexing stays on (mdutil failed)"
       - name: Start the ${{ inputs.device }} booting
         run: python3 -I scripts/ci-simulator.py start "${{ inputs.sim }}" "${{ inputs.device }}"
-      - name: Sample the runner's load every 20 s for the whole job (gatefold#39)
-        run: |
-          # shellcheck disable=SC2016
-          nohup sh -c 'while :; do echo "== $(date -u +%T) $(sysctl -n vm.loadavg)"; ps -Aceo pcpu=,rss=,comm= -r | head -8; sleep 20; done' \
-            >> "$RUNNER_TEMP/load.log" 2>&1 &
+      - name: Sample the runner's load, and whose threads make it, every 20 s for the whole job (gatefold#39)
+        run: nohup sh scripts/ci-load-sample.sh "$RUNNER_TEMP/load.log" 20 > /dev/null 2>&1 &
       - name: Wait for this commit's build (Build for testing runs while the simulator boots)
         id: artifact
         # Up to the build's own 35 min; it usually lands 2 to 4 min after the run starts.
@@ -184,17 +186,9 @@ jobs:
       - name: Keep the app's place log as it runs (file and progression only, never the book's words)
         run: |
           sh scripts/ci-crashes.sh mark
-          nohup sh -c 'xcrun simctl spawn "$0" log stream --style compact --predicate "subsystem == \"bot.ouro.gatefold\"" 2>/dev/null \
-            | grep --line-buffered -E "place (read|write)|place:|location |reflow|landing|landed|reopen|tapped|warm:|open:|first page|pages:|turn:|spread:|veil:|settle [0-9]|REPRO|snapshot:|back:" \
-            | grep --line-buffered -v -E "text:|\] visible|\] anchor[: ]" >> "$1"' "$UDID" "$RUNNER_TEMP/place.log" >/dev/null 2>&1 &
-          # Why the system ended the app, when it did (gatefold#76): runningboardd's lines about it, no page text.
-          nohup sh -c 'xcrun simctl spawn "$0" log stream --style compact --predicate "process == \"runningboardd\" AND eventMessage CONTAINS \"bot.ouro.gatefold\"" 2>/dev/null \
-            | grep --line-buffered -i -E "termin|kill|jetsam|exit|reason|invalidat|memory|highwater|limit" >> "$1"' "$UDID" "$RUNNER_TEMP/rb.log" >/dev/null 2>&1 &
-          # The reader's own lines (launch-jump landings among them; gatefold#72), kept for every shard as Real unfold
-          # keeps them; lines carrying the page's text are dropped. ($0 and $1 are the inner shell's, so single quotes.)
-          # shellcheck disable=SC2016
-          nohup sh -c 'xcrun simctl spawn "$0" log stream --style compact --predicate "subsystem == \"bot.ouro.gatefold\" AND category == \"reader\"" 2>/dev/null \
-            | grep --line-buffered -v "text:" >> "$1"' "$UDID" "$RUNNER_TEMP/reader.log" >/dev/null 2>&1 &
+          # One `log stream` for the place, runningboardd and reader logs (scripts/ci-app-log.sh): each stream is another
+          # client the simulator's diagnosticd matches every message against.
+          nohup sh scripts/ci-app-log.sh "$UDID" "$RUNNER_TEMP" > /dev/null 2>&1 &
           # Every thread of the app and its busiest neighbours while main is held past 30 s (gatefold#357): the app's
           # own watch names main's work only, and nothing when main waits on another thread or the process starves.
           nohup sh scripts/ci-hang-sample.sh "$RUNNER_TEMP/reader.log" "$RUNNER_TEMP/hangs" >> "$RUNNER_TEMP/hangs.log" 2>&1 &
@@ -285,6 +279,7 @@ jobs:
         timeout-minutes: 2
         run: |
           pkill -f "log stream --style compact" || true
+          pkill -f "ci-load-sample.sh" || true
           pkill -f "ci-hang-sample.sh" || true
           wc -l < "$RUNNER_TEMP/place.log" || true
       - uses: actions/upload-artifact@v4
@@ -302,6 +297,7 @@ jobs:
             ${{ runner.temp }}/reader.log
             ${{ runner.temp }}/warm.log
             ${{ runner.temp }}/load.log
+            ${{ runner.temp }}/load.log.threads
             ${{ runner.temp }}/crashes
             ${{ runner.temp }}/ui.log
             ${{ runner.temp }}/hangs

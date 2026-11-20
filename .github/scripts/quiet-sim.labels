@@ -41,3 +41,19 @@ com.apple.intelligenceplatformd
 com.apple.modelmanagerd
 com.apple.newsd
 com.apple.familycircled
+# Not first-boot jobs: the simulator daemons holding the most runnable threads through the tests in probe
+# 44308174398 (Find My, Reminders, Wallet, Siri, Fitness, ad attribution, Finance, Safari bookmark sync, Family
+# Controls, Calendar access), and apsd, which used about 12% of the runner's 3 CPUs throughout. Each label is the one in
+# the iOS 27.2 runtime's LaunchDaemons plist for that process. Last, as each weighs less than the jobs above. Gatefold
+# sends and receives no push notifications.
+com.apple.apsd
+com.apple.findmy.findmylocated
+com.apple.remindd
+com.apple.passd
+com.apple.assistantd
+com.apple.fitcore
+com.apple.ap.adprivacyd
+com.apple.financed
+com.apple.SafariBookmarksSyncAgent
+com.apple.FamilyControlsAgent
+com.apple.calaccessd

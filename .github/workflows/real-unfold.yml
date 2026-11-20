@@ -3,8 +3,10 @@ name: Real unfold
 # Opens and shuts an iPhone Duo simulator's hinge through DeviceHub (the Duo tour's helper) with a book
 # open, and judges each unfold from the app's own "reflow check" log line: did the spread keep his words?
 # It drives a window; it is the posture gate (the UI test can't move a hinge, and a spread forced on the folded cover
-# is no reader's layout). It runs on every pull request, merge-queue group and push to main that touches the reader or
-# the app shell (`changes`; one that touches none skips, which reports success), and on demand. A red main is fixed as
+# is no reader's layout). Like App's macOS jobs (#531), it unfolds on pushes to main that touch the reader or the app
+# shell, and on demand, never on a pull request or in the merge queue (`changes` output `native`): there the gate
+# reports success by saying so, and the Linux checks judge the change. A red main is the alarm, the central auto-revert
+# reverts the culprit, and TestFlight publishes only a commit whose own main run passed. A red main is fixed as
 # AGENTS.md says ("CI").
 #
 # One build, five places at once (gatefold#39's pattern): `Build for testing` builds the app for the simulator once and
@@ -52,6 +54,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       reader: ${{ steps.diff.outputs.reader }}
+      native: ${{ steps.native.outputs.native }}
       tree: ${{ steps.tree.outputs.tree }}
       proven: ${{ steps.proof.outputs.proven }}
       proof: ${{ steps.proof.outputs.proof }}
@@ -67,6 +70,11 @@ jobs:
       - id: tree
         name: The tree this run tests (the proof job names it)
         run: echo "tree=$(git rev-parse 'HEAD^{tree}')" >> "$GITHUB_OUTPUT"
+      - id: native
+        name: Does this run unfold on a Mac? (main pushes and dispatches only)
+        env:
+          EVENT: ${{ github.event_name }}
+        run: if [ "$EVENT" = pull_request ] || [ "$EVENT" = merge_group ]; then echo "native=false" >> "$GITHUB_OUTPUT"; else echo "native=true" >> "$GITHUB_OUTPUT"; fi
       - id: proof
         name: Has the merge queue or a pull request already unfolded this tree? (main pushes and the merge queue)
         if: github.event_name == 'push' || github.event_name == 'merge_group'
@@ -100,7 +108,7 @@ jobs:
     name: Build for testing
     needs: changes
     # A failed `changes` leaves the outputs empty, so it builds rather than skipping as a pass.
-    if: ${{ !cancelled() && needs.changes.outputs.reader != 'false' && needs.changes.outputs.proven != 'true' }}
+    if: ${{ !cancelled() && needs.changes.outputs.native != 'false' && needs.changes.outputs.reader != 'false' && needs.changes.outputs.proven != 'true' }}
     runs-on: xcode-27
     timeout-minutes: 35
     permissions:
@@ -150,7 +158,7 @@ jobs:
     needs: changes
     # Starts with the run, so the simulator boots and DeviceHub opens while `build` builds. A failed `changes` leaves
     # the outputs empty, so the unfolds run rather than skipping as a pass.
-    if: ${{ !cancelled() && needs.changes.outputs.reader != 'false' && needs.changes.outputs.proven != 'true' }}
+    if: ${{ !cancelled() && needs.changes.outputs.native != 'false' && needs.changes.outputs.reader != 'false' && needs.changes.outputs.proven != 'true' }}
     strategy:
       # Every place gives its verdict, on a pull request too: one red place says nothing about the others.
       fail-fast: false
@@ -510,11 +518,13 @@ jobs:
       - env:
           EVENT: ${{ github.event_name }}
           READER: ${{ needs.changes.outputs.reader }}
+          NATIVE: ${{ needs.changes.outputs.native }}
           BUILD: ${{ needs.build.result }}
           UNFOLD: ${{ needs.unfold.result }}
           PROVEN: ${{ needs.changes.outputs.proven }}
           PROOF: ${{ needs.changes.outputs.proof }}
         run: |
+          if [ "$NATIVE" = false ]; then echo "The unfolds run on main after the merge, not on a pull request or in the merge queue."; exit 0; fi
           if [ "$PROVEN" = true ]; then echo "::notice::Passed by proof: every unfold passed on this tree in $PROOF"; exit 0; fi
           if [ "$READER" = false ]; then echo "This change doesn't touch the reader, so the unfolds have nothing to judge."; exit 0; fi
           echo "Build: $BUILD; unfolds at every place: $UNFOLD"
