@@ -243,4 +243,16 @@ struct AnchorKeeperTests {
         #expect(keeper.anchor == anchor)
         #expect(keeper.reflowMove == 0)
     }
+
+    // gatefold#534: the reflow check is by words only.
+    @Test func theVerdictIsHisWordsNeverProgressions() {
+        let around = (start: 0.38, end: 0.45)
+        #expect(VisibleRange(href: "c.xhtml", start: around.start, end: around.end, text: nil).verdict(for: anchor) == .unread)
+        #expect(VisibleRange(href: "c.xhtml", start: around.start, end: around.end, text: "an entirely different page").verdict(for: anchor) == .lost)
+        let elsewhere = VisibleRange(href: "c.xhtml", start: 0.9, end: 0.9, text: "the top line. " + anchor.text!)
+        #expect(elsewhere.verdict(for: anchor) == .visible)
+        #expect(elsewhere.offset(of: anchor) == 14)
+        #expect(VisibleRange(href: "other.xhtml", start: 0.4, end: 0.4, text: anchor.text).verdict(for: anchor) == .lost)
+        #expect(VisibleRange(href: "c.xhtml", start: 0.4, end: 0.4, text: "x").verdict(for: ReadingAnchor(href: "c.xhtml", progression: 0.4, text: nil)) == .wordless)
+    }
 }
