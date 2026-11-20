@@ -108,6 +108,14 @@ iPhone Duo|QuickLeaveUITests/testALeaveUnderTheReopensCoverAfterTheWatchdogKeeps
 iPhone Duo|SheetDismissPlaceUITests/testPullingContentsAwayAfterScrollingKeepsThePage	200	# estimate until CI has run it: 86 s locally (gatefold#535)
 iPhone Duo|SheetDismissPlaceUITests/testClosingContentsAfterScrollingKeepsThePage	210	# estimate until CI has run it: 104 s locally (gatefold#535)
 iPhone Duo|SheetDismissPlaceUITests/testClosingFineTuneAfterJustifyKeepsHisWords	280	# estimate until CI has run it: 175 s locally (gatefold#535)
+iPad Pro 13-inch|ContentsCloseUITests/testAFastSwipeDownFromTheHeaderClosesContents	120	# estimate until CI has run it: 49 s locally
+iPad Pro 13-inch|ContentsCloseUITests/testAFastSwipeDownInTheListAtItsTopClosesContents	180	# estimate until CI has run it: 86 s locally
+iPad Pro 13-inch|ContentsCloseUITests/testAPullPastTheTopOfTheListClosesContents	180	# estimate until CI has run it: 88 s locally
+iPad Pro 13-inch|ContentsCloseUITests/testFlickingThroughTheListKeepsContentsUp	250	# estimate until CI has run it: 123 s locally
+iPhone Duo|ContentsCloseUITests/testAFastSwipeDownFromTheHeaderClosesContents	200	# estimate until CI has run it: 133 s locally, on a new simulator
+iPhone Duo|ContentsCloseUITests/testAFastSwipeDownInTheListAtItsTopClosesContents	200	# estimate until CI has run it: 133 s locally
+iPhone Duo|ContentsCloseUITests/testAPullPastTheTopOfTheListClosesContents	200	# estimate until CI has run it: 100 s locally
+iPhone Duo|ContentsCloseUITests/testFlickingThroughTheListKeepsContentsUp	340	# estimate until CI has run it: 169 s locally
 iPhone Duo|ReviewerChecksUITests/testACounterThatNeverHearsBackStillCounts	420	# an estimate (an open, a count and a stalled counter's wait) until CI has timed it
 iPhone Duo|ReviewerChecksUITests/testEveryReopenReturnsTheSameWords	895	# p95 of 103, slowest 1362
 iPhone Duo|ReviewerChecksUITests/testPageNumbersAreOnOrOffInEveryBook	1075	# p95 of 97, slowest 1160
