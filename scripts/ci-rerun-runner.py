@@ -82,6 +82,12 @@ def evidence(repo, job_id):
     return "\n".join(text)
 
 
+def job_lines(out):
+    """One job per line. `--paginate` with a `--jq` array printed one array per page, so a run of more than 100
+    jobs (main's full App run) failed to parse ("Extra data", run 44673477325) and nothing was rerun."""
+    return [json.loads(line) for line in out.splitlines() if line.strip()]
+
+
 def main(run_id):
     repo = "repos/{owner}/{repo}"
     run = json.loads(gh("api", f"{repo}/actions/runs/{run_id}",
@@ -93,8 +99,8 @@ def main(run_id):
         if superseded(run, newest[0] if newest else None):
             print(f"Not rerunning: a newer push replaced it (run {newest[0]})")
             return
-    jobs = json.loads(gh("api", "--paginate", f"{repo}/actions/runs/{run_id}/attempts/1/jobs",
-                         "--jq", "[.jobs[]|{id, name, conclusion}]"))
+    jobs = job_lines(gh("api", "--paginate", f"{repo}/actions/runs/{run_id}/attempts/1/jobs",
+                        "--jq", ".jobs[]|{id, name, conclusion}|tojson"))
     failed = [(j["name"], j["conclusion"], evidence(repo, j["id"]) if j["conclusion"] == "failure" else "")
               for j in jobs if j["conclusion"] in ("failure", "cancelled", "timed_out")]
     rerun, why = decide(failed)
@@ -161,6 +167,12 @@ def selftest():
             bad += 1
             print(f"FAIL: superseded({run}, {newest}) is not {want}")
     cases += runs
+    # Two pages, as `gh api --paginate --jq '...|tojson'` prints them (run 44673477325 had more than 100 jobs).
+    pages = '{"id":1,"name":"a","conclusion":"success"}\n{"id":2,"name":"b","conclusion":"cancelled"}\n\n'
+    if [j["id"] for j in job_lines(pages)] != [1, 2]:
+        bad += 1
+        print("FAIL: two pages of jobs did not read as two jobs")
+    cases.append(pages)
     print(f"{len(cases) - bad} of {len(cases)} passed")
     return 1 if bad else 0
 
