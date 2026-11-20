@@ -1373,7 +1373,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         if case let .jump(anchor) = action { target = anchor }
         if columns == 2, let target {
             placingGeneration = generation
-            let moved = await keepOnLeft(target, purpose: .restore, current: current)
+            let moved = await keepOnLeft(target, purpose: .restore, current: current)?.visible
             if placingGeneration == generation { placingGeneration = -1 }
             if let moved { after = moved }
         }
@@ -1468,10 +1468,11 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     }
 
     /// Moves the spread so `anchor`'s words start its left page: a blank verso before the file's first
-    /// page shifts every page one side over. Returns what's on screen after a move, nil when none was needed.
+    /// page shifts every page one side over. Returns what's on screen after a move, and whether a column break at
+    /// the words now starts the left page with them (`wordsOnTop`); nil when no move was needed.
     /// The moves are `SpreadSettler`'s: each is judged by measuring the page again once it stands still.
     private func keepOnLeft(_ anchor: ReadingAnchor, purpose: SpreadSettler.Purpose,
-                            current: () -> Bool) async -> VisibleRange? {
+                            current: () -> Bool) async -> (visible: VisibleRange?, wordsOnTop: Bool)? {
         guard let text = anchor.text?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else { return nil }
         let surface = WebSpread(host: self, anchor: anchor, text: text)
         guard await SpreadSettler.keepOnLeft(surface, current: current, purpose: purpose) == true, current() else { return nil }
@@ -1480,7 +1481,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         let (visible, reads) = await LaidOutPage.read({ await self.liveVisibleRange() }, beat: { await surface.beat() }, current: current)
         // The settler also ends here when its passes run out with the words still off the left page.
         readerLog.notice("spread: words placed on the left page; \(surface.moves, privacy: .public) moves (last read side \(surface.lastSide.map { String($0.rawValue) } ?? "nil", privacy: .public)); page read \(reads, privacy: .public) times, words \(visible?.text != nil, privacy: .public)")
-        return visible
+        return (visible, surface.pinned && surface.lastSide == .left)
     }
 
     func keepWordsOnPage(_ anchor: ReadingAnchor, placing: Bool, stillWanted: @escaping @MainActor () -> Bool) async -> VisibleRange? {
@@ -1492,7 +1493,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         if columns == 2 {
             // After a restore whose columns landed late, the break the restore would have put in at his words (and
             // could not, on a page still in the old columns) goes in now, as a reopen at this size puts it in.
-            let moved = await keepOnLeft(anchor, purpose: placing ? .restore : .recheck, current: stillWanted)
+            let moved = await keepOnLeft(anchor, purpose: placing ? .restore : .recheck, current: stillWanted)?.visible
             if moved != nil {
                 readerLog.notice("spread: a late layout had moved his words; put back on the left page")
             }
@@ -1528,21 +1529,22 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     /// keeps restores them to the top of a left page. Settled here the way that restore will, so the
     /// spread he lands on is the one every reopen shows. Behind the jump's veil when it is still up;
     /// after it lifted (`abandonVeil`), each move is held behind a picture (`SpreadSettler.keepOnLeft`).
-    func settleLanding(_ anchor: ReadingAnchor, stillWanted: @escaping @MainActor () -> Bool) async {
-        guard columns == 2 else { return }
+    /// True when a column break at the words now starts the left page with them (gatefold#562).
+    func settleLanding(_ anchor: ReadingAnchor, stillWanted: @escaping @MainActor () -> Bool) async -> Bool {
+        guard columns == 2 else { return false }
         guard stillWanted() else {
             readerLog.notice("spread: a landing left unsettled (overtaken before it began)")
-            return
+            return false
         }
         guard !lateSettling, placingGeneration == -1 else {
             readerLog.notice("spread: a landing left unsettled (a late look \(self.lateSettling, privacy: .public), a restore placing \(self.placingGeneration != -1, privacy: .public))")
-            return
+            return false
         }
         lateSettling = true
         defer { lateSettling = false }
-        if await keepOnLeft(anchor, purpose: .restore, current: stillWanted) != nil {
-            readerLog.notice("spread: a landing settled the way a reopen of its place will (veil \(self.veil != nil, privacy: .public))")
-        }
+        guard let settled = await keepOnLeft(anchor, purpose: .restore, current: stillWanted) else { return false }
+        readerLog.notice("spread: a landing settled the way a reopen of its place will (veil \(self.veil != nil, privacy: .public), its words on top \(settled.wordsOnTop, privacy: .public))")
+        return settled.wordsOnTop
     }
 
     /// The reader's page as `SpreadSettler` moves it.
@@ -1553,6 +1555,8 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         private(set) var moves = 0
         /// Where the words were at the last look.
         private(set) var lastSide: WordsSide?
+        /// A column break went in at the words: on the left page, they start it.
+        private(set) var pinned = false
 
         init(host: ReaderHostController, anchor: ReadingAnchor, text: String) {
             self.host = host
@@ -1583,6 +1587,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             // A move: never run again on a spread that replaced this one, where a newer restore owns the page.
             let pinned = ((try? await host.navigator.answer(ReaderJS.pinToTop(text))) as? NSNumber)?.intValue == 1
             if pinned {
+                self.pinned = true
                 moves += 1
                 if visible { host.noteVisibleMove("column break") }
             }

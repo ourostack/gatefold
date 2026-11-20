@@ -177,10 +177,27 @@ final class ScriptedPage: ReaderPage {
     private(set) var landingSettles: [String?] = []
     /// Whether each landing settle was still wanted when it began; the host's settle gives up when not.
     private(set) var landingWanted: [Bool] = []
-    func settleLanding(_ anchor: ReadingAnchor, stillWanted: @escaping @MainActor () -> Bool) async {
+    func settleLanding(_ anchor: ReadingAnchor, stillWanted: @escaping @MainActor () -> Bool) async -> Bool {
         landingSettles.append(model?.locator(for: anchor)?.href.string)
         landingWanted.append(stillWanted())
+        guard placesLandingWordsOnTop, let words = anchor.text else { return false }
+        // A column break at the landing's words starts the left page with them, and the page's first words are
+        // theirs from now on; the next reads can still find the left page as it was before the move.
+        anchorText = words
+        namesAnchorWords = true
+        staleReads = staleReadsAfterSettle
+        return true
     }
+
+    /// The landing settle puts its words at the top of the left page, as the host's column break does.
+    var placesLandingWordsOnTop = false
+    /// How many reads of the first words, right after that move, still find the left page as it was before it
+    /// (gatefold#562: a starved iPad read it 113 ms after the move), and the words they find.
+    var staleReadsAfterSettle = 0
+    var wordsBeforeTheMove = "stand-in words at the top of the left page before the move"
+    private var staleReads = 0
+    /// The anchor's locator carries its words, as the host's does.
+    private var namesAnchorWords = false
 
     /// Reflows the host ended because a standby swap retired the page they were laying out.
     private(set) var reflowsEndedBySwap = 0
@@ -231,8 +248,11 @@ final class ScriptedPage: ReaderPage {
             await mine.value
         }
         guard !withholdAnchor, let here = taken else { return nil }
-        let anchor = ReadingAnchor(href: here.href.string, progression: here.locations.progression ?? 0, text: anchorText)
-        return (anchor, here)
+        var text = anchorText
+        if staleReads > 0 { staleReads -= 1; text = wordsBeforeTheMove }
+        let anchor = ReadingAnchor(href: here.href.string, progression: here.locations.progression ?? 0, text: text)
+        guard namesAnchorWords, let text else { return (anchor, here) }
+        return (anchor, here.copy(text: { $0 = Locator.Text(highlight: text) }))
     }
 }
 
@@ -768,6 +788,48 @@ final class ScriptedPage: ReaderPage {
         #expect(landed != left, "the Cloud's place is in another chapter")
         try #require(f.page.landingSettles.count == 1, "the Cloud's place had words for the landing to settle")
         #expect(f.page.landingSettles == [landed], "the landing settle's words resolved to \(f.page.landingSettles), not \(landed)")
+        f.model.close()
+    }
+
+    /// gatefold#562 (main run 44739070531, a starved iPad): the landing's settle put the Cloud's words at the top of
+    /// the left page, and the read of his first words 113 ms later found the left page as it was before that move.
+    /// Those words were kept as his place, and the reopen came back one spread early, with the screen right all along.
+    /// The first read after the move here always finds the page before it.
+    @Test func aLandingKeepsTheWordsItsSettlePutOnTopNotThePageBeforeTheMove() async throws {
+        let f = try await Self.make(remote: { pub, mapper in
+            try await Self.inkPadPlace(pub, mapper, index: 12, percent: 40)
+        }, book: { $0.totalProgression = 0.05; $0.lastOpened = Date().addingTimeInterval(-600) }, startAt: 0.05)
+        await f.model.load()
+        f.page.placesLandingWordsOnTop = true
+        f.page.staleReadsAfterSettle = 1
+        await f.model.acceptSuggestion()
+        try #require(f.page.landingSettles.count == 1, "the Cloud's place had words for the landing to settle")
+        let placed = try #require(f.page.anchorText, "the settle placed the landing's words")
+        let probe = String(placed.prefix(24))
+        let saved = try #require(f.app.library.book(Self.frankenstein.fastHash)?.locatorJSON.flatMap { try? Locator(jsonString: $0) },
+                                 "the landing kept nothing")
+        let words = saved.text.highlight.map(ReaderJS.normalize) ?? ""
+        #expect(words.hasPrefix(probe), "the landing kept the page before its move, not the words on top of the page he sees")
+        #expect(f.model.keeper.anchor?.text?.hasPrefix(probe) == true, "his anchor is the page before the move")
+        f.model.close()
+    }
+
+    /// The same, with a page whose reads never catch up with the move: the landing's own words, which the settle put
+    /// on top and a reopen puts on top again, are his place, never the page before the move.
+    @Test func aLandingWhosePageNeverShowsTheMoveKeepsItsOwnWords() async throws {
+        let f = try await Self.make(remote: { pub, mapper in
+            try await Self.inkPadPlace(pub, mapper, index: 12, percent: 40)
+        }, book: { $0.totalProgression = 0.05; $0.lastOpened = Date().addingTimeInterval(-600) }, startAt: 0.05)
+        await f.model.load()
+        f.page.placesLandingWordsOnTop = true
+        f.page.staleReadsAfterSettle = 1_000
+        await f.model.acceptSuggestion()
+        let placed = try #require(f.page.anchorText, "the settle placed the landing's words")
+        let probe = String(placed.prefix(24))
+        let saved = try #require(f.app.library.book(Self.frankenstein.fastHash)?.locatorJSON.flatMap { try? Locator(jsonString: $0) },
+                                 "the landing kept nothing")
+        #expect(saved.text.highlight.map(ReaderJS.normalize)?.hasPrefix(probe) == true, "the landing kept the page before its move")
+        #expect(f.model.keeper.anchor?.text?.hasPrefix(probe) == true, "his anchor is the page before the move")
         f.model.close()
     }
 

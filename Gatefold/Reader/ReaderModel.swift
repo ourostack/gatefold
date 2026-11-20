@@ -1743,29 +1743,59 @@ final class ReaderModel {
         guard moves == move, hisSteps == hisAtStart, !isClosed else { return back }
         // The spread the place it keeps reopens on: its words to the top of a left page, as a restore
         // puts them. Given way to any move of his, another jump or the close meanwhile.
+        // The landing's words, when the settle's column break put them at the top of the left page.
+        var wordsOnTop: String?
         if let words = locator.text.highlight.map(ReaderJS.normalize), !words.isEmpty {
             let his = hisMoves, step = steps
             let anchor = ReadingAnchor(href: locator.href.string, progression: locator.locations.progression ?? 0, text: words)
             // A reflow's restore owns the page once it begins (one settler at a time), and a swipe of his
             // takes a step without counting a move.
             settlingLanding = (move, locator)
-            await page?.settleLanding(anchor) { [weak self] in
+            let onTop = await page?.settleLanding(anchor) { [weak self] in
                 guard let self else { return false }
                 return self.moves == move && self.hisMoves == his && self.steps == step
                     && self.keeper.reflowing == nil && !self.isClosed
-            }
+            } ?? false
             if settlingLanding?.move == move { settlingLanding = nil }
+            if onTop { wordsOnTop = words }
         }
         let settled = Self.ms(since: started)
         guard moves == move, hisSteps == hisAtStart, !isClosed else { return back }
-        await captureAnchor()
+        if let wordsOnTop {
+            await captureLandingsWords(wordsOnTop, landing: locator, move: move, his: hisAtStart)
+        } else {
+            await captureAnchor()
+        }
         let anchored = Self.ms(since: started)
         guard moves == move, hisSteps == hisAtStart, !isClosed, let here = page?.currentLocation else { return back }
         // Landed on the other device's page: that's the reader's place now.
         landed(step, at: here)
-        await recordLanding(here, target: target, cloud: cloud)
+        await recordLanding(here, target: target, cloud: cloud, wordsOnTop: wordsOnTop)
         readerLog.notice("landing timing (standby \(ready, privacy: .public)): go \(went, privacy: .public) ms, settled \(settled, privacy: .public) ms, anchored \(anchored, privacy: .public) ms, recorded \(Self.ms(since: started), privacy: .public) ms")
         return back
+    }
+
+    /// The settle put the landing's words at the top of the left page with a column break, so the page's first words
+    /// begin with them now. A read that finds other words read the page as it was before that move: on a starved
+    /// iPad, 113 ms after the move, the left page before it, kept as his place, and the reopen came back one spread
+    /// early while the screen showed the right one (gatefold#562). So the first words are read again, a beat apart,
+    /// until they begin with the landing's (`PlacedWords`); if the page never shows them, the landing's own words are
+    /// his place, as the settle placed them and a reopen will.
+    private func captureLandingsWords(_ words: String, landing: Locator, move: Int, his: Int) async {
+        func current() -> Bool { moves == move && hisSteps == his && !isClosed && keeper.reflowing == nil }
+        let taken = await PlacedWords.read({ await self.captureAnchor()?.text }, placed: words,
+                                           beat: { try? await Task.sleep(for: .milliseconds(250)) }, current: current)
+        guard current() else { return }
+        if taken.begun {
+            if taken.reads > 1 {
+                readerLog.notice("place: the landing's first words read again; read \(taken.reads, privacy: .public) times before they were the words its settle put on top (the earlier reads were the page before the move)")
+            }
+            return
+        }
+        guard let here = page?.currentLocation else { return }
+        readerLog.notice("place: \(taken.reads, privacy: .public) reads of the first words never found the words the landing's settle put on top; its own words are kept")
+        keeper.userSettled(on: ReadingAnchor(href: here.href.string, progression: here.locations.progression ?? 0, text: words))
+        anchorLocator = here.copy(text: { $0 = Locator.Text(highlight: landing.text.highlight ?? words) })
     }
 
     /// The standby page swapped in was laid out at the size the open reflow brought; the page that
@@ -1798,7 +1828,10 @@ final class ReaderModel {
     /// Records a settled landing. The first words on screen are the place, unless they come before the
     /// place we landed on (the page starts a few lines above it): then the target itself is, so the
     /// other device's place comes back unchanged instead of a few lines behind.
-    private func recordLanding(_ here: Locator, target: ReadingPosition?, cloud: Double? = nil, retake: Bool = true) async {
+    /// `wordsOnTop`: the landing's words, when its settle put them at the top of the left page; a retake takes only
+    /// first words that begin with them (`captureLandingsWords`).
+    private func recordLanding(_ here: Locator, target: ReadingPosition?, cloud: Double? = nil, retake: Bool = true,
+                               wordsOnTop: String? = nil) async {
         location = here
         let fresh = anchorLocator.flatMap { a in
             a.href == here.href && a.locations.progression == here.locations.progression ? a : nil
@@ -1851,11 +1884,11 @@ final class ReaderModel {
             let move = moves
             if isWarming {
                 pendingRecord = { [weak self] _ in
-                    Task { [weak self] in await self?.retakeLanding(move: move, target: target, cloud: cloud, orKeep: record) }
+                    Task { [weak self] in await self?.retakeLanding(move: move, target: target, cloud: cloud, wordsOnTop: wordsOnTop, orKeep: record) }
                 }
             } else {
                 record(now)
-                Task { [weak self] in await self?.retakeLanding(move: move, target: target, cloud: cloud, orKeep: nil) }
+                Task { [weak self] in await self?.retakeLanding(move: move, target: target, cloud: cloud, wordsOnTop: wordsOnTop, orKeep: nil) }
             }
         } else if isWarming {
             pendingRecord = record
@@ -1869,7 +1902,8 @@ final class ReaderModel {
     /// A landing kept on Readium's boundary is provisional: when no reflow is moving the page, take his
     /// first words and keep them as the landing, unless he has moved since. `orKeep` (behind the shelf)
     /// is the boundary's record, kept at the tap if his words can't be had.
-    private func retakeLanding(move: Int, target: ReadingPosition?, cloud: Double?, orKeep: (@MainActor (Date) -> Void)?) async {
+    private func retakeLanding(move: Int, target: ReadingPosition?, cloud: Double?, wordsOnTop: String? = nil,
+                               orKeep: (@MainActor (Date) -> Void)?) async {
         var captures = 0
         for _ in 0..<120 where !isClosed && moves == move && captures < 8 {
             if keeper.reflowing == nil {
@@ -1877,7 +1911,8 @@ final class ReaderModel {
                 await captureAnchor()
                 guard !isClosed, moves == move else { return }
                 if keeper.reflowing == nil, let now = page?.currentLocation, let a = anchorLocator,
-                   a.href == now.href, a.locations.progression == now.locations.progression {
+                   a.href == now.href, a.locations.progression == now.locations.progression,
+                   wordsOnTop.map({ PlacedWords.begin(a.text.highlight, with: $0) }) != false {
                     readerLog.notice("place: the landing's first words taken once the layout was still (try \(captures, privacy: .public))")
                     return await recordLanding(now, target: target, cloud: cloud, retake: false)
                 }
@@ -3243,10 +3278,12 @@ final class ReaderModel {
 
     /// Takes the first words on screen as the reader's place, unless a reflow is moving the page, or the cover is
     /// putting the open's place with no words back (`bareStillOwed`): then it is taken once the cover lifts.
-    func captureAnchor() async {
-        guard keeper.reflowing == nil, !deferAnchorWhileBareOwed() else { return }
+    /// Returns the anchor taken, nil when none was.
+    @discardableResult
+    func captureAnchor() async -> ReadingAnchor? {
+        guard keeper.reflowing == nil, !deferAnchorWhileBareOwed() else { return nil }
         guard let (anchor, anchorLoc) = await page?.currentAnchor(), keeper.reflowing == nil,
-              !deferAnchorWhileBareOwed() else { return }
+              !deferAnchorWhileBareOwed() else { return nil }
         readerLog.notice("anchor \(anchor.text ?? "nil", privacy: .private)")
         keeper.userSettled(on: anchor)
         if keeper.anchor == anchor { anchorLocator = anchorLoc }
@@ -3256,6 +3293,7 @@ final class ReaderModel {
             anchorReady = true
             anchorCheck = "ready \(reflowCount)"
         }
+        return anchor
     }
 
     /// The cover is putting the open's place with no words back (`putBackBarePlaceUnderCover`) and he hasn't moved:
