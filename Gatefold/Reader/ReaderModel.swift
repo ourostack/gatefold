@@ -2378,15 +2378,18 @@ final class ReaderModel {
     func lookAgainInNewColumns() async {
         guard let anchor = keeper.anchor, anchor.text != nil, !isClosed, keeper.reflowing == nil else { return }
         let movesNow = moves
+        let reflow = reflowCount
         let stillWanted: @MainActor () -> Bool = { [weak self] in
             guard let self else { return false }
             return !self.isClosed && self.moves == movesNow && !self.touchedSinceLocation && self.keeper.reflowing == nil
+                && self.reflowCount == reflow
         }
         let moved = await page?.keepWordsOnPage(anchor, placing: true, stillWanted: stillWanted)
         guard stillWanted() else { return }
         let shown: VisibleRange?
         if let moved { shown = moved } else { shown = await page?.visibleRange() }
         guard stillWanted() else { return }
+        rejudgeReflow(shown, reflow: reflow)
         refreshBookmarkState(shown)
     }
 
@@ -2418,6 +2421,33 @@ final class ReaderModel {
         reflowProbe = "\(number) settled"
     }
 
+    /// The reflow's check: his anchor's words in the text on screen, never progressions (gatefold#534). Logged with
+    /// numbers only (no book text), so a real unfold can be judged from the log: where his words start in the text
+    /// on screen, in characters, and Readium's own report, which is not the page's range and never the verdict.
+    private func judgeReflow(_ visible: VisibleRange, anchor: ReadingAnchor, when: String, probe: Bool = true) {
+        let verdict = "\(visible.verdict(for: anchor).rawValue) \(reflowCount)"
+        if probe {
+            anchorCheck = verdict
+            anchorDetail = "anchor \(anchor.href)@\(anchor.progression) [\(anchor.text?.prefix(40) ?? "-")] visible \(visible.href) \(visible.start)..\(visible.end) [\(visible.text?.prefix(60) ?? "nil")]"
+        }
+        let at = visible.offset(of: anchor).map(String.init) ?? "none"
+        readerLog.notice("reflow check (\(when, privacy: .public)): \(verdict, privacy: .public) columns \(self.layout.columns == .two ? 2 : 1, privacy: .public) his words at \(at, privacy: .public) of \(visible.text?.count ?? -1, privacy: .public) characters on screen, same file \(visible.href == anchor.href, privacy: .public) (Readium's report \(visible.start, privacy: .public), his place \(anchor.progression, privacy: .public))")
+    }
+
+    /// The page as reflow `reflow`'s late look left it (its new columns landed after the restore): judged again, for
+    /// a verdict on the page he sees, not the one the restore read before the layout changed under it. Only for that
+    /// reflow, with the page's text read (a read that missed it leaves the restore's verdict standing). The probe
+    /// takes it only over that reflow's own verdict: a newer state ("ready", a newer reflow's) stays.
+    func rejudgeReflow(_ visible: VisibleRange?, reflow: Int) {
+        guard let visible, let anchor = keeper.anchor, keeper.reflowing == nil, reflow == reflowCount else { return }
+        guard visible.text != nil else {
+            readerLog.notice("reflow check (late columns): page text not read; the restore's verdict stands")
+            return
+        }
+        let ownVerdict = anchorCheck.hasPrefix("anchor-") && anchorCheck.hasSuffix(" \(reflow)")
+        judgeReflow(visible, anchor: anchor, when: "late columns", probe: ownVerdict)
+    }
+
     func reflowDidFinish(visible: VisibleRange?) {
         // A restore landed: the open's bare place is never put back after it.
         openedOnBarePlace = nil
@@ -2445,11 +2475,9 @@ final class ReaderModel {
         // A reflow throws away the page loading behind this one; the catch-up still on offer gets a new one.
         if let waiting = suggestionLocator, !isClosed { prepareStandbyOnceShown(waiting) }
         if let visible, let anchor = keeper.anchor {
-            anchorCheck = (visible.contains(anchor) ? "anchor-visible " : "anchor-lost ") + "\(reflowCount)"
-            anchorDetail = "anchor \(anchor.href)@\(anchor.progression) [\(anchor.text?.prefix(40) ?? "-")] visible \(visible.href) \(visible.start)..\(visible.end) [\(visible.text?.prefix(60) ?? "nil")]"
-            // The restore's verdict, numbers only (no book text), so a real unfold can be judged from the log.
-            readerLog.notice("reflow check: \(self.anchorCheck, privacy: .public) columns \(self.layout.columns == .two ? 2 : 1, privacy: .public) anchor \(anchor.progression, privacy: .public) visible \(visible.start, privacy: .public)..\(visible.end, privacy: .public) same file \(visible.href == anchor.href, privacy: .public) words read \(visible.text != nil, privacy: .public)")
+            judgeReflow(visible, anchor: anchor, when: "restore")
             // His words are on screen as the restore ends: a later report with no move of his is the layout's.
+            // Unchanged by gatefold#534's stricter check: an unread page found by its progression still marks the restore's.
             if visible.contains(anchor), !placeOwed { restoredMove = moves }
         } else {
             anchorCheck = "no-anchor \(reflowCount)"

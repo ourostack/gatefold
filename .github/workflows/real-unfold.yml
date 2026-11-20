@@ -465,6 +465,11 @@ jobs:
           grep -E "main: held [0-9]+ ms" "$out/reader.log" | awk '{ for (i = 1; i < NF; i++) if ($i == "held" && $(i + 1) >= 60000) print "::warning::the app'"'"'s main thread was held " int($(i + 1) / 1000) " s, ending " $2 }'
           # No posture change may have lost his words, and every unfold must have been judged.
           if echo "$verdicts" | grep -q "anchor-lost"; then echo "::error::a posture change lost the reader's words"; exit 1; fi
+          # A check that read no words proved nothing: it is never counted as his words kept (gatefold#534). Every
+          # line counts, the restore's and the late look's: a later pass doesn't excuse an earlier check that failed.
+          if echo "$verdicts" | grep -q "anchor-unread"; then echo "::error::a posture change's check read no words, so it proved nothing"; exit 1; fi
+          # A place with no words to look for (the open's bare place) can't be judged by words: told, not hidden.
+          if echo "$verdicts" | grep -q "anchor-wordless"; then echo "::warning::a posture change came while his place had no words, so its check proved nothing ($(echo "$verdicts" | grep -c "anchor-wordless") times)"; fi
           # Its verdicts printed, a run cut short is still red: the unfolds it never made weren't judged.
           [ "$failed" = 0 ] || { echo "::error::a launch failed, so the unfolds after it never ran ($(grep -c "" "$out/marks.log") of $planned begun)"; exit 1; }
           [ "$stalled" = 0 ] || { echo "::error::a DeviceHub press stalled twice, so the unfolds after it never ran ($(grep -c "" "$out/marks.log") of $planned begun)"; exit 1; }

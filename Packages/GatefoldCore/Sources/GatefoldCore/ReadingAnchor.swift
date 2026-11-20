@@ -30,6 +30,24 @@ public struct VisibleRange: Equatable, Sendable {
         self.text = text
     }
 
+    /// The reflow check, by words only: his anchor's opening words in the text on screen. Never by progression,
+    /// which is Readium's last report and the page's end clamped to it, not the page's range: a check that fell
+    /// back to it would call an unread page his (gatefold#534).
+    public func verdict(for anchor: ReadingAnchor) -> AnchorVerdict {
+        guard anchor.href == href else { return .lost }
+        guard let needle = anchor.text?.openingWords, !needle.isEmpty else { return .wordless }
+        guard let text else { return .unread }
+        return text.contains(needle) ? .visible : .lost
+    }
+
+    /// Where his anchor's opening words start in the text on screen, in characters (nil when they aren't in it):
+    /// a number the log can carry, where the words can't go.
+    public func offset(of anchor: ReadingAnchor) -> Int? {
+        guard anchor.href == href, let needle = anchor.text?.openingWords, !needle.isEmpty, let text,
+              let r = text.range(of: needle) else { return nil }
+        return text.distance(from: text.startIndex, to: r.lowerBound)
+    }
+
     public func contains(_ anchor: ReadingAnchor) -> Bool {
         guard anchor.href == href else { return false }
         if let needle = anchor.text?.openingWords, !needle.isEmpty, let text {
@@ -39,6 +57,19 @@ public struct VisibleRange: Equatable, Sendable {
         // Half-open, so a page that starts exactly where the anchor is counts and the next one doesn't.
         return anchor.progression >= start - 0.0001 && (anchor.progression < end || end >= 1)
     }
+}
+
+/// A reflow's own check of his place (`ReaderModel.reflowDidFinish`): are his anchor's words on screen?
+public enum AnchorVerdict: String, Sendable {
+    /// His words are in the text on screen.
+    case visible = "anchor-visible"
+    /// The text on screen was read and his words aren't in it (or the page is another file).
+    case lost = "anchor-lost"
+    /// The page's text wasn't read: nothing is proven either way.
+    case unread = "anchor-unread"
+    /// His place has no words to look for (the open's bare place, gatefold#250): nothing is proven either way, and
+    /// the place is no one's loss to fix; it is told apart from a page that wasn't read.
+    case wordless = "anchor-wordless"
 }
 
 public enum ReflowReason: String, Sendable {
