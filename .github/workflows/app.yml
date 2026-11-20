@@ -436,11 +436,11 @@ jobs:
             timeout: 55 # 30 + 2 x 3.6 + 5 + 12
             lane: 16
           - shard: ipad-place-rest
-            # The catch-all for new place tests: 130 + 124 + 94, and the quick leave (gatefold#301)
+            # The catch-all for new place tests: 200 + 200 + 244 + 224. The quick leave (gatefold#301) runs in ipad-place-late.
             tests: >-
-              NavigationPlaceUITests QuickLeaveUITests
+              NavigationPlaceUITests
             skip: >-
-              NavigationPlaceUITests/testReadInPortraitRotatedThenLeftKeepsHisFirstWords NavigationPlaceUITests/testWithPageNumbersOnReadInPortraitRotatedThenLeftKeepsHisFirstWords NavigationPlaceUITests/testAJumpFromAPageStillLoadingStartsAtOnce NavigationPlaceUITests/testAContentsJumpKeepsThePlace NavigationPlaceUITests/testScrolledAfterTheLaunchReflowThenLeftKeepsWhereHeScrolled NavigationPlaceUITests/testScrolledAfterAStalledSwitchToScrollKeepsWhereHeScrolled NavigationPlaceUITests/testOpenedFromTheShelfThenLeftTwiceWithoutATurnKeepsThePlace NavigationPlaceUITests/testTheOpeningCoverLetsTheControlsThrough NavigationPlaceUITests/testAScrubberJumpLeftWhileItsChapterLoadsKeepsItsTarget NavigationPlaceUITests/testNoWordsAreReadUnderTheOpeningCover NavigationPlaceUITests/testTheCloudsOfferOverTheOpeningCoverTakesHisTap QuickLeaveUITests/testALeaveUnderTheReopensCoverAfterTheWatchdogKeepsHisPlace QuickLeaveUITests/testTurnsThenAQuickLeaveReopenOnTheLastTurnsPage
+              NavigationPlaceUITests/testReadInPortraitRotatedThenLeftKeepsHisFirstWords NavigationPlaceUITests/testWithPageNumbersOnReadInPortraitRotatedThenLeftKeepsHisFirstWords NavigationPlaceUITests/testAJumpFromAPageStillLoadingStartsAtOnce NavigationPlaceUITests/testAContentsJumpKeepsThePlace NavigationPlaceUITests/testScrolledAfterTheLaunchReflowThenLeftKeepsWhereHeScrolled NavigationPlaceUITests/testScrolledAfterAStalledSwitchToScrollKeepsWhereHeScrolled NavigationPlaceUITests/testOpenedFromTheShelfThenLeftTwiceWithoutATurnKeepsThePlace NavigationPlaceUITests/testTheOpeningCoverLetsTheControlsThrough NavigationPlaceUITests/testAScrubberJumpLeftWhileItsChapterLoadsKeepsItsTarget NavigationPlaceUITests/testNoWordsAreReadUnderTheOpeningCover NavigationPlaceUITests/testTheCloudsOfferOverTheOpeningCoverTakesHisTap
             pr_tests: none
             cold: false
             timeout: 76 # 30 + 2 x 14.5 + 5 + 12
