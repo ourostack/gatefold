@@ -38,9 +38,16 @@ struct GatefoldApp: App {
                 #endif
         }
         .onChange(of: scenePhase) { _, phase in
+            GatefoldTelemetry.shared.appPhase = switch phase {
+            case .active: "active"
+            case .inactive: "inactive"
+            case .background: "background"
+            @unknown default: "other"
+            }
             switch phase {
             case .active:
                 ReopenSnapshot.setAside()
+                GatefoldTelemetry.shared.sendDeferred()
                 Task { await app.didBecomeActive() }
             case .inactive:
                 // He may be leaving: a move a reflow still owes is kept now, in case that reflow never
@@ -69,10 +76,18 @@ struct GatefoldApp: App {
                 // Finish sending the place even if the app is suspended mid-request.
                 // iOS ends the grace period if the network hangs; whichever comes first ends the task once.
                 let finish = BackgroundTaskEnd()
-                let task = UIApplication.shared.beginBackgroundTask(withName: "Send reading place") { finish.end() }
+                let task = UIApplication.shared.beginBackgroundTask(withName: "Send reading place") {
+                    // iOS ended the time before the send finished: say so at the next launch or return,
+                    // since nothing sent now would get out.
+                    if finish.task != .invalid {
+                        GatefoldTelemetry.shared.captureLater(PlaceReport(direction: .push, result: .failed, reason: .backgroundExpired,
+                                                                          trigger: .background))
+                    }
+                    finish.end()
+                }
                 finish.task = task
                 Task {
-                    await app.sendPlaceNow()
+                    await app.sendPlaceNow(trigger: .background)
                     finish.end()
                 }
             default:
@@ -269,7 +284,7 @@ struct RootView: View {
         reader = nil
         app.openBookID = nil
         app.activeReader = nil
-        Task { await app.sendPlaceNow() }
+        Task { await app.sendPlaceNow(trigger: .close) }
     }
 
     /// Measuring opens without UI automation (which turns on accessibility, and so loads WebKit's
@@ -412,7 +427,7 @@ extension ReaderModel: Identifiable {
 
 /// Ends a background task exactly once, from the expiration handler or the finished work.
 @MainActor
-private final class BackgroundTaskEnd {
+final class BackgroundTaskEnd {
     var task: UIBackgroundTaskIdentifier = .invalid
     func end() {
         guard task != .invalid else { return }

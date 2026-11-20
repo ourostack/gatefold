@@ -35,6 +35,8 @@ public actor PocketBookCloud: SyncService {
     private let pushedPlaces: PushedPlaces
     /// Where each download's counts-only report goes (the app forwards them as telemetry).
     private let downloadReports: DownloadReports
+    /// Where each place send's counts-only report goes (the app forwards them as telemetry).
+    private let placeReports: PlaceReports
 
     private var books: [CloudBook]
     private var state: OutboxState
@@ -42,6 +44,9 @@ public actor PocketBookCloud: SyncService {
     private var draining: Task<Void, Never>?
     private var timer: Task<Void, Never>?
     private var timerDue: Date?
+    /// What set the waiting timer off, and what set the running drain off (for place reports).
+    private var timerTrigger: PlaceReport.Trigger = .debounce
+    private var drainTrigger: PlaceReport.Trigger = .other
     private var blockedOnSignIn = false
     /// The outbox item being sent right now.
     private var inFlight: UUID?
@@ -59,6 +64,7 @@ public actor PocketBookCloud: SyncService {
                 tokenStore: TokenStore = KeychainTokenStore(),
                 pushedPlaces: PushedPlaces = KeychainPushedPlaces(),
                 downloadReports: DownloadReports = .shared,
+                placeReports: PlaceReports = .shared,
                 base: URL = CloudSession.defaultBase,
                 now: @escaping @Sendable () -> Date = { Date() },
                 jitter: @escaping @Sendable () -> Double = { Double.random(in: 0.8...1.2) },
@@ -66,6 +72,7 @@ public actor PocketBookCloud: SyncService {
         self.configuration = configuration
         self.pushedPlaces = pushedPlaces
         self.downloadReports = downloadReports
+        self.placeReports = placeReports
         self.transport = transport
         self.now = now
         self.jitter = jitter
@@ -114,7 +121,7 @@ public actor PocketBookCloud: SyncService {
         saveOutbox()
         blockedOnSignIn = false
         broadcaster.emit(.signedIn(account))
-        scheduleFlush(after: 0)
+        scheduleFlush(after: 0, trigger: .signIn)
         return account
     }
 
@@ -149,7 +156,7 @@ public actor PocketBookCloud: SyncService {
         announceDifferences(from: books, to: fetched)
         books = fetched
         JSONFile.write(books, to: libraryFile)
-        if !state.items.isEmpty { scheduleFlush(after: 0) }
+        if !state.items.isEmpty { scheduleFlush(after: 0, trigger: .library) }
         return fetched
     }
 
@@ -507,12 +514,17 @@ public actor PocketBookCloud: SyncService {
         state.enqueue(item)
         saveOutbox()
         broadcaster.emit(.outbox(pending: state.items.count))
-        scheduleFlush(after: configuration.debounce)
+        scheduleFlush(after: configuration.debounce, trigger: .debounce)
     }
 
     private func saveOutbox() { JSONFile.write(state, to: outboxFile) }
 
-    public func flushOutbox() async {
+    public func flushOutbox() async { await flushOutbox(trigger: .other) }
+
+    /// Sends whatever is due now; `trigger` says why, in the place reports.
+    public func flushOutbox(trigger: PlaceReport.Trigger) async {
+        // A send already under way is now this trigger's too (the app leaving while a debounce send runs).
+        drainTrigger = trigger
         if let draining {
             await draining.value
             return
@@ -531,6 +543,8 @@ public actor PocketBookCloud: SyncService {
         case finished
         /// The send succeeded but turned the item into another one (a create into an update).
         case replace(OutboxItem.Operation)
+        /// A position not sent: another device's newer place stands. Otherwise like `done`.
+        case superseded
     }
 
     private func drain() async {
@@ -544,15 +558,30 @@ public actor PocketBookCloud: SyncService {
             let generation = accountGeneration
             inFlight = item.id
             defer { inFlight = nil }
+            let (renewalsBefore, reSignInsBefore) = await (session.renewals, session.reSignIns)
             do {
                 let outcome = try await send(item)
+                let signIns = await (session.renewals, session.reSignIns)
                 guard generation == accountGeneration else { return }
                 guard let i = state.items.firstIndex(where: { $0.id == item.id }) else { continue }
-                if case .position = item.operation, case .done = outcome { broadcaster.emit(.positionSent(fastHash: item.fastHash)) }
+                if case .position = item.operation {
+                    switch outcome {
+                    case .done, .superseded: broadcaster.emit(.positionSent(fastHash: item.fastHash))
+                    default: break
+                    }
+                    var report = placeReport(item, result: .sent, signIns: (renewalsBefore, reSignInsBefore), signIns)
+                    if case .superseded = outcome {
+                        report.result = .skipped
+                        report.reason = .remoteNewer
+                        report.remoteNewer = true
+                    }
+                    report.queued = state.items.count - 1
+                    placeReports.record(report)
+                }
                 switch outcome {
                 case .finished:
                     state.items.remove(at: i)
-                case .done:
+                case .done, .superseded:
                     if state.items[i].revision == item.revision {
                         state.items.remove(at: i)
                     } else {
@@ -566,9 +595,25 @@ public actor PocketBookCloud: SyncService {
                 }
                 blockedOnSignIn = false
             } catch {
+                let signIns = await (session.renewals, session.reSignIns)
                 guard generation == accountGeneration else { return }
                 guard let i = state.items.firstIndex(where: { $0.id == item.id }) else { continue }
                 let newerArrived = state.items[i].revision != item.revision
+                if case .position = item.operation {
+                    var report = placeReport(item, result: .failed, signIns: (renewalsBefore, reSignInsBefore), signIns)
+                    report.note(error)
+                    switch Self.disposition(of: error) {
+                    case .drop where !newerArrived: report.reason = .dropped
+                    case .retry where state.items[i].attempts + 1 >= Self.maxAttempts && !(error as? CloudError).map(\.isTransient).orFalse && !newerArrived:
+                        report.reason = .dropped
+                    case .signIn:
+                        report.reason = .signInNeeded
+                        report.signInExpired = true
+                    default: report.reason = .willRetry
+                    }
+                    report.queued = state.items.count - (report.reason == .dropped ? 1 : 0)
+                    placeReports.record(report)
+                }
                 switch Self.disposition(of: error) {
                 case .drop where newerArrived:
                     // The rejection was for the older payload; give the newer one its own chance.
@@ -711,7 +756,7 @@ public actor PocketBookCloud: SyncService {
             if remote.updated > ours {
                 updateCachedPosition(remote, fastHash: fastHash)
                 broadcaster.emit(.positionSuperseded(fastHash: fastHash, remote: remote))
-                return .done
+                return .superseded
             }
         }
         let body = try WireEncoder.positionBody(position, pointerStyle: configuration.pointerStyle)
@@ -733,14 +778,28 @@ public actor PocketBookCloud: SyncService {
         JSONFile.write(books, to: libraryFile)
     }
 
+    /// The counts-only report of one position send (`PlaceReport`): never its hash, pointer or CFI.
+    /// `before` and `after` are the session's (renewals, re-sign-ins) around the send.
+    private func placeReport(_ item: OutboxItem, result: PlaceReport.Result, signIns before: (Int, Int), _ after: (Int, Int)) -> PlaceReport {
+        var report = PlaceReport(direction: .push, result: result, trigger: drainTrigger,
+                                 signInRenewed: after.0 > before.0, signedInAgain: after.1 > before.1,
+                                 attempts: item.attempts + 1)
+        if case let .position(p) = item.operation {
+            report.hasCFI = p.parsedCFI != nil
+            report.ageSeconds = max(0, now().timeIntervalSince(p.updated))
+        }
+        return report
+    }
+
     // MARK: Scheduling
 
-    private func scheduleFlush(after delay: TimeInterval) {
+    private func scheduleFlush(after delay: TimeInterval, trigger: PlaceReport.Trigger) {
         guard configuration.autoFlush, !blockedOnSignIn else { return }
         let due = now().addingTimeInterval(delay)
         if let timerDue, timerDue <= due, timer != nil { return }
         timer?.cancel()
         timerDue = due
+        timerTrigger = trigger
         timer = Task { [weak self] in
             if delay > 0 { try? await Task.sleep(for: .seconds(delay)) }
             guard !Task.isCancelled else { return }
@@ -751,12 +810,12 @@ public actor PocketBookCloud: SyncService {
     private func timerFired() async {
         timer = nil
         timerDue = nil
-        await flushOutbox()
+        await flushOutbox(trigger: timerTrigger)
     }
 
     private func rescheduleAfterDrain() {
         guard let next = state.items.map({ $0.notBefore ?? now() }).min() else { return }
-        scheduleFlush(after: max(1, next.timeIntervalSince(now())))
+        scheduleFlush(after: max(1, next.timeIntervalSince(now())), trigger: .retry)
     }
 }
 

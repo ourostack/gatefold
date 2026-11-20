@@ -38,8 +38,14 @@ public protocol SyncService: Sendable {
     func pendingChanges() async -> Int
     /// Sends whatever is due now. The real service also does this by itself.
     func flushOutbox() async
+    /// Sends whatever is due now; `trigger` says why, in the place reports (telemetry).
+    func flushOutbox(trigger: PlaceReport.Trigger) async
 
     func changes() -> AsyncStream<CloudChange>
+}
+
+public extension SyncService {
+    func flushOutbox(trigger: PlaceReport.Trigger) async { await flushOutbox() }
 }
 
 /// Fans each change out to every live subscriber.

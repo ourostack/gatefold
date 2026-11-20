@@ -26,13 +26,14 @@ private struct Harness {
     }
 
     let reports = DownloadReports()
+    let placeReports = PlaceReports()
 
     func cloud() -> PocketBookCloud {
         let clock = self.clock
         return PocketBookCloud(
             configuration: .init(storageDirectory: directory, autoFlush: false),
             transport: transport, credentials: creds, tokenStore: tokens, pushedPlaces: places,
-            downloadReports: reports,
+            downloadReports: reports, placeReports: placeReports,
             now: { clock.now }, jitter: { 1.0 }, sleep: { _ in }
         )
     }
@@ -893,4 +894,117 @@ func waitForRequest(_ transport: ScriptedTransport, _ method: String, _ path: St
         try await Task.sleep(for: .milliseconds(10))
     }
     try #require(await !transport.requests(method, path).isEmpty)
+}
+
+/// Every place send leaves a counts-only report, so a place that never reaches the e-reader says why.
+@Suite("Place reports")
+struct PlaceReportTests {
+    let position = ReadingPosition(cfi: "epubcfi(/6/16[item9]!/4/2[pgepubid00007]/2/1:0)", progression: 0.0, totalProgression: 0.086, updated: utc("2026-10-31T21:59:30Z"))
+
+    func remote(_ updated: String, pointer: String = "pbr:/webkit?##epubcfi(/6/8!/4/2/1:0)") -> ScriptedTransport.Response {
+        .json(#"{"fast_hash":"\#(frankenstein)","name":"x","position":{"pointer":"\#(pointer)","pointer_pb":"\#(pointer)","percent":3,"updated":"\#(updated)"}}"#)
+    }
+
+    @Test func aPlaceThatLandsIsReportedSentWithItsTrigger() async throws {
+        let h = Harness()
+        await h.transport.on("GET", "/fileops/info", remote("2026-10-31T21:00:00Z"))
+        await h.transport.on("POST", "/books/read-position", .ok)
+        let cloud = h.cloud()
+        await cloud.push(position, for: CloudBook(fastHash: frankenstein))
+        await cloud.flushOutbox(trigger: .background)
+        let report = try #require(h.placeReports.reports.last)
+        #expect(report.direction == .push)
+        #expect(report.result == .sent)
+        #expect(report.reason == nil)
+        #expect(report.trigger == .background)
+        #expect(report.hasCFI)
+        #expect(report.attempts == 1)
+        #expect(report.queued == 0)
+        #expect(!report.signInRenewed && !report.signInExpired)
+    }
+
+    @Test func aNewerEReaderPlaceIsReportedSkippedNotSent() async throws {
+        let h = Harness()
+        await h.transport.on("GET", "/fileops/info", remote("2026-10-31T21:59:50Z"))
+        let cloud = h.cloud()
+        await cloud.push(position, for: CloudBook(fastHash: frankenstein))
+        await cloud.flushOutbox(trigger: .close)
+        let report = try #require(h.placeReports.reports.last)
+        #expect(report.result == .skipped)
+        #expect(report.reason == .remoteNewer)
+        #expect(report.remoteNewer == true)
+        #expect(report.trigger == .close)
+    }
+
+    @Test func aServerErrorIsReportedWithItsStatusAndARetry() async throws {
+        let h = Harness()
+        await h.transport.on("GET", "/fileops/info", .json("{}", status: 503))
+        let cloud = h.cloud()
+        await cloud.push(position, for: CloudBook(fastHash: frankenstein))
+        await cloud.flushOutbox()
+        let report = try #require(h.placeReports.reports.last)
+        #expect(report.result == .failed)
+        #expect(report.reason == .willRetry)
+        #expect(report.httpStatus == 503)
+        #expect(report.errorDomain == "CloudError")
+        #expect(report.errorKind == "server")
+        #expect(report.queued == 1)
+    }
+
+    @Test func aRefusedPlaceIsReportedDropped() async throws {
+        let h = Harness()
+        await h.transport.on("GET", "/fileops/info", remote("2026-10-31T21:00:00Z"))
+        await h.transport.on("POST", "/books/read-position", .json(#"{"error_code":0,"error_msg":"position: File not found."}"#, status: 422))
+        let cloud = h.cloud()
+        await cloud.push(position, for: CloudBook(fastHash: frankenstein))
+        await cloud.flushOutbox()
+        let report = try #require(h.placeReports.reports.last)
+        #expect(report.result == .failed)
+        #expect(report.reason == .dropped)
+        #expect(report.httpStatus == 422)
+        #expect(report.queued == 0)
+    }
+
+    @Test func anExpiredSignInIsReportedAndThePlaceWaits() async throws {
+        let h = Harness()
+        await h.transport.on("GET", "/fileops/info", .json("{}", status: 401))
+        await h.transport.on("POST", "/auth/renew-token", .json("{}", status: 401))
+        let cloud = h.cloud()
+        await cloud.push(position, for: CloudBook(fastHash: frankenstein))
+        await cloud.flushOutbox()
+        let report = try #require(h.placeReports.reports.last)
+        #expect(report.result == .failed)
+        #expect(report.reason == .signInNeeded)
+        #expect(report.signInExpired)
+        #expect(report.errorKind == "authenticationRequired")
+        #expect(await cloud.pendingChanges() == 1)
+    }
+
+    @Test func aRenewedSignInIsReported() async throws {
+        let clock = TestClock(utc("2026-10-31T22:00:00Z"))
+        let h = Harness(clock: clock, tokens: InMemoryTokenStore(StoredSession(
+            account: CloudAccount(email: "reader@example.com", store: testStore()),
+            token: CloudToken(accessToken: "a1", refreshToken: "r1", expiresAt: utc("2026-10-31T21:00:00Z")))))
+        await h.transport.on("POST", "/auth/renew-token", .json(#"{"access_token":"a2","refresh_token":"r2","expires_in":3600}"#))
+        await h.transport.on("GET", "/fileops/info", remote("2026-10-31T21:00:00Z"))
+        await h.transport.on("POST", "/books/read-position", .ok)
+        let cloud = h.cloud()
+        await cloud.push(position, for: CloudBook(fastHash: frankenstein))
+        await cloud.flushOutbox()
+        let report = try #require(h.placeReports.reports.last)
+        #expect(report.result == .sent)
+        #expect(report.signInRenewed)
+        #expect(!report.signedInAgain)
+    }
+
+    @Test func noteKeepsTheStatusButNeverTheMessage() {
+        var report = PlaceReport(direction: .push, result: .failed)
+        report.note(CloudError.http(status: 422, message: "position: File not found."))
+        #expect(report.httpStatus == 422)
+        #expect(report.errorKind == "http")
+        var offline = PlaceReport(direction: .push, result: .failed)
+        offline.note(URLError(.timedOut))
+        #expect(offline.errorDomain == NSURLErrorDomain)
+        #expect(offline.errorCode == URLError.timedOut.rawValue)
+    }
 }

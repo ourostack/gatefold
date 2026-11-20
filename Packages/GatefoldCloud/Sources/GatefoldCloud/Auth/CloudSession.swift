@@ -31,6 +31,10 @@ public actor CloudSession {
     public private(set) var persistenceError: Error?
     /// Server time minus device time, from the latest `Date` header.
     public private(set) var serverClockOffset: TimeInterval = 0
+    /// Tokens renewed so far (by refresh token, or by signing in again), for telemetry.
+    public private(set) var renewals = 0
+    /// Of those, the ones that needed the kept password because the renewal was refused.
+    public private(set) var reSignIns = 0
 
     public init(transport: HTTPTransport, credentials: ClientCredentialsProvider, tokenStore: TokenStore,
                 base: URL = CloudSession.defaultBase, language: String = "en", now: @escaping @Sendable () -> Date = { Date() },
@@ -249,7 +253,9 @@ public actor CloudSession {
         var token = try WireDecoder.token(data, now: now())
         if token.refreshToken == nil { token.refreshToken = refreshToken }
         session.token = token
-        return try await keep(session, startedIn: startedIn)
+        let kept = try await keep(session, startedIn: startedIn)
+        renewals += 1
+        return kept
     }
 
     /// Signs in again with the kept password, once, after the Cloud refused to renew the token.
@@ -278,7 +284,10 @@ public actor CloudSession {
         reSignInPause = nil
         guard generation == startedIn else { throw CloudError.notSignedIn }
         if Task.isCancelled { throw CancellationError() }
-        return try await keep(session, startedIn: startedIn)
+        let kept = try await keep(session, startedIn: startedIn)
+        renewals += 1
+        reSignIns += 1
+        return kept
     }
 
     /// Makes `session` current and saves it, unless he signed out or in again meanwhile.

@@ -1,9 +1,11 @@
 import Foundation
 import GatefoldCloud
 import os
+import UIKit
 
-/// Counts-only telemetry for book downloads, so a download that fails on a reader's phone tells us
-/// where and why (P0, 2026-11-13: "can you see the error? if not, you gotta add telemetry").
+/// Counts-only telemetry for book downloads and reading-place sync, so a download that fails or a place
+/// that never reaches the e-reader tells us where and why (P0, 2026-11-13: "can you see the error? if not,
+/// you gotta add telemetry"; 2026-11-20: the InkPad didn't pick up where Gatefold left off).
 ///
 /// It sends stages, status codes, error domains and codes, and yes/no facts. Never a title, author,
 /// file name, hash, link, email or error message. The install is a random ID, and PostHog is told not to place the event by IP.
@@ -11,6 +13,9 @@ import os
 final class GatefoldTelemetry: @unchecked Sendable {
     static let shared = GatefoldTelemetry()
     static let distinctIDKey = "GatefoldTelemetryInstallID"
+    /// Events from a moment the app can't send in (iOS ending its background time), sent at the next launch or return.
+    static let deferredKey = "GatefoldTelemetryDeferred"
+    static let deferredLimit = 20
 
     struct Configuration: Equatable {
         var apiKey: String
@@ -21,12 +26,18 @@ final class GatefoldTelemetry: @unchecked Sendable {
     private let defaults: UserDefaults
     private let send: @Sendable (URLRequest) -> Void
     private let log = Logger(subsystem: "bot.ouro.gatefold", category: "telemetry")
+    private let lock = NSLock()
+    private var _appPhase = "active"
+
+    /// The scene's phase (`active`, `inactive`, `background`), sent with each place event.
+    var appPhase: String {
+        get { lock.withLock { _appPhase } }
+        set { lock.withLock { _appPhase = newValue } }
+    }
 
     init(configuration: Configuration? = GatefoldTelemetry.loadConfiguration(),
          defaults: UserDefaults = .standard,
-         send: @escaping @Sendable (URLRequest) -> Void = { request in
-             Task.detached(priority: .utility) { _ = try? await URLSession.shared.data(for: request) }
-         }) {
+         send: @escaping @Sendable (URLRequest) -> Void = GatefoldTelemetry.sendWithBackgroundTime) {
         self.configuration = configuration
         self.defaults = defaults
         self.send = send
@@ -47,10 +58,86 @@ final class GatefoldTelemetry: @unchecked Sendable {
         #endif
     }
 
-    /// Hands every download report to PostHog. Call once at launch.
+    /// Sends a request with its own background time: a place sent as the app leaves reports from the
+    /// background, and iOS would otherwise suspend the app before the report goes out.
+    static let sendWithBackgroundTime: @Sendable (URLRequest) -> Void = { request in
+        Task { @MainActor in
+            let finish = BackgroundTaskEnd()
+            finish.task = UIApplication.shared.beginBackgroundTask(withName: "Telemetry") { finish.end() }
+            _ = try? await URLSession.shared.data(for: request)
+            finish.end()
+        }
+    }
+
+    /// Hands every download and place report to PostHog, and sends what was kept for later. Call once at launch.
     func start() {
         guard configuration != nil else { return }
         DownloadReports.shared.sink = { [weak self] report in self?.capture(report) }
+        PlaceReports.shared.sink = { [weak self] report in self?.capture(report) }
+        sendDeferred()
+    }
+
+    func capture(_ report: PlaceReport) {
+        capture(Self.eventName(of: report), properties: Self.properties(of: report, phase: appPhase))
+    }
+
+    static func eventName(of report: PlaceReport) -> String {
+        report.direction == .push ? "gatefold_place_push" : "gatefold_place_pull"
+    }
+
+    /// The properties sent for one place send or fetch. Only fixed names, numbers and booleans: never a
+    /// title, hash, pointer, CFI, email or text.
+    static func properties(of report: PlaceReport, phase: String) -> [String: Value] {
+        var p: [String: Value] = [
+            "result": .string(report.result.rawValue),
+            "app_phase": .string(phase),
+            "has_cfi": .bool(report.hasCFI),
+        ]
+        if let v = report.reason { p["reason"] = .string(v.rawValue) }
+        if let v = report.httpStatus { p["http_status"] = .int(v) }
+        if let v = report.errorDomain { p["error_domain"] = .string(v) }
+        if let v = report.errorCode { p["error_code"] = .int(v) }
+        if let v = report.errorKind { p["error_kind"] = .string(v) }
+        if let v = report.remoteSource { p["remote_source"] = .string(v) }
+        if let v = report.remoteNewer { p["remote_newer"] = .bool(v) }
+        if let v = report.remoteAhead { p["remote_ahead"] = .bool(v) }
+        if report.direction == .push {
+            p["trigger"] = .string(report.trigger.rawValue)
+            p["sign_in_renewed"] = .bool(report.signInRenewed)
+            p["signed_in_again"] = .bool(report.signedInAgain)
+            p["sign_in_expired"] = .bool(report.signInExpired)
+            p["background_expired"] = .bool(report.reason == .backgroundExpired)
+            p["attempts"] = .int(report.attempts)
+            if let v = report.ageSeconds { p["seconds_since_turn"] = .int(bucket(v)) }
+            if let v = report.queued { p["queued"] = .int(v) }
+        } else {
+            p["sign_in_expired"] = .bool(report.signInExpired)
+        }
+        return p
+    }
+
+    private struct Deferred: Codable {
+        let event: String
+        let properties: [String: Value]
+    }
+
+    /// Keeps a place report to send at the next launch or return to the app: for a moment when nothing
+    /// can be sent (iOS ending the background time). Keeps the latest `deferredLimit`.
+    func captureLater(_ report: PlaceReport, phase: String = "background") {
+        guard configuration != nil else { return }
+        var kept = (defaults.data(forKey: Self.deferredKey)).flatMap { try? JSONDecoder().decode([Deferred].self, from: $0) } ?? []
+        kept.append(Deferred(event: Self.eventName(of: report), properties: Self.properties(of: report, phase: phase)))
+        if kept.count > Self.deferredLimit { kept.removeFirst(kept.count - Self.deferredLimit) }
+        defaults.set(try? JSONEncoder().encode(kept), forKey: Self.deferredKey)
+    }
+
+    /// Sends what `captureLater` kept, once.
+    func sendDeferred() {
+        guard configuration != nil, let data = defaults.data(forKey: Self.deferredKey) else { return }
+        defaults.removeObject(forKey: Self.deferredKey)
+        for event in (try? JSONDecoder().decode([Deferred].self, from: data)) ?? [] {
+            capture(event.event, properties: event.properties)
+        }
     }
 
     func capture(_ report: DownloadReport) {
@@ -101,8 +188,14 @@ final class GatefoldTelemetry: @unchecked Sendable {
         }
     }
 
-    enum Value: Encodable, Equatable {
+    enum Value: Codable, Equatable {
         case string(String), int(Int), bool(Bool)
+        init(from decoder: Decoder) throws {
+            let c = try decoder.singleValueContainer()
+            if let v = try? c.decode(Bool.self) { self = .bool(v) }
+            else if let v = try? c.decode(Int.self) { self = .int(v) }
+            else { self = .string(try c.decode(String.self)) }
+        }
         func encode(to encoder: Encoder) throws {
             var c = encoder.singleValueContainer()
             switch self {
@@ -140,7 +233,7 @@ final class GatefoldTelemetry: @unchecked Sendable {
         request.httpBody = body
         request.timeoutInterval = 10
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        log.info("telemetry \(event, privacy: .public) stage=\(String(describing: properties["stage"]), privacy: .public)")
+        log.info("telemetry \(event, privacy: .public) stage=\(String(describing: properties["stage"] ?? properties["result"]), privacy: .public)")
         send(request)
     }
 
