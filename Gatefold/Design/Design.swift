@@ -154,7 +154,8 @@ enum LaunchOptions {
     static var holdLeaveWrites: Bool { isUITest && defaults.bool(forKey: "GatefoldHoldLeaveWrites") }
     /// Debug only: Back's first this many sends are taken at their chapter's start, the chapter still
     /// loading meanwhile, as a web view still loading takes a jump (gatefold#170). Counted in sends, not
-    /// looks, so a Back that stops sending stays short. Armed once per launch, by its first Back.
+    /// looks, so a Back that stops sending stays short. Armed once per launch, by its first Back. The rest
+    /// go once the trip has waited on the load past `JumpLanding.reads`, however that waiting came.
     static var holdBackSends: Int? {
         #if DEBUG
         defaults.object(forKey: "GatefoldHoldBackSends") == nil ? nil : defaults.integer(forKey: "GatefoldHoldBackSends")
@@ -198,8 +199,9 @@ enum LaunchOptions {
         false
         #endif
     }
-    /// Tests only: the first page counts as still loading for this many looks, so the opening cover
-    /// stays up as it does on a slow device or a stuck load (#94), and a test can tap through it (#104).
+    /// Tests only: the first page counts as still loading until the page beneath has reported its words, the
+    /// test has read the screen a few times since, and for this many looks after, so the opening cover stays up
+    /// as it does on a slow device or a stuck load (#94), and a test can tap through it (#104).
     static var holdOpeningLoadLooks: Int? { defaults.object(forKey: "GatefoldHoldOpeningLoad") == nil ? nil : defaults.integer(forKey: "GatefoldHoldOpeningLoad") }
     /// Tests only: seconds an unanswered offer waits before it folds into its tab (10 by default), so
     /// a test on a slow host can tap Catch up without racing the fold.

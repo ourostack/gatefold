@@ -44,6 +44,9 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             guard oldValue != isTurning else { return }
             if LaunchOptions.isUITest {
                 if isTurning { frames.start() } else { frames.stop(counting: counter != nil) }
+                // A test waits on the turn itself, not a count of reads: one into another chapter waits for that
+                // chapter's page beneath, which on CI's busy iPad took up to 58 s (gatefold#492).
+                weakModel?.turningProbe = isTurning
             }
             // A chapter still loading behind the page shares its web process with the turn: stop the count
             // for the turn (what's counted is kept) and take it up again once turns go quiet.
@@ -116,7 +119,10 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         super.viewDidLoad()
         if let model = weakModel { readerLog.notice("open: host loads after \(Date().timeIntervalSince(model.openedAt), privacy: .public) s") }
         if LaunchOptions.isUITest || LaunchOptions.openTour != nil { traceWebViews() }
-        if LaunchOptions.isUITest, let looks = LaunchOptions.holdOpeningLoadLooks, looks > 0 { holdLoadForTest(looks: looks) }
+        if LaunchOptions.isUITest, let looks = LaunchOptions.holdOpeningLoadLooks, looks > 0 {
+            holdLoadForTest(looks: looks)
+            heldUntilWordsBeneath = true
+        }
         if LaunchOptions.holdOpeningLoadUntilCatchUp { heldUntilCatchUp = true; holdLoadForTest(looks: 0) }
         view.clipsToBounds = true
         // A book opened ahead of the tap waits behind the shelf, out of accessibility's reach until it is tapped.
@@ -296,14 +302,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     func promoteStandby(for locator: Locator) async -> Bool {
         guard let next = standby, next.locator == locator else { return false }
         // A page that hasn't loaded in 1.5 s may never load: the plain jump is no slower than waiting on.
-        let ready = next.ready
-        let loaded = await withTaskGroup(of: Bool.self) { group in
-            group.addTask { await ready.value; return true }
-            group.addTask { try? await Task.sleep(for: .milliseconds(1500)); return false }
-            let first = await group.next() ?? false
-            group.cancelAll()
-            return first
-        }
+        let loaded = await Self.finished(next.ready, within: .milliseconds(1500))
         guard loaded else {
             readerLog.notice("standby: not loaded 1.5 s after the tap; jumping the plain way")
             dropStandby()
@@ -328,6 +327,19 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         weakModel?.highlights.navigatorChanged()
         if let here = navigator.currentLocation { self.navigator(navigator, locationDidChange: here) }
         return true
+    }
+
+    /// True when `task` ends within `limit`, false as soon as `limit` passes. Never waits on past the limit: a task
+    /// group's child awaiting `task.value` ignores the group's cancel, so the group waited out the whole load. On CI's
+    /// starved iPad a catch-up tap waited 4 minutes on a standby page still loading, under a veil that let go after
+    /// 150 beats, and the test read no words (merge-queue run 44170382162).
+    static func finished(_ task: Task<Void, Never>, within limit: Duration) async -> Bool {
+        let once = AnswerOnce<Bool>()
+        Task { @MainActor in await task.value; once.resume(true) }
+        let timer = Task { @MainActor in try? await Task.sleep(for: limit); once.resume(false) }
+        let answer = await withCheckedContinuation { once.wait($0) }
+        timer.cancel()
+        return answer ?? false
     }
 
     // MARK: Screen pages
@@ -2269,6 +2281,16 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         }
         if LaunchOptions.isUITest, let sends = LaunchOptions.holdBackSends, sends > 0, weakModel?.isGoingBack == true {
             if !heldSendsArmed { heldSendsArmed = true; heldSends = sends; holdLoadForTest(looks: 0) }
+            // The hold has proved its point once the trip has waited on the load for more reads than a trip may
+            // make without one: it lets the rest of its sends go. A real load slow enough to spend the trip's
+            // waiting reads first (100 s on CI's starved iPad, run 44152627391) left the held sends nothing to
+            // wait on, and the trip ran out of reads with the hold still up.
+            if heldSends > 0, let waited = weakModel?.backTripWaited, waited > JumpLanding.reads {
+                readerLog.notice("test: Back's trip has waited \(waited, privacy: .public) reads on the load; the \(self.heldSends, privacy: .public) held sends left go")
+                heldSends = 0
+                heldLoadMarker?.accessibilityValue = "0"
+                if heldLoadLooks == 0, !heldUntilCatchUp { heldLoadMarker?.removeFromSuperview(); heldLoadMarker = nil }
+            }
             if heldSends > 0 {
                 heldSends -= 1
                 // The sends still held, for the test to read (the log stream can drop lines).
@@ -2672,6 +2694,28 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     private var heldLoadMarker: UIView?
     /// Tests only (`-GatefoldHoldOpeningLoadUntilCatchUp`): the opening load is held until Catch up is taken.
     private var heldUntilCatchUp = false
+    /// Tests only (`-GatefoldHoldOpeningLoad`): the opening hold's looks start once the page beneath has reported
+    /// its words and the test has since read the screen `openingHoldReads` times (each read asks the held marker
+    /// for its value). Counted from the open, a starved runner spent every look before the page beneath had any
+    /// words, and the cover lifted with nothing under it to leak (gatefold#374's check, run 44170382162); counted
+    /// from the words alone, a runner whose reads take seconds still read nothing in between.
+    private var heldUntilWordsBeneath = false
+    private var readsAtWords: Int?
+    static let openingHoldReads = 10
+    private var waitingForWordsBeneath: Bool {
+        guard heldUntilWordsBeneath, let model = weakModel, !model.isClosed else { return false }
+        if model.wordsBeneathProbe.isEmpty { return true }
+        let reads = (heldLoadMarker as? ReadCountingMarker)?.reads ?? 0
+        guard let at = readsAtWords else {
+            readsAtWords = reads
+            readerLog.notice("open: the page beneath has its words; the held load waits for \(Self.openingHoldReads, privacy: .public) reads of the screen")
+            return true
+        }
+        if reads - at < Self.openingHoldReads { return true }
+        heldUntilWordsBeneath = false
+        readerLog.notice("open: the screen was read \(reads - at, privacy: .public) times over the words beneath; the held load's \(self.heldLoadLooks, privacy: .public) looks start")
+        return false
+    }
 
     /// Tests only: Catch up was taken, so the opening load held for it goes on.
     func releaseHoldForCatchUp() {
@@ -2693,7 +2737,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     private func holdLoadForTest(looks: Int) {
         heldLoadMarker?.removeFromSuperview()
         heldLoadLooks = max(heldLoadLooks, looks)
-        let marker = UIView(frame: CGRect(x: 0, y: 0, width: 1, height: 1))
+        let marker = ReadCountingMarker(frame: CGRect(x: 0, y: 0, width: 1, height: 1))
         marker.isAccessibilityElement = true
         marker.accessibilityIdentifier = "reader.loadingHeld"
         view.addSubview(marker)
@@ -2704,6 +2748,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     var isLoadingPage: Bool {
         if heldSends > 0 || heldUntilCatchUp { return true }
         if heldLoadLooks > 0 {
+            if waitingForWordsBeneath { return true }
             heldLoadLooks -= 1
             if heldLoadLooks == 0 { heldLoadMarker?.removeFromSuperview(); heldLoadMarker = nil }
             return true
@@ -3022,11 +3067,11 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     func waitWhileLoading() async -> Int {
         var looks = 0
         // A load held until Catch up has no allowance and spends none: the test's tap ends it, and the real
-        // load after it still gets its own.
-        while isLoadingPage, looks < Self.loadingLooks || heldUntilCatchUp {
+        // load after it still gets its own. Nor does an opening hold still waiting for the words beneath.
+        while isLoadingPage, looks < Self.loadingLooks || heldUntilCatchUp || waitingForWordsBeneath {
             await unveilPlacedPages()
             guard isLoadingPage else { break }
-            if !heldUntilCatchUp { looks += 1 }
+            if !heldUntilCatchUp, !waitingForWordsBeneath { looks += 1 }
             try? await Task.sleep(for: .milliseconds(50))
         }
         if looks > 0 { readerLog.notice("veil: waited \(looks, privacy: .public) looks for the chapter to load") }
@@ -3351,5 +3396,16 @@ extension EPUBNavigatorViewController {
             if let error = error as? EPUBNavigatorViewController.EPUBError, case .spreadNotLoaded = error { throw SpreadChanged() }
             return nil
         }
+    }
+}
+
+/// Tests only: the held load's marker, which counts how often a UI test has read it (each read of the screen asks
+/// every element for its value), so a hold can wait on the test's reads rather than on time.
+private final class ReadCountingMarker: UIView {
+    private(set) var reads = 0
+    private var value: String?
+    override var accessibilityValue: String? {
+        get { reads += 1; return value }
+        set { value = newValue }
     }
 }

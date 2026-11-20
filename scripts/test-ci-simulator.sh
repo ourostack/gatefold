@@ -18,6 +18,11 @@ case "$*" in
     for u in ${FAKE_HANG_CALLS:-}; do [ "$u" = "$n" ] && { sleep 3; exit 1; }; done
     avail=true; for u in $FAKE_UNAVAIL_CALLS; do [ "$u" = "$n" ] && avail=false; done
     echo "{\"runtimes\":[{\"platform\":\"iOS\",\"isAvailable\":$avail,\"version\":\"27.1\",\"identifier\":\"iOS-27-1\",\"supportedDeviceTypes\":[{\"name\":\"iPad Pro 13-inch (M5)\",\"identifier\":\"iPad-Pro-13\"}]}]}" ;;
+  "simctl runtime list -j")
+    # No image listed, so `start` boots at once; with $FAKE_STANDIN, iOS 27.1 is a Ready stand-in that never moves.
+    if [ -n "${FAKE_STANDIN:-}" ]; then
+      echo '{"a":{"runtimeIdentifier":"iOS-27-1","build":"24A94425","state":"Ready","mountPath":"/Library/Developer/CoreSimulator/Volumes/iOS_24A94425"}}'
+    else echo '{}'; fi ;;
   "simctl list devices -j")
     list=""; for u in $(cat "$FAKE/udids" 2>/dev/null); do list="$list${list:+,}{\"udid\":\"$u\",\"state\":\"Booted\"}"; done
     echo "{\"devices\":{\"iOS-27-1\":[$list]}}" ;;
@@ -81,6 +86,10 @@ check "booted and its runtime is there" "" 0 0 dev1 "booted, and its runtime is 
 check "the runtime goes after the boot, a fresh device has it (gatefold#71)" "2" 0 0 dev2 "Booted, but its runtime iOS-27-1 is no longer available"
 check "the runtime stays gone" "2 3 4" 0 1 - "booted again, but its runtime iOS-27-1 is no longer available"
 check "the boot fails" "" 3 1 - "boot-sim.sh exited 3"
+# A runtime on its stand-in mount that never moves to its cryptex: no boot at all, and the runner is named (#469).
+FAKE_STANDIN=1 CI_SIMULATOR_SETTLE_LIMIT=1 check "the runtime never settles" "" 0 1 - "::error title=The runner, not the app::the runtime never settled"
+if [ ! -e "$work/the runtime never settles/fake/boots" ]; then echo "ok   wait: an unsettled runtime is never booted"
+else echo "FAIL wait: an unsettled runtime was booted"; fails=$((fails + 1)); fi
 # `erase`, the cold step's erase: runtime listing 1 is the check; 2 is the fresh device's pick; 3 its check.
 erase_case() {
   local case_dir="$work/erase-$1"; mkdir -p "$case_dir/fake" "$case_dir/tmp"; : > "$case_dir/env"

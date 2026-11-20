@@ -31,6 +31,16 @@ com.apple.homed
 com.apple.geod
 com.apple.weatherd
 com.apple.triald
+# Next heaviest in #476's run (44227368725) once the posters were gone: mail, Screen Time, Game Center, App Store
+# engagement, Apple Intelligence's models, News and Family. Gatefold uses none of them.
+com.apple.icloudmailagent
+com.apple.ScreenTimeAgent
+com.apple.gamed
+com.apple.amsengagementd
+com.apple.intelligenceplatformd
+com.apple.modelmanagerd
+com.apple.newsd
+com.apple.familycircled
 # Not first-boot jobs: the simulator daemons holding the most runnable threads through the tests in probe
 # 44308174398 (Find My, Reminders, Wallet, Siri, Fitness, ad attribution, Finance, Safari bookmark sync, Family
 # Controls, Calendar access), and apsd, which used about 12% of the runner's 3 CPUs throughout. Each label is the one in

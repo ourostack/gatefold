@@ -12,6 +12,7 @@ What to Test, in the order they merged. Nothing here writes prose: the same comm
 
 `--since` defaults to the newest testflight/build-* tag behind --head; with none, every fragment counts.
 """
+import json
 import os
 import pathlib
 import re
@@ -304,6 +305,15 @@ def selftest():
         assert len(text) <= LIMIT and "XII. Tale 11" in text and "I. Tale 0\n" + "w" * 690 in text, len(text)
         errs = lint(d)
         assert any("Bad_Name" in e for e in errs) and any("too-long" in e for e in errs), errs
+    # Ouro Current adds the fragment .github/ouro-current.json declares to each Ouro UI update pull request; it must
+    # pass this check with the longest release names and versions it fills in.
+    rules = json.loads(pathlib.Path(__file__).resolve().parent.parent.joinpath(".github/ouro-current.json").read_text())
+    fill = {"{releases}": "Ouro UI core v10.20.30, Ouro UI for Apple v10.20.30 and Ouro UI v10.20.30", "{versionSlug}": "10-20-30"}
+    path, text = rules["changelog"]["path"], rules["changelog"]["text"]
+    for key, value in fill.items():
+        path, text = path.replace(key, value), text.replace(key, value)
+    assert is_fragment(path) and SLUG.match(pathlib.PurePosixPath(path).name), path
+    assert parse(text, path)[1] == [], parse(text, path)[1]
     print("changelog selftest: ok")
 
 

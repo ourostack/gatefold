@@ -3,16 +3,20 @@ name: Real unfold
 # Opens and shuts an iPhone Duo simulator's hinge through DeviceHub (the Duo tour's helper) with a book
 # open, and judges each unfold from the app's own "reflow check" log line: did the spread keep his words?
 # It drives a window; it is the posture gate (the UI test can't move a hinge, and a spread forced on the folded cover
-# is no reader's layout). It is the main tier: it runs on a push to main and in the merge queue when the change touches
-# the reader (the files listed in `changes`; a group or push that touches none skips, which reports success), and on
-# demand, never cancelled. It takes
-# 45 to 75 min, too long for the PR clock (gatefold#39), so on a pull request the job skips, which reports success
-# under the same required name. A red main is fixed as AGENTS.md says ("CI"). On a slow host it stops starting unfolds
-# in time to print its verdicts and upload its logs, and is red for the unfolds it never made (gatefold#391).
+# is no reader's layout). It runs on every pull request, merge-queue group and push to main that touches the reader or
+# the app shell (`changes`; one that touches none skips, which reports success), and on demand. A red main is fixed as
+# AGENTS.md says ("CI").
 #
-# The required check `Real unfold` is the gate job at the end: green when the unfolds passed, on a pull request where
-# they don't run, or on a main push whose tree the merge queue's run (or a pull request's) already unfolded and passed
-# (its job "Real unfold passed on tree <tree>"; scripts/ci-proof.py). A main push without that proof unfolds as before.
+# One build, five places at once (gatefold#39's pattern): `Build for testing` builds the app for the simulator once and
+# uploads it; each place's job boots its own iPhone Duo and opens DeviceHub while that build runs, waits for it
+# (.github/actions/await-build), installs it and unfolds at its place: three rounds and a half open, then its share of
+# the eight early unfolds. One job held all five places in a row (about 43 min of unfolds, 62 to 81 min a run). Each
+# job stops starting unfolds in time to print its verdicts and upload its logs, and is red for the unfolds it never
+# made (gatefold#391).
+#
+# The required check `Real unfold` is the gate job at the end: green when every place passed; on a pull request that
+# doesn't touch the reader; or on a main push whose tree the merge queue's run or a pull request's already unfolded and
+# passed (its job "Real unfold passed on tree <tree>"; scripts/ci-proof.py). A main push without that proof unfolds.
 
 on:
   workflow_dispatch:
@@ -20,15 +24,18 @@ on:
       rounds:
         description: Unfolds at each place in the book
         default: "3"
-  # Every pull request, because Real unfold is a required check: the job skips there, which reports success (a
-  # workflow-level path filter never reported, so such a pull request waited forever; gatefold#42).
+  # Every pull request, because Real unfold is a required check: on one that doesn't touch the reader the gate reports
+  # success without unfolding (a workflow-level path filter never reported, so such a pull request waited forever;
+  # gatefold#42).
   pull_request:
   merge_group:
   push:
     branches: [main]
 
+# The places read this run's jobs and artifacts to wait for the build (.github/actions/await-build).
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: real-unfold-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
@@ -79,22 +86,106 @@ jobs:
           # A dispatch, a new branch (no base) or a base the checkout can't read unfolds, as before.
           if [ "$EVENT" = workflow_dispatch ] || [ -z "${BASE//0/}" ] || ! git diff --name-only "$BASE...$HEAD" > changed.txt; then echo "reader=true" >> "$GITHUB_OUTPUT"; exit 0; fi
           # The reader, the fold and the app shell it runs in; GatefoldCore; the Readium link; the project; the hinge driver.
-          if grep -E '^(\.github/(workflows/real-unfold\.yml|scripts/duo/|actions/)|Gatefold/(Reader|Duo|App)/|Packages/GatefoldCore/|Packages/GatefoldCloud/(Package\.(swift|resolved)$|Sources/GatefoldCloudReadium/)|project\.yml$)' changed.txt; then
+          if grep -E '^(\.github/(workflows/real-unfold\.yml|scripts/duo/|scripts/boot-sim\.sh|actions/)|Gatefold/(Reader|Duo|App)/|Packages/GatefoldCore/|Packages/GatefoldCloud/(Package\.(swift|resolved)$|Sources/GatefoldCloudReadium/)|project\.yml$)' changed.txt; then
             echo "reader=true" >> "$GITHUB_OUTPUT"
           else
             echo "reader=false" >> "$GITHUB_OUTPUT"
           fi
 
-  unfold:
-    name: Unfold with a book open
+  build:
+    name: Build for testing
     needs: changes
-    # Main, the merge queue and dispatch only (see the top). A failed `changes` leaves the outputs empty, so the unfold
-    # runs rather than skipping as a pass.
-    if: ${{ !cancelled() && github.event_name != 'pull_request' && needs.changes.outputs.reader != 'false' && needs.changes.outputs.proven != 'true' }}
+    # A failed `changes` leaves the outputs empty, so it builds rather than skipping as a pass.
+    if: ${{ !cancelled() && needs.changes.outputs.reader != 'false' && needs.changes.outputs.proven != 'true' }}
     runs-on: xcode-27
-    timeout-minutes: 75
+    timeout-minutes: 35
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/select-xcode
+      - id: name
+        name: Name the build by commit and Xcode version (the places' await-build looks for this name)
+        run: echo "artifact=gatefold-tests-${{ github.sha }}-xcode-$(xcodebuild -version | tr -s ' \n' '-' | sed 's/-$//; s/^Xcode-//; s/-Build-version-/-/')" >> "$GITHUB_OUTPUT"
+      - name: Install the Metal toolchain (the page curl is a Metal shader)
+        run: xcodebuild -downloadComponent MetalToolchain
+      - name: Generate the Xcode project from project.yml
+        run: |
+          brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
+          xcodegen generate
+      - name: Build the app for the simulator, once
+        # The same build as App's `Build for testing` (13 to 16 min); the places install its Gatefold.app.
+        timeout-minutes: 25
+        run: |
+          set -o pipefail
+          xcodebuild build-for-testing -project Gatefold.xcodeproj -scheme Gatefold \
+            -destination 'generic/platform=iOS Simulator' ARCHS="$(uname -m)" \
+            -derivedDataPath "$RUNNER_TEMP/dd" 2>&1 | tee "$RUNNER_TEMP/build.log" | tail -60
+          ls "$RUNNER_TEMP"/dd/Build/Products/Debug-iphonesimulator/Gatefold.app/Gatefold
+          tar -czf "$RUNNER_TEMP/products.tgz" -C "$RUNNER_TEMP/dd/Build" Products
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.name.outputs.artifact }}
+          path: ${{ runner.temp }}/products.tgz
+          retention-days: 5
+          compression-level: 0
+          overwrite: true
+      - uses: actions/upload-artifact@v4
+        if: failure() || cancelled()
+        with:
+          name: real-unfold-build-log
+          path: ${{ runner.temp }}/build.log
+          overwrite: true
+      # Merge queue only, last: a failed build cancels the other runs on this commit (.github/actions/fail-fast).
+      - if: failure() && github.event_name == 'merge_group'
+        uses: ./.github/actions/fail-fast
+
+  unfold:
+    name: Unfold at ${{ matrix.place }}
+    needs: changes
+    # Starts with the run, so the simulator boots and DeviceHub opens while `build` builds. A failed `changes` leaves
+    # the outputs empty, so the unfolds run rather than skipping as a pass.
+    if: ${{ !cancelled() && needs.changes.outputs.reader != 'false' && needs.changes.outputs.proven != 'true' }}
+    strategy:
+      # Every place gives its verdict, on a pull request too: one red place says nothing about the others.
+      fail-fast: false
+      matrix:
+        include:
+          # Five places in the book, and the eight early unfolds spread over them (0.12, 0.31 and 0.47 get two).
+          - place: "0.12"
+            early: "0.12 0.12"
+            lane: 1
+          - place: "0.31"
+            early: "0.31 0.31"
+            lane: 2
+          - place: "0.47"
+            early: "0.47 0.47"
+            lane: 3
+          - place: "0.66"
+            early: "0.66"
+            lane: 4
+          - place: "0.83"
+            early: "0.83"
+            lane: 5
+    runs-on: xcode-27
+    # PR lane (gatefold#286): one lane per place, shared by every open pull request; see "macOS lanes" in app.yml.
+    # Never cancel-in-progress.
+    concurrency:
+      group: >-
+        ${{ github.event_name == 'pull_request'
+        && format('gatefold-macos-pr-lane-unfold-{0}', matrix.lane)
+        || format('real-unfold-{0}-{1}-{2}', github.run_id, github.run_attempt, strategy.job-index) }}
+      queue: max
+    # 36 for the boot, DeviceHub and the build wait (await-build's own limit), up to 12 for a slow download and the
+    # install, twice a place's slowest unfolds (about 9.5 min: 43 min for five places and eight early unfolds in run
+    # 44019735528), and the last 10 for the verdicts and the upload, when no new unfold starts (stop_at below). A late
+    # build eats into the unfolds' share first; a place that runs out is red, never shortened.
+    timeout-minutes: 77
     env:
       APP: bot.ouro.gatefold
+      LIMIT: "77" # the job's timeout-minutes, for the unfold step's own stop (scripts/ci-lanes.py checks they agree)
+    # Read: the build's artifact (await-build). Write: the merge queue's fail-fast cancels (.github/actions/fail-fast).
     permissions:
       contents: read
       actions: write
@@ -103,38 +194,17 @@ jobs:
       - run: echo "JOB_START=$(date +%s)" >> "$GITHUB_ENV"
       - uses: actions/checkout@v4
       - uses: ./.github/actions/select-xcode
-      - name: Install the Metal toolchain
-        run: xcodebuild -downloadComponent MetalToolchain
-      - name: Generate the project
-        run: |
-          brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
-          xcodegen generate
       - name: Create and boot an iPhone Duo
         id: sim
         run: |
           set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/unfold/shots"
           runtime="$(xcrun simctl list runtimes --json | python3 -c 'import json,sys; r=[x for x in json.load(sys.stdin)["runtimes"] if x["platform"]=="iOS" and x["isAvailable"] and any(d["name"].startswith("iPhone Duo") for d in x.get("supportedDeviceTypes",[]))]; print(max(r, key=lambda x: [int(p) for p in x["version"].split(".")])["identifier"])')"
+          # A runtime mid-swap loses its booted device (scripts/ci-simulator.py, "settle").
+          python3 -I scripts/ci-simulator.py settle "$runtime"
           udid="$(.github/scripts/boot-sim.sh gatefold-duo com.apple.CoreSimulator.SimDeviceType.iPhone-Duo "$runtime")"
           echo "udid=$udid" >> "$GITHUB_OUTPUT"
-      - name: Build and install the app
-        # 16 min measured at most; 16 / 0.7. Run 42393941976 hung here 75 min and lost its log (#35).
-        timeout-minutes: 23
-        run: |
-          set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/unfold/shots"
-          echo "$(date -u +%T) building"
-          xcodebuild build -project Gatefold.xcodeproj -scheme Gatefold \
-            -destination "platform=iOS Simulator,arch=$(uname -m),id=${{ steps.sim.outputs.udid }}" \
-            -derivedDataPath "$RUNNER_TEMP/unfold/DerivedData" CODE_SIGNING_ALLOWED=NO 2>&1 | tee "$RUNNER_TEMP/unfold/build.log" \
-            | grep --line-buffered -E "error:|BUILD (SUCCEEDED|FAILED)|^(Compil|Link|Process|Sign)[A-Za-z]* " | awk 'NR % 25 == 1 || /error:|BUILD/ { print; fflush() }'
-          echo "$(date -u +%T) built; installing"
-          for attempt in 1 2 3; do
-            xcrun simctl bootstatus "${{ steps.sim.outputs.udid }}" -b >/dev/null 2>&1 || true
-            echo "$(date -u +%T) install attempt $attempt"
-            if xcrun simctl install "${{ steps.sim.outputs.udid }}" "$RUNNER_TEMP/unfold/DerivedData/Build/Products/Debug-iphonesimulator/Gatefold.app"; then break; fi
-            [ "$attempt" = 3 ] && exit 1
-            sleep 15
-          done
+      # Before the build lands: DeviceHub drives the simulator's hinge, not the app.
       - name: Open DeviceHub
         run: |
           set -euo pipefail
@@ -147,14 +217,52 @@ jobs:
           open -a "$(xcode-select -p)/../Applications/DeviceHub.app"
           sleep 20
           "$RUNNER_TEMP/unfold/devicehub" dump
+      - name: Wait for this commit's build (Build for testing runs while the simulator boots)
+        id: artifact
+        timeout-minutes: 36
+        uses: ./.github/actions/await-build
+      - id: fetch
+        # A download cut off at 4 min tries once more (gatefold#144), and a truncated one too (gatefold#89).
+        uses: actions/download-artifact@v4
+        timeout-minutes: 4
+        continue-on-error: true
+        with:
+          name: ${{ steps.artifact.outputs.artifact }}
+          path: ${{ runner.temp }}
+      - id: whole
+        name: The download is whole (gzip -t)
+        if: steps.fetch.outcome == 'success'
+        continue-on-error: true
+        timeout-minutes: 2
+        run: gzip -t "$RUNNER_TEMP/products.tgz"
+      - name: Download the build again (the first try failed, ran past 4 min or came truncated)
+        if: steps.fetch.outcome != 'success' || steps.whole.outcome != 'success'
+        uses: actions/download-artifact@v4
+        timeout-minutes: 6
+        with:
+          name: ${{ steps.artifact.outputs.artifact }}
+          path: ${{ runner.temp }}
+      - name: Install the app (built once, for this commit and Xcode)
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/dd/Build"
+          tar -xzf "$RUNNER_TEMP/products.tgz" -C "$RUNNER_TEMP/dd/Build"
+          for attempt in 1 2 3; do
+            xcrun simctl bootstatus "${{ steps.sim.outputs.udid }}" -b >/dev/null 2>&1 || true
+            echo "$(date -u +%T) install attempt $attempt"
+            if xcrun simctl install "${{ steps.sim.outputs.udid }}" "$RUNNER_TEMP/dd/Build/Products/Debug-iphonesimulator/Gatefold.app"; then break; fi
+            [ "$attempt" = 3 ] && exit 1
+            sleep 15
+          done
       # The unfold step ends 5 min before the job's limit (gatefold#423): main's runs at e132d48 and 74383b3 hung in
-      # it past 75 min, and the job's own limit skipped the upload, so neither left a log or an artifact.
+      # it past their limit, and the job's own limit skipped the upload, so neither left a log or an artifact.
       - id: left
         run: |
-          left=$(( (JOB_START + (75 - 5) * 60 - $(date +%s)) / 60 ))
+          left=$(( (JOB_START + (LIMIT - 5) * 60 - $(date +%s)) / 60 ))
           [ "$left" -ge 1 ] || left=1
           echo "minutes=$left" >> "$GITHUB_OUTPUT"
-      - name: Unfold with a book open, at five places
+      - name: Unfold with a book open, at ${{ matrix.place }}
         id: unfold
         timeout-minutes: ${{ fromJSON(steps.left.outputs.minutes) }}
         run: |
@@ -166,10 +274,12 @@ jobs:
             --predicate 'subsystem == "bot.ouro.gatefold" AND category == "reader"' > "$out/reader.log" 2>&1 &
           stream=$!
           # A slow host stretches every step: past this, no new unfold starts, so the verdicts on those already made
-          # still print and the logs still upload before the job's 75-min limit (gatefold#391). 10 min for those.
-          stop_at=$(( JOB_START + (75 - 10) * 60 ))
+          # still print and the logs still upload before the job's limit (gatefold#391). 10 min for those.
+          stop_at=$(( JOB_START + (LIMIT - 10) * 60 ))
           rounds="${{ inputs.rounds || '3' }}"
-          planned=$(( 5 * (rounds + 1) + 8 ))
+          places="${{ matrix.place }}"
+          early="${{ matrix.early }}"
+          planned=$(( (rounds + 1) + $(echo "$early" | wc -w) ))
           # Inside `unfolds || true` bash's -e is off, so each command the step needs says when it failed.
           out_of_time=0 stalled=0 failed=0
           in_time() {
@@ -282,7 +392,7 @@ jobs:
             echo $(( $(date +%s) - t0 ))
           }
           unfolds() {
-          for place in 0.12 0.31 0.47 0.66 0.83; do
+          for place in $places; do
             press "Closed" || return 1; sleep 6
             ready="$(grep -cE "first page ready|open: page shown" "$out/reader.log" || true)"
             xcrun simctl launch --terminate-running-process "$udid" "$APP" -GatefoldUITest YES -GatefoldFakeCloud YES \
@@ -310,7 +420,7 @@ jobs:
           done
           # Early unfolds: opened folded, then unfolded 2 s after the page shows, as the posture test
           # switches (the reviewer's failures came on the first switch after launch).
-          for place in 0.12 0.31 0.47 0.66 0.83 0.12 0.31 0.47; do
+          for place in $early; do
             in_time || return 1
             press "Closed" || return 1; sleep 6
             ready="$(grep -cE "first page ready|open: page shown" "$out/reader.log" || true)"
@@ -323,7 +433,7 @@ jobs:
             echo "EARLY UNFOLD place $place (page ready in $took s)" | tee -a "$out/marks.log"
             echo "EARLY UNFOLD place $place" >> "$out/reader.log"
             move "Open" spread 16 || return 1
-            xcrun simctl io "$udid" screenshot --display=3 "$out/shots/early-$place-$took.png" >/dev/null 2>&1 || true
+            xcrun simctl io "$udid" screenshot --display=3 "$out/shots/early-$place-$(grep -c "" "$out/marks.log")-$took.png" >/dev/null 2>&1 || true
           done
           }
           # The flags carry how it ended; the verdicts below print either way.
@@ -375,22 +485,20 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: real-unfold
+          name: real-unfold-${{ matrix.place }}
           path: |
             ${{ runner.temp }}/unfold/reader.log
-            ${{ runner.temp }}/unfold/build.log
             ${{ runner.temp }}/unfold/marks.log
             ${{ runner.temp }}/unfold/shots
             ${{ runner.temp }}/unfold/stall
-      # Merge queue only: a failed job cancels the other runs on this commit, so the queue drops it now
-      # (.github/actions/fail-fast). Last, so the logs above are uploaded first.
-      - if: failure() && github.event_name == 'merge_group'
-        uses: ./.github/actions/fail-fast
+      # No fail-fast here, even in the merge queue: a UI-test shard's failure must not cancel its siblings. Each
+      # sibling that finishes leaves a pass on this tree, so a re-enqueue reruns only the shard that failed
+      # (scripts/ci-proof.py). Cancelling them threw those passes away, and the rerun gave every flake a new chance.
 
   # The required check. Never skipped, so it always reports.
   real-unfold:
     name: Real unfold
-    needs: [changes, unfold]
+    needs: [changes, build, unfold]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 2
@@ -398,22 +506,23 @@ jobs:
       - env:
           EVENT: ${{ github.event_name }}
           READER: ${{ needs.changes.outputs.reader }}
+          BUILD: ${{ needs.build.result }}
           UNFOLD: ${{ needs.unfold.result }}
           PROVEN: ${{ needs.changes.outputs.proven }}
           PROOF: ${{ needs.changes.outputs.proof }}
         run: |
           if [ "$PROVEN" = true ]; then echo "::notice::Passed by proof: every unfold passed on this tree in $PROOF"; exit 0; fi
-          if [ "$EVENT" = pull_request ] && [ "$UNFOLD" = skipped ]; then echo "The unfolds run in the merge queue and on main, not on a pull request."; exit 0; fi
-          if [ "$READER" = false ] && [ "$UNFOLD" = skipped ]; then echo "This change doesn't touch the reader, so the unfolds have nothing to judge."; exit 0; fi
-          echo "Unfolds: $UNFOLD"
-          [ "$UNFOLD" = success ]
+          if [ "$READER" = false ]; then echo "This change doesn't touch the reader, so the unfolds have nothing to judge."; exit 0; fi
+          echo "Build: $BUILD; unfolds at every place: $UNFOLD"
+          [ "$BUILD" = success ] && [ "$UNFOLD" = success ]
 
   # The proof a main push reads (scripts/ci-proof.py): every unfold ran and passed on this tree, with the usual rounds.
   proof:
     name: Real unfold passed on tree ${{ needs.changes.outputs.tree }}
-    needs: [changes, unfold]
-    # A run that passed by proof (its unfolds skipped) ends with it too, so main's push finds it on the merged commit.
-    if: ${{ !cancelled() && (needs.unfold.result == 'success' || needs.changes.outputs.proven == 'true') && needs.changes.outputs.tree != '' && github.event_name != 'workflow_dispatch' }}
+    needs: [changes, build, unfold]
+    # A run that passed by proof (its build and unfolds skipped) ends with it too, so main's push finds it on the merged
+    # commit.
+    if: ${{ !cancelled() && ((needs.build.result == 'success' && needs.unfold.result == 'success') || needs.changes.outputs.proven == 'true') && needs.changes.outputs.tree != '' && github.event_name != 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
