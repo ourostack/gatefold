@@ -1,0 +1,98 @@
+name: Simulator cache probe
+
+# PROBE ONLY (branch ci-cached-sim), removed before merge: never on main, never in the merge queue.
+# seed: the first boot as today, shutdown, the device saved with actions/cache. restore: on a fresh runner, the cache
+# restored, the device cloned into the default set and booted, and two short UI tests run on it.
+on:
+  pull_request:
+    paths:
+      - .github/workflows/sim-cache-probe.yml
+      - scripts/sim-cache-probe.sh
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  seed:
+    name: Seed (${{ matrix.device }})
+    runs-on: xcode-27
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        device: ["iPad Pro 13-inch", "iPhone Duo"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/select-xcode
+        with:
+          xcode: "27.2"
+      - run: bash scripts/sim-cache-probe.sh plan "${{ matrix.device }}"
+      - run: bash scripts/sim-cache-probe.sh seed
+      - run: echo "SAVE_START=$(date +%s)" >> "$GITHUB_ENV"
+      - uses: actions/cache/save@v4
+        with:
+          path: ~/simcache/set
+          key: ${{ env.SIMKEY }}
+      - run: |
+          echo "- seed: cache save $(( $(date +%s) - SAVE_START )) s" | tee -a "$GITHUB_STEP_SUMMARY"
+
+  restore:
+    name: Restore (${{ matrix.device }})
+    needs: seed
+    runs-on: xcode-27
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        include:
+          - device: "iPad Pro 13-inch"
+            tests: ReaderVisibleTextUITests/testTheShelfReadsNoWords NavigationPlaceUITests/testTheOpeningCoverLetsTheControlsThrough
+          - device: "iPhone Duo"
+            tests: ReviewerChecksUITests/testTheDefaultSpreadIsAsFullAsAppleBooks QuickLeaveUITests/testALeaveUnderTheReopensCoverAfterTheWatchdogKeepsHisPlace
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/select-xcode
+        with:
+          xcode: "27.2"
+      - run: bash scripts/sim-cache-probe.sh plan "${{ matrix.device }}"
+      - run: echo "RESTORE_START=$(date +%s)" >> "$GITHUB_ENV"
+      - id: cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/simcache/set
+          key: ${{ env.SIMKEY }}
+          fail-on-cache-miss: true
+      - run: |
+          echo "- restore: cache restore $(( $(date +%s) - RESTORE_START )) s, $(du -sk ~/simcache/set | cut -f1) KiB" | tee -a "$GITHUB_STEP_SUMMARY"
+      - run: bash scripts/sim-cache-probe.sh clone
+      - name: A main build of the app and its tests (run 44603453975)
+        uses: actions/download-artifact@v4
+        with:
+          name: gatefold-tests-711bed096d298341a5cb36e49cfb78061c6ae28c-xcode-27.2-27B52
+          run-id: 44603453975
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}
+      - name: Two short UI tests on the restored device
+        timeout-minutes: 20
+        env:
+          TESTS: ${{ matrix.tests }}
+        run: |
+          set -o pipefail
+          mkdir -p "$RUNNER_TEMP/dd/Build" && tar -xzf "$RUNNER_TEMP/products.tgz" -C "$RUNNER_TEMP/dd/Build"
+          xctestrun=$(ls "$RUNNER_TEMP"/dd/Build/Products/*.xctestrun | head -1)
+          only=(); for t in $TESTS; do only+=("-only-testing:GatefoldUITests/$t"); done
+          t0=$SECONDS
+          xcodebuild test-without-building -xctestrun "$xctestrun" \
+            -destination "platform=iOS Simulator,arch=$(uname -m),id=$UDID" "${only[@]}" 2>&1 \
+            | grep -E "Test Case .*(started|passed|failed|skipped)|TEST (SUCCEEDED|FAILED)|error:"
+          code=${PIPESTATUS[0]}
+          echo "- restore: UI tests exit $code in $((SECONDS - t0)) s ($TESTS)" | tee -a "$GITHUB_STEP_SUMMARY"
+          exit $code
+      - name: The other path (dir moved into Devices, service restarted)
+        if: always()
+        run: |
+          xcrun simctl shutdown "$UDID" || true
+          bash scripts/sim-cache-probe.sh restart
