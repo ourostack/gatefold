@@ -284,6 +284,22 @@ struct ReaderScreen: View {
     private func page(_ layout: ReaderLayout, clearance: ChromeClearance) -> some View {
         ZStack(alignment: .topLeading) {
             if let host = model.hostController {
+                // A single page on a wide screen is inset to a book's measure (`measured`), and a tap in the margin
+                // beside it reached nothing: taps at 3% and 97% of the iPad's portrait width did nothing at all
+                // (gatefold#536). Each side's margin takes the tap and gives it to the page as a tap beside it.
+                if layout.posture == .single, layout.pageFrame.minX > 0 {
+                    let margin = layout.pageFrame.minX
+                    ForEach([false, true], id: \.self) { right in
+                        Color.clear
+                            .frame(width: margin, height: layout.pageFrame.height)
+                            .contentShape(Rectangle())
+                            .onTapGesture { at in
+                                host.marginTapped(at: CGPoint(x: right ? layout.pageFrame.width + at.x : at.x - margin, y: at.y))
+                            }
+                            .accessibilityHidden(true)
+                            .offset(x: right ? layout.pageFrame.maxX : 0, y: layout.pageFrame.minY)
+                    }
+                }
                 ReaderHostView(controller: host)
                     .frame(width: layout.pageFrame.width, height: layout.pageFrame.height)
                     .offset(x: layout.pageFrame.minX, y: layout.pageFrame.minY)

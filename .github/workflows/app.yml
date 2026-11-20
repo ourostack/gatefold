@@ -629,11 +629,22 @@ jobs:
             tests: >-
               FineTuneTapUITests MarginTapUITests SwallowedTapUITests
             skip: >-
+              MarginTapUITests/testABrushNeverTurnsInPortrait MarginTapUITests/testABrushNeverTurnsOnItsSide MarginTapUITests/testAnEdgeTapAlwaysTurnsInPortrait MarginTapUITests/testAnEdgeTapAlwaysTurnsOnItsSide
               FineTuneTapUITests/testAQuickTouchChangesEverySwitchOnce FineTuneTapUITests/testATapOnTheRowsNameChangesItsSwitch FineTuneTapUITests/testEveryTapFlipsJustifyPortrait FineTuneTapUITests/testEveryTapFlipsPageNumbersPortrait FineTuneTapUITests/testEveryTapFlipsPositionLabelPortrait FineTuneTapUITests/testEveryTapFlipsPagesLeftPortrait FineTuneTapUITests/testEveryTapFlipsJustifyLandscape FineTuneTapUITests/testEveryTapFlipsPageNumbersLandscape FineTuneTapUITests/testEveryTapFlipsPositionLabelLandscape FineTuneTapUITests/testEveryTapFlipsPagesLeftLandscape
             pr_tests: none
             cold: false
             timeout: 75 # 30 + 2 x 13.6 + 5 + 12
             lane: 2
+          - shard: ipad-taps-edges
+            # Main only: a 20-pt brush turns nothing and taps at 3% and 97% of the window turn, both ways up
+            # (gatefold#536; estimates until CI has timed them)
+            tests: >-
+              MarginTapUITests/testABrushNeverTurnsInPortrait MarginTapUITests/testABrushNeverTurnsOnItsSide MarginTapUITests/testAnEdgeTapAlwaysTurnsInPortrait MarginTapUITests/testAnEdgeTapAlwaysTurnsOnItsSide
+            skip: ""
+            pr_tests: none
+            cold: false
+            timeout: 69 # 30 + 2 x 11.0 + 5 + 12
+            lane: 1
           - shard: ipad-taps-furniture
             # 130 + 129 + 86
             tests: >-
