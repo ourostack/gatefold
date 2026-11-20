@@ -250,7 +250,7 @@ real_case() {
   local began got code took; began=$(date +%s)
   got="$(PATH="$real/bin:$PATH" FAKE="$d/fake" FAKE_HANGS="$2" FAKE_NO_BOOT="$3" BOOT_SIM_BOOTSTATUS_LIMIT="${CASE_LIMIT:-2}" \
     BOOT_SIM_BOOTSTATUS_SLICE="${CASE_SLICE:-}" BOOT_SIM_NOBOOT_LIMIT="${CASE_NOBOOT:-}" BOOT_SIM_CONFIRM_LIMIT=2 \
-    BOOT_SIM_RECHECK_LIMIT=2 BOOT_SIM_LIST_LIMIT=2 BOOT_SIM_WARM_SET="${CASE_WARM:-}" BOOT_SIM_WARM_LIMIT=2 \
+    BOOT_SIM_RECHECK_LIMIT=2 BOOT_SIM_LIST_LIMIT=2 BOOT_SIM_WARM_SET="${CASE_WARM:-}" \
     BOOT_SIM_DEVICES="$d/devices" "${BOOT_SIM_BASH:-/bin/bash}" "${BOOT_SIM_UNDER_TEST:-$here/../.github/scripts/boot-sim.sh}" gatefold-ipad iPad-Pro-13 iOS-27-1 2>"$d/err")"; code=$?
   took=$(( $(date +%s) - began ))
   # The script's last background process is gone once it returns (nothing of a watchdog left to act).
@@ -327,11 +327,37 @@ CASE_WARM="$real/warm-missing" real_case "the cache missed (no warm set restored
   "" "" dev1 "holds no iPad-Pro-13 on iOS-27-1; a new device" "cloned"
 FAKE_CLONE_FAILS=1 CASE_WARM="$(warm_set clonefails "iPad-Pro-13 iOS-27-1")" real_case "the clone fails: a new device, as with no cache" \
   "" "" dev1 "warm: cloning W1 failed" "warm1"
-CASE_WARM="$(warm_set noboot "iPad-Pro-13 iOS-27-1")" real_case "the warm clone doesn't boot in its limit: deleted, a new device" \
-  "" "warm1" dev1 "warm: warm1 did not boot within 2 s; deleted, a new device" "warm1 never booted" "delete warm1"
-# A warm clone listed Booted whose bootstatus hangs gets no listing and recheck (a first boot would): it goes at its limit.
-CASE_WARM="$(warm_set hangs "iPad-Pro-13 iOS-27-1")" real_case "the warm clone's bootstatus hangs: no recheck, deleted, a new device" \
-  "1" "" dev1 "warm1: bootstatus did not finish within 2 s" "second bootstatus" "delete warm1"
+# The clone boots as any device does (gatefold#198). One never listed (gone at the 180 s listing) is deleted and a new
+# device boots.
+CASE_LIMIT=12 CASE_SLICE=2 CASE_NOBOOT=1 CASE_WARM="$(warm_set noboot "iPad-Pro-13 iOS-27-1")" real_case \
+  "the warm clone never comes up: deleted at the early listing, a new device" \
+  "" "warm1" dev1 "warm: warm1 failed or never came up; deleted, a new device" "no second device" "delete warm1"
+# One whose bootstatus said Failed is a failed boot, however its slice ended: deleted, a new device.
+FAKE_FAILED_HANGS=1 CASE_WARM="$(warm_set failed "iPad-Pro-13 iOS-27-1")" real_case "the warm clone's boot said Failed: deleted, a new device" \
+  "" "" dev1 "warm: warm1 failed or never came up; deleted, a new device" "warm: warm1 booted" "delete warm1"
+# One whose bootstatus hangs while it is listed Booted gets the recheck, as a first boot does, and passes.
+CASE_WARM="$(warm_set hangs "iPad-Pro-13 iOS-27-1")" real_case "the warm clone's bootstatus hangs, listed Booted: rechecked and kept" \
+  "1" "" warm1 "warm1 is booted; its second bootstatus finished" "a new device"
+# One still Booting past the first slice keeps going in the next ones, and passes.
+FAKE_BOOTING=warm1 CASE_LIMIT=6 CASE_SLICE=1 CASE_WARM="$(warm_set booting "iPad-Pro-13 iOS-27-1")" real_case \
+  "the warm clone is still Booting after a slice: it keeps its limit and boots" "1" "" warm1 "warm: warm1 booted" "a new device"
+for c in the-warm-clone-s-bootstatus-hangs--listed-Booted--rechecked-and-kept the-warm-clone-is-still-Booting-after-a-slice--it-keeps-its-limit-and-boots; do
+  if [ ! -e "$real/$c/fake/created" ] && ! grep -q "delete warm1" "$real/$c/fake/calls" 2>/dev/null; then echo "ok   boot-sim.sh: $c: no other device"
+  else echo "FAIL boot-sim.sh: $c: another device was created or the clone deleted"; fails=$((fails + 1)); fi
+done
+# One still coming up when its whole limit runs out is shut down and the boot fails there: no second device beside it,
+# whose storm doubled the clone's (gatefold#198). The listing is asked, hangs or not.
+for hang in "" 1; do
+  d="$real/warm-out-of-time-$hang"; mkdir -p "$d/fake"
+  got="$(PATH="$real/bin:$PATH" FAKE="$d/fake" FAKE_HANGS="1" FAKE_BOOTING=warm1 FAKE_LIST_HANGS="$hang" BOOT_SIM_BOOTSTATUS_LIMIT=2 \
+    BOOT_SIM_CONFIRM_LIMIT=2 BOOT_SIM_RECHECK_LIMIT=2 BOOT_SIM_LIST_LIMIT=2 BOOT_SIM_WARM_SET="$(warm_set "oot$hang" "iPad-Pro-13 iOS-27-1")" \
+    BOOT_SIM_DEVICES="$d/devices" "${BOOT_SIM_BASH:-/bin/bash}" "${BOOT_SIM_UNDER_TEST:-$here/../.github/scripts/boot-sim.sh}" gatefold-ipad iPad-Pro-13 iOS-27-1 2>"$d/err")"; code=$?
+  if [ "$code" = 1 ] && [ -z "$got" ] && [ ! -e "$d/fake/created" ] && grep -qxF "shutdown warm1" "$d/fake/calls" \
+     && grep -qF "warm: warm1 was still coming up after 2 s; no second device beside it" "$d/err"; then
+    echo "ok   boot-sim.sh: a warm clone still coming up at its limit${hang:+ (the listing hangs)}: shut down, no second device, the boot fails"
+  else echo "FAIL boot-sim.sh: a warm clone still coming up at its limit${hang:+ (the listing hangs)}: exit $code, printed '$got', created $(cat "$d/fake/created" 2>/dev/null || echo none)"
+    tail -6 "$d/err"; fails=$((fails + 1)); fi
+done
 # A clone that printed more than its UDID made a device anyway: it is deleted, and a new device boots.
 FAKE_CLONE_NOISY=1 CASE_WARM="$(warm_set noisy "iPad-Pro-13 iOS-27-1")" real_case "the clone prints more than a UDID: that device deleted, a new device" \
   "" "" dev1 "warm: cloning W1 failed" "cloned as" "delete 0A1B2C3D-0000-4000-8000-00000000000F"
