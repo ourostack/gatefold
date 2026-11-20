@@ -66,6 +66,12 @@ on:
         description: The pull-request lane, 1 to 18, that this shard waits in (gatefold#286; see "macOS lanes" in app.yml)
         type: number
         required: true
+      try:
+        description: >-
+          "-retry" when app.yml's `retry` job runs this shard again after GitHub cancelled it (gatefold#404): its
+          artifacts take the suffix, since the cancelled job's names are used
+        type: string
+        default: ""
       timeout:
         description: >-
           The job's limit in minutes: 30 of setup (the simulator wait step's own limit; gatefold#198), twice its
@@ -323,7 +329,7 @@ jobs:
         continue-on-error: true
         with:
           # By attempt, so a rerun keeps the failed attempt's logs beside its own.
-          name: ${{ inputs.shard }}-results-${{ github.run_attempt }}
+          name: ${{ inputs.shard }}-results-${{ github.run_attempt }}${{ inputs.try }}
           retention-days: ${{ job.status != 'failure' && 3 || 0 }} # 0: the repository's default
           path: |
             ${{ runner.temp }}/place.log
@@ -341,7 +347,7 @@ jobs:
         if: failure() || cancelled()
         continue-on-error: true
         with:
-          name: ${{ inputs.shard }}-xcresults-${{ github.run_attempt }}
+          name: ${{ inputs.shard }}-xcresults-${{ github.run_attempt }}${{ inputs.try }}
           path: ${{ runner.temp }}/ui.xcresult
       # No fail-fast here, even in the merge queue: a UI-test shard's failure must not cancel its siblings. Each
       # sibling that finishes leaves a pass on this tree, so a re-enqueue reruns only the shard that failed
