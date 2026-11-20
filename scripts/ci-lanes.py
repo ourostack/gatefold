@@ -33,6 +33,8 @@ EXEMPT = {
     # The shards and Unit tests wait for this run's build inside their own jobs, so a laned build would spend their
     # setup budget. One runs per pull request being pushed.
     ("app.yml", "build"): None,
+    # Pushes to main only (its `if`): it saves the warm devices the UI shards boot from (gatefold#533).
+    ("app.yml", "warm-sim"): "github.event_name == 'push'",
     # Main, the merge queue and dispatch only: its `if` keeps it off pull requests, and the check holds it to that.
     ("real-unfold.yml", "unfold"): "github.event_name != 'pull_request'",
     # The cloud canary signs in to the live cloud, so it runs from schedule and dispatch only, one at a time in its

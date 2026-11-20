@@ -8,6 +8,7 @@
 #   2. the same device booted a second time (the migration has run once), then a fresh one;
 #   3. `xcodebuild -runFirstLaunch` and a service restart, then a fresh device.
 # On every failure the device's migration lines go to the log, so the next failure names its cause.
+# Before those, a warm device restored from the Actions cache, when the job has one ($BOOT_SIM_WARM_SET; see try_warm).
 # Usage: boot-sim.sh <name> <device type id> <runtime id>
 set -uo pipefail
 name="$1" type="$2" runtime="$3"
@@ -191,6 +192,48 @@ restart_service() {
   fi
   xcrun simctl list devices >/dev/null 2>&1 || true
 }
+# A warm device first, when the job restored one (gatefold#533): a device that booted once on a runner like this one,
+# was shut down cleanly and saved with actions/cache by app.yml's `warm-sim` job, restored by the shard into
+# $BOOT_SIM_WARM_SET. That set's warm.txt names its UDID, device type and runtime. `simctl --set <warm set> clone`
+# copies it into the default set, which CoreSimulatorService already has loaded, so no service restart, and the clone
+# boots in seconds instead of a first boot's 3 to 7 min. It is tried once, with its own short bootstatus limit; if
+# there is none for this device type and runtime, the clone fails, or it doesn't boot in time, it is deleted and the
+# attempts below run exactly as they would with no cache.
+WARM_SET="${BOOT_SIM_WARM_SET:-}"
+WARM_LIMIT="$(limit "${BOOT_SIM_WARM_LIMIT:-}" 120)" || exit 2
+DEVICES="${BOOT_SIM_DEVICES:-$HOME/Library/Developer/CoreSimulator/Devices}"
+warm=""
+try_warm() {
+  [[ -n $WARM_SET ]] || return 1
+  local u="" t="" r=""
+  [[ -r $WARM_SET/warm.txt ]] && read -r u t r < "$WARM_SET/warm.txt"
+  if [[ -z $u || $t != "$type" || $r != "$runtime" || ! -d $WARM_SET/$u ]]; then
+    echo "warm: $WARM_SET holds no $type on $runtime; a new device" >&2
+    return 1
+  fi
+  local began=$SECONDS out
+  out="$(within "$LIST_LIMIT" xcrun simctl --set "$WARM_SET" clone "$u" "$name" "$DEVICES")"
+  if [[ $? != 0 || ! $out =~ ^[0-9A-Za-z-]+$ ]]; then
+    echo "warm: cloning $u failed ('$out'); a new device" >&2
+    return 1
+  fi
+  warm="$out"
+  echo "warm: $u cloned as $warm in $(( SECONDS - began )) s" >&2
+  local full=$BOOTSTATUS_LIMIT ok=1
+  BOOTSTATUS_LIMIT=$WARM_LIMIT
+  try_boot "$warm" && ok=0
+  BOOTSTATUS_LIMIT=$full
+  if [[ $ok == 0 ]]; then
+    echo "warm: $warm booted $(( SECONDS - began )) s after the clone began" >&2
+    return 0
+  fi
+  diagnose "$warm"
+  echo "warm: $warm did not boot within $WARM_LIMIT s; deleted, a new device" >&2
+  within "$LIST_LIMIT" xcrun simctl shutdown "$warm" >/dev/null 2>&1
+  within "$LIST_LIMIT" xcrun simctl delete "$warm" >&2
+  return 1
+}
+if try_warm; then echo "$warm"; exit 0; fi
 for attempt in 1 2 3; do
   if [[ $attempt == 3 ]]; then
     xcodebuild -runFirstLaunch >&2 || true

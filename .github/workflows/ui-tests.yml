@@ -119,8 +119,34 @@ jobs:
       - uses: ./.github/actions/select-xcode
         with:
           xcode: "27.2"
+      # A warm device (gatefold#533): one that booted once on this runner image, saved by app.yml's `warm-sim` job on
+      # main. Its clone boots in seconds, not a first boot's 3 to 7 min. Not for the rotation shards, which need a device
+      # at least as cold as an erased one. A miss, or any trouble here, boots a new device as before (boot-sim.sh).
+      - id: warm-key
+        name: The warm ${{ inputs.device }}'s cache key
+        if: ${{ !inputs.cold }}
+        continue-on-error: true
+        timeout-minutes: 3
+        run: python3 -I scripts/ci-simulator.py key "${{ inputs.device }}" | tee -a "$GITHUB_OUTPUT"
+      - id: warm
+        name: Restore the warm ${{ inputs.device }}
+        if: ${{ steps.warm-key.outputs.key != '' }}
+        continue-on-error: true
+        timeout-minutes: 4
+        uses: actions/cache/restore@v4
+        env:
+          SEGMENT_DOWNLOAD_TIMEOUT_MINS: "3"
+        with:
+          path: ~/warm-sim
+          key: ${{ steps.warm-key.outputs.key }}
       - name: Start the ${{ inputs.device }} booting
-        run: python3 -I scripts/ci-simulator.py start "${{ inputs.sim }}" "${{ inputs.device }}"
+        env:
+          BOOT_SIM_WARM_SET: ${{ steps.warm.outputs.cache-hit == 'true' && '~/warm-sim' || '' }}
+        run: |
+          [ -z "$BOOT_SIM_WARM_SET" ] || BOOT_SIM_WARM_SET="$HOME/warm-sim"
+          export BOOT_SIM_WARM_SET
+          echo "Warm device: ${BOOT_SIM_WARM_SET:-none}"
+          python3 -I scripts/ci-simulator.py start "${{ inputs.sim }}" "${{ inputs.device }}"
       - name: Sample the runner's load every 20 s for the whole job (gatefold#39)
         run: |
           # shellcheck disable=SC2016

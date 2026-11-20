@@ -254,6 +254,71 @@ jobs:
       - if: failure() && github.event_name == 'merge_group'
         uses: ./.github/actions/fail-fast
 
+  # The warm devices the UI shards boot from (gatefold#533). A new simulator's first boot took 155 to 393 s on this
+  # runner (296 s at the median, run 44603453975); a device that has booted once, shut down cleanly and been cloned
+  # boots in seconds. On a push to main this job looks for the warm iPad and Duo for this runner's Xcode and runtime
+  # builds in the Actions cache; if one is missing, it boots that device as a shard would (ci-simulator.py), shuts it
+  # down and saves it, keyed by `ci-simulator.py key`. Caches saved on main are read by every branch. Nothing waits
+  # for it, and a shard that misses boots a new device as before, so it never holds up or fails a test; it can't turn
+  # the run red (continue-on-error), and its own failure only means the next run boots fresh.
+  warm-sim:
+    name: Warm simulator (${{ matrix.device }})
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    runs-on: xcode-27
+    continue-on-error: true
+    timeout-minutes: 40
+    concurrency:
+      group: warm-sim-${{ matrix.sim }}
+      cancel-in-progress: false
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - device: "iPad Pro 13-inch"
+            sim: gatefold-ipad
+          - device: "iPhone Duo"
+            sim: gatefold-duo
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/select-xcode
+        with:
+          xcode: "27.2"
+      - id: key
+        timeout-minutes: 3
+        run: python3 -I scripts/ci-simulator.py key "${{ matrix.device }}" | tee -a "$GITHUB_OUTPUT"
+      - id: have
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/warm-sim
+          key: ${{ steps.key.outputs.key }}
+          lookup-only: true
+      - name: Boot the ${{ matrix.device }} once, as a shard does
+        if: steps.have.outputs.cache-hit != 'true'
+        timeout-minutes: 30
+        env:
+          CI_SIMULATOR_BUDGET: "1740"
+        run: |
+          python3 -I scripts/ci-simulator.py start "${{ matrix.sim }}" "${{ matrix.device }}"
+          python3 -I scripts/ci-simulator.py wait "${{ matrix.sim }}" "${{ matrix.device }}" 1200
+      - name: Shut it down and keep it as the warm device
+        if: steps.have.outputs.cache-hit != 'true'
+        timeout-minutes: 5
+        run: |
+          set -eu
+          plan="$RUNNER_TEMP/ci-simulator/${{ matrix.sim }}.plan"
+          kind=$(python3 -I -c 'import json, sys; print(json.load(open(sys.argv[1]))["kind"])' "$plan")
+          runtime=$(python3 -I -c 'import json, sys; print(json.load(open(sys.argv[1]))["runtime"])' "$plan")
+          xcrun simctl shutdown "$UDID"
+          mkdir -p ~/warm-sim
+          cp -Rp "$HOME/Library/Developer/CoreSimulator/Devices/$UDID" ~/warm-sim/
+          echo "$UDID $kind $runtime" > ~/warm-sim/warm.txt
+          du -sh ~/warm-sim
+      - if: steps.have.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/warm-sim
+          key: ${{ steps.key.outputs.key }}
+
   core:
     name: GatefoldCore tests
     # GatefoldCore is pure Swift (Foundation only, no UIKit or Readium), so it tests on Linux and

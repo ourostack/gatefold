@@ -63,4 +63,17 @@ restart)
   t0=$SECONDS; xcrun simctl boot "$new"; xcrun simctl bootstatus "$new" >/dev/null
   say "restart path: boot $((SECONDS - t0)) s, load $(load)"
   ;;
+keep)
+  # Idle until the 1-minute load is under 60, at most 600 s, so the first boot's background work finishes first.
+  t0=$SECONDS
+  while (( SECONDS - t0 < 600 )); do l=$(sysctl -n vm.loadavg | awk '{print int($2)}'); (( l < 60 )) && break; sleep 10; done
+  say "seed: idled $((SECONDS - t0)) s until load $(load)"
+  plan="$RUNNER_TEMP/ci-simulator/$2.plan"
+  kind=$(python3 -I -c 'import json, sys; print(json.load(open(sys.argv[1]))["kind"])' "$plan")
+  runtime=$(python3 -I -c 'import json, sys; print(json.load(open(sys.argv[1]))["runtime"])' "$plan")
+  t0=$SECONDS; xcrun simctl shutdown "$UDID"; say "seed: shutdown $((SECONDS - t0)) s"
+  mkdir -p ~/warm-sim; cp -Rp "$HOME/Library/Developer/CoreSimulator/Devices/$UDID" ~/warm-sim/
+  echo "$UDID $kind $runtime" > ~/warm-sim/warm.txt
+  say "seed: kept $(du -sk ~/warm-sim | cut -f1) KiB"
+  ;;
 esac

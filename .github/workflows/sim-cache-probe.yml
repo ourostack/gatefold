@@ -1,8 +1,9 @@
 name: Simulator cache probe
 
 # PROBE ONLY (branch ci-cached-sim), removed before merge: never on main, never in the merge queue.
-# seed: the first boot as today, shutdown, the device saved with actions/cache. restore: on a fresh runner, the cache
-# restored, the device cloned into the default set and booted, and two short UI tests run on it.
+# seed: app.yml's warm-sim steps (boot as a shard does, idle until the runner's load settles, shut down, save).
+# restore: on a fresh runner, the cache restored and the shard's own start and wait (boot-sim.sh's warm path) timed,
+# then two UI tests that run on that device.
 on:
   pull_request:
     paths:
@@ -17,31 +18,43 @@ jobs:
   seed:
     name: Seed (${{ matrix.device }})
     runs-on: xcode-27
-    timeout-minutes: 30
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       max-parallel: 2
       matrix:
-        device: ["iPad Pro 13-inch", "iPhone Duo"]
+        include:
+          - device: "iPad Pro 13-inch"
+            sim: gatefold-ipad
+          - device: "iPhone Duo"
+            sim: gatefold-duo
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/select-xcode
         with:
           xcode: "27.2"
-      - run: bash scripts/sim-cache-probe.sh plan "${{ matrix.device }}"
-      - run: bash scripts/sim-cache-probe.sh seed
-      - run: echo "SAVE_START=$(date +%s)" >> "$GITHUB_ENV"
+      - id: key
+        run: |
+          python3 -I scripts/ci-simulator.py key "${{ matrix.device }}" | sed "s/^key=/key=probe2-${{ github.run_id }}-/" | tee -a "$GITHUB_OUTPUT"
+      - name: Boot as a shard does
+        timeout-minutes: 30
+        env:
+          CI_SIMULATOR_BUDGET: "1740"
+        run: |
+          t0=$(date +%s)
+          python3 -I scripts/ci-simulator.py start "${{ matrix.sim }}" "${{ matrix.device }}"
+          python3 -I scripts/ci-simulator.py wait "${{ matrix.sim }}" "${{ matrix.device }}" 1200
+          echo "- seed: first boot and check $(( $(date +%s) - t0 )) s, load $(sysctl -n vm.loadavg)" | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Idle until the load settles, then keep it
+        run: bash scripts/sim-cache-probe.sh keep "${{ matrix.sim }}"
       - uses: actions/cache/save@v4
         with:
-          path: ~/simcache/set
-          key: ${{ env.SIMKEY }}
-      - run: |
-          echo "- seed: cache save $(( $(date +%s) - SAVE_START )) s" | tee -a "$GITHUB_STEP_SUMMARY"
+          path: ~/warm-sim
+          key: ${{ steps.key.outputs.key }}
 
   restore:
     name: Restore (${{ matrix.device }})
     needs: seed
-    # Each device's restore runs whether or not the other device's seed passed.
     if: ${{ !cancelled() }}
     runs-on: xcode-27
     timeout-minutes: 30
@@ -51,26 +64,41 @@ jobs:
       matrix:
         include:
           - device: "iPad Pro 13-inch"
+            sim: gatefold-ipad
             tests: ReaderVisibleTextUITests/testTheShelfReadsNoWords NavigationPlaceUITests/testTheOpeningCoverLetsTheControlsThrough
           - device: "iPhone Duo"
-            tests: ReviewerChecksUITests/testTheDefaultSpreadIsAsFullAsAppleBooks QuickLeaveUITests/testALeaveUnderTheReopensCoverAfterTheWatchdogKeepsHisPlace
+            sim: gatefold-duo
+            tests: FineTuneTapUITests/testEveryTapFlipsJustifyLandscape PositionUITests/testRotationKeepsThePlace
     steps:
+      - run: echo "JOB_START=$(date +%s)" >> "$GITHUB_ENV"
       - uses: actions/checkout@v4
       - uses: ./.github/actions/select-xcode
         with:
           xcode: "27.2"
-      - run: bash scripts/sim-cache-probe.sh plan "${{ matrix.device }}"
+      - id: key
+        run: |
+          python3 -I scripts/ci-simulator.py key "${{ matrix.device }}" | sed "s/^key=/key=probe2-${{ github.run_id }}-/" | tee -a "$GITHUB_OUTPUT"
       - run: echo "RESTORE_START=$(date +%s)" >> "$GITHUB_ENV"
-      - id: cache
+      - id: warm
         uses: actions/cache/restore@v4
+        env:
+          SEGMENT_DOWNLOAD_TIMEOUT_MINS: "3"
         with:
-          path: ~/simcache/set
-          key: ${{ env.SIMKEY }}
-          restore-keys: ${{ env.SIMPREFIX }}
+          path: ~/warm-sim
+          key: ${{ steps.key.outputs.key }}
           fail-on-cache-miss: true
       - run: |
-          echo "- restore: cache restore $(( $(date +%s) - RESTORE_START )) s, $(du -sk ~/simcache/set | cut -f1) KiB" | tee -a "$GITHUB_STEP_SUMMARY"
-      - run: bash scripts/sim-cache-probe.sh clone
+          echo "- restore: cache restore $(( $(date +%s) - RESTORE_START )) s, $(du -sk ~/warm-sim | cut -f1) KiB; job start to here $(( $(date +%s) - JOB_START )) s" | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: The shard's start and wait, with the warm device
+        timeout-minutes: 30
+        env:
+          CI_SIMULATOR_BUDGET: "1740"
+        run: |
+          t0=$(date +%s)
+          BOOT_SIM_WARM_SET="$HOME/warm-sim" python3 -I scripts/ci-simulator.py start "${{ matrix.sim }}" "${{ matrix.device }}"
+          python3 -I scripts/ci-simulator.py wait "${{ matrix.sim }}" "${{ matrix.device }}" 1200
+          echo "- restore: start to a checked, warm device $(( $(date +%s) - t0 )) s, load $(sysctl -n vm.loadavg)" | tee -a "$GITHUB_STEP_SUMMARY"
+          grep -h "warm:" "$RUNNER_TEMP"/ci-simulator/*.log | tee -a "$GITHUB_STEP_SUMMARY"
       - name: A main build of the app and its tests (run 44603453975)
         uses: actions/download-artifact@v4
         with:
@@ -78,7 +106,7 @@ jobs:
           run-id: 44603453975
           github-token: ${{ github.token }}
           path: ${{ runner.temp }}
-      - name: Two short UI tests on the restored device
+      - name: Two UI tests on the warm device
         timeout-minutes: 20
         env:
           TESTS: ${{ matrix.tests }}
@@ -88,14 +116,8 @@ jobs:
           xctestrun=$(ls "$RUNNER_TEMP"/dd/Build/Products/*.xctestrun | head -1)
           only=(); for t in $TESTS; do only+=("-only-testing:GatefoldUITests/$t"); done
           t0=$SECONDS
-          xcodebuild test-without-building -xctestrun "$xctestrun" \
-            -destination "platform=iOS Simulator,arch=$(uname -m),id=$UDID" "${only[@]}" 2>&1 \
+          xcodebuild test-without-building -xctestrun "$xctestrun" -destination "$DESTINATION" "${only[@]}" 2>&1 \
             | grep -E "Test Case .*(started|passed|failed|skipped)|TEST (SUCCEEDED|FAILED)|error:"
           code=${PIPESTATUS[0]}
-          echo "- restore: UI tests exit $code in $((SECONDS - t0)) s ($TESTS)" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "- restore: UI tests exit $code in $((SECONDS - t0)) s" | tee -a "$GITHUB_STEP_SUMMARY"
           exit $code
-      - name: The other path (dir moved into Devices, service restarted)
-        if: always()
-        run: |
-          xcrun simctl shutdown "$UDID" || true
-          bash scripts/sim-cache-probe.sh restart
