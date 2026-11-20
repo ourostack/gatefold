@@ -35,25 +35,16 @@ jobs:
           xcode: "27.2"
       - id: key
         run: |
-          python3 -I scripts/ci-simulator.py key "${{ matrix.device }}" | sed "s/^key=/key=probe2-${{ github.run_id }}-/" | tee -a "$GITHUB_OUTPUT"
-      - name: Boot as a shard does
-        timeout-minutes: 30
-        env:
-          CI_SIMULATOR_BUDGET: "1740"
-        run: |
-          t0=$(date +%s)
-          python3 -I scripts/ci-simulator.py start "${{ matrix.sim }}" "${{ matrix.device }}"
-          python3 -I scripts/ci-simulator.py wait "${{ matrix.sim }}" "${{ matrix.device }}" 1200
-          echo "- seed: first boot and check $(( $(date +%s) - t0 )) s, load $(sysctl -n vm.loadavg)" | tee -a "$GITHUB_STEP_SUMMARY"
-      - name: Idle until the load settles, then keep it
-        run: bash scripts/sim-cache-probe.sh keep "${{ matrix.sim }}"
+          python3 -I scripts/ci-simulator.py key "${{ matrix.device }}" | sed "s/^key=/key=probe4-${{ github.run_id }}-/" | tee -a "$GITHUB_OUTPUT"
+      - run: bash scripts/sim-cache-probe.sh plan "${{ matrix.device }}"
+      - run: bash scripts/sim-cache-probe.sh seedplain
       - uses: actions/cache/save@v4
         with:
           path: ~/warm-sim
           key: ${{ steps.key.outputs.key }}
 
   restore:
-    name: Restore (${{ matrix.device }})
+    name: Restore (${{ matrix.device }}, ${{ matrix.mode }})
     needs: seed
     if: ${{ !cancelled() }}
     runs-on: xcode-27
@@ -65,19 +56,32 @@ jobs:
         include:
           - device: "iPad Pro 13-inch"
             sim: gatefold-ipad
+            mode: real
             tests: ReaderVisibleTextUITests/testTheShelfReadsNoWords NavigationPlaceUITests/testTheOpeningCoverLetsTheControlsThrough
           - device: "iPhone Duo"
             sim: gatefold-duo
-            tests: FineTuneTapUITests/testEveryTapFlipsJustifyLandscape PositionUITests/testRotationKeepsThePlace
+            mode: real
+            tests: FineTuneTapUITests/testATapOnTheRowsNameChangesItsSwitch PositionUITests/testBookmarkInTheTopBarBookmarks
+          - device: "iPad Pro 13-inch"
+            sim: gatefold-ipad
+            mode: plain
+            tests: ReaderVisibleTextUITests/testTheShelfReadsNoWords NavigationPlaceUITests/testTheOpeningCoverLetsTheControlsThrough
+          - device: "iPhone Duo"
+            sim: gatefold-duo
+            mode: plain
+            tests: FineTuneTapUITests/testATapOnTheRowsNameChangesItsSwitch PositionUITests/testBookmarkInTheTopBarBookmarks
     steps:
-      - run: echo "JOB_START=$(date +%s)" >> "$GITHUB_ENV"
+      - run: |
+          echo "JOB_START=$(date +%s)" >> "$GITHUB_ENV"
+          echo "- restore (${{ matrix.mode }}): load at job start $(sysctl -n vm.loadavg)" | tee -a "$GITHUB_STEP_SUMMARY"
+          nohup sh -c 'while :; do echo "== $(date -u +%T) $(sysctl -n vm.loadavg)"; ps -Aceo pcpu=,comm= -r | head -6; sleep 15; done' > "$RUNNER_TEMP/load.log" 2>&1 &
       - uses: actions/checkout@v4
       - uses: ./.github/actions/select-xcode
         with:
           xcode: "27.2"
       - id: key
         run: |
-          python3 -I scripts/ci-simulator.py key "${{ matrix.device }}" | sed "s/^key=/key=probe2-${{ github.run_id }}-/" | tee -a "$GITHUB_OUTPUT"
+          python3 -I scripts/ci-simulator.py key "${{ matrix.device }}" | sed "s/^key=/key=probe4-${{ github.run_id }}-/" | tee -a "$GITHUB_OUTPUT"
       - run: echo "RESTORE_START=$(date +%s)" >> "$GITHUB_ENV"
       - id: warm
         uses: actions/cache/restore@v4
@@ -89,7 +93,11 @@ jobs:
           fail-on-cache-miss: true
       - run: |
           echo "- restore: cache restore $(( $(date +%s) - RESTORE_START )) s, $(du -sk ~/warm-sim | cut -f1) KiB; job start to here $(( $(date +%s) - JOB_START )) s" | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Plain boot of the clone
+        if: matrix.mode == 'plain'
+        run: bash scripts/sim-cache-probe.sh plainboot
       - name: The shard's start and wait, with the warm device
+        if: matrix.mode == 'real'
         timeout-minutes: 30
         env:
           CI_SIMULATOR_BUDGET: "1740"
@@ -121,3 +129,9 @@ jobs:
           code=${PIPESTATUS[0]}
           echo "- restore: UI tests exit $code in $((SECONDS - t0)) s" | tee -a "$GITHUB_STEP_SUMMARY"
           exit $code
+      - name: What made the load during the boot
+        if: always()
+        run: |
+          pkill -f "ps -Aceo" || true
+          awk '/^==/{t=$0; next} {c[$2]+=$1; n[$2]++} END{for (k in c) printf "%8.0f %s\n", c[k], k}' "$RUNNER_TEMP/load.log" | sort -rn | head -15
+          grep "^==" "$RUNNER_TEMP/load.log" | head -30

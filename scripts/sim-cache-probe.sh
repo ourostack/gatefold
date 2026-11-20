@@ -76,4 +76,24 @@ keep)
   echo "$UDID $kind $runtime" > ~/warm-sim/warm.txt
   say "seed: kept $(du -sk ~/warm-sim | cut -f1) KiB"
   ;;
+seedplain)
+  # Run 2's seed: boot-sim.sh's first boot, shut down at once (no quiet, no idle), kept in the warm-set layout.
+  t0=$SECONDS
+  udid=$(bash .github/scripts/boot-sim.sh probe "$KIND" "$RUNTIME") || { echo "first boot failed"; exit 1; }
+  say "seed: first boot $((SECONDS - t0)) s (boot-sim.sh), load $(load)"
+  t0=$SECONDS; xcrun simctl shutdown "$udid"; say "seed: shutdown $((SECONDS - t0)) s"
+  mkdir -p ~/warm-sim; cp -Rp "$HOME/Library/Developer/CoreSimulator/Devices/$udid" ~/warm-sim/
+  echo "$udid $KIND $RUNTIME" > ~/warm-sim/warm.txt
+  say "seed: kept $(du -sk ~/warm-sim | cut -f1) KiB"
+  ;;
+plainboot)
+  # The restored device cloned and booted with no flags, as in run 2.
+  read -r src _ < ~/warm-sim/warm.txt
+  t0=$SECONDS; udid=$(xcrun simctl --set "$HOME/warm-sim" clone "$src" gatefold-probe "$HOME/Library/Developer/CoreSimulator/Devices")
+  say "restore: clone $((SECONDS - t0)) s"
+  t0=$SECONDS; xcrun simctl boot "$udid"; xcrun simctl bootstatus "$udid" >/dev/null
+  say "restore: plain boot of the clone $((SECONDS - t0)) s (bootstatus exit $?), load $(load)"
+  echo "UDID=$udid" >> "$GITHUB_ENV"
+  echo "DESTINATION=platform=iOS Simulator,arch=$(uname -m),id=$udid" >> "$GITHUB_ENV"
+  ;;
 esac
