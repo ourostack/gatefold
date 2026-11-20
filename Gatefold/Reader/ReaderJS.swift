@@ -77,6 +77,47 @@ enum ReaderJS {
         }
         return found ? found.id : null;
       }
+      // The words from `offset` in text node `node` on, for a page whose left edge is at `x0` (`anchor`, `screenWords`).
+      function wordsAt(node, offset, x0, ids) {
+        const text = node.textContent;
+        let start = offset;
+        while (start > 0 && !/\s/.test(text[start - 1])) { start--; }
+        // A word hyphenated across the page turn ("her Lady-" | "ship would"): its start is on the
+        // page before, and a place there reopens a page early. The place is the page's first whole word.
+        if (start < offset) {
+          const head = document.createRange();
+          head.setStart(node, start);
+          head.setEnd(node, start + 1);
+          const at = head.getBoundingClientRect();
+          if (at.right <= x0 + 1 || at.bottom <= 0) {
+            let next = offset;
+            while (next < text.length && !/\s/.test(text[next])) { next++; }
+            while (next < text.length && /\s/.test(text[next])) { next++; }
+            start = next < text.length ? next : offset;
+          }
+        }
+        let highlight = text.substr(start, 64);
+        // The page's words run on past this text node (a quotation mark before "<i>Plover</i>"): a
+        // mark alone matches the chapter's first quotation, pages back. Take the words that follow,
+        // within his paragraph: the next one's words would be glued on ("bank.Marrow").
+        if (highlight.length < 64) {
+          const blockOf = (n) => {
+            let e = n.parentElement;
+            while (e && e !== document.body && getComputedStyle(e).display.startsWith('inline')) { e = e.parentElement; }
+            return e;
+          };
+          const block = blockOf(node);
+          const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+          walker.currentNode = node;
+          while (highlight.length < 64 && walker.nextNode()) {
+            if (blockOf(walker.currentNode) !== block) { break; }
+            highlight += walker.currentNode.data;
+          }
+          highlight = highlight.substr(0, 64);
+        }
+        if (!norm(highlight)) { return null; }
+        return { highlight: highlight, before: text.substr(Math.max(0, start - 32), Math.min(32, start)), heading: headingBefore(node), contents: contentsBefore(node, ids) };
+      }
       window.gatefold = {
         // The first visible words of the column starting at fraction `fx` of the viewport, and the
         // contents anchor (of `ids`) above them.
@@ -85,45 +126,43 @@ enum ReaderJS {
           const two = twoPages();
           const r = fx ? first(w / 2, w) : first(0, two ? w / 2 : w);
           if (!r) { return null; }
-          const node = r.startContainer, text = node.textContent;
-          let start = r.startOffset;
-          while (start > 0 && !/\s/.test(text[start - 1])) { start--; }
-          // A word hyphenated across the page turn ("her Lady-" | "ship would"): its start is on the
-          // page before, and a place there reopens a page early. The place is the page's first whole word.
-          if (start < r.startOffset) {
-            const x0 = fx ? w / 2 : 0;
-            const head = document.createRange();
-            head.setStart(node, start);
-            head.setEnd(node, start + 1);
-            const at = head.getBoundingClientRect();
-            if (at.right <= x0 + 1 || at.bottom <= 0) {
-              let next = r.startOffset;
-              while (next < text.length && !/\s/.test(text[next])) { next++; }
-              while (next < text.length && /\s/.test(text[next])) { next++; }
-              start = next < text.length ? next : r.startOffset;
+          return wordsAt(r.startContainer, r.startOffset, fx ? w / 2 : 0, ids);
+        },
+        // The first words of the screen a turn reaches from here (`dx` 1 forward, -1 back), read in this
+        // layout before the turn moves: the characters laid out a screen's width to the right (or left).
+        // As `anchor`, past the tail of a word broken across the turn. Null when that screen is in another
+        // chapter (this one ends, or starts, here). Its start in the chapter as `pageRange` gives it.
+        screenWords: function (dx, ids) {
+          if (document.readyState !== "complete") { return null; }
+          const se = document.scrollingElement, w = window.innerWidth;
+          // Right to left, the screens run the other way: not read, as before.
+          if (se.scrollWidth <= w + 1 || getComputedStyle(document.body).direction === "rtl") { return null; }
+          const x0 = dx * w;
+          const lead = (n, i) => { const c = document.createRange(); c.setStart(n, i); c.setEnd(n, i + 1); return c.getClientRects()[0]; };
+          const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+          while (walker.nextNode()) {
+            const node = walker.currentNode, text = node.data;
+            if (!norm(text)) { continue; }
+            const el = node.parentElement;
+            if (el && el.closest("figure, figcaption, .caption, .figcenter, .figleft, .figright, .pagenum")) { continue; }
+            const whole = document.createRange();
+            whole.selectNodeContents(node);
+            const rects = whole.getClientRects();
+            if (!rects.length || rects[rects.length - 1].right <= x0 + 1) { continue; }
+            for (let i = 0; i < text.length; i++) {
+              if (/\s/.test(text[i])) { continue; }
+              const at = lead(node, i);
+              if (!at || at.left < x0 - 1) { continue; }
+              if (at.left >= x0 + w - 1) { return null; }
+              const found = wordsAt(node, i, x0, ids);
+              if (!found) { return null; }
+              found.s = Math.max(0, (Math.abs(se.scrollLeft) + x0 - 2) / se.scrollWidth);
+              found.w = w;
+              found.doc = location.pathname;
+              return JSON.stringify(found);
             }
           }
-          let highlight = text.substr(start, 64);
-          // The page's words run on past this text node (a quotation mark before "<i>Plover</i>"): a
-          // mark alone matches the chapter's first quotation, pages back. Take the words that follow,
-          // within his paragraph: the next one's words would be glued on ("bank.Marrow").
-          if (highlight.length < 64) {
-            const blockOf = (n) => {
-              let e = n.parentElement;
-              while (e && e !== document.body && getComputedStyle(e).display.startsWith('inline')) { e = e.parentElement; }
-              return e;
-            };
-            const block = blockOf(node);
-            const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-            walker.currentNode = node;
-            while (highlight.length < 64 && walker.nextNode()) {
-              if (blockOf(walker.currentNode) !== block) { break; }
-              highlight += walker.currentNode.data;
-            }
-            highlight = highlight.substr(0, 64);
-          }
-          if (!norm(highlight)) { return null; }
-          return { highlight: highlight, before: text.substr(Math.max(0, start - 32), Math.min(32, start)), heading: headingBefore(node), contents: contentsBefore(node, ids) };
+          return null;
         },
         // The page on screen as one read of the web view, for a jump's landing (`JumpLanding`): where it
         // starts and ends in its document, as progressions, and which document that is. The start sits
@@ -334,6 +373,12 @@ enum ReaderJS {
     static func anchor(column: Int, contentsAnchors: [String] = []) -> String {
         let ids = (try? JSONEncoder().encode(contentsAnchors)).map { String(decoding: $0, as: UTF8.self) } ?? "[]"
         return "JSON.stringify(window.gatefold ? window.gatefold.anchor(\(column == 1 ? "0.5" : "0"), \(ids)) : null)"
+    }
+
+    /// The first words of the screen a turn reaches, read before it moves (`dx` 1 forward, -1 back).
+    static func screenWords(_ dx: Int, contentsAnchors: [String] = []) -> String {
+        let ids = (try? JSONEncoder().encode(contentsAnchors)).map { String(decoding: $0, as: UTF8.self) } ?? "[]"
+        return "window.gatefold ? window.gatefold.screenWords(\(dx), \(ids)) : null"
     }
 
     static let visibleText = "window.gatefold ? window.gatefold.visibleText() : null"

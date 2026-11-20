@@ -148,6 +148,16 @@ public struct ScreenPageGeometry: Equatable, Sendable {
         return trimmed == chapter
     }
 
+    /// The chapter a turn forward from this screen opens, at its start: the next in `readingOrder` when the screen
+    /// shows `href`'s last columns (to the point), nil when the turn stays in the chapter, the book ends, or the page
+    /// isn't laid out. A chapter's start is the same place in any layout, so it is known before the turn moves.
+    public static func chapterOpened(after href: String, scrollWidth: Double, scrollLeft: Double, viewportWidth: Double,
+                                     readingOrder: [String]) -> String? {
+        guard viewportWidth > 0, scrollWidth > 0, scrollLeft + viewportWidth >= scrollWidth - 1,
+              let i = readingOrder.firstIndex(of: href), i + 1 < readingOrder.count else { return nil }
+        return readingOrder[i + 1]
+    }
+
     /// Laid out as any reader would see the chapter, so its columns are the chapter's count.
     public var isClean: Bool { !verso && !pinned }
 }

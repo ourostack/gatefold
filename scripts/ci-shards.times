@@ -131,3 +131,4 @@ iPhone Duo|JustifyPlaceUITests/testJustifyKeepsHisPageAtTheMiddle	200	# estimate
 iPhone Duo|JustifyPlaceUITests/testJustifyKeepsHisPageAtThreeQuarters	200	# estimate until CI has run it: 66 to 125 s locally (build 47 Justify)
 iPad Pro 13-inch|JustifyPlaceUITests/testJustifyThenReopenKeepsHisPage	200	# estimate until CI has run it: 90 to 124 s locally (build 47 Duo reopen)
 iPhone Duo|JustifyPlaceUITests/testJustifyThenReopenKeepsHisPage	200	# estimate until CI has run it: 90 to 124 s on the iPad locally (build 47 Duo reopen)
+iPad Pro 13-inch|RotationMidTransitionUITests/testATurnIntoTheNextChapterThenUprightAtOnceKeepsTheChapterHeTurnedTo	150	# estimate (new, build 47 review): 74 s locally, twice that for a hosted runner; replace once CI has timed it

@@ -205,4 +205,30 @@ struct ScreenPagesTests {
         #expect(!ScreenPageGeometry.document("/OEBPS/ch1.xhtml", isChapter: "OEBPS/sub/ch1.xhtml"))
         #expect(!ScreenPageGeometry.document("/OEBPS/ch2.xhtml", isChapter: "OEBPS/ch1.xhtml"))
     }
+
+    /// A turn forward from the screen showing a chapter's last columns opens the next chapter at its start, a place
+    /// no layout moves: it is known before the turn moves, and a turn of the iPad straight after the tap puts it back
+    /// even when the page beneath is still loading and no words could be read (build 47's review, 0.47 and 0.73).
+    @Test func aTurnFromAChaptersLastScreenOpensTheNextChapter() {
+        // Five columns of 466, two a screen: the last screen shows columns 4 and 5 (the right one blank).
+        #expect(ScreenPageGeometry.chapterOpened(after: "ch1.xhtml", scrollWidth: 2796, scrollLeft: 1864,
+                                                 viewportWidth: 932, readingOrder: order) == "ch2.xhtml")
+        // One column a screen, a sub-point short of the end: still the last screen.
+        #expect(ScreenPageGeometry.chapterOpened(after: "ch2.xhtml", scrollWidth: 1398, scrollLeft: 931.6,
+                                                 viewportWidth: 466, readingOrder: order) == "ch3.xhtml")
+    }
+
+    @Test func aTurnWithinTheChapterOrPastTheBooksEndOpensNoChapter() {
+        // A screen before the last: the turn stays in the chapter.
+        #expect(ScreenPageGeometry.chapterOpened(after: "ch1.xhtml", scrollWidth: 2796, scrollLeft: 932,
+                                                 viewportWidth: 932, readingOrder: order) == nil)
+        // The book's last chapter: the end leaf, not a chapter.
+        #expect(ScreenPageGeometry.chapterOpened(after: "ch3.xhtml", scrollWidth: 932, scrollLeft: 0,
+                                                 viewportWidth: 932, readingOrder: order) == nil)
+        // A chapter not in the reading order, or a page not laid out yet.
+        #expect(ScreenPageGeometry.chapterOpened(after: "notes.xhtml", scrollWidth: 932, scrollLeft: 0,
+                                                 viewportWidth: 932, readingOrder: order) == nil)
+        #expect(ScreenPageGeometry.chapterOpened(after: "ch1.xhtml", scrollWidth: 0, scrollLeft: 0,
+                                                 viewportWidth: 0, readingOrder: order) == nil)
+    }
 }

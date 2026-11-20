@@ -64,12 +64,12 @@ final class RotationMidTransitionUITests: XCTestCase {
         return (Double(a) / half, Double(b) / half)
     }
 
-    private func launch(_ extra: [String] = []) {
+    private func launch(_ extra: [String] = [], at spot: String = "0.31") {
         XCUIDevice.shared.orientation = .portrait
         sleep(1)
         app.launchArguments = ["-GatefoldUITest", "YES", "-GatefoldFakeCloud", "YES", "-GatefoldSkipWelcome", "YES",
                                "-GatefoldSignedIn", "YES", "-GatefoldNoLatency", "YES", "-GatefoldReset", "YES",
-                               "-GatefoldDownloadAll", "YES", "-GatefoldOpenBook", "gutenberg-pride-and-prejudice", "-GatefoldGoTo", "0.31"] + extra
+                               "-GatefoldDownloadAll", "YES", "-GatefoldOpenBook", "gutenberg-pride-and-prejudice", "-GatefoldGoTo", spot] + extra
         app.launch()
         XCTAssertTrue(el("reader.page").waitForExistence(timeout: 120), "the book opened")
         _ = settle(60)
@@ -309,8 +309,9 @@ final class RotationMidTransitionUITests: XCTestCase {
         try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .pad, "a spread on rotation is an iPad path")
         // Every tap's leaf holds 2 s on the page beneath before it lands (its words already read), so the turn of the
         // iPad sent straight after the tap always begins while the turn is under way, the order build 46's review hit
-        // at 0.12, 0.31 and 0.47. A rotation before the words are read takes the fallback, covered by
-        // TurnUnderReflowTests.
+        // at 0.12, 0.31 and 0.47. On a slow runner the rotation can still begin before the page beneath answers
+        // (main's run for #565: 170 ms after the turn moved); the words read before the turn moved are put back then
+        // (TurnUnderReflowTests).
         launch(["-GatefoldHoldTapTurnLanding", "2"])
         let page = settle(30)
         let savedProbe = el("reader.savedWords")
@@ -347,6 +348,56 @@ final class RotationMidTransitionUITests: XCTestCase {
         XCTAssertEqual(hash(head(back)), hash(head(next)), "back upright, he is on the page he turned to")
         XCTAssertEqual(hash(String(saved.prefix(24))), hash(nextWords), "the place kept is the first words of the page he turned to")
         XCTAssertTrue(check.hasPrefix("anchor-visible"), "the reader's own check: \(check)")
+    }
+
+    /// The chapter file Readium last reported (`reader.shownPlace` is `file@progression`): no words.
+    private var shownFile: String { String(((el("reader.shownPlace").value as? String) ?? "").split(separator: "@").first ?? "") }
+
+    /// A forward tap on the last spread of a chapter, with the iPad turned upright straight after it, before the
+    /// turn has landed: he is on the next chapter's first page, the one he turned to, upright and on his side again,
+    /// and that is the place kept. Build 47's review (0.47, `rot-2-T4`) left him on the spread he tapped from: the
+    /// turn's page was still loading, so no words were read for it, and the restore gave way to a landing that Readium,
+    /// laying the chapter out again for the new columns, reported as the old chapter. Judged by hash and file name.
+    func testATurnIntoTheNextChapterThenUprightAtOnceKeepsTheChapterHeTurnedTo() throws {
+        try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .pad, "a spread on rotation is an iPad path")
+        // Every tap's leaf holds 2 s on the page beneath before it lands, so the turn of the iPad sent straight after
+        // the tap always begins while the turn is under way (as testATurnOfThePageThenOnItsSideAtOnce...).
+        // 0.477 is a few pages before chapter VIII's file ends (it ends at 0.4799 of the book).
+        launch(["-GatefoldHoldTapTurnLanding", "2"], at: "0.477")
+        XCUIDevice.shared.orientation = .landscapeLeft
+        _ = readsUntil(reads: 100) { el("reader.posture").label == "spread" }
+        _ = settle(30)
+        // Forward a spread at a time until the next turn crosses into the next file, then back to its last spread.
+        var next = "", nextFile = "", page = "", pageFile = ""
+        for _ in 0..<8 {
+            page = settle(20); pageFile = shownFile
+            turn()
+            _ = readsUntil(reads: 150) { let now = words; return !now.isEmpty && now != page }
+            next = settle(20); nextFile = shownFile
+            if nextFile != pageFile { break }
+        }
+        XCTAssertNotEqual(nextFile, pageFile, "a turn crossed into the next file")
+        el("reader.page").coordinate(withNormalizedOffset: CGVector(dx: 0.05, dy: 0.5)).tap()
+        _ = readsUntil(reads: 150) { words == page }
+        _ = settle(20)
+        XCTAssertEqual(hash(head(words)), hash(head(page)), "back on the chapter's last spread before the test's turn")
+        let beforeTurn = reflow.number
+        turn()
+        XCUIDevice.shared.orientation = .portrait
+        _ = readsUntil(reads: 100) { el("reader.posture").label == "single" }
+        _ = readsUntil(reads: 300) { settledSince(beforeTurn) }
+        let upright = settle(30), uprightFile = shownFile
+        let savedFile = String(((el("reader.savedPlace").value as? String) ?? "").split(separator: "@").first ?? "")
+        let beforeBack = reflow.number
+        XCUIDevice.shared.orientation = .landscapeLeft
+        _ = readsUntil(reads: 100) { el("reader.posture").label == "spread" }
+        _ = readsUntil(reads: 300) { settledSince(beforeBack) }
+        let back = settle(30)
+        print("CHAPTERTURN pageHead=\(hash(head(page))) nextHead=\(hash(head(next))) uprightHead=\(hash(head(upright))) uprightHasNext=\(upright.contains(head(next))) uprightFile=\(uprightFile == nextFile ? "next" : uprightFile == pageFile ? "tapped-from" : "other") saved=\(savedFile == nextFile ? "next" : savedFile == pageFile ? "tapped-from" : savedFile) backHead=\(hash(head(back)))")
+        XCTAssertTrue(upright.contains(head(next)), "upright, the page holds the first words of the chapter he turned to")
+        XCTAssertEqual(uprightFile, nextFile, "upright, he is in the chapter he turned to")
+        XCTAssertEqual(savedFile, nextFile, "the place kept is in the chapter he turned to")
+        XCTAssertEqual(hash(head(back)), hash(head(next)), "on its side again, the spread he turned to")
     }
 
     func testTurningDuringAPageTurn() throws {

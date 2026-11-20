@@ -41,7 +41,7 @@ final class ReaderModel {
     private(set) var contents = ContentsIndex(entries: [], readingOrder: [])
     /// Where back matter (a Project Gutenberg licence) begins; turning past it closes the book.
     private(set) var storyEnd: ContentsIndex.Entry?
-    private var readingOrderHrefs: [String] = []
+    private(set) var readingOrderHrefs: [String] = []
     private var resourceStarts: [Double] = []
     /// The contents anchor above the first line on screen (from the web view).
     var contentsFragment: String?
@@ -3149,17 +3149,33 @@ final class ReaderModel {
     /// before the page beneath is pictured: a turn of the iPad straight after the tap begins a reflow before the turn
     /// lands, and they are the page its restore puts back (gatefold#534). A read a reflow began during may mix the
     /// two layouts: it counts as no words read.
-    func turnMovedBeneath() {
+    ///
+    /// `reaching`: that page as read before the turn moved, in the same layout (`ReaderHostController.pageTurnedTo`):
+    /// its first words, or the next chapter's start. It holds when the read after the move can't be made: build 47's
+    /// review turned the iPad as the next chapter still loaded, and on a slow runner the reflow began 170 ms after the
+    /// turn moved, before the page beneath answered. With no words the restore gave way to a landing Readium
+    /// reported on the page he turned from, or left a page half laid out.
+    func turnMovedBeneath(reaching: Locator? = nil) {
         beneathTurns += 1
         beneathOpen = true
-        beneathWords = nil
+        beneathWords = reaching.map { page in page.copy(locations: { $0.totalProgression = self.totalProgression(of: page) }) }
         let turn = beneathTurns, reflow = reflowSerial
         let chapters = readingOrderHrefs
-        // A turn begun while a reflow lays out reads a page still changing under it: no words.
-        guard keeper.reflowing == nil else { beneathRead = nil; return }
+        // A turn begun while a reflow lays out reads a page still changing under it: no words. Its page read before it
+        // moved is under this reflow all the same, as the reflow began before the turn moved: that page is put back.
+        guard keeper.reflowing == nil else {
+            beneathRead = nil
+            if beneathWords != nil {
+                turnUnderReflow = (turn: turn, reflow: reflow)
+                takeTurnUnderReflow()
+            }
+            return
+        }
         beneathRead = Task { [weak self] in
             guard let read = await self?.page?.wordsBeneath(chapters: chapters), let self, self.beneathTurns == turn,
                   self.reflowSerial == reflow, read.text.highlight != nil else { return }
+            // Words from the chapter he left, its page still on screen as the next one loads, are not that page's.
+            if let reaching, read.href.string != reaching.href.string { return }
             self.beneathWords = read.copy(locations: { $0.totalProgression = self.totalProgression(of: read) ?? $0.totalProgression })
         }
     }
@@ -3193,13 +3209,14 @@ final class ReaderModel {
     func takeTurnUnderReflow() {
         guard let under = turnUnderReflow, under.reflow == reflowSerial, keeper.reflowing != nil, !isClosed else { return }
         turnUnderReflow = nil
-        guard under.turn == beneathTurns, let words = beneathWords, let text = words.text.highlight else {
+        // Its words, or the start of the chapter it opens (`turnMovedBeneath`), which needs none.
+        guard under.turn == beneathTurns, let words = beneathWords else {
             if turnUnderReflowLanded { keeper.turnUnderReflowUnread() }
             readerLog.notice("reflow: his turn under way has no words read; the restore gives way to its landing")
             return
         }
         keeper.turnUnderReflow(ReadingAnchor(href: words.href.string, progression: words.locations.progression ?? 0,
-                                             text: ReaderJS.normalize(text)))
+                                             text: words.text.highlight.map(ReaderJS.normalize)))
         anchorLocator = words
         turnTakenByReflow = (turn: under.turn, reflow: under.reflow, hisMoves: hisMoves)
         readerLog.notice("reflow: his turn under way; the restore puts back its page at \(Self.placeTag(words), privacy: .public)")
