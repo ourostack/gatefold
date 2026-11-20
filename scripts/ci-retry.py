@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
-"""CI only: retry a shard that GitHub cancelled, in the same App run (gatefold#404).
+"""CI only: retry a shard (or Real unfold place) that GitHub cancelled, in the same run (gatefold#404).
 
     python3 -I scripts/ci-retry.py plan      # GH_TOKEN, GH_REPO, RUN_ID set; writes matrix= and count= to $GITHUB_OUTPUT
     python3 -I scripts/ci-retry.py verdict   # writes <job id>=ok|bad for each UI shard job to $GITHUB_OUTPUT
+
+WORKFLOW names the workflow whose run is judged: app.yml (the default; its UI shards) or real-unfold.yml (its places,
+which real-unfold-place.yml runs; the one job `unfold` is judged as a group).
     python3 -I scripts/ci-retry.py --selftest
 
 A hosted macOS runner whose simulator is booting is cancelled from outside about 1 shard in 12 ("The operation was
@@ -13,7 +16,8 @@ reports each shard job's group as ok when every shard passed, or was cancelled a
 shard is retried: a failed one, a test failure above all, stays failed and keeps its gate red. Nothing is retried in a
 run someone cancelled (the jobs say `!cancelled()`), and a retry that is cancelled too is left to rerun-runner.yml.
 
-The retry's inputs come from app.yml's own matrix (scripts/ci-shards.py reads it), so a shard has one definition.
+The retry's inputs come from the workflow's own matrix (scripts/ci-shards.py reads App's), so a shard or place has one
+definition.
 """
 import importlib.util
 import json
@@ -24,8 +28,12 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 APP = os.path.join(HERE, "..", ".github", "workflows", "app.yml")
+REAL = os.path.join(HERE, "..", ".github", "workflows", "real-unfold.yml")
 FIRST = re.compile(r"^(?P<prefix>.+) shard \((?P<shard>[^)]+)\) / (?P<inner>.+)$")
 RETRY = re.compile(r"^Retry \((?P<shard>[^)]+)\) / (?P<inner>.+)$")
+# Real unfold's job `unfold` calls real-unfold-place.yml once per place: "Unfold at 0.12 / Place", retried as
+# "Retry (0.12) / Place". Its one group is judged as a whole.
+FIRST_PLACE = re.compile(r"^(?P<prefix>Unfold) at (?P<shard>[^/]+?) / (?P<inner>Place)$")
 PASSED = {"success", "skipped"}
 
 
@@ -57,16 +65,27 @@ def app_shards(text):
     return entries, prefixes
 
 
+def real_places(text):
+    """([{place, early, timeout, lane}], {"unfold": "Unfold"}) for Real unfold's `unfold` matrix."""
+    block = "\n".join(_shards().jobs(text)["unfold"])
+    block = block.split("\n    permissions:")[0]
+    entries = []
+    for part in re.split(r"^ {10}- ", block, flags=re.M)[1:]:
+        e = dict(re.findall(r"^\s*(place|early|timeout|lane):\s*\"?([^\"\n#]+?)\"?\s*(?:#.*)?$", part, re.M))
+        entries.append({"place": e["place"], "early": e["early"], "timeout": int(e["timeout"]), "lane": int(e["lane"])})
+    return entries, {"unfold": "Unfold"}
+
+
 def classify(jobs, prefixes):
     """`jobs`: [{name, conclusion}] of one run. Returns ({job id: "ok" | "bad"}, [shards to retry])."""
     first, retried = {}, {}
     for j in jobs:
-        m = FIRST.match(j["name"])
-        if m and m["inner"] == "Tests":
+        m = FIRST.match(j["name"]) or FIRST_PLACE.match(j["name"])
+        if m and m["inner"] in ("Tests", "Place"):
             first[m["shard"]] = (m["prefix"], j["conclusion"])
             continue
         m = RETRY.match(j["name"])
-        if m and m["inner"] == "Tests":
+        if m and m["inner"] in ("Tests", "Place"):
             retried[m["shard"]] = j["conclusion"]
     out = {job: "ok" for job in prefixes}
     byprefix = {prefix: job for job, prefix in prefixes.items()}
@@ -94,11 +113,13 @@ def emit(**kv):
 
 
 def main(mode):
-    entries, prefixes = app_shards(open(APP).read())
+    real = os.environ.get("WORKFLOW") == "real-unfold.yml"
+    entries, prefixes = (real_places if real else app_shards)(open(REAL if real else APP).read())
+    key = "place" if real else "shard"
     jobs = gh_jobs(os.environ["RUN_ID"])
     verdict, cancelled = classify(jobs, prefixes)
     if mode == "plan":
-        todo = [e for e in entries if e["shard"] in cancelled]
+        todo = [e for e in entries if e[key] in cancelled]
         print(f"Cancelled shards to retry: {', '.join(cancelled) or 'none'}")
         emit(matrix=json.dumps({"include": todo}, separators=(",", ":")), count=len(todo))
     else:
@@ -121,6 +142,9 @@ def selftest():
     check(set(prefixes.values()) >= {"iPad place", "iPad taps", "Duo"}, f"job names: {prefixes}")
     check(all(e["device"] and e["sim"] and e["tests"] or e["skip"] for e in entries), "each shard has its inputs")
     check(any(e["cold"] for e in entries) and any(not e["cold"] for e in entries), "cold is read as a boolean")
+    places, groups = real_places(open(REAL).read())
+    check([p["place"] for p in places] == ["0.12", "0.31", "0.47", "0.66", "0.83"] and groups == {"unfold": "Unfold"}, f"places: {places}")
+    check(all(p["early"] and p["timeout"] == 77 and 1 <= p["lane"] <= 5 for p in places), f"each place has its inputs: {places}")
     j = lambda name, c: {"name": name, "conclusion": c}
     t = lambda p, s, c: j(f"{p} shard ({s}) / Tests", c)
     check(classify([t("iPad place", "a", "success"), j("iPad (place)", "success")], prefixes)[0]["ipad-place"] == "ok", "a passed shard")
@@ -138,6 +162,17 @@ def selftest():
     check(r[0]["duo"] == "ok" and r[0]["ipad-taps"] == "ok", "groups are judged apart")
     r = classify([j("iPad place shard (a) / Main only", "success"), j("Build for testing", "success")], prefixes)
     check(set(r[0].values()) == {"ok"}, "a shard with nothing to run is ok")
+    u = lambda p, c: j(f"Unfold at {p} / Place", c)
+    r = classify([u("0.12", "cancelled"), u("0.31", "success"), j("Retry (0.12) / Place", "success")], groups)
+    check(r == ({"unfold": "ok"}, ["0.12"]), f"a cancelled place that passed its retry: {r}")
+    r = classify([u("0.12", "cancelled"), u("0.31", "success")], groups)
+    check(r == ({"unfold": "bad"}, ["0.12"]), "a cancelled place with no retry is bad")
+    r = classify([u("0.12", "failure"), j("Retry (0.12) / Place", "success")], groups)
+    check(r == ({"unfold": "bad"}, []), "a failed place is never retried or excused")
+    r = classify([u("0.12", "cancelled"), j("Retry (0.12) / Place", "cancelled")], groups)
+    check(r[0] == {"unfold": "bad"}, "a retry that was cancelled too is bad")
+    r = classify([u("0.12", "success"), u("0.31", "success")], groups)
+    check(r == ({"unfold": "ok"}, []), "every place passed")
     print("checks passed" if not bad else f"{bad} failed")
     return 1 if bad else 0
 

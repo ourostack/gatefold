@@ -98,7 +98,7 @@ jobs:
           # A dispatch, a new branch (no base) or a base the checkout can't read unfolds, as before.
           if [ "$EVENT" = workflow_dispatch ] || [ -z "${BASE//0/}" ] || ! git diff --name-only "$BASE...$HEAD" > changed.txt; then echo "reader=true" >> "$GITHUB_OUTPUT"; exit 0; fi
           # The reader, the fold and the app shell it runs in; GatefoldCore; the Readium link; the project; the hinge driver.
-          if grep -E '^(\.github/(workflows/real-unfold\.yml|scripts/duo/|scripts/boot-sim\.sh|actions/)|Gatefold/(Reader|Duo|App)/|Packages/GatefoldCore/|Packages/GatefoldCloud/(Package\.(swift|resolved)$|Sources/GatefoldCloudReadium/)|project\.yml$)' changed.txt; then
+          if grep -E '^(\.github/(workflows/real-unfold(-place)?\.yml|scripts/duo/|scripts/boot-sim\.sh|actions/)|Gatefold/(Reader|Duo|App)/|Packages/GatefoldCore/|Packages/GatefoldCloud/(Package\.(swift|resolved)$|Sources/GatefoldCloudReadium/)|project\.yml$)' changed.txt; then
             echo "reader=true" >> "$GITHUB_OUTPUT"
           else
             echo "reader=false" >> "$GITHUB_OUTPUT"
@@ -167,355 +167,100 @@ jobs:
           # Five places in the book, and the eight early unfolds spread over them (0.12, 0.31 and 0.47 get two).
           - place: "0.12"
             early: "0.12 0.12"
+            timeout: 77
             lane: 1
           - place: "0.31"
             early: "0.31 0.31"
+            timeout: 77
             lane: 2
           - place: "0.47"
             early: "0.47 0.47"
+            timeout: 77
             lane: 3
           - place: "0.66"
             early: "0.66"
+            timeout: 77
             lane: 4
           - place: "0.83"
             early: "0.83"
+            timeout: 77
             lane: 5
-    runs-on: xcode-27
-    # PR lane (gatefold#286): one lane per place, shared by every open pull request; see "macOS lanes" in app.yml.
-    # Never cancel-in-progress.
-    concurrency:
-      group: >-
-        ${{ github.event_name == 'pull_request'
-        && format('gatefold-macos-pr-lane-unfold-{0}', matrix.lane)
-        || format('real-unfold-{0}-{1}-{2}', github.run_id, github.run_attempt, strategy.job-index) }}
-      queue: max
-    # 36 for the boot, DeviceHub and the build wait (await-build's own limit), up to 12 for a slow download and the
-    # install, twice a place's slowest unfolds (about 9.5 min: 43 min for five places and eight early unfolds in run
-    # 44019735528), and the last 10 for the verdicts and the upload, when no new unfold starts (stop_at below). A late
-    # build eats into the unfolds' share first; a place that runs out is red, never shortened.
-    timeout-minutes: 77
-    env:
-      APP: bot.ouro.gatefold
-      LIMIT: "77" # the job's timeout-minutes, for the unfold step's own stop (scripts/ci-lanes.py checks they agree)
     # Read: the build's artifact (await-build). Write: the merge queue's fail-fast cancels (.github/actions/fail-fast).
     permissions:
       contents: read
       actions: write
+    uses: ./.github/workflows/real-unfold-place.yml
+    with:
+      place: ${{ matrix.place }}
+      early: ${{ matrix.early }}
+      rounds: ${{ inputs.rounds || '3' }}
+      timeout: ${{ matrix.timeout }}
+      lane: ${{ matrix.lane }}
+
+  # A place GitHub cancelled from outside (during the simulator's first boot; gatefold#404, as App's shards) unfolds
+  # again in this run, on a fresh runner, as soon as every place has ended. A run with a cancelled job ends "cancelled"
+  # whatever else passes, so the gate and the proof read `retry-verdict`: green when every place passed, or was
+  # cancelled and passed on its retry. A place that failed is never retried (scripts/ci-retry.py, shared with App's).
+  retry-plan:
+    name: Which places were cancelled
+    needs: [changes, unfold]
+    if: ${{ !cancelled() && needs.changes.outputs.native != 'false' && needs.changes.outputs.reader != 'false' && needs.changes.outputs.proven != 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      count: ${{ steps.plan.outputs.count }}
     steps:
-      # The unfolds stop in time for their verdicts and the upload, counted from here (gatefold#391).
-      - run: echo "JOB_START=$(date +%s)" >> "$GITHUB_ENV"
       - uses: actions/checkout@v4
-      - uses: ./.github/actions/select-xcode
-      - name: Create and boot an iPhone Duo
-        id: sim
-        run: |
-          set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/unfold/shots"
-          runtime="$(xcrun simctl list runtimes --json | python3 -c 'import json,sys; r=[x for x in json.load(sys.stdin)["runtimes"] if x["platform"]=="iOS" and x["isAvailable"] and any(d["name"].startswith("iPhone Duo") for d in x.get("supportedDeviceTypes",[]))]; print(max(r, key=lambda x: [int(p) for p in x["version"].split(".")])["identifier"])')"
-          # A runtime mid-swap loses its booted device (scripts/ci-simulator.py, "settle").
-          python3 -I scripts/ci-simulator.py settle "$runtime"
-          udid="$(.github/scripts/boot-sim.sh gatefold-duo com.apple.CoreSimulator.SimDeviceType.iPhone-Duo "$runtime")"
-          echo "udid=$udid" >> "$GITHUB_OUTPUT"
-      # Before the build lands: DeviceHub drives the simulator's hinge, not the app.
-      - name: Open DeviceHub
-        run: |
-          set -euo pipefail
-          for attempt in 1 2 3; do
-            swiftc -Onone .github/scripts/duo/devicehub.swift -o "$RUNNER_TEMP/unfold/devicehub" && break
-            [ "$attempt" = 3 ] && exit 1
-            sleep 10
-          done
-          sleep 30
-          open -a "$(xcode-select -p)/../Applications/DeviceHub.app"
-          sleep 20
-          "$RUNNER_TEMP/unfold/devicehub" dump
-      - name: Wait for this commit's build (Build for testing runs while the simulator boots)
-        id: artifact
-        timeout-minutes: 36
-        uses: ./.github/actions/await-build
-      - id: fetch
-        # A download cut off at 4 min tries once more (gatefold#144), and a truncated one too (gatefold#89).
-        uses: actions/download-artifact@v4
-        timeout-minutes: 4
-        continue-on-error: true
-        with:
-          name: ${{ steps.artifact.outputs.artifact }}
-          path: ${{ runner.temp }}
-      - id: whole
-        name: The download is whole (gzip -t)
-        if: steps.fetch.outcome == 'success'
-        continue-on-error: true
-        timeout-minutes: 2
-        run: gzip -t "$RUNNER_TEMP/products.tgz"
-      - name: Download the build again (the first try failed, ran past 4 min or came truncated)
-        if: steps.fetch.outcome != 'success' || steps.whole.outcome != 'success'
-        uses: actions/download-artifact@v4
-        timeout-minutes: 6
-        with:
-          name: ${{ steps.artifact.outputs.artifact }}
-          path: ${{ runner.temp }}
-      - name: Install the app (built once, for this commit and Xcode)
-        timeout-minutes: 5
-        run: |
-          set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/dd/Build"
-          tar -xzf "$RUNNER_TEMP/products.tgz" -C "$RUNNER_TEMP/dd/Build"
-          for attempt in 1 2 3; do
-            xcrun simctl bootstatus "${{ steps.sim.outputs.udid }}" -b >/dev/null 2>&1 || true
-            echo "$(date -u +%T) install attempt $attempt"
-            if xcrun simctl install "${{ steps.sim.outputs.udid }}" "$RUNNER_TEMP/dd/Build/Products/Debug-iphonesimulator/Gatefold.app"; then break; fi
-            [ "$attempt" = 3 ] && exit 1
-            sleep 15
-          done
-      # The unfold step ends 5 min before the job's limit (gatefold#423): main's runs at e132d48 and 74383b3 hung in
-      # it past their limit, and the job's own limit skipped the upload, so neither left a log or an artifact.
-      - id: left
-        run: |
-          left=$(( (JOB_START + (LIMIT - 5) * 60 - $(date +%s)) / 60 ))
-          [ "$left" -ge 1 ] || left=1
-          echo "minutes=$left" >> "$GITHUB_OUTPUT"
-      - name: Unfold with a book open, at ${{ matrix.place }}
-        id: unfold
-        timeout-minutes: ${{ fromJSON(steps.left.outputs.minutes) }}
-        run: |
-          set -uo pipefail
-          udid="${{ steps.sim.outputs.udid }}"
-          hub="$RUNNER_TEMP/unfold/devicehub"
-          out="$RUNNER_TEMP/unfold"
-          xcrun simctl spawn "$udid" log stream --style compact \
-            --predicate 'subsystem == "bot.ouro.gatefold" AND category == "reader"' > "$out/reader.log" 2>&1 &
-          stream=$!
-          # A slow host stretches every step: past this, no new unfold starts, so the verdicts on those already made
-          # still print and the logs still upload before the job's limit (gatefold#391). 10 min for those.
-          stop_at=$(( JOB_START + (LIMIT - 10) * 60 ))
-          rounds="${{ inputs.rounds || '3' }}"
-          places="${{ matrix.place }}"
-          early="${{ matrix.early }}"
-          planned=$(( (rounds + 1) + $(echo "$early" | wc -w) ))
-          # Inside `unfolds || true` bash's -e is off, so each command the step needs says when it failed.
-          out_of_time=0 stalled=0 failed=0
-          in_time() {
-            [ "$stalled" = 0 ] || return 1
-            [ "$(date +%s)" -lt "$stop_at" ] && return 0
-            [ "$out_of_time" = 1 ] || echo "::error::out of time at $(date -u +%T): no more unfolds, so the job can print its verdicts and upload its logs"
-            out_of_time=1
-            return 1
-          }
-          # Each press has 120 s and one retry (gatefold#149): a stall names its press and the app's latest main-thread
-          # hold, never spends the job in silence. A press that answers late is named too.
-          # At the first press that gives no answer, what each side was doing (gatefold#423): is Gatefold alive and
-          # being run, its main thread's stack (host `sample`: frames only, never the book's words), DeviceHub's stack,
-          # whether the log stream still runs, and the host's load. run 43923823167's app logged nothing for 8 min
-          # after its last press, not even its own "main: still held" watch, which a main-thread hang would print.
-          captured=0
-          stall_capture() {
-            [ "$captured" = 0 ] || return 0
-            captured=1
-            local dir="$out/stall" pid hubpid
-            mkdir -p "$dir"
-            # First, so the record shows how long the host took to run the lookups below (run 43958142531: 14 min).
-            echo "asked at $(date -u +%T)" > "$dir/state.txt"
-            pid="$(pgrep -f 'Gatefold\.app/Gatefold$' | head -1 || true)"
-            hubpid="$(pgrep -x DeviceHub | head -1 || true)"
-            {
-              echo "at $(date -u +%T), press $1"
-              uptime
-              if kill -0 "$stream" 2>/dev/null; then echo "log stream: running"; else echo "log stream: gone"; fi
-              if [ -n "$pid" ]; then ps -o pid,stat,%cpu,time,etime,command -p "$pid"; else echo "Gatefold: no process"; fi
-              [ -z "$hubpid" ] || ps -o pid,stat,%cpu,time,etime,command -p "$hubpid"
-              top -l 1 -o cpu -n 10 -stats pid,command,cpu,state,time | tail -12
-            } >> "$dir/state.txt" 2>&1
-            [ -z "$pid" ] || perl -e 'alarm shift; exec @ARGV' 30 sample "$pid" 3 -mayDie -file "$dir/gatefold-sample.txt" >/dev/null 2>&1 || true
-            [ -z "$hubpid" ] || perl -e 'alarm shift; exec @ARGV' 30 sample "$hubpid" 3 -mayDie -file "$dir/devicehub-sample.txt" >/dev/null 2>&1 || true
-            sed 's/^/  /' "$dir/state.txt"
-            if [ -f "$dir/gatefold-sample.txt" ]; then
-              echo "--- Gatefold's main thread at the stall (heaviest frames, from host sample) ---"
-              awk '/^Call graph:/ { on = 1 } on && /^ +[0-9]+ Thread_/ { n++ } on && n == 1 { print } n > 1 { exit }' "$dir/gatefold-sample.txt" \
-                | sed -E 's/  \(in [^)]*\)//; s/ +\[0x[0-9a-f,]+\]//g' | cut -c1-200 | head -40
-            fi
-          }
-          press() {
-            local try t0 took status
-            for try in 1 2; do
-              t0=$(date +%s)
-              # The step runs under bash -e: the status is taken, never left to end the step.
-              status=0
-              perl -e 'alarm shift; exec @ARGV' 120 "$hub" press "$1" || status=$?
-              took=$(( $(date +%s) - t0 ))
-              # 142 is the alarm's SIGALRM. Any other status is the press's own answer (not found, refused): named, and
-              # left to the verdicts, as before.
-              if [ "$status" != 142 ]; then
-                [ "$status" = 0 ] || echo "::warning::press $1 answered status $status"
-                [ "$took" -lt 30 ] || echo "::warning::press $1 took $took s"
-                return 0
-              fi
-              echo "::warning::press $1 gave no answer in 120 s (try $try); the app's latest main-thread note: $(grep -E 'main: (still held|held) ' "$out/reader.log" | tail -1 | sed -E 's/^[0-9-]+ //' | cut -c1-160)"
-              stall_capture "$1"
-            done
-            echo "::error::press $1 stalled twice"
-            stalled=1
-            return 1
-          }
-          # Waits on the app's own lines, never a fixed time, so a fast host moves on as soon as the app has done its part.
-          # Each wait is capped at the fixed wait it replaced, so a slow host is never held longer than before (#391).
-          # After a press: the app's layout for the posture pressed ("layout single" on the cover, "layout spread",
-          # "layout tabletop"), a verdict ("reflow check") after it, then 3 s with no new reflow or layout, at most `cap`
-          # seconds. A verdict before that layout doesn't count: folded shut from tabletop, the inner screen's tabletop
-          # reflow can give its verdict seconds before the app moves to the cover, whose verdict is the one wanted.
-          # Polled once a second.
-          settled() {
-            local before=$1 want=$2 cap=$3 t0 lines n last="" quiet=0
-            t0=$(date +%s)
-            while [ $(( $(date +%s) - t0 )) -lt "$cap" ]; do
-              lines="$(grep -E "reflow (begins|check)|layout (single|spread|tabletop) [0-9]" "$out/reader.log" || true)"
-              n="$(printf '%s\n' "$lines" | grep -c "" || true)"
-              if printf '%s\n' "$lines" | awk -v before="$before" -v want="layout $want " '
-                  index($0, want) { layouts++; seen = 0; next }
-                  /reflow check/ { if (layouts > before) seen = 1; last = "check"; next }
-                  { last = "other" }
-                  END { exit !(seen && last == "check") }' && [ "$n" = "$last" ]; then
-                quiet=$(( quiet + 1 ))
-                [ "$quiet" -lt 3 ] || return 0
-              else
-                quiet=0
-              fi
-              last=$n
-              sleep 1
-            done
-            return 0
-          }
-          # A press, then `settled` for the layout it should bring.
-          move() {
-            local before
-            before="$(grep -cE "layout $2 [0-9]" "$out/reader.log" || true)"
-            press "$1" || return 1
-            settled "$before" "$2" "$3"
-          }
-          # The app's "first page ready" (or, on a cold first launch, "open: page shown") after `before` of them, at most
-          # `cap` seconds. (The early unfolds waited on
-          # "open: page shown", a line the app prints only when a hidden page is revealed, so each spent its whole
-          # minute, then about 100 s on a slow host, and unfolded long after the page showed.)
-          page_ready() {
-            local before=$1 cap=$2 t0
-            t0=$(date +%s)
-            while [ "$(grep -cE "first page ready|open: page shown" "$out/reader.log" || true)" -le "$before" ] && [ $(( $(date +%s) - t0 )) -lt "$cap" ]; do
-              sleep 0.5
-            done
-            echo $(( $(date +%s) - t0 ))
-          }
-          unfolds() {
-          for place in $places; do
-            press "Closed" || return 1; sleep 6
-            ready="$(grep -cE "first page ready|open: page shown" "$out/reader.log" || true)"
-            xcrun simctl launch --terminate-running-process "$udid" "$APP" -GatefoldUITest YES -GatefoldFakeCloud YES \
-              -GatefoldReset YES -GatefoldSkipWelcome YES -GatefoldSignedIn YES -GatefoldDownloadAll YES \
-              -GatefoldOpenBook gutenberg-pride-and-prejudice -GatefoldGoTo "$place" >/dev/null \
-              || { echo "::error::the app's launch at $place failed"; failed=1; return 1; }
-            # The page shown, then 5 s for the launch jump's settle, within the 30 s this always had.
-            took="$(page_ready "$ready" 25)"; sleep 5
-            echo "  page ready in $took s"
-            for round in $(seq 1 "$rounds"); do
-              in_time || return 1
-              echo "UNFOLD place $place round $round" | tee -a "$out/marks.log"
-              move "Open" spread 14 || return 1
-              xcrun simctl io "$udid" screenshot --display=3 "$out/shots/$place-$round-open.png" >/dev/null 2>&1 || true
-              move "Closed" single 12 || return 1
-            done
-            # Half open: tabletop on the inner screen, then flat again and folded.
-            in_time || return 1
-            echo "HALF OPEN place $place" | tee -a "$out/marks.log"
-            move "Open" spread 12 || return 1
-            move "Partially Open" tabletop 14 || return 1
-            xcrun simctl io "$udid" screenshot --display=3 "$out/shots/$place-half.png" >/dev/null 2>&1 || true
-            move "Open" spread 12 || return 1
-            move "Closed" single 12 || return 1
-          done
-          # Early unfolds: opened folded, then unfolded 2 s after the page shows, as the posture test
-          # switches (the reviewer's failures came on the first switch after launch).
-          for place in $early; do
-            in_time || return 1
-            press "Closed" || return 1; sleep 6
-            ready="$(grep -cE "first page ready|open: page shown" "$out/reader.log" || true)"
-            xcrun simctl launch --terminate-running-process "$udid" "$APP" -GatefoldUITest YES -GatefoldFakeCloud YES \
-              -GatefoldReset YES -GatefoldSkipWelcome YES -GatefoldSignedIn YES -GatefoldDownloadAll YES \
-              -GatefoldOpenBook gutenberg-pride-and-prejudice -GatefoldGoTo "$place" >/dev/null \
-              || { echo "::error::the app's launch at $place failed"; failed=1; return 1; }
-            took="$(page_ready "$ready" 60)"
-            sleep 2
-            echo "EARLY UNFOLD place $place (page ready in $took s)" | tee -a "$out/marks.log"
-            echo "EARLY UNFOLD place $place" >> "$out/reader.log"
-            move "Open" spread 16 || return 1
-            xcrun simctl io "$udid" screenshot --display=3 "$out/shots/early-$place-$(grep -c "" "$out/marks.log")-$took.png" >/dev/null 2>&1 || true
-          done
-          }
-          # The flags carry how it ended; the verdicts below print either way.
-          : > "$out/marks.log"
-          unfolds || true
-          kill "$stream" || true
-          grep -E "reflow check|reflow begins|host size|layout (single|spread|tabletop)|spread: " "$out/reader.log" | sed -E 's/^[0-9-]+ //' | tail -200
-          echo "--- verdicts after an unfold (two columns) ---"
-          spreads="$(grep "reflow check" "$out/reader.log" | grep "columns 2" || true)"
-          echo "$spreads" | grep -o "anchor-[a-z]*" | sort | uniq -c
-          echo "--- every verdict (unfold, half open, fold) ---"
-          verdicts="$(grep "reflow check" "$out/reader.log" || true)"
-          echo "$verdicts" | grep -o "anchor-[a-z]*" | sort | uniq -c
-          echo "--- half-open posture changes ---"
-          grep -c "reflow begins: posture" "$out/reader.log" || true
-          echo "--- the app's main thread held a minute or more ---"
-          grep -E "main: held [0-9]+ ms" "$out/reader.log" | awk '{ for (i = 1; i < NF; i++) if ($i == "held" && $(i + 1) >= 60000) print "::warning::the app'"'"'s main thread was held " int($(i + 1) / 1000) " s, ending " $2 }'
-          # No posture change may have lost his words, and every unfold must have been judged.
-          if echo "$verdicts" | grep -q "anchor-lost"; then echo "::error::a posture change lost the reader's words"; exit 1; fi
-          # A check that read no words proved nothing: it is never counted as his words kept (gatefold#534). Every
-          # line counts, the restore's and the late look's: a later pass doesn't excuse an earlier check that failed.
-          if echo "$verdicts" | grep -q "anchor-unread"; then echo "::error::a posture change's check read no words, so it proved nothing"; exit 1; fi
-          # A place with no words to look for (the open's bare place) can't be judged by words: told, not hidden.
-          if echo "$verdicts" | grep -q "anchor-wordless"; then echo "::warning::a posture change came while his place had no words, so its check proved nothing ($(echo "$verdicts" | grep -c "anchor-wordless") times)"; fi
-          # Its verdicts printed, a run cut short is still red: the unfolds it never made weren't judged.
-          [ "$failed" = 0 ] || { echo "::error::a launch failed, so the unfolds after it never ran ($(grep -c "" "$out/marks.log") of $planned begun)"; exit 1; }
-          [ "$stalled" = 0 ] || { echo "::error::a DeviceHub press stalled twice, so the unfolds after it never ran ($(grep -c "" "$out/marks.log") of $planned begun)"; exit 1; }
-          [ "$out_of_time" = 0 ] || { echo "::error::the unfolds stopped for time with $(grep -c "" "$out/marks.log") of $planned begun"; exit 1; }
-          [ -n "$spreads" ] || { echo "::error::no unfold reached a spread"; exit 1; }
-      - name: What Gatefold and DeviceHub were doing when the unfolds ran out of time
-        # Only when the step failed or hit its limit (a step's timeout reads as cancelled: run 43958142531 skipped this)
-        # before any press stalled, so nothing was sampled (stacks only, no page text).
-        if: ${{ always() && (steps.unfold.outcome == 'failure' || steps.unfold.outcome == 'cancelled') }}
-        timeout-minutes: 2
-        run: |
-          dir="$RUNNER_TEMP/unfold/stall"
-          # A press's capture the step's limit cut short (run 43958142531) left no sample: take one now.
-          [ ! -f "$dir/gatefold-sample.txt" ] || { echo "sampled at the stalled press already"; exit 0; }
-          mkdir -p "$dir"
-          pid="$(pgrep -f 'Gatefold\.app/Gatefold$' | head -1 || true)"
-          hubpid="$(pgrep -x DeviceHub | head -1 || true)"
-          {
-            echo "at $(date -u +%T), after the unfold step ended"
-            uptime
-            if [ -n "$pid" ]; then ps -o pid,stat,%cpu,time,etime,command -p "$pid"; else echo "Gatefold: no process"; fi
-            [ -z "$hubpid" ] || ps -o pid,stat,%cpu,time,etime,command -p "$hubpid"
-            pgrep -fl 'simctl|devicehub' | cut -c1-200 || true
-            top -l 1 -o cpu -n 10 -stats pid,command,cpu,state,time | tail -12
-          } >> "$dir/state.txt" 2>&1
-          [ -z "$pid" ] || perl -e 'alarm shift; exec @ARGV' 30 sample "$pid" 3 -mayDie -file "$dir/gatefold-sample.txt" >/dev/null 2>&1 || true
-          [ -z "$hubpid" ] || perl -e 'alarm shift; exec @ARGV' 30 sample "$hubpid" 3 -mayDie -file "$dir/devicehub-sample.txt" >/dev/null 2>&1 || true
-          cat "$dir/state.txt"
-          tail -5 "$RUNNER_TEMP/unfold/reader.log" 2>/dev/null | grep -E "main: |layout |reflow " | sed -E 's/^[0-9-]+ //' | cut -c1-160 || true
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: real-unfold-${{ matrix.place }}
-          path: |
-            ${{ runner.temp }}/unfold/reader.log
-            ${{ runner.temp }}/unfold/marks.log
-            ${{ runner.temp }}/unfold/shots
-            ${{ runner.temp }}/unfold/stall
-      # No fail-fast here, even in the merge queue: a UI-test shard's failure must not cancel its siblings. Each
-      # sibling that finishes leaves a pass on this tree, so a re-enqueue reruns only the shard that failed
-      # (scripts/ci-proof.py). Cancelling them threw those passes away, and the rerun gave every flake a new chance.
+      - id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          WORKFLOW: real-unfold.yml
+        run: python3 -I scripts/ci-retry.py plan
+
+  retry:
+    name: Retry (${{ matrix.place }})
+    needs: [changes, retry-plan]
+    if: ${{ !cancelled() && needs.retry-plan.outputs.count != '' && needs.retry-plan.outputs.count != '0' }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.retry-plan.outputs.matrix) }}
+    permissions:
+      contents: read
+      actions: write
+    uses: ./.github/workflows/real-unfold-place.yml
+    with:
+      place: ${{ matrix.place }}
+      early: ${{ matrix.early }}
+      rounds: ${{ inputs.rounds || '3' }}
+      timeout: ${{ matrix.timeout }}
+      lane: ${{ matrix.lane }}
+      try: "-retry"
+
+  retry-verdict:
+    name: Judge the places after their retries
+    needs: [changes, retry-plan, retry]
+    if: ${{ !cancelled() && needs.changes.outputs.native != 'false' && needs.changes.outputs.reader != 'false' && needs.changes.outputs.proven != 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      unfold: ${{ steps.verdict.outputs.unfold }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: verdict
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          WORKFLOW: real-unfold.yml
+        run: python3 -I scripts/ci-retry.py verdict
 
   # The required check. Never skipped, so it always reports.
   real-unfold:
     name: Real unfold
-    needs: [changes, build, unfold]
+    needs: [changes, build, unfold, retry-verdict]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 2
@@ -526,22 +271,25 @@ jobs:
           NATIVE: ${{ needs.changes.outputs.native }}
           BUILD: ${{ needs.build.result }}
           UNFOLD: ${{ needs.unfold.result }}
+          RETRIED: ${{ needs.retry-verdict.outputs.unfold }}
           PROVEN: ${{ needs.changes.outputs.proven }}
           PROOF: ${{ needs.changes.outputs.proof }}
         run: |
           if [ "$NATIVE" = false ]; then echo "The unfolds run on main after the merge, not on a pull request or in the merge queue."; exit 0; fi
           if [ "$PROVEN" = true ]; then echo "::notice::Passed by proof: every unfold passed on this tree in $PROOF"; exit 0; fi
           if [ "$READER" = false ]; then echo "This change doesn't touch the reader, so the unfolds have nothing to judge."; exit 0; fi
-          echo "Build: $BUILD; unfolds at every place: $UNFOLD"
-          [ "$BUILD" = success ] && [ "$UNFOLD" = success ]
+          echo "Build: $BUILD; unfolds at every place: $UNFOLD; after retrying the cancelled ones: ${RETRIED:-not judged}"
+          # A place GitHub cancelled and the `retry` job unfolded again counts as passed; a failed place never does.
+          [ "$BUILD" = success ] || exit 1
+          [ "$UNFOLD" = success ] || { [ "$RETRIED" = ok ] && [ "$UNFOLD" != skipped ]; }
 
   # The proof a main push reads (scripts/ci-proof.py): every unfold ran and passed on this tree, with the usual rounds.
   proof:
     name: Real unfold passed on tree ${{ needs.changes.outputs.tree }}
-    needs: [changes, build, unfold]
+    needs: [changes, build, unfold, retry-verdict]
     # A run that passed by proof (its build and unfolds skipped) ends with it too, so main's push finds it on the merged
     # commit.
-    if: ${{ !cancelled() && ((needs.build.result == 'success' && needs.unfold.result == 'success') || needs.changes.outputs.proven == 'true') && needs.changes.outputs.tree != '' && github.event_name != 'workflow_dispatch' }}
+    if: ${{ !cancelled() && ((needs.build.result == 'success' && (needs.unfold.result == 'success' || (needs.retry-verdict.outputs.unfold == 'ok' && needs.unfold.result != 'skipped'))) || needs.changes.outputs.proven == 'true') && needs.changes.outputs.tree != '' && github.event_name != 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
