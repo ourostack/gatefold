@@ -13,7 +13,7 @@ import XCTest
 ///   index and so moves to another row after every scroll (entry 31, then 37, in that run).
 @MainActor
 enum ContentsRow {
-    /// Taps `row` once it is wholly inside the list below its navigation bar and its frame has held still for two
+    /// Taps `row` once it is wholly inside the part of the list on screen and its frame has held still for two
     /// reads. `later`: whether a row not built yet lies after the ones that are (the jumps go forward). With `later`
     /// false the list is pulled down, which closes the sheet when the list is already at its top. Bounded by
     /// reads and drags, never seconds. Returns whether the tap was sent, and the drags it took.
@@ -46,7 +46,8 @@ enum ContentsRow {
         return (false, dragged)
     }
 
-    /// The part of the list on screen: its frame less the navigation bar laid over its top.
+    /// The part of the list on screen: its frame less any navigation bar laid over its top (Contents has none since
+    /// gatefold#535, and the whole list frame is shown).
     static func shownPart(of list: CGRect, under bar: CGRect) -> CGRect {
         guard !bar.isNull, bar.intersects(list), bar.maxY > list.minY else { return list }
         return CGRect(x: list.minX, y: bar.maxY, width: list.width, height: max(0, list.maxY - bar.maxY))
