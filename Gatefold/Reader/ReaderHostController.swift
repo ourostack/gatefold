@@ -2647,7 +2647,8 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
 
     /// Where paper laid over the page's foot may end (window points): in the gap above the highest line
     /// of text that reaches into `band`, below the last line kept whole, so its descenders are never cut.
-    func lineTop(crossing band: ClosedRange<CGFloat>) async -> CGFloat? {
+    /// With `across`, only a line that reaches into that span of x (window points) counts as reaching the band.
+    func lineTop(crossing band: ClosedRange<CGFloat>, across: ClosedRange<CGFloat>? = nil) async -> CGFloat? {
         let host = navigator.view!
         var best: CGFloat?
         func walk(_ v: UIView) {
@@ -2665,23 +2666,62 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             // the controls are up, and a line's offset inside it shrinks with it.
             let y0 = web.convert(CGPoint(x: 0, y: band.lowerBound), from: window).y
             let y1 = web.convert(CGPoint(x: 0, y: band.upperBound), from: window).y
+            let x0 = across.map { web.convert(CGPoint(x: $0.lowerBound, y: 0), from: window).x } ?? -1e9
+            let x1 = across.map { web.convert(CGPoint(x: $0.upperBound, y: 0), from: window).x } ?? 1e9
             let js = """
-            (function(y0,y1){var w=window.innerWidth,best=-1,n,r=document.createRange();
+            (function(y0,y1,x0,x1){var w=window.innerWidth,best=-1,n,r=document.createRange();
             var tw=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT);
             while((n=tw.nextNode())){if(!n.textContent.trim())continue;r.selectNodeContents(n);var rs=r.getClientRects();
             for(var i=0;i<rs.length;i++){var q=rs[i];if(q.width<1||q.right<=0||q.left>=w)continue;
-            if(q.bottom>y0&&q.top<y1&&(best<0||q.top<best))best=q.top;}}
+            if(q.bottom>y0&&q.top<y1&&q.right>x0&&q.left<x1&&(best<0||q.top<best))best=q.top;}}
             if(best<0)return -1;var above=-1;tw=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT);
             while((n=tw.nextNode())){if(!n.textContent.trim())continue;r.selectNodeContents(n);var rs=r.getClientRects();
             for(var i=0;i<rs.length;i++){var q=rs[i];if(q.width<1||q.right<=0||q.left>=w)continue;
             if(q.top<best-1&&q.bottom>above)above=q.bottom;}}
-            if(above<0)return best-3;var gap=best-above;return gap>=2?above+Math.min(1.5,gap/2):(above+best)/2;})(\(y0),\(y1))
+            if(above<0)return best-3;var gap=best-above;return gap>=2?above+Math.min(1.5,gap/2):(above+best)/2;})(\(y0),\(y1),\(x0),\(x1))
             """
             guard let top = (try? await web.evaluateJavaScript(js)) as? Double, top >= 0 else { continue }
             let y = web.convert(CGPoint(x: 0, y: CGFloat(top)), to: window).y
             best = min(best ?? y, y)
         }
         return best
+    }
+
+    /// The lines of text shown on the page that reach into `rect` (window points), each in window points.
+    /// Only for the UI tests' chrome-backing probe.
+    func textLines(in rect: CGRect) async -> [CGRect] {
+        let host = navigator.view!
+        var webs: [WKWebView] = []
+        func walk(_ v: UIView) {
+            if let web = v as? WKWebView {
+                if !web.isHidden, web.alpha > 0.01, web.convert(web.bounds, to: host).intersects(host.bounds) { webs.append(web) }
+                return
+            }
+            v.subviews.forEach(walk)
+        }
+        walk(host)
+        var lines: [CGRect] = []
+        for web in webs {
+            guard let window = web.window else { continue }
+            let a = web.convert(CGPoint(x: rect.minX, y: rect.minY), from: window)
+            let b = web.convert(CGPoint(x: rect.maxX, y: rect.maxY), from: window)
+            let js = """
+            (function(x0,y0,x1,y1){var w=window.innerWidth,out=[],n,r=document.createRange();
+            var tw=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT);
+            while((n=tw.nextNode())){if(!n.textContent.trim())continue;r.selectNodeContents(n);var rs=r.getClientRects();
+            for(var i=0;i<rs.length;i++){var q=rs[i];if(q.width<1||q.right<=0||q.left>=w)continue;
+            if(q.right>x0&&q.left<x1&&q.bottom>y0&&q.top<y1)out.push([q.left,q.top,q.right,q.bottom]);}}
+            return JSON.stringify(out);})(\(a.x),\(a.y),\(b.x),\(b.y))
+            """
+            guard let json = (try? await web.evaluateJavaScript(js)) as? String,
+                  let rects = try? JSONDecoder().decode([[Double]].self, from: Data(json.utf8)) else { continue }
+            for q in rects where q.count == 4 {
+                let p0 = web.convert(CGPoint(x: q[0], y: q[1]), to: window)
+                let p1 = web.convert(CGPoint(x: q[2], y: q[3]), to: window)
+                lines.append(CGRect(x: p0.x, y: p0.y, width: p1.x - p0.x, height: p1.y - p0.y))
+            }
+        }
+        return lines
     }
 
     /// A page that opens partway into its file is kept hidden by Readium, spinner up, for a fixed

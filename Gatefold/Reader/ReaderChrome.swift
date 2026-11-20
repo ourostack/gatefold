@@ -34,8 +34,10 @@ struct ReaderChrome: View {
                 if model.chromeVisible {
                     HStack(spacing: 12) {
                         bookmarkButton
+                            .chromePiece("bookmark")
                         Spacer(minLength: 0)
                         GlassIconButton(systemName: "xmark", label: "Close Book", id: "reader.close", action: onClose)
+                            .chromePiece("close")
                     }
                     .padding(.leading, lead)
                     .padding(.trailing, trail)
@@ -61,6 +63,9 @@ struct ReaderChrome: View {
     }
 
     static func safeTop(_ insets: EdgeInsets) -> CGFloat { max(insets.top, 12) }
+
+    /// The trailing column's name among the pieces (`ChromePieces`): Contents, Share, Your Page and Search.
+    static let column = "column"
 
     /// The status bar's room in portrait, remembered from any screen that shows it. With the status bar
     /// hidden an iPhone's Dynamic Island leaves the safe area, and it isn't among the occlusion regions
@@ -110,6 +115,7 @@ struct ReaderChrome: View {
                     .frame(minHeight: 44)
                     .buttonStyle(.glass(.regular.tint(model.theme.background.opacity(0.7))))
                     .accessibilityIdentifier("reader.back")
+                    .chromePiece("back")
                     // One pill for every way back (no identity per place): Back leaves a way back of
                     // its own, and a new identity tore the tapped pill out from under his finger.
                     .transition(.scale.combined(with: .opacity))
@@ -136,6 +142,7 @@ struct ReaderChrome: View {
                     .padding(.vertical, 6)
                     .frame(maxWidth: 420)
                     .readerGlass(model.theme.background.opacity(0.7), in: .capsule)
+                    .chromePiece("scrubber")
                     .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
             }
@@ -162,6 +169,8 @@ struct ReaderChrome: View {
                     }
                 }
                 .foregroundStyle(model.theme.text)
+                // The bottom paper reaches above this column wherever it stands on a line (gatefold#538).
+                .chromePiece(Self.column)
                 .transition(.move(edge: .trailing).combined(with: .opacity))
             }
         }
@@ -367,5 +376,24 @@ struct TabletopDeck: View {
         .glassEffect(.regular.interactive(), in: .circle)
         .accessibilityLabel(label)
         .accessibilityIdentifier(id)
+    }
+}
+
+/// Where each floating control stands (global points), by name: the paper beneath the controls reads it, so no
+/// control stands on a line with nothing behind it (gatefold#538).
+struct ChromePieces: PreferenceKey {
+    static let defaultValue: [String: CGRect] = [:]
+    static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) {
+        value.merge(nextValue()) { $1 }
+    }
+}
+
+extension View {
+    func chromePiece(_ name: String) -> some View {
+        background {
+            GeometryReader { geo in
+                Color.clear.preference(key: ChromePieces.self, value: [name: geo.frame(in: .global)])
+            }
+        }
     }
 }
