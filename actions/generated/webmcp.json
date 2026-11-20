@@ -1,9 +1,10 @@
 {
-  "generator": "ouro-actions 0.16.0",
+  "generator": "ouro-actions 1.6.0",
   "set": "gatefold",
   "tools": [
     {
       "name": "list_books",
+      "title": "List Books",
       "description": "Lists the books in the library with their title, author and whether each is on this device. Changes nothing.",
       "inputSchema": {
         "type": "object",
@@ -23,6 +24,7 @@
     },
     {
       "name": "open_book",
+      "title": "Open Book",
       "description": "Opens a book from the library in Gatefold, at the reading place kept for it, so the person sees it. Changes no text. Fails when the book is not on this device.",
       "inputSchema": {
         "type": "object",
@@ -44,6 +46,7 @@
     },
     {
       "name": "sync_reading_place",
+      "title": "Sync Reading Place",
       "description": "Sends the reading place of every book whose place is still waiting to be sent, now rather than later. Returns when the sending finishes.",
       "inputSchema": {
         "type": "object",
