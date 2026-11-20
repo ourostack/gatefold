@@ -6,8 +6,9 @@ name: App
 # Two tiers (gatefold#39, #198). A pull request runs the build, the unit tests, GatefoldCore and at most five UI shards,
 # picked by the paths it touches: an iPad and a Duo smoke on every app change, and the place and taps guards when it
 # touches that code (`changes` output `fired`; the lists are the Gatefold agent's). Every push to main runs the full UI
-# suite and is never cancelled; a red main is fixed as AGENTS.md says ("CI"). Each new simulator's first boot holds the
-# runner's load at 500 to 760 for about 15 min (#198), so fewer shards per pull request is the lever, not more.
+# suite, in batches (a started run is never cancelled; gatefold#246); a red main is fixed as AGENTS.md says ("CI").
+# Each new simulator's first boot holds the runner's load at 500 to 760 for about 15 min (#198), so fewer shards per
+# pull request is the lever, not more.
 #
 # Build once: `build` makes the app and its tests for the simulator (build-for-testing) and uploads them, named by
 # commit and Xcode version; no simulator job compiles the app again (gatefold#39: each job spent 10 to 16 min building).
@@ -40,10 +41,16 @@ on:
       - "**/*.md"
   workflow_dispatch:
 
-# A newer push to a pull request cancels its older run. Pushes to main keep one group per commit and are never
-# cancelled.
+# A newer push to a pull request cancels its older run. Pushes to main share one group: a started run is never
+# cancelled, and at most one more waits, the newest, which replaces any older waiting push (gatefold#246; #326 lost
+# this on 2026-11-13, and one full run per merged commit then left main's runs two hours behind on 2026-11-20). Its run
+# tests every merge since the last one; the central auto-revert (ourostack/.github tools/red-main) attributes a red
+# across that range. A manual run and a re-run keep a group of their own, so a re-run never replaces the waiting push.
+# The merge queue keeps one group per commit. TestFlight is its own workflow, outside this group.
 concurrency:
-  group: app-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  group: >-
+    app-${{ github.event_name == 'pull_request' && github.ref
+    || github.event_name == 'push' && github.run_attempt == 1 && 'main' || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # macOS lanes (gatefold#286). The Ouro Labs enterprise has 50 macOS slots, shared by every org in it (spoonjoy too).

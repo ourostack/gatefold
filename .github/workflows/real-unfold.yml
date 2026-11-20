@@ -37,8 +37,12 @@ permissions:
   contents: read
   actions: read
 
+# Pushes to main share one group, as App's do (gatefold#246): a started run is never cancelled, and only the newest
+# waiting push runs next, covering every merge since the last run.
 concurrency:
-  group: real-unfold-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  group: >-
+    real-unfold-${{ github.event_name == 'pull_request' && github.ref
+    || github.event_name == 'push' && github.run_attempt == 1 && 'main' || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
