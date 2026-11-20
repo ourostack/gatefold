@@ -524,6 +524,26 @@ jobs:
             cold: true
             timeout: 98 # 30 + 2 x 25.3 + 5 + 12
             lane: 17
+          - shard: ipad-place-justify
+            # Main only: Justify on and off keeps the page he was reading (build 47), two of its four places. Estimates
+            # until CI has run them, from 157 s locally each
+            tests: >-
+              JustifyPlaceUITests/testJustifyKeepsHisPageAtAnEighth JustifyPlaceUITests/testJustifyKeepsHisPageAtAThird
+            skip: ""
+            pr_tests: none
+            cold: false
+            timeout: 65 # 30 + 2 x 9.0 + 5 + 12
+            lane: 2
+          - shard: ipad-place-justify-more
+            # Main only: the other two of Justify's places, and the catch-all for new Justify tests
+            tests: >-
+              JustifyPlaceUITests
+            skip: >-
+              JustifyPlaceUITests/testJustifyKeepsHisPageAtAnEighth JustifyPlaceUITests/testJustifyKeepsHisPageAtAThird
+            pr_tests: none
+            cold: false
+            timeout: 72 # 30 + 2 x 12.4 + 5 + 12
+            lane: 3
     permissions:
       contents: read
       actions: write
@@ -951,6 +971,17 @@ jobs:
             cold: false
             timeout: 83 # 30 + 2 x 18.0 + 5 + 12
             lane: 6
+          - shard: duo-justify
+            # Main only: Justify on and off keeps the page he was reading on the cover screen, where every new look
+            # reworked the margins the book opened with, and a reopen came back on other pages (build 47). Estimates
+            # until CI has run them, from 66 to 125 s locally
+            tests: >-
+              JustifyPlaceUITests
+            skip: ""
+            pr_tests: none
+            cold: false
+            timeout: 81 # 30 + 2 x 16.7 + 5 + 12
+            lane: 8
     permissions:
       contents: read
       actions: write
