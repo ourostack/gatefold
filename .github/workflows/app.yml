@@ -439,11 +439,20 @@ jobs:
             tests: >-
               NavigationPlaceUITests QuickLeaveUITests
             skip: >-
-              NavigationPlaceUITests/testReadInPortraitRotatedThenLeftKeepsHisFirstWords NavigationPlaceUITests/testWithPageNumbersOnReadInPortraitRotatedThenLeftKeepsHisFirstWords NavigationPlaceUITests/testAJumpFromAPageStillLoadingStartsAtOnce NavigationPlaceUITests/testAContentsJumpKeepsThePlace NavigationPlaceUITests/testScrolledAfterTheLaunchReflowThenLeftKeepsWhereHeScrolled NavigationPlaceUITests/testScrolledAfterAStalledSwitchToScrollKeepsWhereHeScrolled NavigationPlaceUITests/testOpenedFromTheShelfThenLeftTwiceWithoutATurnKeepsThePlace NavigationPlaceUITests/testTheOpeningCoverLetsTheControlsThrough
+              NavigationPlaceUITests/testReadInPortraitRotatedThenLeftKeepsHisFirstWords NavigationPlaceUITests/testWithPageNumbersOnReadInPortraitRotatedThenLeftKeepsHisFirstWords NavigationPlaceUITests/testAJumpFromAPageStillLoadingStartsAtOnce NavigationPlaceUITests/testAContentsJumpKeepsThePlace NavigationPlaceUITests/testScrolledAfterTheLaunchReflowThenLeftKeepsWhereHeScrolled NavigationPlaceUITests/testScrolledAfterAStalledSwitchToScrollKeepsWhereHeScrolled NavigationPlaceUITests/testOpenedFromTheShelfThenLeftTwiceWithoutATurnKeepsThePlace NavigationPlaceUITests/testTheOpeningCoverLetsTheControlsThrough NavigationPlaceUITests/testAScrubberJumpLeftWhileItsChapterLoadsKeepsItsTarget NavigationPlaceUITests/testNoWordsAreReadUnderTheOpeningCover NavigationPlaceUITests/testTheCloudsOfferOverTheOpeningCoverTakesHisTap QuickLeaveUITests/testALeaveUnderTheReopensCoverAfterTheWatchdogKeepsHisPlace QuickLeaveUITests/testTurnsThenAQuickLeaveReopenOnTheLastTurnsPage
             pr_tests: none
             cold: false
-            timeout: 106 # 30 + 2 x 29.2 + 5 + 12
+            timeout: 76 # 30 + 2 x 14.5 + 5 + 12
             lane: 15
+          - shard: ipad-place-late
+            # Main only: the other half of what ipad-place-rest ran, 239 + 150 + 175 + 200 + 117
+            tests: >-
+              NavigationPlaceUITests/testAScrubberJumpLeftWhileItsChapterLoadsKeepsItsTarget NavigationPlaceUITests/testNoWordsAreReadUnderTheOpeningCover NavigationPlaceUITests/testTheCloudsOfferOverTheOpeningCoverTakesHisTap QuickLeaveUITests/testALeaveUnderTheReopensCoverAfterTheWatchdogKeepsHisPlace QuickLeaveUITests/testTurnsThenAQuickLeaveReopenOnTheLastTurnsPage
+            skip: ""
+            pr_tests: none
+            cold: false
+            timeout: 77 # 30 + 2 x 14.7 + 5 + 12
+            lane: 16
           - shard: ipad-rotate-contents
             # Rotation, on this job's new iPad: 237, and the frames of a turn and back (gatefold#537), 150 estimated
             # from 44 locally
@@ -734,14 +743,26 @@ jobs:
             timeout: 68 # 30 + 2 x 10.4 + 5 + 12
             lane: 17
           - shard: ipad-reviewer-controls
-            # Main only: 1481
+            # Main only: 900, the first two of five reopens (the other three are ipad-reviewer-controls-more)
             tests: >-
-              ReopenAfterControlsUITests
+              ReopenAfterControlsUITests/testAReturnAfterTheControlsAndNumbersShowsTheSameWords1
+              ReopenAfterControlsUITests/testAReturnAfterTheControlsAndNumbersShowsTheSameWords2
             skip: ""
             pr_tests: none
             cold: false
-            timeout: 118 # 30 + 2 x 35.2 + 5 + 12
+            timeout: 77 # 30 + 2 x 15.0 + 5 + 12
             lane: 1
+          - shard: ipad-reviewer-controls-more
+            # Main only: 1211, the other three reopens
+            tests: >-
+              ReopenAfterControlsUITests/testAReturnAfterTheControlsAndNumbersShowsTheSameWords3
+              ReopenAfterControlsUITests/testAReturnAfterTheControlsAndNumbersShowsTheSameWords4
+              ReopenAfterControlsUITests/testAReturnAfterTheControlsAndNumbersShowsTheSameWords5
+            skip: ""
+            pr_tests: none
+            cold: false
+            timeout: 88 # 30 + 2 x 20.2 + 5 + 12
+            lane: 2
           - shard: ipad-reviewer-numbers
             # Main only: 926
             tests: >-
@@ -767,11 +788,20 @@ jobs:
             tests: >-
               ReviewerChecksUITests SingleColumnUITests ShelfAccessibilityUITests ReaderVisibleTextUITests
             skip: >-
-              ReviewerChecksUITests/testTheLastPagesNumberIsTheCount ReviewerChecksUITests/testPageNumbersAreOnOrOffInEveryBook
+              ReviewerChecksUITests/testTheLastPagesNumberIsTheCount ReviewerChecksUITests/testPageNumbersAreOnOrOffInEveryBook ReviewerChecksUITests/testEveryReopenReturnsTheSameWords
             pr_tests: none
             cold: false
-            timeout: 111 # 30 + 2 x 31.9 + 5 + 12
+            timeout: 78 # 30 + 2 x 15.3 + 5 + 12
             lane: 2
+          - shard: ipad-reviewer-reopen
+            # Main only: 994, out of ipad-reviewer-rest, as duo-reviewer-reopen is on the Duo
+            tests: >-
+              ReviewerChecksUITests/testEveryReopenReturnsTheSameWords
+            skip: ""
+            pr_tests: none
+            cold: false
+            timeout: 81 # 30 + 2 x 16.6 + 5 + 12
+            lane: 3
     permissions:
       contents: read
       actions: write
@@ -905,11 +935,20 @@ jobs:
             tests: >-
               ReviewerChecksUITests SingleColumnUITests ChromeBackingUITests
             skip: >-
-              ReviewerChecksUITests/testEveryReopenReturnsTheSameWords
+              ReviewerChecksUITests/testEveryReopenReturnsTheSameWords ReviewerChecksUITests/testPageNumbersAreOnOrOffInEveryBook
             pr_tests: none
             cold: false
-            timeout: 119 # 30 + 2 x 35.7 + 5 + 12
+            timeout: 83 # 30 + 2 x 17.8 + 5 + 12
             lane: 3
+          - shard: duo-reviewer-numbers
+            # Main only: 1075, out of duo-reviewer-rest
+            tests: >-
+              ReviewerChecksUITests/testPageNumbersAreOnOrOffInEveryBook
+            skip: ""
+            pr_tests: none
+            cold: false
+            timeout: 83 # 30 + 2 x 18.0 + 5 + 12
+            lane: 6
     permissions:
       contents: read
       actions: write
