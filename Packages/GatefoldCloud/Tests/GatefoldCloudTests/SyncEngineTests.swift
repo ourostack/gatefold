@@ -450,6 +450,35 @@ struct PositionSyncTests {
         #expect(await h.transport.requests("POST", "/books/read-position").count == 1)
     }
 
+    /// A place waiting out a backoff (a send failed a moment ago) still goes when he leaves: the app is
+    /// about to be suspended, and a backoff timer doesn't run in a suspended app, so the e-reader would
+    /// not get the place until he next opened Gatefold.
+    @Test(arguments: [PlaceReport.Trigger.background, .close])
+    func leavingSendsAPlaceThatIsWaitingOutABackoff(_ trigger: PlaceReport.Trigger) async throws {
+        let h = Harness()
+        await h.transport.on("GET", "/fileops/info", .json("{}", status: 503), remote("2026-10-31T21:00:00Z"))
+        await h.transport.on("POST", "/books/read-position", .ok)
+        let cloud = h.cloud()
+        await cloud.push(position, for: CloudBook(fastHash: frankenstein))
+        await cloud.flushOutbox()
+        #expect(await cloud.pendingChanges() == 1, "waiting out its backoff")
+        await cloud.flushOutbox(trigger: trigger)
+        #expect(await h.transport.requests("POST", "/books/read-position").count == 1)
+        #expect(await cloud.pendingChanges() == 0)
+    }
+
+    /// Only places: a note waiting out its backoff still waits (its create is not idempotent).
+    @Test func leavingStillHoldsANoteThatIsWaitingOutABackoff() async throws {
+        let h = Harness()
+        await h.transport.on("POST", "/notes?fast_hash=", .json("{}", status: 503))
+        let cloud = h.cloud()
+        let note = CloudAnnotation(kind: Stamped(.highlight, updated: nil), quotation: Stamped(AnnotationQuotation(begin: "#epubcfi(/6/4!/4/2/1:0)", end: "#epubcfi(/6/4!/4/2/1:5)", text: ""), updated: nil))
+        await cloud.save(note, for: CloudBook(fastHash: frankenstein))
+        await cloud.flushOutbox()
+        await cloud.flushOutbox(trigger: .background)
+        #expect(await h.transport.requests("POST", "/notes").count == 1)
+    }
+
     @Test func dropsAWriteForABookThatNoLongerExists() async throws {
         let h = Harness()
         await h.transport.on("GET", "/fileops/info", .json(#"{"error_code":311}"#, status: 404))

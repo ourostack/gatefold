@@ -521,18 +521,24 @@ public actor PocketBookCloud: SyncService {
 
     public func flushOutbox() async { await flushOutbox(trigger: .other) }
 
-    /// Sends whatever is due now; `trigger` says why, in the place reports.
+    /// Sends whatever is due now; `trigger` says why, in the place reports. When he is leaving (the app
+    /// going to the background, a book closing), places go even while they wait out a backoff: iOS is
+    /// about to suspend the app, and a backoff timer doesn't run in a suspended app.
     public func flushOutbox(trigger: PlaceReport.Trigger) async {
         // A send already under way is now this trigger's too (the app leaving while a debounce send runs).
         drainTrigger = trigger
-        if let draining {
-            await draining.value
-            return
+        let leaving = trigger == .background || trigger == .close
+        if let running = draining {
+            await running.value
+            // That send skipped any place waiting out a backoff; leaving, send it now, once no send runs.
+            guard leaving else { return }
+            while let other = draining, other != running { await other.value }
         }
-        let task = Task { await self.drain() }
+        let task = Task { await self.drain(sendingPlacesNow: leaving) }
         draining = task
         await task.value
-        draining = nil
+        // Only this send's own slot: a send for someone leaving may have started since.
+        if draining == task { draining = nil }
         rescheduleAfterDrain()
     }
 
@@ -547,11 +553,14 @@ public actor PocketBookCloud: SyncService {
         case superseded
     }
 
-    private func drain() async {
+    /// `sendingPlacesNow`: positions go even before their backoff is over (he is leaving).
+    private func drain(sendingPlacesNow: Bool = false) async {
         var index = 0
         while index < state.items.count {
             let item = state.items[index]
-            if let due = item.notBefore, due > now() {
+            var isPosition = false
+            if case .position = item.operation { isPosition = true }
+            if let due = item.notBefore, due > now(), !(sendingPlacesNow && isPosition) {
                 index += 1
                 continue
             }
