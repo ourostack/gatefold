@@ -41,6 +41,8 @@ jobs:
   restore:
     name: Restore (${{ matrix.device }})
     needs: seed
+    # Each device's restore runs whether or not the other device's seed passed.
+    if: ${{ !cancelled() }}
     runs-on: xcode-27
     timeout-minutes: 30
     strategy:
@@ -64,6 +66,7 @@ jobs:
         with:
           path: ~/simcache/set
           key: ${{ env.SIMKEY }}
+          restore-keys: ${{ env.SIMPREFIX }}
           fail-on-cache-miss: true
       - run: |
           echo "- restore: cache restore $(( $(date +%s) - RESTORE_START )) s, $(du -sk ~/simcache/set | cut -f1) KiB" | tee -a "$GITHUB_STEP_SUMMARY"

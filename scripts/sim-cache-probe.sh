@@ -23,6 +23,7 @@ PY
   xb=$(xcodebuild -version | awk '/Build version/{print $3}')
   {
     echo "KIND=$kind"; echo "RUNTIME=$runtime"; echo "RUNTIME_BUILD=$rbuild"; echo "XCODE_BUILD=$xb"
+    echo "SIMPREFIX=probe-sim-$kind-$rbuild-$xb-"
     echo "SIMKEY=probe-sim-$kind-$rbuild-$xb-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
   } | tee -a "$GITHUB_ENV"
   ;;
