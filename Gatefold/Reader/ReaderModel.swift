@@ -2696,14 +2696,23 @@ final class ReaderModel {
     /// on the way, and never the place, though the page shows it. Waiting for that report kept nothing, ever: on
     /// CI's starved iPad the saved place, the page number and the words on screen stayed on the page he had left
     /// for 42 minutes (run 44110357660). Its target on the page shown is his place, as a leave would keep it.
+    /// A page left on the file's start, the place in it never taken, is sent to the place again, once, and where
+    /// that lands is kept: waiting kept nothing there either, and the page stayed on the chapter file's first
+    /// words for 30 minutes (run 44820376573).
     private func keepPlaceNeverReported() async {
         guard let jump = jumpOnItsWay, let reported = lastReported, isJumpsFileStart(reported) else { return }
         let target = ReadingAnchor(href: jump.target.href.string, progression: jump.target.locations.progression ?? 0, text: nil)
         let shown = await page?.pageRange()
         guard jumpOnItsWay?.move == jump.move, jump.move == moves, recordedMoves != moves, !isClosed,
-              lastReported.map({ Self.samePage($0, reported) }) == true, shown?.contains(target) == true else { return }
-        readerLog.notice("place: a jump back with only its file's start reported; its place on screen kept at \(Self.placeTag(jump.target), privacy: .public)")
-        await locationDidChange(jump.target, hisMove: true)
+              lastReported.map({ Self.samePage($0, reported) }) == true else { return }
+        if shown?.contains(target) == true {
+            readerLog.notice("place: a jump back with only its file's start reported; its place on screen kept at \(Self.placeTag(jump.target), privacy: .public)")
+            await locationDidChange(jump.target, hisMove: true)
+        } else if resentTargetForMove != jump.move, host?.isTurning != true {
+            resentTargetForMove = jump.move
+            readerLog.notice("place: a jump back with only its file's start reported, its place not on screen (\(shown.map { "\($0.href) \(String(format: "%.5f", $0.start))-\(String(format: "%.5f", $0.end))" } ?? "unmeasured", privacy: .public)); sent again to \(Self.placeTag(jump.target), privacy: .public)")
+            await putBack(to: jump.target)
+        }
     }
 
     func locationDidChange(_ locator: Locator, duringTurn: Bool = false, hisMove: Bool = false, placeOnly: Bool = false,
