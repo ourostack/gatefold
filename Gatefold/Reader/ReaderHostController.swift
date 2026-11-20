@@ -838,7 +838,9 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         }
         dropStandby()
         stopCounting()
-        model.keeper.reflowWillBegin(reason, move: model.hisMoves)
+        // A turn of his that has let go and not landed counts as made: its landing is that turn, and the restore
+        // puts back its page, never the one before it (gatefold#534).
+        model.keeper.reflowWillBegin(reason, move: model.reflowMove())
         model.reflowDidBegin()
         if !curl.isActive {
             let page = navigator.view!
@@ -1158,6 +1160,10 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             return model.keeper.restoreMayMove(move: model.hisMoves)
         }
         defer { giveWayIfHeMoved(generation: generation) }
+        // A turn of his under way as the reflow began: its page's words, read before the layout changed, are
+        // what the restore puts back (gatefold#534).
+        model.takeTurnUnderReflow()
+        guard current() else { return }
         // Tests only: the page doesn't answer yet, as a spread whose chapter is still loading.
         if let until = slowRestoreDeadline {
             while ContinuousClock.now < until, current(), !Task.isCancelled { try? await Task.sleep(for: .milliseconds(250)) }
@@ -1837,6 +1843,26 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         await Self.onSpread { try await self.readAnchor() }
     }
 
+    /// The first words on the page beneath a turn that has just moved, at the page's own start in its chapter (the
+    /// web view's scroll, not Readium's location, which names the page before until its report comes). A turn into
+    /// the next chapter, not yet reported, is named by the chapter on screen, from `chapters` (the reading order).
+    func wordsBeneath(chapters: [String]) async -> Locator? {
+        await Self.onSpread { () async throws -> Locator? in
+            let navigator = self.navigator // the one on screen now, on each try
+            guard let (_, words) = try await self.readAnchor(publish: false),
+                  let json = try await navigator.answer(ReaderJS.pageRange) as? String,
+                  let data = json.data(using: .utf8) else { return nil }
+            struct Found: Decodable { var s: Double; var e: Double; var doc: String }
+            guard let found = try? JSONDecoder().decode(Found.self, from: data) else { return nil }
+            if ScreenPageGeometry.document(found.doc, isChapter: words.href.string) {
+                return words.copy(locations: { $0.progression = found.s })
+            }
+            guard let chapter = chapters.first(where: { ScreenPageGeometry.document(found.doc, isChapter: $0) }),
+                  let url = AnyURL(string: chapter) else { return nil }
+            return Locator(href: url, mediaType: words.mediaType, locations: .init(progression: found.s), text: words.text)
+        }
+    }
+
     func wordsOnPage() async -> Locator? {
         await Self.onSpread { try await self.readAnchor(publish: false) }?.1
     }
@@ -1981,7 +2007,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
 
     /// A whole turn without a finger: lift from the lower corner and sweep across.
     private func animatedTurn(forward: Bool, from finger: CGPoint?) async {
-        guard await prepareTurn(forward: forward, startingAt: finger ?? CGPoint(x: view.bounds.width, y: view.bounds.height * 0.86)) else { return }
+        guard await prepareTurn(forward: forward, startingAt: finger ?? CGPoint(x: view.bounds.width, y: view.bounds.height * 0.86), committed: true) else { return }
         // A tap's turn has let go as it starts: Readium is on the page beneath, and leaving now leaves it.
         weakModel?.turnCommitted()
         // The same leaf as a drag: the corner lifts up and in first, so the page bends as a cylinder
@@ -1997,7 +2023,10 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
 
     /// Snapshots the current page, moves the navigator underneath the overlay and snapshots the
     /// destination. Returns false at the start or end of the book.
-    private func prepareTurn(forward: Bool, startingAt point: CGPoint) async -> Bool {
+    /// `committed`: a tap's turn, which has let go as it starts. Its page's words are read as soon as Readium is on
+    /// the page beneath, before it is pictured, so a turn of the iPad straight after the tap finds his turn under
+    /// way and its page's words read in the layout he turned in (gatefold#534).
+    private func prepareTurn(forward: Bool, startingAt point: CGPoint, committed: Bool = false) async -> Bool {
         guard !isTurning, weakModel != nil else { return false }
         isTurning = true
         let t0 = ContinuousClock.now
@@ -2036,6 +2065,11 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             }
             return false
         }
+        // A tap's turn is his from here: Readium is on the page beneath, laid out as he turned it.
+        if committed { weakModel?.turnMovedBeneath() }
+        // UI tests: the leaf waits before it falls, so a turn of the iPad sent straight after the tap begins while
+        // the turn is under way, every time (gatefold#534).
+        if committed, let hold = LaunchOptions.holdTapTurnLanding { try? await Task.sleep(for: .seconds(hold)) }
         // Wait until the destination has painted and stopped changing (a spread lays out two
         // columns; caught halfway it ghosts).
         curl.beneath = await renderedSnapshot(afterChange: true)

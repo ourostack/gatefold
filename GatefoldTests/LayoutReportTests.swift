@@ -154,6 +154,51 @@ final class DriftingPage: ReaderPage {
         f.model.close()
     }
 
+    /// gatefold#534: the reflow's check judges his words, never progressions. A page whose text wasn't read is
+    /// unproven, not his (build 46's check fell back to Readium's report and the page's end clamped to it); a page
+    /// whose text holds other words is a loss, even where the progressions overlap.
+    @Test func theReflowCheckJudgesHisWordsNeverProgressions() async throws {
+        let f = try await Self.open()
+        let anchor = try #require(f.model.keeper.anchor)
+        try #require(anchor.text != nil, "his words were read")
+        func check(_ visible: VisibleRange) -> String {
+            f.model.keeper.reflowWillBegin(.rotation)
+            f.model.reflowDidBegin()
+            f.model.keeper.restoreDidComplete()
+            f.model.reflowDidFinish(visible: visible)
+            return f.model.anchorCheck
+        }
+        let around = (start: anchor.progression - 0.01, end: anchor.progression + 0.02)
+        #expect(check(VisibleRange(href: anchor.href, start: around.start, end: around.end, text: nil)).hasPrefix("anchor-unread "),
+                "a page with no words read was called his by its progressions")
+        #expect(check(VisibleRange(href: anchor.href, start: around.start, end: around.end, text: Self.nextWords)).hasPrefix("anchor-lost "),
+                "a page of other words was called his")
+        #expect(check(VisibleRange(href: anchor.href, start: 0.9, end: 0.9, text: Self.hisWords)).hasPrefix("anchor-visible "),
+                "his words on screen weren't seen, because Readium's report was elsewhere")
+        f.model.close()
+    }
+
+    /// gatefold#534: the late look's second verdict is for its own reflow only. A look begun for an older reflow, or a
+    /// read that missed the page's text, leaves the latest verdict standing.
+    @Test func theLateCheckJudgesOnlyItsOwnReflowWithItsWordsRead() async throws {
+        let f = try await Self.open()
+        let anchor = try #require(f.model.keeper.anchor)
+        try #require(anchor.text != nil, "his words were read")
+        f.model.keeper.reflowWillBegin(.rotation)
+        f.model.reflowDidBegin()
+        f.model.keeper.restoreDidComplete()
+        f.model.reflowDidFinish(visible: VisibleRange(href: anchor.href, start: 0.9, end: 0.9, text: Self.hisWords))
+        let own = f.model.reflowNumber
+        try #require(f.model.anchorCheck == "anchor-visible \(own)")
+        f.model.rejudgeReflow(VisibleRange(href: anchor.href, start: 0.9, end: 0.9, text: nil), reflow: own)
+        #expect(f.model.anchorCheck == "anchor-visible \(own)", "a late read that missed the page's text overturned the verdict")
+        f.model.rejudgeReflow(VisibleRange(href: anchor.href, start: 0.9, end: 0.9, text: Self.nextWords), reflow: own - 1)
+        #expect(f.model.anchorCheck == "anchor-visible \(own)", "an older reflow's late look overwrote the latest verdict")
+        f.model.rejudgeReflow(VisibleRange(href: anchor.href, start: 0.9, end: 0.9, text: Self.nextWords), reflow: own)
+        #expect(f.model.anchorCheck == "anchor-lost \(own)", "the late look found his words gone and the check didn't say so")
+        f.model.close()
+    }
+
     /// A swipe (slide or scroll mode) is a touch Readium owns: the words change, and that is his move.
     @Test func aSwipeThatBringsNewWordsIsStillHisMove() async throws {
         let f = try await Self.open()
