@@ -208,9 +208,10 @@ def selftest():
                       "          - timeout: 118 # 30 + 2 x 35.2\n") == 118, "a reusable caller's matrix timeout"
     assert limit(wf + "  d:\n    runs-on: x\n    timeout-minutes: ${{ inputs.t }}\n") == DEFAULT, "an expression"
     here = limits_here()
-    # Read, not pinned: a pinned 75 failed every watchdog run once #463 set 77. Each must be a literal the parser
-    # found, below the 360-minute default it falls back to.
-    assert 30 <= here[RU] < DEFAULT and 118 <= here[APP] < DEFAULT, f"this repository's limits: {here}"
+    # Read, not pinned: a pinned 75 failed every watchdog run once #463 set 77, and a floor of 118 for App failed
+    # them again when a shard's limit fell to 107. Each must be a literal the parser found (30 or more), below the
+    # 360-minute default it falls back to.
+    assert 30 <= here[RU] < DEFAULT and 30 <= here[APP] < DEFAULT, f"this repository's limits: {here}"
     print(f"ci-stuck selftest: {len(cases) + 6} cases pass")
 
 
