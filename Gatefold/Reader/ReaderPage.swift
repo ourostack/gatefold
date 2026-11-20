@@ -27,6 +27,8 @@ protocol ReaderPage: AnyObject {
     func currentAnchor() async -> (ReadingAnchor, Locator)?
     /// The same words, read only: nothing on screen (the running head) takes them up.
     func wordsOnPage() async -> Locator?
+    /// The first words on the page beneath a turn that has just moved, at that page's own start (`ReaderHostController`).
+    func wordsBeneath(chapters: [String]) async -> Locator?
     /// Starts loading `locator`'s page out of sight, so a jump there later is quick.
     func prepareStandby(at locator: Locator)
     func dropStandby()
@@ -61,6 +63,7 @@ extension ReaderPage {
     var isLoadingChapter: Bool { false }
     var isTurning: Bool { false }
     func wordsOnPage() async -> Locator? { await currentAnchor()?.1 }
+    func wordsBeneath(chapters: [String]) async -> Locator? { await currentAnchor()?.1 }
     func prepareStandby(at locator: Locator) {}
     func dropStandby() {}
     func promoteStandby(for locator: Locator) async -> Bool { false }

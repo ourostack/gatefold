@@ -2469,13 +2469,20 @@ final class ReaderModel {
                 await self.waitForLaunchJump()
                 guard self.placeOwed, !self.isClosed, self.keeper.reflowing == nil else { return }
                 // The keeper ignored the move while the reflow ran, so its words are the page before it:
-                // take them from the page he is on now.
-                await self.captureAnchor()
+                // take them from the page he is on now. Not a turn whose page the restore put back: its words,
+                // read in the layout he turned in, are the anchor, and the restored page can open a line or two
+                // before them (gatefold#534).
+                let turnWords = self.turnTakenByReflow?.turn == self.beneathTurns && self.turnLandedUnderReflow == self.moves
+                    && self.reflowTouches == 0 && self.anchorLocator?.text.highlight != nil ? self.anchorLocator : nil
+                if turnWords == nil { await self.captureAnchor() }
                 // A turn that landed meanwhile recorded its own page and paid the debt.
                 // A jump that never landed owes where he was sent, not Readium's stale file start.
                 // A slide or scroll since (no move counted; a report under the reflow leaves the touch
                 // pending) makes his page the place, not the target. A tap that only shows the controls doesn't.
                 let target = self.owedJumpTarget.flatMap { $0.1 == self.moves && !self.touchedSinceLocation ? $0.0 : nil }
+                    // His turn's page, as the restore put it back: its words, where they were in the layout he
+                    // turned in, not Readium's page now, which is the new layout's boundary.
+                    ?? turnWords
                 guard self.placeOwed, !self.isClosed, self.keeper.reflowing == nil,
                       let here = target ?? self.page?.currentLocation else { return }
                 // Kept until now: a reflow that began meanwhile owes it still.
@@ -2891,7 +2898,7 @@ final class ReaderModel {
                 savedWordsProbe = here.text.highlight.map(ReaderJS.normalize) ?? ""
                 savedPlaceProbe = Self.probeTag(here)
             }
-            readerLog.notice("place write [r\(self.readerNumber, privacy: .public)]: his move (\(fresh != nil ? "his first words" : "Readium's boundary", privacy: .public)) \(Self.placeTag(here), privacy: .public); reported \(Self.placeTag(locator), privacy: .public); move \(self.moves, privacy: .public), touched \(self.touchedSinceLocation, privacy: .public), layoutOnly \(self.layoutOnly, privacy: .public)")
+            readerLog.notice("place write [r\(self.readerNumber, privacy: .public)]: his move (\(here.text.highlight != nil ? "his first words" : "Readium's boundary", privacy: .public)) \(Self.placeTag(here), privacy: .public); reported \(Self.placeTag(locator), privacy: .public); move \(self.moves, privacy: .public), touched \(self.touchedSinceLocation, privacy: .public), layoutOnly \(self.layoutOnly, privacy: .public)")
             placeRecords += 1
             placeWrittenFor = max(placeWrittenFor, keeping)
             app.library.recordPlace(
@@ -2965,13 +2972,42 @@ final class ReaderModel {
         readOnAfterJump()
         hasMoved = true
         moves += 1
+        // Landed under the reflow it was under way as it began (`reflowMove`): the turn its restore puts back, not a
+        // move since; once taken, its words are the anchor already.
+        let underThis = beneathOpen && keeper.reflowing != nil
+        let pending = underThis && turnUnderReflow.map { $0.turn == beneathTurns && $0.reflow == reflowSerial } == true
+        let taken = underThis && turnTakenByReflow.map { $0.turn == beneathTurns && $0.reflow == reflowSerial } == true
+        if pending || taken {
+            keeper.turnUnderReflowLanded()
+            turnUnderReflowLanded = pending
+        }
+        turnLandedUnderReflow = pending || taken ? moves : nil
+        // Landed after a reflow already put its page back: its words are the place, not the restored page's first
+        // words, which can start a line or two before them.
+        // No move of his since the restore took it, but this landing: a jump meanwhile is his place, not this turn.
+        let putBack = beneathOpen && keeper.reflowing == nil && turnTakenByReflow?.turn == beneathTurns
+            && turnTakenByReflow.map { $0.hisMoves + 1 == hisMoves } == true
+            ? anchorLocator.flatMap { $0.text.highlight != nil ? $0 : nil } : nil
+        beneathOpen = false
         turnFalling = false
         lastTurnMove = moves
         let step = steps
+        let movesAtTurn = moves
         turnLook = Task {
             guard let first = page?.currentLocation else { return }
             // A turn is a move too: a Back that comes back late after it puts the page back here.
             landed(step, at: first)
+            if let putBack {
+                // Landed after a reflow put its page back: its words are his anchor and his place, never the restored
+                // page's first words, which can start a line or two before them (gatefold#534).
+                readerLog.notice("turn: landed after a reflow put its page back; its words are the place")
+                await locationDidChange(putBack)
+                guard moves == movesAtTurn, !isClosed else { return }
+                keeper.userSettled(on: ReadingAnchor(href: putBack.href.string, progression: putBack.locations.progression ?? 0,
+                                                     text: putBack.text.highlight.map(ReaderJS.normalize)))
+                anchorLocator = putBack
+                return
+            }
             await locationDidChange(first)
             // Turning into the next resource, Readium can name the old one until the new one has
             // loaded, and its update arrives mid-turn when it's ignored. Look again once it has.
@@ -2979,6 +3015,13 @@ final class ReaderModel {
             // Not a freed Back's chapter while it is out: that page may be the trip landing, not this turn.
             if let later = page?.currentLocation, isStrayChapter(later) {
                 readerLog.notice("turn: second look found a freed Back's chapter, skipped")
+                return
+            }
+            // Not a turn that landed under a reflow that puts its page back: Readium's location now is the restore's,
+            // and its page can open a line or two before his turn's words, which the reflow's owed place keeps
+            // (gatefold#534).
+            if self.turnLandedUnderReflow == movesAtTurn {
+                readerLog.notice("turn: second look skipped, the turn landed under a reflow that puts its page back")
                 return
             }
             if let later = page?.currentLocation, later.href != first.href
@@ -3006,6 +3049,96 @@ final class ReaderModel {
             self.fallingWords = read
         }
     }
+    /// A tap's turn has moved Readium onto the page beneath (`ReaderHostController.prepareTurn`): it can't spring
+    /// back, and lands once its leaf has fallen. That page's first words are read at once, in the layout he turned in,
+    /// before the page beneath is pictured: a turn of the iPad straight after the tap begins a reflow before the turn
+    /// lands, and they are the page its restore puts back (gatefold#534). A read a reflow began during may mix the
+    /// two layouts: it counts as no words read.
+    func turnMovedBeneath() {
+        beneathTurns += 1
+        beneathOpen = true
+        beneathWords = nil
+        let turn = beneathTurns, reflow = reflowSerial
+        let chapters = readingOrderHrefs
+        // A turn begun while a reflow lays out reads a page still changing under it: no words.
+        guard keeper.reflowing == nil else { beneathRead = nil; return }
+        beneathRead = Task { [weak self] in
+            guard let read = await self?.page?.wordsBeneath(chapters: chapters), let self, self.beneathTurns == turn,
+                  self.reflowSerial == reflow, read.text.highlight != nil else { return }
+            self.beneathWords = read.copy(locations: { $0.totalProgression = self.totalProgression(of: read) ?? $0.totalProgression })
+        }
+    }
+
+    /// A reflow begins (`AnchorKeeper.reflowWillBegin`): the count of his moves its restore is for. A tap's turn of
+    /// his that has moved and not landed is noted: its landing is the turn he made before the reflow, not a move
+    /// since (`userTurnedPage`), and the restore puts back its page (`takeTurnUnderReflow`). Build 46 took its
+    /// landing as a move since: the restore had put back the page before the turn, or gave way to a page the
+    /// unfinished layout showed, and that page was kept (gatefold#534).
+    func reflowMove() -> Int {
+        // A turn that landed under the reflow before this one, its page not yet put back: this reflow puts it back
+        // (an iPad's rotation begins two reflows in a row). Its landing is in his moves already.
+        let carried = turnUnderReflow.flatMap { $0.turn == beneathTurns && turnLandedUnderReflow == moves ? $0.turn : nil }
+        reflowSerial += 1
+        turnUnderReflowLanded = false
+        if beneathOpen {
+            turnUnderReflow = (turn: beneathTurns, reflow: reflowSerial)
+        } else if let carried {
+            // Its landing is in his moves already: with no words read, this reflow's restore gives way to it.
+            turnUnderReflow = (turn: carried, reflow: reflowSerial)
+            turnUnderReflowLanded = true
+        } else {
+            turnUnderReflow = nil
+        }
+        return hisMoves
+    }
+
+    /// Before a reflow's restore reads the anchor: his turn under way as it began makes its page's first words, read
+    /// as the turn moved, in the layout he turned in, the anchor. Without them (the read hadn't ended as the reflow
+    /// began, so it was let go) the turn's landing is a move the restore gives way to, as before.
+    func takeTurnUnderReflow() {
+        guard let under = turnUnderReflow, under.reflow == reflowSerial, keeper.reflowing != nil, !isClosed else { return }
+        turnUnderReflow = nil
+        guard under.turn == beneathTurns, let words = beneathWords, let text = words.text.highlight else {
+            if turnUnderReflowLanded { keeper.turnUnderReflowUnread() }
+            readerLog.notice("reflow: his turn under way has no words read; the restore gives way to its landing")
+            return
+        }
+        keeper.turnUnderReflow(ReadingAnchor(href: words.href.string, progression: words.locations.progression ?? 0,
+                                             text: ReaderJS.normalize(text)))
+        anchorLocator = words
+        turnTakenByReflow = (turn: under.turn, reflow: under.reflow, hisMoves: hisMoves)
+        readerLog.notice("reflow: his turn under way; the restore puts back its page at \(Self.placeTag(words), privacy: .public)")
+    }
+
+    /// Where a place in a chapter is in the book, from the chapters' starts; nil when its chapter isn't listed.
+    private func totalProgression(of place: Locator) -> Double? {
+        let href = place.href.string
+        guard let p = place.locations.progression,
+              let i = readingOrderHrefs.firstIndex(of: href) ?? readingOrderHrefs.firstIndex(where: { href.hasPrefix($0) }),
+              i < resourceStarts.count else { return nil }
+        let start = resourceStarts[i]
+        let end = i + 1 < resourceStarts.count ? resourceStarts[i + 1] : 1
+        return start + p * (end - start)
+    }
+
+    /// Reflows begun (`reflowMove`), so a turn's state is tied to the reflow it was under.
+    @ObservationIgnored private var reflowSerial = 0
+    /// Tap turns that moved Readium onto the page beneath (`turnMovedBeneath`), and whether the latest is still to land.
+    @ObservationIgnored private var beneathTurns = 0
+    @ObservationIgnored private var beneathOpen = false
+    /// The first words on the page beneath his latest tap's turn, read as it moved, and that read.
+    @ObservationIgnored private(set) var beneathWords: Locator?
+    @ObservationIgnored private(set) var beneathRead: Task<Void, Never>?
+    /// The tap turn under way when the latest reflow began (`reflowMove`), until its restore takes it or not, and
+    /// whether it has landed under that reflow meanwhile.
+    @ObservationIgnored private var turnUnderReflow: (turn: Int, reflow: Int)?
+    @ObservationIgnored private var turnUnderReflowLanded = false
+    /// The tap turn whose page a reflow's restore put back (`takeTurnUnderReflow`), and his moves as it did.
+    @ObservationIgnored private var turnTakenByReflow: (turn: Int, reflow: Int, hisMoves: Int)?
+    /// The move his turn counted as it landed under a reflow that puts its page back: the reflow owes its place,
+    /// and its words are the anchor already, never read again from the page the layout shows.
+    @ObservationIgnored private var turnLandedUnderReflow: Int?
+
     /// His latest landed turn's own work (its report, its write, its second look), for tests to wait on
     /// its end: the event, never a count of scheduler turns (gatefold#350).
     @ObservationIgnored private(set) var turnLook: Task<Void, Never>?
