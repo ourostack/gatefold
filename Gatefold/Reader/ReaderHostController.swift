@@ -772,6 +772,41 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         return nil
     }
 
+    override func viewWillTransition(to size: CGSize, with coordinator: any UIViewControllerTransitionCoordinator) {
+        super.viewWillTransition(to: size, with: coordinator)
+        // `size` is the window's; the page's own new size is known only at its next layout.
+        guard !closed else { return }
+        if LaunchOptions.isUITest { watchTurnFrames() }
+        holdTurnPicture()
+        // A turn that reflowed nothing (the same layout either way) leaves no picture behind.
+        coordinator.animate(alongsideTransition: nil) { [weak self] _ in self?.turnPicture = nil }
+    }
+
+    /// The page as it was before the device turned, whole, for the turn's reflow to cover the page with until the
+    /// new layout is placed (gatefold#537). Taken before the window changes size: a picture taken once it has shows
+    /// the old layout clipped to the new window, and stretched to it, a squeezed frame.
+    private var turnPicture: (view: UIView, size: CGSize)?
+
+    private func holdTurnPicture() {
+        turnPicture = nil
+        // A device that folds opens with the unfold, which brings its own pictures; a turn mid-curl keeps the
+        // curl's own handling (gatefold#534); a page not shown has nothing to picture.
+        guard weakModel?.hasFold == false, pageShown, !curl.isActive, reflowCover == nil, settlePicture == nil,
+              let page = navigator.viewIfLoaded, page.window != nil, page.alpha > 0.5,
+              let picture = page.snapshotView(afterScreenUpdates: false) else { return }
+        turnPicture = (picture, page.bounds.size)
+    }
+
+    /// The turn's picture over the theme's paper, filling the page: the old page at its own proportions, all of it,
+    /// centred, kept so as the page's frame moves to the new size.
+    private func takeTurnCover(frame: CGRect) -> (cover: UIView, picture: UIView)? {
+        guard let (picture, size) = turnPicture else { return nil }
+        turnPicture = nil
+        let cover = WholePictureCover(picture: picture, size: size, frame: frame)
+        cover.backgroundColor = weakModel?.theme.uiBackground ?? .systemBackground
+        return (cover, picture)
+    }
+
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         let size = view.bounds.size
@@ -779,6 +814,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         readerLog.notice("host size \(size.width, privacy: .public)x\(size.height, privacy: .public)")
         let first = lastSize == .zero
         lastSize = size
+        if first { pageLaidFor = size }
         if !first { beginReflow(model.consumeReflowReason() ?? .resize) }
     }
 
@@ -788,7 +824,8 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         // A closed reader's page is retired: new preferences would only load pages nobody sees (#109).
         guard !closed else { return }
         // One page becoming two is the unfold: the right page swings open once it has laid out.
-        unfolding = reflow && self.columns == 1 && columns == 2
+        // A turned iPad fades to its spread (gatefold#537): the leaf is the unfold's, on a device that opens.
+        unfolding = reflow && self.columns == 1 && columns == 2 && weakModel?.hasFold == true
         let newColumns = self.columns != columns
         self.columns = columns
         self.preferences = preferences
@@ -850,12 +887,23 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         model.reflowDidBegin()
         if !curl.isActive {
             let page = navigator.view!
-            if reflowCover == nil, page.alpha > 0.5, let container = page.superview,
+            if reflowCover == nil, let container = page.superview, let turned = takeTurnCover(frame: page.frame) {
+                // The device turned: its whole page from before the turn, never one clipped or stretched to the new size.
+                // Placed outside the turn's animation, so it never shrinks into place from the old size, cut off.
+                UIView.performWithoutAnimation {
+                    container.insertSubview(turned.cover, aboveSubview: page)
+                    turned.cover.layoutIfNeeded()
+                }
+                reflowCover = turned.cover
+                notePicture(turned.cover, of: turned.picture)
+                readerLog.notice("reflow: covered by the page from before the turn")
+            } else if reflowCover == nil, page.alpha > 0.5, let container = page.superview,
                let cover = page.snapshotView(afterScreenUpdates: false) {
                 cover.frame = page.frame
                 cover.isUserInteractionEnabled = false
                 container.insertSubview(cover, aboveSubview: page)
                 reflowCover = cover
+                notePicture(cover, of: cover)
             } else if reflowCover == nil, let container = page.superview, let held = heldCover(frame: page.frame) {
                 // The old page's view is gone (the app changed screens): the picture held as the hinge moved stands in.
                 container.insertSubview(held, aboveSubview: page)
@@ -874,6 +922,81 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             if unfolding { liftLeaf() }
         }
         settleReflowSoon()
+    }
+
+    // MARK: UI tests: what a turn of the device shows (gatefold#537)
+
+    /// The size of the layout the page shows: its size when it last settled. A picture of the page taken
+    /// before its new layout is placed shows this layout, whatever size its view is given.
+    private var pageLaidFor: CGSize = .zero
+    /// Covers that are pictures of the page: the cover, the view showing the picture, and the layout it shows.
+    private var pictures: [ObjectIdentifier: (picture: UIView, shows: CGSize)] = [:]
+    private var turnWatch: TurnFrameWatch?
+
+    private func notePicture(_ cover: UIView, of picture: UIView) {
+        guard LaunchOptions.isUITest, pageLaidFor != .zero else { return }
+        pictures = pictures.filter { $0.value.picture.window != nil }
+        pictures[ObjectIdentifier(cover)] = (picture, pageLaidFor)
+    }
+
+    /// Watches every display frame from a turn of the device until its reflow is shown, the page whole and
+    /// nothing over it, and counts the frames that showed anything but a whole page (`reader.turnFrames`).
+    private func watchTurnFrames() {
+        turnWatch?.stop()
+        let began = reflowGeneration
+        let watchdog = weakModel?.shownUnsettledProbe ?? 0
+        weakModel?.turnFramesProbe = "watching"
+        let watch = TurnFrameWatch { [weak self] in
+            guard let self, !self.closed else { return nil }
+            let shown = self.navigator.view.layer.presentation()?.opacity ?? self.navigator.view.layer.opacity
+            if self.reflowGeneration > began, self.settledGeneration == self.reflowGeneration, self.reflowCover == nil,
+               self.leaf == nil, shown >= 0.99, self.weakModel?.foldLeafUp != true { return nil }
+            // The 12 s watchdog shows the page as it is on purpose (a reflow that never settles): not this watch's to judge.
+            return self.brokenNow(watchdogShown: (self.weakModel?.shownUnsettledProbe ?? 0) > watchdog)
+        } ended: { [weak self] frames, broken, why in
+            let verdict = "\(broken) broken of \(frames)" + (why.isEmpty ? "" : " (\(why.sorted().joined(separator: ", ")))")
+            readerLog.notice("turn frames: \(verdict, privacy: .public)")
+            self?.weakModel?.turnFramesProbe = verdict
+            self?.turnWatch = nil
+        }
+        turnWatch = watch
+        watch.start()
+    }
+
+    /// What this frame shows over the page that isn't a whole page; empty when it is whole.
+    private func brokenNow(watchdogShown: Bool) -> [String] {
+        var why: [String] = []
+        func visible(_ v: UIView) -> Bool {
+            v.window != nil && !v.isHidden && (v.layer.presentation()?.opacity ?? v.layer.opacity) > 0.01
+        }
+        // Where a view is this frame, and the page it is judged against, in one space: the presentation layers
+        // (mid-turn the page's bounds are on their way to the new size), or, for a view not yet drawn once and so
+        // without one, the views themselves.
+        func onScreen(_ v: UIView) -> (rect: CGRect, page: CGRect) {
+            guard let layer = v.layer.presentation(), let page = view.layer.presentation() else {
+                return (v.convert(v.bounds, to: view), view.bounds)
+            }
+            return (layer.convert(layer.bounds, to: page), page.bounds)
+        }
+        if let leaf, visible(leaf.view) { why.append("leaf") }
+        if weakModel?.foldLeafUp == true { why.append("fold leaf") }
+        var covered = false
+        for cover in [reflowCover, settlePicture].compactMap({ $0 }) where visible(cover) {
+            let (frame, page) = onScreen(cover)
+            if frame.contains(page.insetBy(dx: 1, dy: 1)) { covered = true } else { why.append("cover short of the page") }
+            guard let (picture, shows) = pictures[ObjectIdentifier(cover)], shows.width > 0, shows.height > 0 else { continue }
+            let (shown, under) = onScreen(picture)
+            if abs(shown.width / shows.width - shown.height / shows.height) > 0.01 { why.append("picture squeezed") }
+            if !under.insetBy(dx: -1, dy: -1).contains(shown) { why.append("picture cut off") }
+            if !why.isEmpty {
+                readerLog.notice("turn frames: cover \(String(describing: frame), privacy: .public) on \(String(describing: page), privacy: .public), picture \(String(describing: shown), privacy: .public) on \(String(describing: under), privacy: .public) of \(String(describing: shows), privacy: .public)")
+            }
+        }
+        // The page itself, mid-layout, with nothing whole over it.
+        if !covered, !watchdogShown, visible(navigator.view), settledGeneration != reflowGeneration, !curl.isActive {
+            why.append("page mid-layout")
+        }
+        return why
     }
 
     /// The page is on screen for him: no opening cover or reopen picture over it.
@@ -1151,7 +1274,9 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             cover?.alpha = 0
         } completion: { _ in cover?.removeFromSuperview() }
     }
-    private var settledGeneration = -1
+    private var settledGeneration = -1 {
+        didSet { if LaunchOptions.isUITest { pageLaidFor = navigator.view.bounds.size } }
+    }
     /// The reflow whose restore is placing his words on the left page right now.
     private var placingGeneration = -1
     /// The newest reflow whose restore has had its first script back from the page.
@@ -1522,6 +1647,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         cover.isUserInteractionEnabled = false
         container.insertSubview(cover, aboveSubview: page)
         settlePicture = cover
+        notePicture(cover, of: cover)
         readerLog.notice("spread: held a picture over the page he is reading while his words are put back")
         return true
     }
@@ -3307,6 +3433,79 @@ final class FrameWatch: NSObject {
         link.invalidate()
         self.link = nil
         readerLog.notice("turn frames: \(self.frames, privacy: .public) frames, \(self.late, privacy: .public) late, worst \(Int(self.worst * 1000), privacy: .public) ms, counting \(counting, privacy: .public)")
+    }
+}
+
+/// A picture of the page over paper, at the picture's own proportions and whole, centred in whatever size the
+/// cover is given (gatefold#537).
+final class WholePictureCover: UIView {
+    private let picture: UIView
+    private let size: CGSize
+
+    init(picture: UIView, size: CGSize, frame: CGRect) {
+        self.picture = picture
+        self.size = size
+        super.init(frame: frame)
+        isUserInteractionEnabled = false
+        clipsToBounds = true
+        autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        accessibilityElementsHidden = true
+        picture.bounds = CGRect(origin: .zero, size: size)
+        addSubview(picture)
+        place()
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        place()
+    }
+
+    private func place() {
+        guard size.width > 0, size.height > 0 else { return }
+        let scale = min(1, bounds.width / size.width, bounds.height / size.height)
+        picture.transform = CGAffineTransform(scaleX: scale, y: scale)
+        picture.center = CGPoint(x: bounds.midX, y: bounds.midY)
+    }
+}
+
+/// UI tests: judges every display frame until `judge` returns nil (its reasons a frame wasn't whole, or none),
+/// or for 30 s at most, then reports the frames, the broken ones and every reason seen (gatefold#537).
+@MainActor
+final class TurnFrameWatch: NSObject {
+    private var link: CADisplayLink?
+    private var frames = 0, broken = 0
+    private var why = Set<String>()
+    private let judge: () -> [String]?
+    private let ended: (Int, Int, Set<String>) -> Void
+    private let until = ContinuousClock.now + .seconds(30)
+
+    init(judge: @escaping () -> [String]?, ended: @escaping (Int, Int, Set<String>) -> Void) {
+        self.judge = judge
+        self.ended = ended
+    }
+
+    func start() {
+        let link = CADisplayLink(target: self, selector: #selector(tick(_:)))
+        link.add(to: .main, forMode: .common)
+        self.link = link
+    }
+
+    func stop() {
+        link?.invalidate()
+        link = nil
+    }
+
+    @objc private func tick(_ link: CADisplayLink) {
+        guard ContinuousClock.now < until, let reasons = judge() else {
+            if ContinuousClock.now >= until { why.insert("no end in 30 s") }
+            stop()
+            ended(frames, broken, why)
+            return
+        }
+        frames += 1
+        if !reasons.isEmpty { broken += 1; why.formUnion(reasons) }
     }
 }
 

@@ -66,6 +66,7 @@ iPad Pro 13-inch|ReviewerChecksUITests/testPageNumbersAreOnOrOffInEveryBook	1105
 iPad Pro 13-inch|ReviewerChecksUITests/testTheDefaultSpreadIsAsFullAsAppleBooks	137	# p95 of 112, slowest 301
 iPad Pro 13-inch|ReviewerChecksUITests/testTheLastPagesNumberIsTheCount	314	# p95 of 114, slowest 362
 iPad Pro 13-inch|RotationMidTransitionUITests/testARestoreThatNeverSettlesStillShowsTheSpread	206	# p95 of 111, slowest 253
+iPad Pro 13-inch|RotationFrameUITests/testATurnOnItsSideAndBackShowsOnlyWholePages	150	# estimated: 44 locally (gatefold#537)
 iPad Pro 13-inch|RotationMidTransitionUITests/testTurningDuringAContentsJump	237	# p95 of 112, slowest 291
 iPad Pro 13-inch|RotationMidTransitionUITests/testTurningDuringAPageTurn	250	# p95 of 132, slowest 305
 iPad Pro 13-inch|RotationMidTransitionUITests/testTurnedOnItsSideAndBackHeIsOnHisPage	250	# estimate (new in #324), as its slowest sibling; replace once CI has timed it

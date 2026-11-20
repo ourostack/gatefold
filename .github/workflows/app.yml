@@ -445,13 +445,15 @@ jobs:
             timeout: 106 # 30 + 2 x 29.2 + 5 + 12
             lane: 15
           - shard: ipad-rotate-contents
-            # Rotation, on this job's new iPad: 204
+            # Rotation, on this job's new iPad: 237, and the frames of a turn and back (gatefold#537), 150 estimated
+            # from 44 locally
             tests: >-
               RotationMidTransitionUITests/testTurningDuringAContentsJump
+              RotationFrameUITests
             skip: ""
             pr_tests: none
             cold: true
-            timeout: 55 # 30 + 2 x 4.0 + 5 + 12
+            timeout: 60 # 30 + 2 x 6.5 + 5 + 12
             lane: 11
           - shard: ipad-rotate-midturn
             # Rotation: 182 + 160, then on main the rotate-then-leave repro, 545, after the mid-turn tests as #167 runs

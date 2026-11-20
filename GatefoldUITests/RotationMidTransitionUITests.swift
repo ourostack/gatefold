@@ -221,6 +221,8 @@ final class RotationMidTransitionUITests: XCTestCase {
         return words
     }
 
+    /// Since gatefold#537 a turned iPad fades from its whole old page to the spread and lifts no leaf (the leaf is a
+    /// folding device's), so here the leaf checks guard that none stands; RotationFrameUITests judges every frame.
     /// Turned on its side, cold: the spread opens whole and stays whole, and the leaf rising from the spine never
     /// stands waiting on it for more than a moment. Build 25 kept the old portrait page up with the right page blank and the risen leaf
     /// standing over it for 6 s and more; its check took a look from before the turn as the whole spread
