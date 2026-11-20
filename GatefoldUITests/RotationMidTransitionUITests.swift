@@ -203,8 +203,8 @@ final class RotationMidTransitionUITests: XCTestCase {
 
     /// The build 25 review's path: a fresh open in portrait at 0.31, counted, a Contents jump (entry 31), two pages
     /// read. Returns his page's words (compared, never printed).
-    private func readTwoPagesAfterAJump() -> String {
-        launch()
+    private func readTwoPagesAfterAJump(_ extra: [String] = []) -> String {
+        launch(extra)
         let pageCount = el("reader.pageCount")
         let counted = readsUntil(reads: 3000) { pageCount.exists && !((pageCount.value as? String) ?? "").isEmpty }
         XCTAssertTrue(counted.ok, "the book was counted before the turn (not in \(counted.reads) reads)")
@@ -221,6 +221,8 @@ final class RotationMidTransitionUITests: XCTestCase {
         return words
     }
 
+    /// Since gatefold#537 a turned iPad fades from its whole old page to the spread and lifts no leaf (the leaf is a
+    /// folding device's), so here the leaf checks guard that none stands; RotationFrameUITests judges every frame.
     /// Turned on its side, cold: the spread opens whole and stays whole, and the leaf rising from the spine never
     /// stands waiting on it for more than a moment. Build 25 kept the old portrait page up with the right page blank and the risen leaf
     /// standing over it for 6 s and more; its check took a look from before the turn as the whole spread
@@ -272,9 +274,12 @@ final class RotationMidTransitionUITests: XCTestCase {
     /// about 1.4 s), and its margins are the ones the page was read in (build 25's open kept a phone's margins in
     /// portrait until the first turn on its side set the iPad's, so back upright his words fell a third of a page
     /// down another page: 16 became 17). Judged in reads: the page's loads, and his first words, by hash.
+    /// Each new column count reaches Readium only once the turn's restore has finished (`-GatefoldLateColumns`), so
+    /// Readium lays the page out again after the restore every time, as on CI's loaded iPad, where it then kept its
+    /// own place a page before or after his (gatefold#482).
     func testTurnedOnItsSideAndBackHeIsOnHisPage() throws {
         try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .pad, "a spread on rotation is an iPad path")
-        let his = readTwoPagesAfterAJump()
+        let his = readTwoPagesAfterAJump(["-GatefoldLateColumns", "YES"])
         XCTAssertFalse(his.isEmpty, "his page's words are readable")
         let freshBefore = count("reader.reflowFreshPages"), beforeTurn = reflow.number
         XCUIDevice.shared.orientation = .landscapeLeft
@@ -292,6 +297,56 @@ final class RotationMidTransitionUITests: XCTestCase {
         XCTAssertTrue(spread.contains(head(his)), "on its side, the spread holds his page's first words")
         // By hash: book text never goes into a log.
         XCTAssertEqual(hash(head(back)), hash(head(his)), "back upright, his page opens on his first words (they start \(at) characters in)")
+    }
+
+    /// A forward tap with the iPad turned on its side straight after it, before the turn has landed: the page he
+    /// turned to is his page. On its side the spread holds its first words, and back upright that page opens on
+    /// them, and they are the place kept. Build 46 restored the page from before the turn (the turn's landing came
+    /// after the reflow began, so the reflow put the old words back), or took the words of whatever spread the
+    /// unfinished layout showed: back upright he was on the page before the turn, a page behind it, or in the
+    /// previous chapter, and the reopen kept it (gatefold#534). Judged by hash; no book text is printed.
+    func testATurnOfThePageThenOnItsSideAtOnceKeepsThePageHeTurnedTo() throws {
+        try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .pad, "a spread on rotation is an iPad path")
+        // Every tap's leaf holds 2 s on the page beneath before it lands (its words already read), so the turn of the
+        // iPad sent straight after the tap always begins while the turn is under way, the order build 46's review hit
+        // at 0.12, 0.31 and 0.47. A rotation before the words are read takes the fallback, covered by
+        // TurnUnderReflowTests.
+        launch(["-GatefoldHoldTapTurnLanding", "2"])
+        let page = settle(30)
+        let savedProbe = el("reader.savedWords")
+        var saved: String { (savedProbe.value as? String) ?? "" }
+        // The page a turn reaches from here, read with no rotation, and its first whole words (the place kept for it,
+        // past the tail of a word broken across the page turn), then back to his page.
+        let savedBefore = saved
+        turn()
+        _ = readsUntil(reads: 150) { let now = words; return !now.isEmpty && now != page }
+        let next = settle(20)
+        _ = readsUntil(reads: 150) { saved != savedBefore }
+        let nextWords = String(saved.prefix(24))
+        el("reader.page").coordinate(withNormalizedOffset: CGVector(dx: 0.05, dy: 0.5)).tap()
+        _ = readsUntil(reads: 150) { words == page }
+        _ = settle(20)
+        XCTAssertFalse(nextWords.isEmpty, "the turned page's words were kept")
+        XCTAssertNotEqual(hash(head(next)), hash(head(page)), "a turn moved on a page")
+        XCTAssertEqual(hash(head(words)), hash(head(page)), "back on his page before the test's turn")
+        let beforeTurn = reflow.number
+        turn()
+        XCUIDevice.shared.orientation = .landscapeLeft
+        _ = readsUntil(reads: 100) { el("reader.posture").label == "spread" }
+        _ = readsUntil(reads: 300) { settledSince(beforeTurn) }
+        let spread = settle(30)
+        let beforeBack = reflow.number
+        XCUIDevice.shared.orientation = .portrait
+        _ = readsUntil(reads: 100) { el("reader.posture").label == "single" }
+        _ = readsUntil(reads: 300) { settledSince(beforeBack) }
+        let back = settle(30)
+        func at(_ text: String) -> Int { text.range(of: nextWords).map { text.distance(from: text.startIndex, to: $0.lowerBound) } ?? -1 }
+        let check = el("reader.anchorCheck").label
+        print("TAPTURN pageHead=\(hash(head(page))) nextHead=\(hash(head(next))) nextWords=\(hash(nextWords)) spreadAt=\(at(spread)) backHead=\(hash(head(back))) backAt=\(at(back)) saved=\(hash(String(saved.prefix(24)))) check=[\(check)]")
+        XCTAssertGreaterThanOrEqual(at(spread), 0, "on its side, the spread holds the first words of the page he turned to")
+        XCTAssertEqual(hash(head(back)), hash(head(next)), "back upright, he is on the page he turned to")
+        XCTAssertEqual(hash(String(saved.prefix(24))), hash(nextWords), "the place kept is the first words of the page he turned to")
+        XCTAssertTrue(check.hasPrefix("anchor-visible"), "the reader's own check: \(check)")
     }
 
     func testTurningDuringAPageTurn() throws {

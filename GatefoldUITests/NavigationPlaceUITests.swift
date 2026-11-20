@@ -190,7 +190,7 @@ final class NavigationPlaceUITests: XCTestCase {
             if start == nil, veil.exists { start = reads }
             let now = visibleText
             if move == nil, !now.isEmpty, opening(now) != opening(first) { move = reads; start = start ?? reads }
-            if back == nil, app.buttons["reader.back"].exists { back = reads }
+            if back == nil, app.descendants(matching: .any)["reader.back"].firstMatch.exists { back = reads }
             RunLoop.current.run(until: Date().addingTimeInterval(0.2))
         }
         let looks = marker.exists ? (marker.value as? String).flatMap { Int($0) } : nil
@@ -248,8 +248,10 @@ final class NavigationPlaceUITests: XCTestCase {
     /// words from under a cover held for that jump (the open's rotation reflow didn't settle, and its 12 s watchdog
     /// read the page beneath), judged them settled, and tapped the cover's edge: that brought the controls up, as a
     /// tap on the cover does (#104), and its next tap took them down, so neither turned the page. Here the first
-    /// page's load is held for 600 looks (`-GatefoldHoldOpeningLoad`), so the cover stays up for the launch jump
-    /// after the page beneath has reported its words. Each read under the cover must find no words; once it lifts,
+    /// page's load is held (`-GatefoldHoldOpeningLoad`) until the page beneath has reported its words, this test
+    /// has read the screen 10 times since, and for 600 looks after, so the cover stays up for the launch jump with
+    /// words beneath it, however slow the runner (the looks once counted from the open, and a starved runner spent
+    /// them all first: run 44170382162). Each read under the cover must find no words; once it lifts,
     /// the words come. Judged in reads, never seconds.
     func testNoWordsAreReadUnderTheOpeningCover() {
         app.launchArguments = common + ["-GatefoldHoldOpeningLoad", "600", "-GatefoldReset", "YES", "-GatefoldDownloadAll", "YES",
@@ -584,8 +586,13 @@ final class NavigationPlaceUITests: XCTestCase {
         let row = app.buttons.matching(NSPredicate(format: "label CONTAINS[c] %@", "Chapter XXX")).firstMatch
         XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label CONTAINS[c] %@", "Chapter I")).firstMatch.waitForExistence(timeout: 10))
         XCTAssertTrue(ContentsRow.tap(row, in: app).ok, "the contents list chapter XXX")
-        var words = waitForWords(changingFrom: first, timeout: 20)
+        // The jump is waited for until it lands, in reads, as the contents jump above is: on a starved iPad chapter
+        // XXX took 51 s to load, past a 20 s clock and the place check's reads after it (gatefold#500).
+        let moved = readsUntilMoved(from: first)
+        print("REPRO jump contents: moved \(moved.ok) after \(moved.reads) reads\(moved.hung ? " (hang guard)" : "")")
+        XCTAssertTrue(moved.ok, "the contents jump never moved the page in \(moved.reads) reads\(moved.hung ? " (hang guard)" : "")")
         XCTAssertTrue(keptWhatIsShown(), "the jump kept a place other than the page shown")
+        var words = visibleText
         sleep(3)
         for _ in 0..<2 {
             turn(forward: true)

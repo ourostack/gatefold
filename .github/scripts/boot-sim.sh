@@ -8,6 +8,7 @@
 #   2. the same device booted a second time (the migration has run once), then a fresh one;
 #   3. `xcodebuild -runFirstLaunch` and a service restart, then a fresh device.
 # On every failure the device's migration lines go to the log, so the next failure names its cause.
+# Before those, a warm device restored from the Actions cache, when the job has one ($BOOT_SIM_WARM_SET; see try_warm).
 # Usage: boot-sim.sh <name> <device type id> <runtime id>
 set -uo pipefail
 name="$1" type="$2" runtime="$3"
@@ -132,6 +133,8 @@ try_boot() {
   [[ $code == 124 ]] || echo "$1: bootstatus finished after $(( SECONDS - began )) s" >&2
   if [[ $code == 124 ]]; then
     echo "$status" | tail -3 >&2
+    # Slow, not failed: no slice said Failed. try_warm boots no second device after a clone that ran out its limit so.
+    grep -q "Failed" <<<"$all" || TIMED_OUT=1
     # Listed Booted is not ready: the data migration runs after that, and bootstatus is what waits for it (#57). So a
     # device that is up gets one more bounded bootstatus; it passes only if that one finishes clean (gatefold#132:
     # the old watchdog shut down a device that had booted, and the attempt failed with it).
@@ -191,6 +194,62 @@ restart_service() {
   fi
   xcrun simctl list devices >/dev/null 2>&1 || true
 }
+# A warm device first, when the job restored one (gatefold#533): a device that booted once on a runner like this one,
+# was shut down cleanly and saved with actions/cache by app.yml's `warm-sim` job, restored by the shard into
+# $BOOT_SIM_WARM_SET. That set's warm.txt names its UDID, device type and runtime. `simctl --set <warm set> clone`
+# copies it into the default set, which CoreSimulatorService already has loaded, so no service restart (3 to 8 s). On
+# the probe runners its clone booted in 39 to 205 s (iPad) and 133 to 269 s (Duo), where a first boot took 177 to 297 s
+# and 338 to 396 s (runs 44664827545, 44667405350, 44670666912). If there is none for this device type and runtime, or
+# the clone fails, the attempts below run exactly as they would with no cache.
+# The clone boots as any device does (try_boot: 420 s of bootstatus, the listing at 180 s, the recheck). One that
+# failed (a slice said Failed) or never came up (listed Shutdown or gone at 180 s) is deleted and a new device boots.
+# One that ran out its whole limit still coming up is shut down and the boot fails there: never a second device beside
+# it. With a 180 s limit and then a new device, the clone's shutdown and delete hung under the load (and the listing
+# with them), so it kept booting beside the new one: two simulators' first-boot storms at once, load 600 to 1000 and
+# 400 to 500 simulator processes for the whole job, and the new device took 744 to 1081 s, never booted in 1200 s, or
+# the job was cancelled from outside (gatefold#198: main run 44681763713's duo-reviewer-rest, which then failed its
+# tests; probe runs 44685016016, 44699592856 and 44711034732). 5 of 16 and 2 of 4 clones in those probes, and 11 of 35
+# in main run 44699693594, ran past 180 s. At worst the clone costs the clone (65 s), one attempt (680 s, BOOT_ATTEMPT
+# in scripts/ci-simulator.py) and the shutdown and delete (65 s each): about 875 s, inside the wait step's 1200 s.
+WARM_SET="${BOOT_SIM_WARM_SET:-}"
+DEVICES="${BOOT_SIM_DEVICES:-$HOME/Library/Developer/CoreSimulator/Devices}"
+warm="" TIMED_OUT=""
+# 0 booted; 1 a new device next; 2 the clone ran out its limit still coming up, so no new device.
+try_warm() {
+  [[ -n $WARM_SET ]] || return 1
+  local u="" t="" r=""
+  [[ -r $WARM_SET/warm.txt ]] && read -r u t r < "$WARM_SET/warm.txt"
+  if [[ -z $u || $t != "$type" || $r != "$runtime" || ! -d $WARM_SET/$u ]]; then
+    echo "warm: $WARM_SET holds no $type on $runtime; a new device" >&2
+    return 1
+  fi
+  local began=$SECONDS out
+  out="$(within "$LIST_LIMIT" xcrun simctl --set "$WARM_SET" clone "$u" "$name" "$DEVICES")"
+  if [[ $? != 0 || ! $out =~ ^[0-9A-Za-z-]+$ ]]; then
+    echo "warm: cloning $u failed ('$out'); a new device" >&2
+    # A clone that printed more than its UDID still made a device: delete it by the UDID in its output.
+    [[ $out =~ [0-9A-Fa-f-]{36} ]] && within "$LIST_LIMIT" xcrun simctl delete "${BASH_REMATCH[0]}" >&2
+    return 1
+  fi
+  warm="$out"
+  created="$created $warm"
+  echo "warm: $u cloned as $warm in $(( SECONDS - began )) s" >&2
+  TIMED_OUT=""
+  if try_boot "$warm"; then
+    echo "warm: $warm booted $(( SECONDS - began )) s after the clone began" >&2
+    return 0
+  fi
+  diagnose "$warm"
+  within "$LIST_LIMIT" xcrun simctl shutdown "$warm" >/dev/null 2>&1
+  within "$LIST_LIMIT" xcrun simctl delete "$warm" >&2
+  if [[ -n $TIMED_OUT ]]; then
+    echo "warm: $warm was still coming up after $BOOTSTATUS_LIMIT s; no second device beside it (gatefold#198)" >&2
+    return 2
+  fi
+  echo "warm: $warm failed or never came up; deleted, a new device" >&2
+  return 1
+}
+try_warm; case $? in 0) echo "$warm"; exit 0 ;; 2) exit 1 ;; esac
 for attempt in 1 2 3; do
   if [[ $attempt == 3 ]]; then
     xcodebuild -runFirstLaunch >&2 || true

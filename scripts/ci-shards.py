@@ -10,6 +10,7 @@ GatefoldUITests: a class, or a class and a test. For each tier (`pr`: a pull req
 main and full-list pull requests) this fails when
   - an entry names no test in the sources (a renamed test would otherwise drop out of CI quietly),
   - a skipped test is not in its shard's `tests`, or runs in no other shard on that device on main,
+  - a `tests` entry has every test it names skipped (it runs nothing, and the test step fails "matched no test"),
   - a shard has no `tests` list (an empty list would run the whole suite), or a PR list with no `pr_when`,
   - one test runs in two shards on the same device in the same tier,
   - a shard's `timeout` is under `<setup> + 2 x <slowest> + 5 + 12` rounded up, or its comment doesn't show that sum:
@@ -175,6 +176,12 @@ def plan(text, tests, lists=None):
         for t in sorted(skipped - listed):
             problems.append(f"{where}: skips {t}, which it does not list")
         full = listed - skipped
+        # The test step fails an entry that ran no test ("matched no test"), so one whose every test is skipped is red.
+        for e in s.get("tests", "").split():
+            names = expand(e, tests, [], "")
+            if names and names <= skipped:
+                problems.append(f"{where} tests: {e} runs nothing: the shard skips every test it names; drop it from "
+                                "both lists")
         skips += [(where, device, t) for t in sorted(skipped & listed)]
         pr = s.get("pr_tests", "")
         if not s.get("tests", "").strip():
@@ -485,6 +492,38 @@ jobs:
               AUITests/testTwo
 """ + base.format(cold="false"))
     assert any("skips AUITests/testTwo, which it does not list" in p for p in outside), outside
+    # An entry whose every test the shard skips runs nothing, and the test step fails "matched no test" (run
+    # 44699693594: ipad-place-rest listed QuickLeaveUITests and skipped both its tests, which ipad-place-late runs).
+    empty = problems_of("""          - shard: s1
+            tests: >-
+              AUITests BUITests
+            skip: >-
+              BUITests/testThree
+""" + base.format(cold="false") + """
+          - shard: s2
+            tests: >-
+              BUITests/testThree
+""" + base.format(cold="false"))
+    assert any("s1 tests: BUITests runs nothing" in p for p in empty), empty
+    assert not any("AUITests runs nothing" in p for p in empty), empty
+    one = problems_of("""          - shard: s1
+            tests: >-
+              AUITests/testOne AUITests/testTwo
+            skip: >-
+              AUITests/testTwo
+""" + base.format(cold="false") + """
+          - shard: s2
+            tests: >-
+              AUITests/testTwo
+""" + base.format(cold="false"))
+    assert any("s1 tests: AUITests/testTwo runs nothing" in p for p in one), one
+    assert not any("testOne runs nothing" in p for p in one), one
+    # An entry that names no test is reported once, as such, and not as running nothing.
+    gone = problems_of("""          - shard: s1
+            tests: >-
+              AUITests/testGone
+""" + base.format(cold="false"))
+    assert sum("AUITests/testGone" in p for p in gone) == 1 and "names no test" in " ".join(gone), gone
     # A cold (rotation) shard follows the tiers like any other: main only with pr_tests: none.
     cold = plan(wf("""          - shard: s1
             tests: >-

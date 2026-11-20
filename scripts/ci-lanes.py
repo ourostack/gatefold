@@ -24,17 +24,26 @@ WORKFLOWS = os.path.join(ROOT, ".github", "workflows")
 SHARD_LANES = 18
 # Odd and even pull requests each get their own set of the shard lanes (the last-digit parity in ui-tests.yml's group).
 SHARD_SETS = 2
+# Real unfold's places: the lanes 1 to 5 its caller's matrix gives them (real-unfold.yml; real-unfold-place.yml waits in them).
+PLACE_LANES = 5
 # Lanes in all, a hard cap on laned jobs: the 36 shard lanes (18 for each parity), 3 each for Release build and Unit
 # tests, 1 each for Duo tour, the cloud package and the two screenshot jobs. Builds for testing aren't laned (see
 # EXEMPT): one runs per pull request being pushed. Raised from 28 on 2026-11-13 while spoonjoy is outside the
 # enterprise, so ourostack has all 50 of its macOS slots; if spoonjoy rejoins, set SHARD_SETS back to 1 and BUDGET to 28.
-BUDGET = 46
+# Plus 5 for Real unfold's places on pull requests that touch the reader (2026-11-17). From 2026-11-15 to 11-17 the
+# organization's macOS jobs peaked at 82 at once (gatefold, ouro-ui-apple, ouro-md, ouro-ui-core), so 50 is not a hard
+# ceiling, but main's unlaned shards waited 5 to 34 min whenever about 50 to 65 ran: the pool is busy, not idle.
+BUDGET = 51
 EXEMPT = {
     # The shards and Unit tests wait for this run's build inside their own jobs, so a laned build would spend their
     # setup budget. One runs per pull request being pushed.
     ("app.yml", "build"): None,
-    # Main, the merge queue and dispatch only: its `if` keeps it off pull requests, and the check holds it to that.
-    ("real-unfold.yml", "unfold"): "github.event_name != 'pull_request'",
+    # Pushes to main and dispatch only (its `on` and `if`): it saves the warm devices the UI shards boot from
+    # (gatefold#533).
+    ("warm-sim.yml", "warm-sim"): "github.event_name != 'pull_request'",
+    # Real unfold's one build, for the same reason as App's: its five places wait for it inside their own jobs. One runs
+    # per pull request being pushed that touches the reader.
+    ("real-unfold.yml", "build"): None,
     # The cloud canary signs in to the live cloud, so it runs from schedule and dispatch only, one at a time in its
     # own group; never on a pull request.
     ("cloud-canary.yml", "canary"): "github.event_name != 'pull_request'",
@@ -110,7 +119,7 @@ def group_of(conc):
     return None
 
 
-def lane(pr):
+def lane(pr, block=None):
     """(name, lanes) for a pull-request branch, or (None, why) when it isn't a bounded lane."""
     m = re.fullmatch(r"'gatefold-macos-pr-lane-([a-z0-9-]+)-0'", pr)
     if m:
@@ -127,6 +136,18 @@ def lane(pr):
         if rest != "'0'" or len(picked) != SHARD_SETS:
             return None, f"the shard lane's {{1}} must be the last-digit chain picking {SHARD_SETS} sets, ending || '0'"
         return "shard", SHARD_LANES * SHARD_SETS
+    # Real unfold's place workflow: one lane per place, 1 to PLACE_LANES (the caller's matrix names them).
+    m = re.fullmatch(r"'gatefold-macos-pr-lane-unfold-\{0\}', inputs\.lane", pr.removeprefix("format(").removesuffix(")"))
+    if m:
+        return "unfold", PLACE_LANES
+    # A matrix whose legs each wait in their own lane, shared by every pull request: one lane per distinct `lane:`.
+    m = re.fullmatch(r"format\('gatefold-macos-pr-lane-([a-z0-9-]+)-\{0\}', matrix\.lane\)", pr)
+    if m:
+        entries = re.split(r"^          - ", block or "", flags=re.M)[1:]
+        legs = [re.search(r"^(?:            )?lane: (\d+)\s*$", e, re.M) for e in entries]
+        if not entries or not all(legs):
+            return None, "a lane by matrix.lane needs a literal `lane:` in each matrix entry"
+        return m.group(1), len({l.group(1) for l in legs})
     m = re.fullmatch(r"format\('gatefold-macos-pr-lane-([a-z0-9-]+)-\{0\}', (.+)\)", pr)
     if not m:
         return None, "the pull-request branch must be a lane name: 'gatefold-macos-pr-lane-<name>-0', or a format of one"
@@ -175,13 +196,14 @@ def check(files):
                               "format(<own group>) }}, so only pull requests share a lane")
                 continue
             off = g.group("off")
-            per_leg = "strategy:" in block or job == "run" and fname == "ui-tests.yml"
+            per_leg = ("strategy:" in block or job == "run" and fname == "ui-tests.yml"
+                       or job == "place" and fname == "real-unfold-place.yml")
             if ("github.run_id, github.run_attempt" not in off or "gatefold-macos-pr-lane" in off
                     or not re.match(r"format\('[^']*\{0\}[^']*\{1\}", off) or (per_leg and not re.search(
-                    r"github\.run_attempt, (strategy\.job-index|inputs\.shard)\)$", off))):
+                    r"github\.run_attempt, (strategy\.job-index|inputs\.shard|inputs\.place, inputs\.try)\)$", off))):
                 errors.append(f"{where}: push and dispatch need a group of their own: format(..., github.run_id, "
-                              "github.run_attempt" + (", strategy.job-index or inputs.shard" if per_leg else "") + ")")
-            name, lanes = lane(g.group("pr"))
+                              "github.run_attempt" + (", strategy.job-index, inputs.shard or inputs.place, inputs.try" if per_leg else "") + ")")
+            name, lanes = lane(g.group("pr"), block)
             if name is None:
                 errors.append(f"{where}: {lanes}")
                 continue
@@ -190,6 +212,13 @@ def check(files):
             names[name] = where
             total += lanes
     errors += check_shards(files.get("app.yml", ""), files.get("ui-tests.yml", ""))
+    errors += check_places(files.get("real-unfold.yml", ""), files.get("real-unfold-place.yml", ""))
+    for fname in ("real-unfold.yml", "real-unfold-place.yml"):
+        for job, block in jobs(files.get(fname, "")):
+            limit = re.search(r"^      LIMIT: (\"?[^\s\"#]+\"?)", block, re.M)
+            timeout = re.search(r"^    timeout-minutes: (\S+)", block, re.M)
+            if limit and (not timeout or timeout.group(1) != limit.group(1).strip('"')):
+                errors.append(f"{fname}: {job}: env LIMIT must equal timeout-minutes, or the unfolds stop by the wrong clock")
     if total > BUDGET:
         errors.append(f"the lanes add up to {total}, over the budget of {BUDGET} (see BUDGET in scripts/ci-lanes.py)")
     return errors
@@ -211,6 +240,25 @@ def check_shards(app, ui):
             lane = re.search(r"^            lane: (\d+)\s*$", entry, re.M)
             if not lane or not 1 <= int(lane.group(1)) <= SHARD_LANES:
                 errors.append(f"app.yml: {job} shard {shard.group(1)} needs `lane:` from 1 to {SHARD_LANES}")
+    return errors
+
+
+def check_places(real, place):
+    """Real unfold's `unfold` and `retry` callers pass every input the place workflow needs, and its `lane` is required."""
+    if not place:
+        return []
+    errors = []
+    if not re.search(r"^      lane:\n(?:        .*\n)*?        required: true", place, re.M):
+        errors.append("real-unfold-place.yml: the `lane` input must be required, so a caller can't drop it")
+    for job, block in jobs(real):
+        if "uses: ./.github/workflows/real-unfold-place.yml" not in block:
+            continue
+        if not re.search(r"^      lane: \$\{\{ matrix\.lane \}\}\s*$", block, re.M):
+            errors.append(f"real-unfold.yml: {job} must pass `lane: ${{{{ matrix.lane }}}}` to real-unfold-place.yml")
+        if job == "unfold":
+            lanes = re.findall(r"^            lane: (\d+)\s*$", block, re.M)
+            if sorted(lanes) != sorted(str(i) for i in range(1, PLACE_LANES + 1)):
+                errors.append(f"real-unfold.yml: unfold's places need `lane:` 1 to {PLACE_LANES}, one each: {lanes}")
     return errors
 
 
@@ -247,6 +295,46 @@ jobs:
         || format('ui-tests-{0}-{1}-{2}', github.run_id, github.run_attempt, inputs.shard) }}
       queue: max
 """
+GOOD_LEGS = """jobs:
+  unfold:
+    strategy:
+      matrix:
+        include:
+          - place: "a"
+            lane: 1
+          - place: "b"
+            lane: 2
+    runs-on: xcode-27
+    concurrency:
+      group: >-
+        ${{ github.event_name == 'pull_request'
+        && format('gatefold-macos-pr-lane-unfold-{0}', matrix.lane)
+        || format('real-unfold-{0}-{1}-{2}', github.run_id, github.run_attempt, strategy.job-index) }}
+      queue: max
+"""
+GOOD_PLACE = """on:
+  workflow_call:
+    inputs:
+      lane:
+        description: x
+        type: number
+        required: true
+jobs:
+  place:
+    runs-on: xcode-27
+    concurrency:
+      group: >-
+        ${{ github.event_name == 'pull_request'
+        && format('gatefold-macos-pr-lane-unfold-{0}', inputs.lane)
+        || format('real-unfold-{0}-{1}-{2}{3}', github.run_id, github.run_attempt, inputs.place, inputs.try) }}
+      queue: max
+    timeout-minutes: ${{ inputs.timeout }}
+    env:
+      LIMIT: ${{ inputs.timeout }} # the timeout
+"""
+GOOD_PLACES = "jobs:\n  unfold:\n    strategy:\n      matrix:\n        include:\n" + "".join(
+    f'          - place: "p{i}"\n            lane: {i}\n' for i in range(1, 6)) + (
+    "    uses: ./.github/workflows/real-unfold-place.yml\n    with:\n      lane: ${{ matrix.lane }}\n")
 GOOD_CALLER = """
   duo:
     strategy:
@@ -282,17 +370,25 @@ def selftest():
         "unbounded lane": ({**good, "app.yml": GOOD_JOB.replace("(endsWith(format('{0}', github.event.pull_request.number), '1') || endsWith(format('{0}', github.event.pull_request.number), '4')) && '1' || '0'", "github.event.pull_request.number") + GOOD_CALLER}, "last-digit chain"),
         "swapped": ({**good, "app.yml": GOOD_JOB.replace("github.event_name == 'pull_request'", "github.event_name != 'pull_request'") + GOOD_CALLER}, "the group must read"),
         "comment only": ({**good, "app.yml": GOOD_JOB.replace("      queue: max", "      # queue: max") + GOOD_CALLER}, "queue: max"),
-        "real-unfold on PRs": ({**good, "real-unfold.yml": "jobs:\n  unfold:\n    if: always()\n    runs-on: xcode-27\n"}, "exempt only while"),
+        "unlaned unfold": ({**good, "real-unfold.yml": "jobs:\n  unfold:\n    if: always()\n    runs-on: xcode-27\n"}, "no lane"),
+        "matrix lanes": ({**good, "real-unfold.yml": GOOD_LEGS}, None),
+        "matrix lanes without a lane": ({**good, "real-unfold.yml": GOOD_LEGS.replace("            lane: 2\n", "")}, "literal `lane:`"),
+        "unfold limit drifts": ({**good, "real-unfold.yml": GOOD_LEGS + "    timeout-minutes: 70\n    env:\n      LIMIT: \"60\"\n"}, "must equal"),
         "testflight on PRs": ({**good, "testflight.yml": "on:\n  pull_request:\njobs:\n  publish:\n    runs-on: xcode-27\n"}, "testflight.yml runs on pull requests"),
         "matrix os": ({**good, "app.yml": GOOD_JOB + "  m:\n    runs-on: ${{ matrix.os }}\n    strategy:\n      matrix:\n        os: [macos-26]\n" + GOOD_CALLER}, "no lane"),
         "leg group": ({**good, "app.yml": GOOD_JOB.replace("    runs-on: xcode-27\n", "    runs-on: xcode-27\n    strategy:\n      matrix: {}\n") + GOOD_CALLER}, "group of their own"),
         "hash in group": ({**good, "app.yml": GOOD_JOB.replace("        || format('app-unit", "        #${{ github.event.pull_request.number }}\n        || format('app-unit") + GOOD_CALLER}, "the group must read"),
         "blank in group": ({**good, "app.yml": GOOD_JOB.replace("        || format('app-unit", "\n        || format('app-unit") + GOOD_CALLER}, "the group must read"),
         "off-PR joins a lane": ({**good, "app.yml": GOOD_JOB.replace("format('app-unit-{0}-{1}'", "format('gatefold-macos-pr-lane-unit-0'") + GOOD_CALLER}, "group of their own"),
-        "condition in a step": ({**good, "real-unfold.yml": "jobs:\n  unfold:\n    if: always()\n    runs-on: xcode-27\n    steps:\n      - if: github.event_name != 'pull_request'\n"}, "exempt only while"),
+        "condition in a step": ({**good, "cloud-canary.yml": "jobs:\n  canary:\n    if: always()\n    runs-on: xcode-27\n    steps:\n      - if: github.event_name != 'pull_request'\n"}, "exempt only while"),
         "testflight inline on": ({**good, "testflight.yml": "on: [workflow_run, pull_request]\njobs:\n  publish:\n    runs-on: xcode-27\n"}, "testflight.yml runs on pull requests"),
         "exempt build": ({**good, "app.yml": GOOD_JOB + "  build:\n    runs-on: xcode-27\n" + GOOD_CALLER}, None),
         "one shard set": ({**good, "ui-tests.yml": re.sub(r"format\('gatefold-macos-pr-lane-shard-\{0\}-\{1\}', inputs\.lane, .*\)\n", "format('gatefold-macos-pr-lane-shard-{0}-{1}', inputs.lane, '0')\n", GOOD_UI)}, "shard lane's {1}"),
+        "place workflow": ({**good, "real-unfold.yml": GOOD_PLACES, "real-unfold-place.yml": GOOD_PLACE}, None),
+        "place drops lane": ({**good, "real-unfold.yml": GOOD_PLACES.replace("      lane: ${{ matrix.lane }}\n", ""), "real-unfold-place.yml": GOOD_PLACE}, "must pass"),
+        "place lane missing": ({**good, "real-unfold.yml": GOOD_PLACES.replace("lane: 5", "lane: 4"), "real-unfold-place.yml": GOOD_PLACE}, "1 to 5"),
+        "place retries share a group": ({**good, "real-unfold.yml": GOOD_PLACES, "real-unfold-place.yml": GOOD_PLACE.replace("{2}{3}', github.run_id, github.run_attempt, inputs.place, inputs.try", "{2}', github.run_id, github.run_attempt, inputs.place")}, "group of their own"),
+        "place limit drifts": ({**good, "real-unfold.yml": GOOD_PLACES, "real-unfold-place.yml": GOOD_PLACE.replace("LIMIT: ${{ inputs.timeout }}", "LIMIT: 60")}, "must equal"),
         "linux": ({**good, "app.yml": GOOD_JOB + "  core:\n    runs-on: ubuntu-latest\n" + GOOD_CALLER}, None),
     }
     failed = 0

@@ -27,6 +27,8 @@ protocol ReaderPage: AnyObject {
     func currentAnchor() async -> (ReadingAnchor, Locator)?
     /// The same words, read only: nothing on screen (the running head) takes them up.
     func wordsOnPage() async -> Locator?
+    /// The first words on the page beneath a turn that has just moved, at that page's own start (`ReaderHostController`).
+    func wordsBeneath(chapters: [String]) async -> Locator?
     /// Starts loading `locator`'s page out of sight, so a jump there later is quick.
     func prepareStandby(at locator: Locator)
     func dropStandby()
@@ -38,11 +40,16 @@ protocol ReaderPage: AnyObject {
     /// `finished` once the count has ended by itself (not when stopped).
     func countPages(_ hrefs: [String], record: @escaping @MainActor (String, Int) -> Void, finished: @escaping @MainActor () -> Void)
     func stopCounting()
-    /// Puts `anchor`'s words back on the spread's left page if a late layout moved them; `stillWanted`
-    /// turns false once the reader has moved or the page is gone.
-    func keepWordsOnLeft(_ anchor: ReadingAnchor, stillWanted: @escaping @MainActor () -> Bool) async
-    /// A jump's landing put on the spread a restore of its place would show (`SpreadSettler`, `.restore`).
-    func settleLanding(_ anchor: ReadingAnchor, stillWanted: @escaping @MainActor () -> Bool) async
+    /// Puts `anchor`'s words back on his page if a late layout moved them: a spread's left page, or the one page
+    /// on screen; `stillWanted` turns false once the reader has moved or the page is gone. `placing`: the layout a
+    /// restore placed his words in has only now landed, so the look may do the restore's placing (a column break at
+    /// his words) the way a reopen at this size would. Returns the page on screen after a move, nil when nothing moved.
+    func keepWordsOnPage(_ anchor: ReadingAnchor, placing: Bool, stillWanted: @escaping @MainActor () -> Bool) async -> VisibleRange?
+    /// A jump's landing put on the spread a restore of its place would show (`SpreadSettler`, `.restore`). True when
+    /// its moves put the words at the top of the left page (a column break at them), so the page's first words begin
+    /// with them from then on (gatefold#562).
+    @discardableResult
+    func settleLanding(_ anchor: ReadingAnchor, stillWanted: @escaping @MainActor () -> Bool) async -> Bool
     /// A standby swap retired the page an open reflow was laying out: that reflow's cover, retries and
     /// generation end with it (the model ends its own side, `keeper` and the reflow's notes).
     func endReflowForSwap()
@@ -54,11 +61,12 @@ protocol ReaderPage: AnyObject {
 }
 
 extension ReaderPage {
-    func keepWordsOnLeft(_ anchor: ReadingAnchor, stillWanted: @escaping @MainActor () -> Bool) async {}
-    func settleLanding(_ anchor: ReadingAnchor, stillWanted: @escaping @MainActor () -> Bool) async {}
+    func keepWordsOnPage(_ anchor: ReadingAnchor, placing: Bool, stillWanted: @escaping @MainActor () -> Bool) async -> VisibleRange? { nil }
+    func settleLanding(_ anchor: ReadingAnchor, stillWanted: @escaping @MainActor () -> Bool) async -> Bool { false }
     var isLoadingChapter: Bool { false }
     var isTurning: Bool { false }
     func wordsOnPage() async -> Locator? { await currentAnchor()?.1 }
+    func wordsBeneath(chapters: [String]) async -> Locator? { await currentAnchor()?.1 }
     func prepareStandby(at locator: Locator) {}
     func dropStandby() {}
     func promoteStandby(for locator: Locator) async -> Bool { false }

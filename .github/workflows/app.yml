@@ -1,10 +1,14 @@
 name: App
 
+# The macOS jobs below run on pushes to main only, never on a pull request or in the merge queue (`changes` output `native`); the gate jobs
+# report success without them there, so a pull request is judged by the Linux checks. A red main is the alarm.
+#
 # Two tiers (gatefold#39, #198). A pull request runs the build, the unit tests, GatefoldCore and at most five UI shards,
 # picked by the paths it touches: an iPad and a Duo smoke on every app change, and the place and taps guards when it
 # touches that code (`changes` output `fired`; the lists are the Gatefold agent's). Every push to main runs the full UI
-# suite and is never cancelled; a red main is fixed as AGENTS.md says ("CI"). Each new simulator's first boot holds the
-# runner's load at 500 to 760 for about 15 min (#198), so fewer shards per pull request is the lever, not more.
+# suite, in batches (a started run is never cancelled; gatefold#246); a red main is fixed as AGENTS.md says ("CI").
+# Each new simulator's first boot holds the runner's load at 500 to 760 for about 15 min (#198), so fewer shards per
+# pull request is the lever, not more.
 #
 # Build once: `build` makes the app and its tests for the simulator (build-for-testing) and uploads them, named by
 # commit and Xcode version; no simulator job compiles the app again (gatefold#39: each job spent 10 to 16 min building).
@@ -37,10 +41,16 @@ on:
       - "**/*.md"
   workflow_dispatch:
 
-# A newer push to a pull request cancels its older run. Pushes to main keep one group per commit and are never
-# cancelled.
+# A newer push to a pull request cancels its older run. Pushes to main share one group: a started run is never
+# cancelled, and at most one more waits, the newest, which replaces any older waiting push (gatefold#246; #326 lost
+# this on 2026-11-13, and one full run per merged commit then left main's runs two hours behind on 2026-11-20). Its run
+# tests every merge since the last one; the central auto-revert (ourostack/.github tools/red-main) attributes a red
+# across that range. A manual run and a re-run keep a group of their own, so a re-run never replaces the waiting push.
+# The merge queue keeps one group per commit. TestFlight is its own workflow, outside this group.
 concurrency:
-  group: app-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  group: >-
+    app-${{ github.event_name == 'pull_request' && github.ref
+    || github.event_name == 'push' && github.run_attempt == 1 && 'main' || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # macOS lanes (gatefold#286). The Ouro Labs enterprise has 50 macOS slots, shared by every org in it (spoonjoy too).
@@ -51,7 +61,8 @@ concurrency:
 #     even pull requests (last digit) each get their own 18, so 36 shard lanes in all.
 #   - Release build and Unit tests: 3 lanes each, by the pull request number's last digit.
 #   - Duo tour, the cloud package, and the screenshots' build and shots: 1 lane each.
-# That is 46 lanes, a hard cap, plus one Build for testing per pull request being pushed (not laned: the shards and
+# Real unfold's five places wait in 5 more lanes of their own (real-unfold.yml).
+# That is 51 lanes, a hard cap, plus one Build for testing per pull request being pushed (not laned: the shards and
 # Unit tests wait for its artifact inside their own jobs). Since 2026-11-13 spoonjoy is outside the enterprise, so
 # ourostack has all 50 slots and main still gets its share through the hosted queue; with 28 lanes 12 open pull
 # requests left about 27 Macs idle. If spoonjoy rejoins, go back to one shard set (SHARD_SETS and BUDGET in
@@ -73,6 +84,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       app: ${{ steps.diff.outputs.app }}
+      native: ${{ steps.diff.outputs.native }}
       full: ${{ steps.diff.outputs.full }}
       fired: ${{ steps.diff.outputs.fired }}
       edited-ipad: ${{ steps.diff.outputs.edited-ipad }}
@@ -134,6 +146,10 @@ jobs:
           HEAD: ${{ github.event.pull_request.head.sha }}
         run: |
           set -eu
+          # The macOS jobs (simulator UI shards, Release build, unit tests) run on pushes to main, never on a pull request or in the
+          # merge queue, so a pull request is judged by the Linux checks alone and a red main is the alarm. Gates report success
+          # without them when `native` is false.
+          if [ "$EVENT" = pull_request ] || [ "$EVENT" = merge_group ]; then echo "native=false" >> "$GITHUB_OUTPUT"; else echo "native=true" >> "$GITHUB_OUTPUT"; fi
           if [ "$EVENT" != pull_request ]; then printf 'app=true\nfull=true\nfired=\nedited-ipad=\nedited-duo=\nsmoke-ipad=0\nsmoke-duo=0\n' >> "$GITHUB_OUTPUT"; exit 0; fi
           git diff --name-only "$BASE...$HEAD" > changed.txt
           cat changed.txt
@@ -190,7 +206,7 @@ jobs:
   build:
     name: Build for testing
     needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.app != 'false' && needs.changes.outputs.proven != 'true' }}
+    if: ${{ !cancelled() && needs.changes.outputs.native != 'false' && needs.changes.outputs.app != 'false' && needs.changes.outputs.proven != 'true' }}
     runs-on: xcode-27
     timeout-minutes: 35
     outputs:
@@ -301,11 +317,16 @@ jobs:
       - name: The simulator helper, offline (a fake xcrun; no simulator)
         run: |
           python3 -I scripts/ci-simulator.py --selftest
+          python3 -I scripts/ci-runner-priority.py --selftest
           bash scripts/test-ci-simulator.sh
+          sh scripts/ci-app-log.sh --selftest
       - name: A shard whose test runner never started is told from one whose test failed (gatefold#135)
         run: |
           python3 -I scripts/ci-bootstrap.py --selftest
           python3 -I scripts/ci-rerun-runner.py --selftest
+          python3 -I scripts/ci-retry.py --selftest
+          python3 -I scripts/ci-runner-faults.py --selftest
+          python3 -I scripts/ci-requeue.py --selftest
       - name: A main commit skips the suite only on proof of its own tree (a mismatched tree or a red run proves nothing)
         run: python3 -I scripts/ci-proof.py --selftest
       - name: A merge-group failure cancels only the queue's other runs on its commit, never main's or a pull request's
@@ -346,7 +367,7 @@ jobs:
   ipad-place:
     name: iPad place shard (${{ matrix.shard }})
     needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.app != 'false' && needs.changes.outputs.proven != 'true' }}
+    if: ${{ !cancelled() && needs.changes.outputs.native != 'false' && needs.changes.outputs.app != 'false' && needs.changes.outputs.proven != 'true' }}
     strategy:
       fail-fast: false
       matrix:
@@ -416,23 +437,34 @@ jobs:
             timeout: 55 # 30 + 2 x 3.6 + 5 + 12
             lane: 16
           - shard: ipad-place-rest
-            # The catch-all for new place tests: 130 + 124 + 94, and the quick leave (gatefold#301)
+            # The catch-all for new place tests: 200 + 200 + 244 + 224. The quick leave (gatefold#301) runs in ipad-place-late.
             tests: >-
-              NavigationPlaceUITests QuickLeaveUITests
+              NavigationPlaceUITests
             skip: >-
-              NavigationPlaceUITests/testReadInPortraitRotatedThenLeftKeepsHisFirstWords NavigationPlaceUITests/testWithPageNumbersOnReadInPortraitRotatedThenLeftKeepsHisFirstWords NavigationPlaceUITests/testAJumpFromAPageStillLoadingStartsAtOnce NavigationPlaceUITests/testAContentsJumpKeepsThePlace NavigationPlaceUITests/testScrolledAfterTheLaunchReflowThenLeftKeepsWhereHeScrolled NavigationPlaceUITests/testScrolledAfterAStalledSwitchToScrollKeepsWhereHeScrolled NavigationPlaceUITests/testOpenedFromTheShelfThenLeftTwiceWithoutATurnKeepsThePlace NavigationPlaceUITests/testTheOpeningCoverLetsTheControlsThrough
+              NavigationPlaceUITests/testReadInPortraitRotatedThenLeftKeepsHisFirstWords NavigationPlaceUITests/testWithPageNumbersOnReadInPortraitRotatedThenLeftKeepsHisFirstWords NavigationPlaceUITests/testAJumpFromAPageStillLoadingStartsAtOnce NavigationPlaceUITests/testAContentsJumpKeepsThePlace NavigationPlaceUITests/testScrolledAfterTheLaunchReflowThenLeftKeepsWhereHeScrolled NavigationPlaceUITests/testScrolledAfterAStalledSwitchToScrollKeepsWhereHeScrolled NavigationPlaceUITests/testOpenedFromTheShelfThenLeftTwiceWithoutATurnKeepsThePlace NavigationPlaceUITests/testTheOpeningCoverLetsTheControlsThrough NavigationPlaceUITests/testAScrubberJumpLeftWhileItsChapterLoadsKeepsItsTarget NavigationPlaceUITests/testNoWordsAreReadUnderTheOpeningCover NavigationPlaceUITests/testTheCloudsOfferOverTheOpeningCoverTakesHisTap
             pr_tests: none
             cold: false
-            timeout: 106 # 30 + 2 x 29.2 + 5 + 12
+            timeout: 76 # 30 + 2 x 14.5 + 5 + 12
             lane: 15
+          - shard: ipad-place-late
+            # Main only: the other half of what ipad-place-rest ran, 239 + 150 + 175 + 200 + 117
+            tests: >-
+              NavigationPlaceUITests/testAScrubberJumpLeftWhileItsChapterLoadsKeepsItsTarget NavigationPlaceUITests/testNoWordsAreReadUnderTheOpeningCover NavigationPlaceUITests/testTheCloudsOfferOverTheOpeningCoverTakesHisTap QuickLeaveUITests/testALeaveUnderTheReopensCoverAfterTheWatchdogKeepsHisPlace QuickLeaveUITests/testTurnsThenAQuickLeaveReopenOnTheLastTurnsPage
+            skip: ""
+            pr_tests: none
+            cold: false
+            timeout: 77 # 30 + 2 x 14.7 + 5 + 12
+            lane: 16
           - shard: ipad-rotate-contents
-            # Rotation, on this job's new iPad: 204
+            # Rotation, on this job's new iPad: 237, and the frames of a turn and back (gatefold#537), 150 estimated
+            # from 44 locally
             tests: >-
               RotationMidTransitionUITests/testTurningDuringAContentsJump
+              RotationFrameUITests
             skip: ""
             pr_tests: none
             cold: true
-            timeout: 55 # 30 + 2 x 4.0 + 5 + 12
+            timeout: 60 # 30 + 2 x 6.5 + 5 + 12
             lane: 11
           - shard: ipad-rotate-midturn
             # Rotation: 182 + 160, then on main the rotate-then-leave repro, 545, after the mid-turn tests as #167 runs
@@ -449,7 +481,7 @@ jobs:
             # On a pull request: Place kept through a jump and a rotation (#130), on place changes (359 s).
             pr_when: place-jumps
             cold: true
-            timeout: 98 # 30 + 2 x 25.5 + 5 + 12
+            timeout: 107 # 30 + 2 x 29.6 + 5 + 12
             lane: 6
           - shard: ipad-rotate-stalled
             # Main only: 470 (#266's probe 43110085155, the slowest of 3 passes)
@@ -492,6 +524,26 @@ jobs:
             cold: true
             timeout: 98 # 30 + 2 x 25.3 + 5 + 12
             lane: 17
+          - shard: ipad-place-justify
+            # Main only: Justify on and off keeps the page he was reading (build 47), two of its four places. Estimates
+            # until CI has run them, from 157 s locally each
+            tests: >-
+              JustifyPlaceUITests/testJustifyKeepsHisPageAtAnEighth JustifyPlaceUITests/testJustifyKeepsHisPageAtAThird
+            skip: ""
+            pr_tests: none
+            cold: false
+            timeout: 65 # 30 + 2 x 9.0 + 5 + 12
+            lane: 2
+          - shard: ipad-place-justify-more
+            # Main only: the other two of Justify's places, and the catch-all for new Justify tests
+            tests: >-
+              JustifyPlaceUITests
+            skip: >-
+              JustifyPlaceUITests/testJustifyKeepsHisPageAtAnEighth JustifyPlaceUITests/testJustifyKeepsHisPageAtAThird
+            pr_tests: none
+            cold: false
+            timeout: 72 # 30 + 2 x 12.4 + 5 + 12
+            lane: 3
     permissions:
       contents: read
       actions: write
@@ -515,7 +567,7 @@ jobs:
   ipad-undo:
     name: iPad undo shard (${{ matrix.shard }})
     needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.app != 'false' && needs.changes.outputs.proven != 'true' }}
+    if: ${{ !cancelled() && needs.changes.outputs.native != 'false' && needs.changes.outputs.app != 'false' && needs.changes.outputs.proven != 'true' }}
     strategy:
       fail-fast: false
       matrix:
@@ -585,7 +637,7 @@ jobs:
   ipad-taps:
     name: iPad taps shard (${{ matrix.shard }})
     needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.app != 'false' && needs.changes.outputs.proven != 'true' }}
+    if: ${{ !cancelled() && needs.changes.outputs.native != 'false' && needs.changes.outputs.app != 'false' && needs.changes.outputs.proven != 'true' }}
     strategy:
       fail-fast: false
       matrix:
@@ -610,11 +662,22 @@ jobs:
             tests: >-
               FineTuneTapUITests MarginTapUITests SwallowedTapUITests
             skip: >-
+              MarginTapUITests/testABrushNeverTurnsInPortrait MarginTapUITests/testABrushNeverTurnsOnItsSide MarginTapUITests/testAnEdgeTapAlwaysTurnsInPortrait MarginTapUITests/testAnEdgeTapAlwaysTurnsOnItsSide
               FineTuneTapUITests/testAQuickTouchChangesEverySwitchOnce FineTuneTapUITests/testATapOnTheRowsNameChangesItsSwitch FineTuneTapUITests/testEveryTapFlipsJustifyPortrait FineTuneTapUITests/testEveryTapFlipsPageNumbersPortrait FineTuneTapUITests/testEveryTapFlipsPositionLabelPortrait FineTuneTapUITests/testEveryTapFlipsPagesLeftPortrait FineTuneTapUITests/testEveryTapFlipsJustifyLandscape FineTuneTapUITests/testEveryTapFlipsPageNumbersLandscape FineTuneTapUITests/testEveryTapFlipsPositionLabelLandscape FineTuneTapUITests/testEveryTapFlipsPagesLeftLandscape
             pr_tests: none
             cold: false
             timeout: 75 # 30 + 2 x 13.6 + 5 + 12
             lane: 2
+          - shard: ipad-taps-edges
+            # Main only: a 20-pt brush turns nothing and taps at 3% and 97% of the window turn, both ways up
+            # (gatefold#536; estimates until CI has timed them)
+            tests: >-
+              MarginTapUITests/testABrushNeverTurnsInPortrait MarginTapUITests/testABrushNeverTurnsOnItsSide MarginTapUITests/testAnEdgeTapAlwaysTurnsInPortrait MarginTapUITests/testAnEdgeTapAlwaysTurnsOnItsSide
+            skip: ""
+            pr_tests: none
+            cold: false
+            timeout: 69 # 30 + 2 x 11.0 + 5 + 12
+            lane: 1
           - shard: ipad-taps-furniture
             # 130 + 129 + 86
             tests: >-
@@ -683,7 +746,7 @@ jobs:
   ipad-reviewer:
     name: iPad reviewer shard (${{ matrix.shard }})
     needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.app != 'false' && needs.changes.outputs.proven != 'true' }}
+    if: ${{ !cancelled() && needs.changes.outputs.native != 'false' && needs.changes.outputs.app != 'false' && needs.changes.outputs.proven != 'true' }}
     strategy:
       fail-fast: false
       matrix:
@@ -702,14 +765,26 @@ jobs:
             timeout: 68 # 30 + 2 x 10.4 + 5 + 12
             lane: 17
           - shard: ipad-reviewer-controls
-            # Main only: 1481
+            # Main only: 900, the first two of five reopens (the other three are ipad-reviewer-controls-more)
             tests: >-
-              ReopenAfterControlsUITests
+              ReopenAfterControlsUITests/testAReturnAfterTheControlsAndNumbersShowsTheSameWords1
+              ReopenAfterControlsUITests/testAReturnAfterTheControlsAndNumbersShowsTheSameWords2
             skip: ""
             pr_tests: none
             cold: false
-            timeout: 118 # 30 + 2 x 35.2 + 5 + 12
+            timeout: 77 # 30 + 2 x 15.0 + 5 + 12
             lane: 1
+          - shard: ipad-reviewer-controls-more
+            # Main only: 1211, the other three reopens
+            tests: >-
+              ReopenAfterControlsUITests/testAReturnAfterTheControlsAndNumbersShowsTheSameWords3
+              ReopenAfterControlsUITests/testAReturnAfterTheControlsAndNumbersShowsTheSameWords4
+              ReopenAfterControlsUITests/testAReturnAfterTheControlsAndNumbersShowsTheSameWords5
+            skip: ""
+            pr_tests: none
+            cold: false
+            timeout: 88 # 30 + 2 x 20.2 + 5 + 12
+            lane: 2
           - shard: ipad-reviewer-numbers
             # Main only: 926
             tests: >-
@@ -735,11 +810,20 @@ jobs:
             tests: >-
               ReviewerChecksUITests SingleColumnUITests ShelfAccessibilityUITests ReaderVisibleTextUITests
             skip: >-
-              ReviewerChecksUITests/testTheLastPagesNumberIsTheCount ReviewerChecksUITests/testPageNumbersAreOnOrOffInEveryBook
+              ReviewerChecksUITests/testTheLastPagesNumberIsTheCount ReviewerChecksUITests/testPageNumbersAreOnOrOffInEveryBook ReviewerChecksUITests/testEveryReopenReturnsTheSameWords
             pr_tests: none
             cold: false
-            timeout: 111 # 30 + 2 x 31.9 + 5 + 12
+            timeout: 78 # 30 + 2 x 15.3 + 5 + 12
             lane: 2
+          - shard: ipad-reviewer-reopen
+            # Main only: 994, out of ipad-reviewer-rest, as duo-reviewer-reopen is on the Duo
+            tests: >-
+              ReviewerChecksUITests/testEveryReopenReturnsTheSameWords
+            skip: ""
+            pr_tests: none
+            cold: false
+            timeout: 81 # 30 + 2 x 16.6 + 5 + 12
+            lane: 3
     permissions:
       contents: read
       actions: write
@@ -765,7 +849,7 @@ jobs:
   duo:
     name: Duo shard (${{ matrix.shard }})
     needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.app != 'false' && needs.changes.outputs.proven != 'true' }}
+    if: ${{ !cancelled() && needs.changes.outputs.native != 'false' && needs.changes.outputs.app != 'false' && needs.changes.outputs.proven != 'true' }}
     strategy:
       fail-fast: false
       matrix:
@@ -818,6 +902,16 @@ jobs:
             cold: false
             timeout: 89 # 30 + 2 x 20.9 + 5 + 12
             lane: 10
+          - shard: duo-sheets
+            # A sheet closed without choosing keeps his place (gatefold#535): Contents pulled away or closed after a
+            # scroll, Fine-Tune closed after Justify (estimates until CI has run them)
+            tests: >-
+              SheetDismissPlaceUITests
+            skip: ""
+            pr_tests: none
+            cold: false
+            timeout: 70 # 30 + 2 x 11.5 + 5 + 12
+            lane: 9
           - shard: duo-scroll
             # Scroll mode keeps the place: a sideways swipe, a status-bar tap, a chapter's end and back (estimates until CI has run them)
             tests: >-
@@ -859,16 +953,36 @@ jobs:
             timeout: 77 # 30 + 2 x 15.0 + 5 + 12
             lane: 4
           - shard: duo-reviewer-rest
-            # Main only, the catch-all for new reviewer checks: 964 + 204 (the default spread skips on the Duo), and about
-            # 240 for one column on the cover screen (#303)
+            # Main only, the catch-all for new reviewer checks: 964 + 204 (the default spread skips on the Duo), about
+            # 240 for one column on the cover screen (#303), and about 150 for the controls' paper there (#538)
             tests: >-
-              ReviewerChecksUITests SingleColumnUITests
+              ReviewerChecksUITests SingleColumnUITests ChromeBackingUITests
             skip: >-
-              ReviewerChecksUITests/testEveryReopenReturnsTheSameWords
+              ReviewerChecksUITests/testEveryReopenReturnsTheSameWords ReviewerChecksUITests/testPageNumbersAreOnOrOffInEveryBook
             pr_tests: none
             cold: false
-            timeout: 114 # 30 + 2 x 33.2 + 5 + 12
+            timeout: 83 # 30 + 2 x 17.8 + 5 + 12
             lane: 3
+          - shard: duo-reviewer-numbers
+            # Main only: 1075, out of duo-reviewer-rest
+            tests: >-
+              ReviewerChecksUITests/testPageNumbersAreOnOrOffInEveryBook
+            skip: ""
+            pr_tests: none
+            cold: false
+            timeout: 83 # 30 + 2 x 18.0 + 5 + 12
+            lane: 6
+          - shard: duo-justify
+            # Main only: Justify on and off keeps the page he was reading on the cover screen, where every new look
+            # reworked the margins the book opened with, and a reopen came back on other pages (build 47). Estimates
+            # until CI has run them, from 66 to 125 s locally
+            tests: >-
+              JustifyPlaceUITests
+            skip: ""
+            pr_tests: none
+            cold: false
+            timeout: 81 # 30 + 2 x 16.7 + 5 + 12
+            lane: 8
     permissions:
       contents: read
       actions: write
@@ -891,11 +1005,81 @@ jobs:
       timeout: ${{ needs.changes.outputs.full == 'false' && matrix.pr_when == 'smoke' && needs.changes.outputs.edited-duo != '' && fromJSON(needs.changes.outputs.smoke-duo) || matrix.timeout }}
       lane: ${{ matrix.lane }}
 
+  # A shard GitHub cancelled from outside (about 1 in 12, during the simulator's first boot; gatefold#404) runs again in
+  # this run, on a fresh runner, as soon as every shard has ended; rerun-runner.yml could only rerun it after the whole
+  # run ended, an hour later. A run with a cancelled job still ends "cancelled" whatever else passes (probe run
+  # 44714274715), so the run's own conclusion says nothing here: the gates read `retry-verdict`, and each is green when
+  # every shard of its group passed, or was cancelled and passed on its retry. A shard that failed is never retried
+  # (scripts/ci-retry.py has the rule and its self-test).
+  retry-plan:
+    name: Which shards were cancelled
+    needs: [changes, ipad-place, ipad-undo, ipad-taps, ipad-reviewer, duo]
+    if: ${{ !cancelled() && needs.changes.outputs.native != 'false' && needs.changes.outputs.app != 'false' && needs.changes.outputs.proven != 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      count: ${{ steps.plan.outputs.count }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          python3 -I scripts/ci-retry.py --selftest
+          python3 -I scripts/ci-retry.py plan
+
+  retry:
+    name: Retry (${{ matrix.shard }})
+    needs: [changes, retry-plan]
+    if: ${{ !cancelled() && needs.retry-plan.outputs.count != '' && needs.retry-plan.outputs.count != '0' }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.retry-plan.outputs.matrix) }}
+    permissions:
+      contents: read
+      actions: write
+    uses: ./.github/workflows/ui-tests.yml
+    with:
+      device: ${{ matrix.device }}
+      sim: ${{ matrix.sim }}
+      shard: ${{ matrix.shard }}
+      tests: ${{ matrix.tests }}
+      skip: ${{ matrix.skip }}
+      full: ${{ needs.changes.outputs.full }}
+      cold: ${{ matrix.cold }}
+      timeout: ${{ matrix.timeout }}
+      lane: ${{ matrix.lane }}
+      try: "-retry"
+
+  retry-verdict:
+    name: Judge the shards after their retries
+    needs: [changes, retry-plan, retry]
+    if: ${{ !cancelled() && needs.changes.outputs.native != 'false' && needs.changes.outputs.app != 'false' && needs.changes.outputs.proven != 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      ipad-place: ${{ steps.verdict.outputs.ipad-place }}
+      ipad-undo: ${{ steps.verdict.outputs.ipad-undo }}
+      ipad-taps: ${{ steps.verdict.outputs.ipad-taps }}
+      ipad-reviewer: ${{ steps.verdict.outputs.ipad-reviewer }}
+      duo: ${{ steps.verdict.outputs.duo }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: verdict
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+        run: python3 -I scripts/ci-retry.py verdict
+
   ipad-place-gate:
     # The required check for the iPad's place: green when every shard passed, or when only Markdown changed (gatefold#42).
     # Always runs, so the check reports on every pull request; a failed or cancelled shard turns it red.
     name: iPad (place)
-    needs: [changes, ipad-place]
+    needs: [changes, ipad-place, retry-verdict]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 2
@@ -903,19 +1087,23 @@ jobs:
       - env:
           APP: ${{ needs.changes.outputs.app }}
           SHARDS: ${{ needs.ipad-place.result }}
+          RETRIED: ${{ needs.retry-verdict.outputs.ipad-place }}
+          NATIVE: ${{ needs.changes.outputs.native }}
           PROVEN: ${{ needs.changes.outputs.proven }}
           PROOF: ${{ needs.changes.outputs.proof }}
         run: |
+          if [ "$NATIVE" = false ]; then echo "The macOS checks run on main after the merge, not on a pull request or in the merge queue."; exit 0; fi
           if [ "$APP" = false ]; then echo "Only Markdown changed; nothing to test."; exit 0; fi
           if [ "$PROVEN" = true ]; then echo "::notice::Passed by proof: every shard passed on this tree in $PROOF"; exit 0; fi
-          echo "Shards: $SHARDS"
-          [ "$SHARDS" = success ]
+          echo "Shards: $SHARDS; after retrying the cancelled ones: ${RETRIED:-not judged}"
+          # A shard GitHub cancelled and the `retry` job ran again counts as passed; a failed shard never does.
+          [ "$SHARDS" = success ] || { [ "$RETRIED" = ok ] && [ "$SHARDS" != skipped ]; }
 
   ipad-undo-gate:
     # The required check for one-tap undo: green when every shard passed, or when only Markdown changed (gatefold#42).
     # Always runs, so the check reports on every pull request; a failed or cancelled shard turns it red.
     name: iPad (undo)
-    needs: [changes, ipad-undo]
+    needs: [changes, ipad-undo, retry-verdict]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 2
@@ -923,19 +1111,23 @@ jobs:
       - env:
           APP: ${{ needs.changes.outputs.app }}
           SHARDS: ${{ needs.ipad-undo.result }}
+          RETRIED: ${{ needs.retry-verdict.outputs.ipad-undo }}
+          NATIVE: ${{ needs.changes.outputs.native }}
           PROVEN: ${{ needs.changes.outputs.proven }}
           PROOF: ${{ needs.changes.outputs.proof }}
         run: |
+          if [ "$NATIVE" = false ]; then echo "The macOS checks run on main after the merge, not on a pull request or in the merge queue."; exit 0; fi
           if [ "$APP" = false ]; then echo "Only Markdown changed; nothing to test."; exit 0; fi
           if [ "$PROVEN" = true ]; then echo "::notice::Passed by proof: every shard passed on this tree in $PROOF"; exit 0; fi
-          echo "Shards: $SHARDS"
-          [ "$SHARDS" = success ]
+          echo "Shards: $SHARDS; after retrying the cancelled ones: ${RETRIED:-not judged}"
+          # A shard GitHub cancelled and the `retry` job ran again counts as passed; a failed shard never does.
+          [ "$SHARDS" = success ] || { [ "$RETRIED" = ok ] && [ "$SHARDS" != skipped ]; }
 
   ipad-taps-gate:
     # The required check for the iPad's taps: green when every shard passed, or when only Markdown changed (gatefold#42).
     # Always runs, so the check reports on every pull request; a failed or cancelled shard turns it red.
     name: iPad (taps)
-    needs: [changes, ipad-taps]
+    needs: [changes, ipad-taps, retry-verdict]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 2
@@ -943,20 +1135,24 @@ jobs:
       - env:
           APP: ${{ needs.changes.outputs.app }}
           SHARDS: ${{ needs.ipad-taps.result }}
+          RETRIED: ${{ needs.retry-verdict.outputs.ipad-taps }}
+          NATIVE: ${{ needs.changes.outputs.native }}
           PROVEN: ${{ needs.changes.outputs.proven }}
           PROOF: ${{ needs.changes.outputs.proof }}
         run: |
+          if [ "$NATIVE" = false ]; then echo "The macOS checks run on main after the merge, not on a pull request or in the merge queue."; exit 0; fi
           if [ "$APP" = false ]; then echo "Only Markdown changed; nothing to test."; exit 0; fi
           if [ "$PROVEN" = true ]; then echo "::notice::Passed by proof: every shard passed on this tree in $PROOF"; exit 0; fi
-          echo "Shards: $SHARDS"
-          [ "$SHARDS" = success ]
+          echo "Shards: $SHARDS; after retrying the cancelled ones: ${RETRIED:-not judged}"
+          # A shard GitHub cancelled and the `retry` job ran again counts as passed; a failed shard never does.
+          [ "$SHARDS" = success ] || { [ "$RETRIED" = ok ] && [ "$SHARDS" != skipped ]; }
 
   ipad-reviewer-gate:
     # The required check for the reviewers' checks on the iPad: green when every shard passed, or when only Markdown
     # changed (gatefold#42). Always runs, so the check reports on every pull request; a failed or cancelled shard turns
     # it red.
     name: iPad (reviewer)
-    needs: [changes, ipad-reviewer]
+    needs: [changes, ipad-reviewer, retry-verdict]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 2
@@ -964,19 +1160,23 @@ jobs:
       - env:
           APP: ${{ needs.changes.outputs.app }}
           SHARDS: ${{ needs.ipad-reviewer.result }}
+          RETRIED: ${{ needs.retry-verdict.outputs.ipad-reviewer }}
+          NATIVE: ${{ needs.changes.outputs.native }}
           PROVEN: ${{ needs.changes.outputs.proven }}
           PROOF: ${{ needs.changes.outputs.proof }}
         run: |
+          if [ "$NATIVE" = false ]; then echo "The macOS checks run on main after the merge, not on a pull request or in the merge queue."; exit 0; fi
           if [ "$APP" = false ]; then echo "Only Markdown changed; nothing to test."; exit 0; fi
           if [ "$PROVEN" = true ]; then echo "::notice::Passed by proof: every shard passed on this tree in $PROOF"; exit 0; fi
-          echo "Shards: $SHARDS"
-          [ "$SHARDS" = success ]
+          echo "Shards: $SHARDS; after retrying the cancelled ones: ${RETRIED:-not judged}"
+          # A shard GitHub cancelled and the `retry` job ran again counts as passed; a failed shard never does.
+          [ "$SHARDS" = success ] || { [ "$RETRIED" = ok ] && [ "$SHARDS" != skipped ]; }
 
   duo-gate:
     # The required check for the Duo's UI tests: green when every shard passed, or when only Markdown changed
     # (gatefold#42). Always runs, so the check reports on every pull request; a failed or cancelled shard turns it red.
     name: Duo (the reviewers' checks)
-    needs: [changes, duo]
+    needs: [changes, duo, retry-verdict]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 2
@@ -984,13 +1184,17 @@ jobs:
       - env:
           APP: ${{ needs.changes.outputs.app }}
           SHARDS: ${{ needs.duo.result }}
+          RETRIED: ${{ needs.retry-verdict.outputs.duo }}
+          NATIVE: ${{ needs.changes.outputs.native }}
           PROVEN: ${{ needs.changes.outputs.proven }}
           PROOF: ${{ needs.changes.outputs.proof }}
         run: |
+          if [ "$NATIVE" = false ]; then echo "The macOS checks run on main after the merge, not on a pull request or in the merge queue."; exit 0; fi
           if [ "$APP" = false ]; then echo "Only Markdown changed; nothing to test."; exit 0; fi
           if [ "$PROVEN" = true ]; then echo "::notice::Passed by proof: every shard passed on this tree in $PROOF"; exit 0; fi
-          echo "Shards: $SHARDS"
-          [ "$SHARDS" = success ]
+          echo "Shards: $SHARDS; after retrying the cancelled ones: ${RETRIED:-not judged}"
+          # A shard GitHub cancelled and the `retry` job ran again counts as passed; a failed shard never does.
+          [ "$SHARDS" = success ] || { [ "$RETRIED" = ok ] && [ "$SHARDS" != skipped ]; }
 
   # xcode-27 is the only hosted image with Xcode 27.1: the first SDK with the iPhone Duo fold APIs, the iOS 27
   # deployment target and the iPhone Duo simulator. macos-latest (macOS 26) has only Xcode 26, so these jobs cannot
@@ -1000,7 +1204,7 @@ jobs:
   release:
     name: Release build for devices
     needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.app != 'false' && needs.changes.outputs.proven != 'true' }}
+    if: ${{ !cancelled() && needs.changes.outputs.native != 'false' && needs.changes.outputs.app != 'false' && needs.changes.outputs.proven != 'true' }}
     runs-on: xcode-27
     # PR lane (gatefold#286): see "macOS lanes" at the top of app.yml. Never cancel-in-progress.
     concurrency:
@@ -1065,7 +1269,7 @@ jobs:
   unit:
     name: Unit tests (iPhone Duo)
     needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.app != 'false' && needs.changes.outputs.proven != 'true' }}
+    if: ${{ !cancelled() && needs.changes.outputs.native != 'false' && needs.changes.outputs.app != 'false' && needs.changes.outputs.proven != 'true' }}
     runs-on: xcode-27
     # PR lane (gatefold#286): see "macOS lanes" at the top of app.yml. Never cancel-in-progress.
     concurrency:
@@ -1183,9 +1387,11 @@ jobs:
           APP: ${{ needs.changes.outputs.app }}
           RELEASE: ${{ needs.release.result }}
           UNIT: ${{ needs.unit.result }}
+          NATIVE: ${{ needs.changes.outputs.native }}
           PROVEN: ${{ needs.changes.outputs.proven }}
           PROOF: ${{ needs.changes.outputs.proof }}
         run: |
+          if [ "$NATIVE" = false ]; then echo "The macOS checks run on main after the merge, not on a pull request or in the merge queue."; exit 0; fi
           if [ "$APP" = false ]; then echo "Only Markdown changed; nothing to build."; exit 0; fi
           if [ "$PROVEN" = true ]; then echo "::notice::Passed by proof: the Release build and the unit tests passed on this tree in $PROOF"; exit 0; fi
           echo "Release build: $RELEASE; unit tests: $UNIT"
@@ -1198,7 +1404,7 @@ jobs:
   proof:
     name: Full suite passed on tree ${{ needs.changes.outputs.tree }}
     needs: [changes, core, app, ipad-place-gate, ipad-undo-gate, ipad-taps-gate, ipad-reviewer-gate, duo-gate]
-    if: ${{ success() && needs.changes.outputs.full == 'true' && needs.changes.outputs.app == 'true' && needs.changes.outputs.tree != '' }}
+    if: ${{ success() && needs.changes.outputs.full == 'true' && needs.changes.outputs.app == 'true' && needs.changes.outputs.native == 'true' && needs.changes.outputs.tree != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:

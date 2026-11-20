@@ -146,10 +146,10 @@ final class DuoLayoutUITests: XCTestCase {
         let rows = app.descendants(matching: .any)
             .matching(NSPredicate(format: "identifier == %@ OR identifier BEGINSWITH %@", "contents.current", "contents.entry."))
         XCTAssertTrue(readsUntil(reads: 100) { rows.firstMatch.exists }.ok, "Contents opened")
-        // Closed by its Done button: a swipe down starts on a row (a slow simulator takes it for a tap and jumps
+        // Closed by its close button: a swipe down starts on a row (a slow simulator takes it for a tap and jumps
         // there) or on the tabs (it changes tab and leaves the sheet up).
-        let done = app.buttons["Done"].firstMatch
-        XCTAssertTrue(done.exists, "Contents has its Done button")
+        let done = app.buttons["contents.close"].firstMatch
+        XCTAssertTrue(done.exists, "Contents has its close button")
         done.tap()
         XCTAssertTrue(readsUntil(reads: 100) { !done.exists && !rows.firstMatch.exists }.ok, "Contents closed")
         tapMiddle { !contents.exists }

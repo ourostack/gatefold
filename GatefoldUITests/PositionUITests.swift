@@ -152,15 +152,29 @@ final class PositionUITests: XCTestCase {
         expectAnchorKept("smaller text") { app.buttons["appearance.smaller"].tap() }
     }
 
+    /// Taps an element once its frame is usable. Asked of a deck still laying out after a resize, `tap()` can read an
+    /// infinite activation point and abort with "point.x != INFINITY" (run 44677657545, which was red on main for it).
+    private func tapSettled(_ element: XCUIElement, file: StaticString = #filePath, line: UInt = #line) {
+        let window = app.frame
+        for _ in 0..<50 {
+            if let f = HitCheck.frame(of: element), let usable = HitCheck.usable(f, within: window) {
+                HitCheck.tap(usable, in: app)
+                return
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        }
+        XCTFail("\(element) never had a usable frame to tap", file: file, line: line)
+    }
+
     func testTabletopDeckTurnsAndResizes() {
         launch()
         expectAnchorKept("into tabletop") { app.buttons["debug.posture.tabletop"].tap() }
         expectPosture("tabletop")
         let larger = app.buttons["deck.larger"]
         XCTAssertTrue(larger.waitForExistence(timeout: 10))
-        expectAnchorKept("tabletop, larger text") { larger.tap() }
-        app.buttons["deck.next"].tap()
-        app.buttons["deck.previous"].tap()
+        expectAnchorKept("tabletop, larger text") { tapSettled(larger) }
+        tapSettled(app.buttons["deck.next"])
+        tapSettled(app.buttons["deck.previous"])
         XCTAssertTrue(app.descendants(matching: .any)["reader.page"].exists)
     }
 

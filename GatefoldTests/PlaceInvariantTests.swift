@@ -13,6 +13,16 @@ import Testing
 
     private func saved(_ f: S.Fixture) -> String? { f.app.library.book(bookID)?.locatorJSON }
 
+    /// Waits while `waiting` holds, for a place write or a step of the page the test expects. A write passes through
+    /// real awaits (its own wait, the mapper's position), so how many yields it takes depends on the machine: one
+    /// took 49 to 166 on a Mac, and a bare 200 failed 4 runs in 50 there, as on CI's Duo (merge_group run
+    /// 44152627391: "no place kept"). Yields first, as before, then 5 ms beats, up to 600 looks in all.
+    private func waitWhile(_ waiting: () -> Bool) async {
+        for look in 0..<600 where waiting() {
+            if look < 200 { await Task.yield() } else { try? await Task.sleep(for: .milliseconds(5)) }
+        }
+    }
+
     /// A contents entry inside its file, once the open has placed it there. The open places its chapters in a
     /// task of its own that reads each file, so on a busy machine the test can reach its jump first; a jump
     /// to an entry not yet placed keeps nothing on leaving, by design (gatefold#254), and the test failed
@@ -161,9 +171,7 @@ import Testing
 
         await f.model.go(to: entry)
         // The write runs in its own task after the report: waited on as an event, counted.
-        for _ in 0..<200 where (saved(f).flatMap { try? Locator(jsonString: $0) }?.locations.progression ?? 0) < 0.5 {
-            await Task.yield()
-        }
+        await waitWhile { (saved(f).flatMap { try? Locator(jsonString: $0) }?.locations.progression ?? 0) < 0.5 }
 
         let kept = try #require(saved(f).flatMap { try? Locator(jsonString: $0) }, "the jump kept no place")
         #expect(ContentsIndex.sameResource(kept.href.string, fileStart.href.string), "the place is in another file")
@@ -195,7 +203,7 @@ import Testing
         let before = saved(f)
 
         await f.model.go(to: entry)
-        for _ in 0..<200 where saved(f) == before { await Task.yield() }
+        await waitWhile { saved(f) == before }
         let kept = try #require(saved(f).flatMap { try? Locator(jsonString: $0) }, "the jump kept no place")
         #expect(saved(f) != before, "the jump that found no anchor kept no place of its own")
         #expect(ContentsIndex.sameResource(kept.href.string, fileStart.href.string), "the place kept is in another file")
@@ -221,20 +229,18 @@ import Testing
         f.page.linkOpens = fileStart
 
         let jump = Task { await f.model.go(to: entry) }
-        for _ in 0..<200 where f.page.currentLocation?.href != fileStart.href { await Task.yield() }
+        await waitWhile { f.page.currentLocation?.href != fileStart.href }
         let far = try #require(await S.locate(f.publication, 0.15))
         // The newer move is still on its way when the contents jump gives way: a write of the contents
         // jump's page then would stand, since the newer move's report counts as already kept.
         f.page.holdsJumps = true
         let newer = Task { await f.model.go(to: far, rememberBack: true) }
-        for _ in 0..<200 where f.page.jumps.last != far { await Task.yield() }
+        await waitWhile { f.page.jumps.last != far }
         await jump.value
         f.page.holdsJumps = false
         f.page.releaseJumps()
         await newer.value
-        for _ in 0..<200 where !(saved(f).flatMap { try? Locator(jsonString: $0) }.map { ContentsIndex.sameResource($0.href.string, far.href.string) } ?? false) {
-            await Task.yield()
-        }
+        await waitWhile { !(saved(f).flatMap { try? Locator(jsonString: $0) }.map { ContentsIndex.sameResource($0.href.string, far.href.string) } ?? false) }
 
         let kept = try #require(saved(f).flatMap { try? Locator(jsonString: $0) }, "no place kept")
         #expect(ContentsIndex.sameResource(kept.href.string, far.href.string), "the place kept is the overtaken contents jump's, not his newer move's")
@@ -280,9 +286,7 @@ import Testing
         #expect((f.page.currentLocation?.locations.progression ?? 1) < 0.5, "the page moved off where he was (\(input))")
         if input != "turn" {
             // The trip he took over keeps the page he is on, never the chapter it didn't reach.
-            for _ in 0..<200 where !(saved(f).flatMap { try? Locator(jsonString: $0) }.map { ContentsIndex.sameResource($0.href.string, fileStart.href.string) } ?? false) {
-                await Task.yield()
-            }
+            await waitWhile { !(saved(f).flatMap { try? Locator(jsonString: $0) }.map { ContentsIndex.sameResource($0.href.string, fileStart.href.string) } ?? false) }
             let kept = try #require(saved(f).flatMap { try? Locator(jsonString: $0) }, "no place kept")
             #expect(ContentsIndex.sameResource(kept.href.string, fileStart.href.string), "the place kept isn't the page he is on (\(input))")
             #expect((kept.locations.progression ?? 1) < 0.5, "the place kept is the chapter he never reached (\(input))")
@@ -323,9 +327,7 @@ import Testing
         }
 
         await f.model.go(to: entry)
-        for _ in 0..<200 where (saved(f).flatMap { try? Locator(jsonString: $0) }?.locations.progression ?? 0) < 0.5 {
-            await Task.yield()
-        }
+        await waitWhile { (saved(f).flatMap { try? Locator(jsonString: $0) }?.locations.progression ?? 0) < 0.5 }
 
         #expect(beats.count >= loadsAt, "the jump ended before the load came in, after \(beats.count) beats")
         #expect((f.page.currentLocation?.locations.progression ?? 0) > 0.5, "the page stayed on the file's start")
@@ -375,7 +377,7 @@ import Testing
                 f.model.afterLeaveWrite = nil
                 f.page.loadingChapter = false
                 f.page.fragmentAt[fragment] = 0.6
-                for _ in 0..<400 where (f.page.currentLocation?.locations.progression ?? 0) < 0.5 { await Task.yield() }
+                await waitWhile { (f.page.currentLocation?.locations.progression ?? 0) < 0.5 }
                 for _ in 0..<50 { await Task.yield() }
             }
         }
@@ -422,7 +424,7 @@ import Testing
         if how.hasPrefix("inactive, landing before") {
             // The landing is the first place written after the target, wherever the page settled on (the stub
             // lands on the page holding the chapter's 0.6, not on 0.6 itself: CI run 43245326863).
-            for _ in 0..<400 where kept.onLeaving == nil || saved(f) == kept.onLeaving { await Task.yield() }
+            await waitWhile { kept.onLeaving == nil || saved(f) == kept.onLeaving }
             let landedJSON = try #require(saved(f), "no place kept")
             let landed = try #require(try? Locator(jsonString: landedJSON), "no place kept")
             // The target and the landing must differ, or the target standing over the landing passes unseen.
@@ -443,10 +445,10 @@ import Testing
             return
         }
         await kept.leave?.value
-        for _ in 0..<200 where saved(f) == before { await Task.yield() }
+        await waitWhile { saved(f) == before }
 
         if how == "inactive, landing at once" {
-            for _ in 0..<200 where (saved(f).flatMap { try? Locator(jsonString: $0) }?.locations.progression ?? 0) < 0.5 { await Task.yield() }
+            await waitWhile { (saved(f).flatMap { try? Locator(jsonString: $0) }?.locations.progression ?? 0) < 0.5 }
             for _ in 0..<50 { await Task.yield() }
             let landed = try #require(saved(f).flatMap { try? Locator(jsonString: $0) }, "no place kept")
             #expect((landed.locations.progression ?? 0) > 0.5, "the target written as he left stood over the page the jump landed on")
@@ -459,7 +461,7 @@ import Testing
         #expect(abs((leftAt.locations.totalProgression ?? -1) - entry.progression) < 0.001, "the place kept on leaving is not the entry's place (\(how))")
         #expect((leftAt.locations.progression ?? 0) > 0.01, "the place kept on leaving is the file's first page (\(how))")
         if how == "inactive" {
-            for _ in 0..<200 where (saved(f).flatMap { try? Locator(jsonString: $0) }?.locations.progression ?? 0) < 0.5 { await Task.yield() }
+            await waitWhile { (saved(f).flatMap { try? Locator(jsonString: $0) }?.locations.progression ?? 0) < 0.5 }
             let landed = try #require(saved(f).flatMap { try? Locator(jsonString: $0) }, "no place kept")
             for _ in 0..<50 { await Task.yield() }
             let final = try #require(saved(f).flatMap { try? Locator(jsonString: $0) }, "no place kept")
@@ -538,7 +540,7 @@ import Testing
         let jumps = f.page.jumps.count
 
         await f.model.go(to: entry)
-        for _ in 0..<200 where saved(f) == nil { await Task.yield() }
+        await waitWhile { saved(f) == nil }
 
         #expect(f.page.jumps.count == jumps, "the page was sent on from Readium's landing")
         let kept = try #require(saved(f).flatMap { try? Locator(jsonString: $0) }, "no place kept")

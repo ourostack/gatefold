@@ -44,6 +44,9 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             guard oldValue != isTurning else { return }
             if LaunchOptions.isUITest {
                 if isTurning { frames.start() } else { frames.stop(counting: counter != nil) }
+                // A test waits on the turn itself, not a count of reads: one into another chapter waits for that
+                // chapter's page beneath, which on CI's busy iPad took up to 58 s (gatefold#492).
+                weakModel?.turningProbe = isTurning
             }
             // A chapter still loading behind the page shares its web process with the turn: stop the count
             // for the turn (what's counted is kept) and take it up again once turns go quiet.
@@ -70,6 +73,11 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     /// Under test, each turn's frames: whether a count behind the page costs the turn any.
     private let frames = FrameWatch()
     private var panStart: CGPoint = .zero
+    /// Where the swipe's finger went down (`shouldReceive`): the pan begins only after the finger has already
+    /// moved some way, and its translation starts from there.
+    private var panTouchDown: CGPoint = .zero
+    /// The page's own swipe (curl and fade), told apart from every other recognizer this controller delegates.
+    private weak var pagePan: UIPanGestureRecognizer?
     private var panForward = true
     /// Set when the pan ends before the turn is ready; the preparing task finishes with it.
     private var panEnded: Bool?
@@ -119,7 +127,10 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         super.viewDidLoad()
         if let model = weakModel { readerLog.notice("open: host loads after \(Date().timeIntervalSince(model.openedAt), privacy: .public) s") }
         if LaunchOptions.isUITest || LaunchOptions.openTour != nil { traceWebViews() }
-        if LaunchOptions.isUITest, let looks = LaunchOptions.holdOpeningLoadLooks, looks > 0 { holdLoadForTest(looks: looks) }
+        if LaunchOptions.isUITest, let looks = LaunchOptions.holdOpeningLoadLooks, looks > 0 {
+            holdLoadForTest(looks: looks)
+            heldUntilWordsBeneath = true
+        }
         if LaunchOptions.holdOpeningLoadUntilCatchUp { heldUntilCatchUp = true; holdLoadForTest(looks: 0) }
         view.clipsToBounds = true
         // A book opened ahead of the tap waits behind the shelf, out of accessibility's reach until it is tapped.
@@ -158,6 +169,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         let pan = UIPanGestureRecognizer(target: self, action: #selector(handlePan(_:)))
         pan.delegate = self
         view.addGestureRecognizer(pan)
+        pagePan = pan
 
         wire(navigator)
         model.host = self
@@ -299,14 +311,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     func promoteStandby(for locator: Locator) async -> Bool {
         guard let next = standby, next.locator == locator else { return false }
         // A page that hasn't loaded in 1.5 s may never load: the plain jump is no slower than waiting on.
-        let ready = next.ready
-        let loaded = await withTaskGroup(of: Bool.self) { group in
-            group.addTask { await ready.value; return true }
-            group.addTask { try? await Task.sleep(for: .milliseconds(1500)); return false }
-            let first = await group.next() ?? false
-            group.cancelAll()
-            return first
-        }
+        let loaded = await Self.finished(next.ready, within: .milliseconds(1500))
         guard loaded else {
             readerLog.notice("standby: not loaded 1.5 s after the tap; jumping the plain way")
             dropStandby()
@@ -331,6 +336,19 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         weakModel?.highlights.navigatorChanged()
         if let here = navigator.currentLocation { self.navigator(navigator, locationDidChange: here) }
         return true
+    }
+
+    /// True when `task` ends within `limit`, false as soon as `limit` passes. Never waits on past the limit: a task
+    /// group's child awaiting `task.value` ignores the group's cancel, so the group waited out the whole load. On CI's
+    /// starved iPad a catch-up tap waited 4 minutes on a standby page still loading, under a veil that let go after
+    /// 150 beats, and the test read no words (merge-queue run 44170382162).
+    static func finished(_ task: Task<Void, Never>, within limit: Duration) async -> Bool {
+        let once = AnswerOnce<Bool>()
+        Task { @MainActor in await task.value; once.resume(true) }
+        let timer = Task { @MainActor in try? await Task.sleep(for: limit); once.resume(false) }
+        let answer = await withCheckedContinuation { once.wait($0) }
+        timer.cancel()
+        return answer ?? false
     }
 
     // MARK: Screen pages
@@ -757,6 +775,41 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         return nil
     }
 
+    override func viewWillTransition(to size: CGSize, with coordinator: any UIViewControllerTransitionCoordinator) {
+        super.viewWillTransition(to: size, with: coordinator)
+        // `size` is the window's; the page's own new size is known only at its next layout.
+        guard !closed else { return }
+        if LaunchOptions.isUITest { watchTurnFrames() }
+        holdTurnPicture()
+        // A turn that reflowed nothing (the same layout either way) leaves no picture behind.
+        coordinator.animate(alongsideTransition: nil) { [weak self] _ in self?.turnPicture = nil }
+    }
+
+    /// The page as it was before the device turned, whole, for the turn's reflow to cover the page with until the
+    /// new layout is placed (gatefold#537). Taken before the window changes size: a picture taken once it has shows
+    /// the old layout clipped to the new window, and stretched to it, a squeezed frame.
+    private var turnPicture: (view: UIView, size: CGSize)?
+
+    private func holdTurnPicture() {
+        turnPicture = nil
+        // A device that folds opens with the unfold, which brings its own pictures; a turn mid-curl keeps the
+        // curl's own handling (gatefold#534); a page not shown has nothing to picture.
+        guard weakModel?.hasFold == false, pageShown, !curl.isActive, reflowCover == nil, settlePicture == nil,
+              let page = navigator.viewIfLoaded, page.window != nil, page.alpha > 0.5,
+              let picture = page.snapshotView(afterScreenUpdates: false) else { return }
+        turnPicture = (picture, page.bounds.size)
+    }
+
+    /// The turn's picture over the theme's paper, filling the page: the old page at its own proportions, all of it,
+    /// centred, kept so as the page's frame moves to the new size.
+    private func takeTurnCover(frame: CGRect) -> (cover: UIView, picture: UIView)? {
+        guard let (picture, size) = turnPicture else { return nil }
+        turnPicture = nil
+        let cover = WholePictureCover(picture: picture, size: size, frame: frame)
+        cover.backgroundColor = weakModel?.theme.uiBackground ?? .systemBackground
+        return (cover, picture)
+    }
+
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         let size = view.bounds.size
@@ -764,6 +817,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         readerLog.notice("host size \(size.width, privacy: .public)x\(size.height, privacy: .public)")
         let first = lastSize == .zero
         lastSize = size
+        if first { pageLaidFor = size }
         if !first { beginReflow(model.consumeReflowReason() ?? .resize) }
     }
 
@@ -773,14 +827,21 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         // A closed reader's page is retired: new preferences would only load pages nobody sees (#109).
         guard !closed else { return }
         // One page becoming two is the unfold: the right page swings open once it has laid out.
-        unfolding = reflow && self.columns == 1 && columns == 2
+        // A turned iPad fades to its spread (gatefold#537): the leaf is the unfold's, on a device that opens.
+        unfolding = reflow && self.columns == 1 && columns == 2 && weakModel?.hasFold == true
+        let newColumns = self.columns != columns
         self.columns = columns
         self.preferences = preferences
         // A page laid out in the old type would be the wrong page, and its counts the wrong counts.
         dropStandby()
         stopCounting()
         if reflow { beginReflow(model.consumeReflowReason() ?? .typography) }
-        navigator.submitPreferences(preferences)
+        if LaunchOptions.lateColumns, reflow, newColumns {
+            lateColumns = preferences
+        } else {
+            lateColumns = nil
+            navigator.submitPreferences(preferences)
+        }
         if reflow { settleReflowSoon() }
         Task {
             _ = await Self.onSpread { () async throws -> Void? in
@@ -796,6 +857,15 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
                 await logTypography()
             }
         }
+    }
+
+    /// Tests only (`LaunchOptions.lateColumns`): preferences with a new column count, held until the restore has finished.
+    private var lateColumns: EPUBPreferences?
+    private func releaseLateColumns() {
+        guard let held = lateColumns else { return }
+        lateColumns = nil
+        readerLog.notice("reflow: the new columns reach Readium after the restore has finished (GatefoldLateColumns)")
+        navigator.submitPreferences(held)
     }
 
     // MARK: Reflow and the reading anchor
@@ -814,16 +884,29 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         }
         dropStandby()
         stopCounting()
-        model.keeper.reflowWillBegin(reason, move: model.hisMoves)
+        // A turn of his that has let go and not landed counts as made: its landing is that turn, and the restore
+        // puts back its page, never the one before it (gatefold#534).
+        model.keeper.reflowWillBegin(reason, move: model.reflowMove())
         model.reflowDidBegin()
         if !curl.isActive {
             let page = navigator.view!
-            if reflowCover == nil, page.alpha > 0.5, let container = page.superview,
+            if reflowCover == nil, let container = page.superview, let turned = takeTurnCover(frame: page.frame) {
+                // The device turned: its whole page from before the turn, never one clipped or stretched to the new size.
+                // Placed outside the turn's animation, so it never shrinks into place from the old size, cut off.
+                UIView.performWithoutAnimation {
+                    container.insertSubview(turned.cover, aboveSubview: page)
+                    turned.cover.layoutIfNeeded()
+                }
+                reflowCover = turned.cover
+                notePicture(turned.cover, of: turned.picture)
+                readerLog.notice("reflow: covered by the page from before the turn")
+            } else if reflowCover == nil, page.alpha > 0.5, let container = page.superview,
                let cover = page.snapshotView(afterScreenUpdates: false) {
                 cover.frame = page.frame
                 cover.isUserInteractionEnabled = false
                 container.insertSubview(cover, aboveSubview: page)
                 reflowCover = cover
+                notePicture(cover, of: cover)
             } else if reflowCover == nil, let container = page.superview, let held = heldCover(frame: page.frame) {
                 // The old page's view is gone (the app changed screens): the picture held as the hinge moved stands in.
                 container.insertSubview(held, aboveSubview: page)
@@ -842,6 +925,81 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             if unfolding { liftLeaf() }
         }
         settleReflowSoon()
+    }
+
+    // MARK: UI tests: what a turn of the device shows (gatefold#537)
+
+    /// The size of the layout the page shows: its size when it last settled. A picture of the page taken
+    /// before its new layout is placed shows this layout, whatever size its view is given.
+    private var pageLaidFor: CGSize = .zero
+    /// Covers that are pictures of the page: the cover, the view showing the picture, and the layout it shows.
+    private var pictures: [ObjectIdentifier: (picture: UIView, shows: CGSize)] = [:]
+    private var turnWatch: TurnFrameWatch?
+
+    private func notePicture(_ cover: UIView, of picture: UIView) {
+        guard LaunchOptions.isUITest, pageLaidFor != .zero else { return }
+        pictures = pictures.filter { $0.value.picture.window != nil }
+        pictures[ObjectIdentifier(cover)] = (picture, pageLaidFor)
+    }
+
+    /// Watches every display frame from a turn of the device until its reflow is shown, the page whole and
+    /// nothing over it, and counts the frames that showed anything but a whole page (`reader.turnFrames`).
+    private func watchTurnFrames() {
+        turnWatch?.stop()
+        let began = reflowGeneration
+        let watchdog = weakModel?.shownUnsettledProbe ?? 0
+        weakModel?.turnFramesProbe = "watching"
+        let watch = TurnFrameWatch { [weak self] in
+            guard let self, !self.closed else { return nil }
+            let shown = self.navigator.view.layer.presentation()?.opacity ?? self.navigator.view.layer.opacity
+            if self.reflowGeneration > began, self.settledGeneration == self.reflowGeneration, self.reflowCover == nil,
+               self.leaf == nil, shown >= 0.99, self.weakModel?.foldLeafUp != true { return nil }
+            // The 12 s watchdog shows the page as it is on purpose (a reflow that never settles): not this watch's to judge.
+            return self.brokenNow(watchdogShown: (self.weakModel?.shownUnsettledProbe ?? 0) > watchdog)
+        } ended: { [weak self] frames, broken, why in
+            let verdict = "\(broken) broken of \(frames)" + (why.isEmpty ? "" : " (\(why.sorted().joined(separator: ", ")))")
+            readerLog.notice("turn frames: \(verdict, privacy: .public)")
+            self?.weakModel?.turnFramesProbe = verdict
+            self?.turnWatch = nil
+        }
+        turnWatch = watch
+        watch.start()
+    }
+
+    /// What this frame shows over the page that isn't a whole page; empty when it is whole.
+    private func brokenNow(watchdogShown: Bool) -> [String] {
+        var why: [String] = []
+        func visible(_ v: UIView) -> Bool {
+            v.window != nil && !v.isHidden && (v.layer.presentation()?.opacity ?? v.layer.opacity) > 0.01
+        }
+        // Where a view is this frame, and the page it is judged against, in one space: the presentation layers
+        // (mid-turn the page's bounds are on their way to the new size), or, for a view not yet drawn once and so
+        // without one, the views themselves.
+        func onScreen(_ v: UIView) -> (rect: CGRect, page: CGRect) {
+            guard let layer = v.layer.presentation(), let page = view.layer.presentation() else {
+                return (v.convert(v.bounds, to: view), view.bounds)
+            }
+            return (layer.convert(layer.bounds, to: page), page.bounds)
+        }
+        if let leaf, visible(leaf.view) { why.append("leaf") }
+        if weakModel?.foldLeafUp == true { why.append("fold leaf") }
+        var covered = false
+        for cover in [reflowCover, settlePicture].compactMap({ $0 }) where visible(cover) {
+            let (frame, page) = onScreen(cover)
+            if frame.contains(page.insetBy(dx: 1, dy: 1)) { covered = true } else { why.append("cover short of the page") }
+            guard let (picture, shows) = pictures[ObjectIdentifier(cover)], shows.width > 0, shows.height > 0 else { continue }
+            let (shown, under) = onScreen(picture)
+            if abs(shown.width / shows.width - shown.height / shows.height) > 0.01 { why.append("picture squeezed") }
+            if !under.insetBy(dx: -1, dy: -1).contains(shown) { why.append("picture cut off") }
+            if !why.isEmpty {
+                readerLog.notice("turn frames: cover \(String(describing: frame), privacy: .public) on \(String(describing: page), privacy: .public), picture \(String(describing: shown), privacy: .public) on \(String(describing: under), privacy: .public) of \(String(describing: shows), privacy: .public)")
+            }
+        }
+        // The page itself, mid-layout, with nothing whole over it.
+        if !covered, !watchdogShown, visible(navigator.view), settledGeneration != reflowGeneration, !curl.isActive {
+            why.append("page mid-layout")
+        }
+        return why
     }
 
     /// The page is on screen for him: no opening cover or reopen picture over it.
@@ -963,7 +1121,10 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             try? await Task.sleep(for: .milliseconds(550))
             guard !Task.isCancelled, let self, self.weakModel != nil else { return }
             await self.restoreAnchor(generation: generation)
-            if generation == self.reflowGeneration { self.settledGeneration = generation; self.reflowRetries = 0 }
+            if generation == self.reflowGeneration {
+                self.settledGeneration = generation; self.reflowRetries = 0
+                self.releaseLateColumns()
+            }
         }
         // Begun before the book's web view had loaded (a spread opened cold): its first script can wait
         // forever, and counting waits on the reflow. Once the web view has loaded, give it a second to
@@ -1116,7 +1277,9 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             cover?.alpha = 0
         } completion: { _ in cover?.removeFromSuperview() }
     }
-    private var settledGeneration = -1
+    private var settledGeneration = -1 {
+        didSet { if LaunchOptions.isUITest { pageLaidFor = navigator.view.bounds.size } }
+    }
     /// The reflow whose restore is placing his words on the left page right now.
     private var placingGeneration = -1
     /// The newest reflow whose restore has had its first script back from the page.
@@ -1131,6 +1294,10 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             return model.keeper.restoreMayMove(move: model.hisMoves)
         }
         defer { giveWayIfHeMoved(generation: generation) }
+        // A turn of his under way as the reflow began: its page's words, read before the layout changed, are
+        // what the restore puts back (gatefold#534).
+        model.takeTurnUnderReflow()
+        guard current() else { return }
         // Tests only: the page doesn't answer yet, as a spread whose chapter is still loading.
         if let until = slowRestoreDeadline {
             while ContinuousClock.now < until, current(), !Task.isCancelled { try? await Task.sleep(for: .milliseconds(250)) }
@@ -1209,7 +1376,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         if case let .jump(anchor) = action { target = anchor }
         if columns == 2, let target {
             placingGeneration = generation
-            let moved = await keepOnLeft(target, purpose: .restore, current: current)
+            let moved = await keepOnLeft(target, purpose: .restore, current: current)?.visible
             if placingGeneration == generation { placingGeneration = -1 }
             if let moved { after = moved }
         }
@@ -1221,6 +1388,16 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         guard current() else { return }
         model.keeper.restoreDidComplete()
         model.reflowDidFinish(visible: after)
+        // Tests only: the held columns reach Readium now that the restore has finished.
+        releaseLateColumns()
+        // A page judged before its new columns had landed: the reflow isn't settled until they have, and his words
+        // have been looked for in them (gatefold#482: back upright, the restore read two narrow columns, and the
+        // reader called the reflow settled with his words 115 characters down a page about to be laid out again).
+        if await columnsLandedLate(generation: generation) {
+            guard generation == reflowGeneration, !Task.isCancelled else { return }
+            await model.lookAgainInNewColumns()
+            guard generation == reflowGeneration, !Task.isCancelled else { return }
+        }
         let shownNumber = model.reflowNumber
         // Settled now, not when the swing below has played: the 12 s watchdog took a slow, finished
         // restore whose swing was still running for a stalled one and started it again.
@@ -1266,11 +1443,39 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         }
     }
 
+    /// Whether the page was still laid out in other columns than the reader's when the restore judged it. If so,
+    /// waits (8 s at most) for the new columns to land and the page to stand still in them. Meanwhile the 12 s
+    /// watchdog waits too, as it does for a restore placing his words.
+    private func columnsLandedLate(generation: Int) async -> Bool {
+        func css() async -> Int? { ((try? await navigator.answer(ReaderJS.cssColumns)) as? NSNumber)?.intValue }
+        guard let first = await css(), first != 0, first != columns else { return false }
+        placingGeneration = generation
+        defer { if placingGeneration == generation { placingGeneration = -1 } }
+        let start = ContinuousClock.now, deadline = start + .seconds(8)
+        func waiting() -> Bool { generation == reflowGeneration && !Task.isCancelled && ContinuousClock.now < deadline }
+        var landed = false
+        while waiting() {
+            try? await Task.sleep(for: .milliseconds(250))
+            if let n = await css(), n == 0 || n == columns { landed = true; break }
+        }
+        // Readium lays the page out again once the style has changed, and moves it after: two reads that agree.
+        var last = await liveVisibleRange().map { ($0.start, $0.end) }
+        while landed, waiting() {
+            try? await Task.sleep(for: .milliseconds(250))
+            let now = await liveVisibleRange().map { ($0.start, $0.end) }
+            if let now, let was = last, now == was { break }
+            last = now
+        }
+        readerLog.notice("reflow: the restore judged the page in \(first, privacy: .public) columns, before its \(self.columns, privacy: .public) landed; \(landed ? "landed" : "still not landed", privacy: .public) after \(String(format: "%.1f", (ContinuousClock.now - start) / .seconds(1)), privacy: .public) s")
+        return true
+    }
+
     /// Moves the spread so `anchor`'s words start its left page: a blank verso before the file's first
-    /// page shifts every page one side over. Returns what's on screen after a move, nil when none was needed.
+    /// page shifts every page one side over. Returns what's on screen after a move, and whether a column break at
+    /// the words now starts the left page with them (`wordsOnTop`); nil when no move was needed.
     /// The moves are `SpreadSettler`'s: each is judged by measuring the page again once it stands still.
     private func keepOnLeft(_ anchor: ReadingAnchor, purpose: SpreadSettler.Purpose,
-                            current: () -> Bool) async -> VisibleRange? {
+                            current: () -> Bool) async -> (visible: VisibleRange?, wordsOnTop: Bool)? {
         guard let text = anchor.text?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else { return nil }
         let surface = WebSpread(host: self, anchor: anchor, text: text)
         guard await SpreadSettler.keepOnLeft(surface, current: current, purpose: purpose) == true, current() else { return nil }
@@ -1279,18 +1484,47 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         let (visible, reads) = await LaidOutPage.read({ await self.liveVisibleRange() }, beat: { await surface.beat() }, current: current)
         // The settler also ends here when its passes run out with the words still off the left page.
         readerLog.notice("spread: words placed on the left page; \(surface.moves, privacy: .public) moves (last read side \(surface.lastSide.map { String($0.rawValue) } ?? "nil", privacy: .public)); page read \(reads, privacy: .public) times, words \(visible?.text != nil, privacy: .public)")
-        return visible
+        return (visible, surface.pinned && surface.lastSide == .left)
     }
 
-    func keepWordsOnLeft(_ anchor: ReadingAnchor, stillWanted: @escaping @MainActor () -> Bool) async {
+    func keepWordsOnPage(_ anchor: ReadingAnchor, placing: Bool, stillWanted: @escaping @MainActor () -> Bool) async -> VisibleRange? {
         // A restore placing his words, or another late look, is already moving this page: the report
         // its moves brought is not a new reason to move it.
-        guard columns == 2, stillWanted(), !lateSettling, placingGeneration == -1 else { return }
+        guard stillWanted(), !lateSettling, placingGeneration == -1 else { return nil }
         lateSettling = true
         defer { lateSettling = false }
-        if await keepOnLeft(anchor, purpose: .recheck, current: stillWanted) != nil {
-            readerLog.notice("spread: a late layout had moved his words; put back on the left page")
+        if columns == 2 {
+            // After a restore whose columns landed late, the break the restore would have put in at his words (and
+            // could not, on a page still in the old columns) goes in now, as a reopen at this size puts it in.
+            let moved = await keepOnLeft(anchor, purpose: placing ? .restore : .recheck, current: stillWanted)?.visible
+            if moved != nil {
+                readerLog.notice("spread: a late layout had moved his words; put back on the left page")
+            }
+            return moved
         }
+        // One page: his words are on it, or the restore's jump to them is made again. Back upright on CI's loaded
+        // iPad, Readium laid the page out in one column after the restore had found his words, and kept its own
+        // place, the page before his (gatefold#482).
+        let beat: () async -> Void = { try? await Task.sleep(for: .milliseconds(160)) }
+        let (shown, _) = await LaidOutPage.read({ await self.liveVisibleRange() }, beat: beat, current: stillWanted)
+        guard stillWanted(), let shown, shown.text != nil, !shown.contains(anchor),
+              let locator = weakModel?.locator(for: anchor) else { return nil }
+        // On a page he can see, the jump is held behind a picture of it and shown as one change, as the restore's is.
+        var picture: UIView?
+        if !pageCovered, settlePicture == nil {
+            if holdSettlePicture() { picture = settlePicture } else { noteVisibleMove("late look, one page") }
+        }
+        let landing = await RestoreLanding.land(
+            go: { _ = await self.navigator.go(to: locator, options: .init(animated: false)) },
+            read: { await self.liveVisibleRange() },
+            beat: beat,
+            arrived: { $0.contains(anchor) },
+            current: { stillWanted() && !Task.isCancelled })
+        if let picture, settlePicture === picture {
+            if stillWanted() { await releaseSettlePicture() } else { dropSettlePicture() }
+        }
+        readerLog.notice("page: a late layout had moved his words off the page; jumped back \(landing.jumps, privacy: .public) times, page read \(landing.reads, privacy: .public) times, his words \(landing.range?.contains(anchor) == true, privacy: .public)")
+        return landing.range
     }
 
     /// A jump to a place with words (the Cloud's, his own offered back) lands where Readium puts its
@@ -1298,21 +1532,22 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     /// keeps restores them to the top of a left page. Settled here the way that restore will, so the
     /// spread he lands on is the one every reopen shows. Behind the jump's veil when it is still up;
     /// after it lifted (`abandonVeil`), each move is held behind a picture (`SpreadSettler.keepOnLeft`).
-    func settleLanding(_ anchor: ReadingAnchor, stillWanted: @escaping @MainActor () -> Bool) async {
-        guard columns == 2 else { return }
+    /// True when a column break at the words now starts the left page with them (gatefold#562).
+    func settleLanding(_ anchor: ReadingAnchor, stillWanted: @escaping @MainActor () -> Bool) async -> Bool {
+        guard columns == 2 else { return false }
         guard stillWanted() else {
             readerLog.notice("spread: a landing left unsettled (overtaken before it began)")
-            return
+            return false
         }
         guard !lateSettling, placingGeneration == -1 else {
             readerLog.notice("spread: a landing left unsettled (a late look \(self.lateSettling, privacy: .public), a restore placing \(self.placingGeneration != -1, privacy: .public))")
-            return
+            return false
         }
         lateSettling = true
         defer { lateSettling = false }
-        if await keepOnLeft(anchor, purpose: .restore, current: stillWanted) != nil {
-            readerLog.notice("spread: a landing settled the way a reopen of its place will (veil \(self.veil != nil, privacy: .public))")
-        }
+        guard let settled = await keepOnLeft(anchor, purpose: .restore, current: stillWanted) else { return false }
+        readerLog.notice("spread: a landing settled the way a reopen of its place will (veil \(self.veil != nil, privacy: .public), its words on top \(settled.wordsOnTop, privacy: .public))")
+        return settled.wordsOnTop
     }
 
     /// The reader's page as `SpreadSettler` moves it.
@@ -1323,6 +1558,8 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         private(set) var moves = 0
         /// Where the words were at the last look.
         private(set) var lastSide: WordsSide?
+        /// A column break went in at the words: on the left page, they start it.
+        private(set) var pinned = false
 
         init(host: ReaderHostController, anchor: ReadingAnchor, text: String) {
             self.host = host
@@ -1353,6 +1590,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             // A move: never run again on a spread that replaced this one, where a newer restore owns the page.
             let pinned = ((try? await host.navigator.answer(ReaderJS.pinToTop(text))) as? NSNumber)?.intValue == 1
             if pinned {
+                self.pinned = true
                 moves += 1
                 if visible { host.noteVisibleMove("column break") }
             }
@@ -1417,6 +1655,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         cover.isUserInteractionEnabled = false
         container.insertSubview(cover, aboveSubview: page)
         settlePicture = cover
+        notePicture(cover, of: cover)
         readerLog.notice("spread: held a picture over the page he is reading while his words are put back")
         return true
     }
@@ -1744,6 +1983,26 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         await Self.onSpread { try await self.readAnchor() }
     }
 
+    /// The first words on the page beneath a turn that has just moved, at the page's own start in its chapter (the
+    /// web view's scroll, not Readium's location, which names the page before until its report comes). A turn into
+    /// the next chapter, not yet reported, is named by the chapter on screen, from `chapters` (the reading order).
+    func wordsBeneath(chapters: [String]) async -> Locator? {
+        await Self.onSpread { () async throws -> Locator? in
+            let navigator = self.navigator // the one on screen now, on each try
+            guard let (_, words) = try await self.readAnchor(publish: false),
+                  let json = try await navigator.answer(ReaderJS.pageRange) as? String,
+                  let data = json.data(using: .utf8) else { return nil }
+            struct Found: Decodable { var s: Double; var e: Double; var doc: String }
+            guard let found = try? JSONDecoder().decode(Found.self, from: data) else { return nil }
+            if ScreenPageGeometry.document(found.doc, isChapter: words.href.string) {
+                return words.copy(locations: { $0.progression = found.s })
+            }
+            guard let chapter = chapters.first(where: { ScreenPageGeometry.document(found.doc, isChapter: $0) }),
+                  let url = AnyURL(string: chapter) else { return nil }
+            return Locator(href: url, mediaType: words.mediaType, locations: .init(progression: found.s), text: words.text)
+        }
+    }
+
     func wordsOnPage() async -> Locator? {
         await Self.onSpread { try await self.readAnchor(publish: false) }?.1
     }
@@ -1869,6 +2128,13 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
 
     // MARK: Taps
 
+    /// A tap in the margin beside the page (`ReaderScreen`'s side strips), at `point` in the page's coordinates:
+    /// outside its bounds, so it never reaches the page's own tap observer (gatefold#536).
+    func marginTapped(at point: CGPoint) {
+        weakModel?.noteInteraction() // as a touch on the page counts (`TouchNoticer`)
+        _ = handleTap(at: point)
+    }
+
     private func handleTap(at point: CGPoint) -> Bool {
         let width = navigator.view.bounds.width
         // While a jump's veil is up the page beneath is on its way somewhere: a tap then would turn
@@ -1878,9 +2144,8 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             readerLog.notice("tap: under a jump's veil at x \(Int(point.x), privacy: .public) of \(Int(width), privacy: .public); no turn, no controls")
             return true
         }
-        let edge = TapZones.edge(viewWidth: width, spread: model.layout.columns == .two)
-        let zone = point.x < edge ? "back" : point.x > width - edge ? "forward" : "middle"
-        readerLog.notice("tap: \(zone, privacy: .public) at x \(Int(point.x), privacy: .public) of \(Int(width), privacy: .public), controls \(self.model.chromeVisible, privacy: .public)")
+        let zone = TapZones.zone(x: point.x, viewWidth: width, spread: model.layout.columns == .two)
+        readerLog.notice("tap: \(zone.rawValue, privacy: .public) at x \(Int(point.x), privacy: .public) of \(Int(width), privacy: .public), controls \(self.model.chromeVisible, privacy: .public)")
         if model.chromeVisible {
             model.controlsTapped(visible: false)
             return true
@@ -1889,12 +2154,10 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             model.controlsTapped(visible: true)
             return true
         }
-        if point.x < edge {
-            turn(forward: false)
-        } else if point.x > width - edge {
-            turn(forward: true)
-        } else {
-            model.controlsTapped(visible: true)
+        switch zone {
+        case .back: turn(forward: false)
+        case .forward: turn(forward: true)
+        case .middle: model.controlsTapped(visible: true)
         }
         return true
     }
@@ -1923,7 +2186,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
 
     /// A whole turn without a finger: lift from the lower corner and sweep across.
     private func animatedTurn(forward: Bool, from finger: CGPoint?) async {
-        guard await prepareTurn(forward: forward, startingAt: finger ?? CGPoint(x: view.bounds.width, y: view.bounds.height * 0.86)) else { return }
+        guard await prepareTurn(forward: forward, startingAt: finger ?? CGPoint(x: view.bounds.width, y: view.bounds.height * 0.86), committed: true) else { return }
         // A tap's turn has let go as it starts: Readium is on the page beneath, and leaving now leaves it.
         weakModel?.turnCommitted()
         // The same leaf as a drag: the corner lifts up and in first, so the page bends as a cylinder
@@ -1939,7 +2202,10 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
 
     /// Snapshots the current page, moves the navigator underneath the overlay and snapshots the
     /// destination. Returns false at the start or end of the book.
-    private func prepareTurn(forward: Bool, startingAt point: CGPoint) async -> Bool {
+    /// `committed`: a tap's turn, which has let go as it starts. Its page's words are read as soon as Readium is on
+    /// the page beneath, before it is pictured, so a turn of the iPad straight after the tap finds his turn under
+    /// way and its page's words read in the layout he turned in (gatefold#534).
+    private func prepareTurn(forward: Bool, startingAt point: CGPoint, committed: Bool = false) async -> Bool {
         guard !isTurning, weakModel != nil else { return false }
         isTurning = true
         let t0 = ContinuousClock.now
@@ -1978,6 +2244,11 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             }
             return false
         }
+        // A tap's turn is his from here: Readium is on the page beneath, laid out as he turned it.
+        if committed { weakModel?.turnMovedBeneath() }
+        // UI tests: the leaf waits before it falls, so a turn of the iPad sent straight after the tap begins while
+        // the turn is under way, every time (gatefold#534).
+        if committed, let hold = LaunchOptions.holdTapTurnLanding { try? await Task.sleep(for: .seconds(hold)) }
         // Wait until the destination has painted and stopped changing (a spread lays out two
         // columns; caught halfway it ghosts).
         curl.beneath = await renderedSnapshot(afterChange: true)
@@ -2106,16 +2377,11 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             updateFinger(point)
         case .ended, .cancelled:
             let v = pan.velocity(in: view).x
-            let dx = point.x - panStart.x
-            let width = view.bounds.width
-            let complete: Bool
-            if pan.state == .cancelled {
-                complete = false
-            } else if panForward {
-                complete = v < -250 || (v < 250 && dx < -width * 0.25)
-            } else {
-                complete = v > 250 || (v > -250 && dx > width * 0.25)
-            }
+            let travel = point.x - panTouchDown.x
+            // A quick brush shorter than a fingertip turns nothing (gatefold#536).
+            let complete = pan.state != .cancelled
+                && PageSwipe.turns(forward: panForward, travel: travel, velocity: v, width: view.bounds.width)
+            readerLog.notice("swipe: \(self.panForward ? "forward" : "back", privacy: .public) travelled \(Int(travel), privacy: .public) pt at \(Int(v), privacy: .public) pt/s; turns \(complete, privacy: .public)")
             guard curl.isActive, curl.top != nil, curl.beneath != nil else {
                 panEnded = complete
                 return
@@ -2136,6 +2402,14 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         let delta = CGPoint(x: point.x - panStart.x, y: point.y - panStart.y)
         // The corner follows the finger; a little vertical travel tilts the fold like paper.
         curl.finger = CGPoint(x: curl.corner.x + delta.x, y: curl.corner.y + delta.y * 0.6 - (curl.corner.y > 0 ? min(40, abs(delta.x) * 0.08) : -min(40, abs(delta.x) * 0.08)))
+    }
+
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+        // The page's own swipe: note where each finger goes down, for how far a swipe has travelled when it lifts.
+        if gestureRecognizer === pagePan, gestureRecognizer.numberOfTouches == 0 {
+            panTouchDown = touch.location(in: view)
+        }
+        return true
     }
 
     func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
@@ -2223,6 +2497,16 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         }
         if LaunchOptions.isUITest, let sends = LaunchOptions.holdBackSends, sends > 0, weakModel?.isGoingBack == true {
             if !heldSendsArmed { heldSendsArmed = true; heldSends = sends; holdLoadForTest(looks: 0) }
+            // The hold has proved its point once the trip has waited on the load for more reads than a trip may
+            // make without one: it lets the rest of its sends go. A real load slow enough to spend the trip's
+            // waiting reads first (100 s on CI's starved iPad, run 44152627391) left the held sends nothing to
+            // wait on, and the trip ran out of reads with the hold still up.
+            if heldSends > 0, let waited = weakModel?.backTripWaited, waited > JumpLanding.reads {
+                readerLog.notice("test: Back's trip has waited \(waited, privacy: .public) reads on the load; the \(self.heldSends, privacy: .public) held sends left go")
+                heldSends = 0
+                heldLoadMarker?.accessibilityValue = "0"
+                if heldLoadLooks == 0, !heldUntilCatchUp { heldLoadMarker?.removeFromSuperview(); heldLoadMarker = nil }
+            }
             if heldSends > 0 {
                 heldSends -= 1
                 // The sends still held, for the test to read (the log stream can drop lines).
@@ -2532,7 +2816,8 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
 
     /// Where paper laid over the page's foot may end (window points): in the gap above the highest line
     /// of text that reaches into `band`, below the last line kept whole, so its descenders are never cut.
-    func lineTop(crossing band: ClosedRange<CGFloat>) async -> CGFloat? {
+    /// With `across`, only a line that reaches into that span of x (window points) counts as reaching the band.
+    func lineTop(crossing band: ClosedRange<CGFloat>, across: ClosedRange<CGFloat>? = nil) async -> CGFloat? {
         let host = navigator.view!
         var best: CGFloat?
         func walk(_ v: UIView) {
@@ -2550,23 +2835,62 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             // the controls are up, and a line's offset inside it shrinks with it.
             let y0 = web.convert(CGPoint(x: 0, y: band.lowerBound), from: window).y
             let y1 = web.convert(CGPoint(x: 0, y: band.upperBound), from: window).y
+            let x0 = across.map { web.convert(CGPoint(x: $0.lowerBound, y: 0), from: window).x } ?? -1e9
+            let x1 = across.map { web.convert(CGPoint(x: $0.upperBound, y: 0), from: window).x } ?? 1e9
             let js = """
-            (function(y0,y1){var w=window.innerWidth,best=-1,n,r=document.createRange();
+            (function(y0,y1,x0,x1){var w=window.innerWidth,best=-1,n,r=document.createRange();
             var tw=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT);
             while((n=tw.nextNode())){if(!n.textContent.trim())continue;r.selectNodeContents(n);var rs=r.getClientRects();
             for(var i=0;i<rs.length;i++){var q=rs[i];if(q.width<1||q.right<=0||q.left>=w)continue;
-            if(q.bottom>y0&&q.top<y1&&(best<0||q.top<best))best=q.top;}}
+            if(q.bottom>y0&&q.top<y1&&q.right>x0&&q.left<x1&&(best<0||q.top<best))best=q.top;}}
             if(best<0)return -1;var above=-1;tw=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT);
             while((n=tw.nextNode())){if(!n.textContent.trim())continue;r.selectNodeContents(n);var rs=r.getClientRects();
             for(var i=0;i<rs.length;i++){var q=rs[i];if(q.width<1||q.right<=0||q.left>=w)continue;
             if(q.top<best-1&&q.bottom>above)above=q.bottom;}}
-            if(above<0)return best-3;var gap=best-above;return gap>=2?above+Math.min(1.5,gap/2):(above+best)/2;})(\(y0),\(y1))
+            if(above<0)return best-3;var gap=best-above;return gap>=2?above+Math.min(1.5,gap/2):(above+best)/2;})(\(y0),\(y1),\(x0),\(x1))
             """
             guard let top = (try? await web.evaluateJavaScript(js)) as? Double, top >= 0 else { continue }
             let y = web.convert(CGPoint(x: 0, y: CGFloat(top)), to: window).y
             best = min(best ?? y, y)
         }
         return best
+    }
+
+    /// The lines of text shown on the page that reach into `rect` (window points), each in window points.
+    /// Only for the UI tests' chrome-backing probe.
+    func textLines(in rect: CGRect) async -> [CGRect] {
+        let host = navigator.view!
+        var webs: [WKWebView] = []
+        func walk(_ v: UIView) {
+            if let web = v as? WKWebView {
+                if !web.isHidden, web.alpha > 0.01, web.convert(web.bounds, to: host).intersects(host.bounds) { webs.append(web) }
+                return
+            }
+            v.subviews.forEach(walk)
+        }
+        walk(host)
+        var lines: [CGRect] = []
+        for web in webs {
+            guard let window = web.window else { continue }
+            let a = web.convert(CGPoint(x: rect.minX, y: rect.minY), from: window)
+            let b = web.convert(CGPoint(x: rect.maxX, y: rect.maxY), from: window)
+            let js = """
+            (function(x0,y0,x1,y1){var w=window.innerWidth,out=[],n,r=document.createRange();
+            var tw=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT);
+            while((n=tw.nextNode())){if(!n.textContent.trim())continue;r.selectNodeContents(n);var rs=r.getClientRects();
+            for(var i=0;i<rs.length;i++){var q=rs[i];if(q.width<1||q.right<=0||q.left>=w)continue;
+            if(q.right>x0&&q.left<x1&&q.bottom>y0&&q.top<y1)out.push([q.left,q.top,q.right,q.bottom]);}}
+            return JSON.stringify(out);})(\(a.x),\(a.y),\(b.x),\(b.y))
+            """
+            guard let json = (try? await web.evaluateJavaScript(js)) as? String,
+                  let rects = try? JSONDecoder().decode([[Double]].self, from: Data(json.utf8)) else { continue }
+            for q in rects where q.count == 4 {
+                let p0 = web.convert(CGPoint(x: q[0], y: q[1]), to: window)
+                let p1 = web.convert(CGPoint(x: q[2], y: q[3]), to: window)
+                lines.append(CGRect(x: p0.x, y: p0.y, width: p1.x - p0.x, height: p1.y - p0.y))
+            }
+        }
+        return lines
     }
 
     /// A page that opens partway into its file is kept hidden by Readium, spinner up, for a fixed
@@ -2626,6 +2950,28 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     private var heldLoadMarker: UIView?
     /// Tests only (`-GatefoldHoldOpeningLoadUntilCatchUp`): the opening load is held until Catch up is taken.
     private var heldUntilCatchUp = false
+    /// Tests only (`-GatefoldHoldOpeningLoad`): the opening hold's looks start once the page beneath has reported
+    /// its words and the test has since read the screen `openingHoldReads` times (each read asks the held marker
+    /// for its value). Counted from the open, a starved runner spent every look before the page beneath had any
+    /// words, and the cover lifted with nothing under it to leak (gatefold#374's check, run 44170382162); counted
+    /// from the words alone, a runner whose reads take seconds still read nothing in between.
+    private var heldUntilWordsBeneath = false
+    private var readsAtWords: Int?
+    static let openingHoldReads = 10
+    private var waitingForWordsBeneath: Bool {
+        guard heldUntilWordsBeneath, let model = weakModel, !model.isClosed else { return false }
+        if model.wordsBeneathProbe.isEmpty { return true }
+        let reads = (heldLoadMarker as? ReadCountingMarker)?.reads ?? 0
+        guard let at = readsAtWords else {
+            readsAtWords = reads
+            readerLog.notice("open: the page beneath has its words; the held load waits for \(Self.openingHoldReads, privacy: .public) reads of the screen")
+            return true
+        }
+        if reads - at < Self.openingHoldReads { return true }
+        heldUntilWordsBeneath = false
+        readerLog.notice("open: the screen was read \(reads - at, privacy: .public) times over the words beneath; the held load's \(self.heldLoadLooks, privacy: .public) looks start")
+        return false
+    }
 
     /// Tests only: Catch up was taken, so the opening load held for it goes on.
     func releaseHoldForCatchUp() {
@@ -2647,7 +2993,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     private func holdLoadForTest(looks: Int) {
         heldLoadMarker?.removeFromSuperview()
         heldLoadLooks = max(heldLoadLooks, looks)
-        let marker = UIView(frame: CGRect(x: 0, y: 0, width: 1, height: 1))
+        let marker = ReadCountingMarker(frame: CGRect(x: 0, y: 0, width: 1, height: 1))
         marker.isAccessibilityElement = true
         marker.accessibilityIdentifier = "reader.loadingHeld"
         view.addSubview(marker)
@@ -2658,6 +3004,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     var isLoadingPage: Bool {
         if heldSends > 0 || heldUntilCatchUp { return true }
         if heldLoadLooks > 0 {
+            if waitingForWordsBeneath { return true }
             heldLoadLooks -= 1
             if heldLoadLooks == 0 { heldLoadMarker?.removeFromSuperview(); heldLoadMarker = nil }
             return true
@@ -2976,11 +3323,11 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     func waitWhileLoading() async -> Int {
         var looks = 0
         // A load held until Catch up has no allowance and spends none: the test's tap ends it, and the real
-        // load after it still gets its own.
-        while isLoadingPage, looks < Self.loadingLooks || heldUntilCatchUp {
+        // load after it still gets its own. Nor does an opening hold still waiting for the words beneath.
+        while isLoadingPage, looks < Self.loadingLooks || heldUntilCatchUp || waitingForWordsBeneath {
             await unveilPlacedPages()
             guard isLoadingPage else { break }
-            if !heldUntilCatchUp { looks += 1 }
+            if !heldUntilCatchUp, !waitingForWordsBeneath { looks += 1 }
             try? await Task.sleep(for: .milliseconds(50))
         }
         if looks > 0 { readerLog.notice("veil: waited \(looks, privacy: .public) looks for the chapter to load") }
@@ -3172,6 +3519,79 @@ final class FrameWatch: NSObject {
     }
 }
 
+/// A picture of the page over paper, at the picture's own proportions and whole, centred in whatever size the
+/// cover is given (gatefold#537).
+final class WholePictureCover: UIView {
+    private let picture: UIView
+    private let size: CGSize
+
+    init(picture: UIView, size: CGSize, frame: CGRect) {
+        self.picture = picture
+        self.size = size
+        super.init(frame: frame)
+        isUserInteractionEnabled = false
+        clipsToBounds = true
+        autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        accessibilityElementsHidden = true
+        picture.bounds = CGRect(origin: .zero, size: size)
+        addSubview(picture)
+        place()
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        place()
+    }
+
+    private func place() {
+        guard size.width > 0, size.height > 0 else { return }
+        let scale = min(1, bounds.width / size.width, bounds.height / size.height)
+        picture.transform = CGAffineTransform(scaleX: scale, y: scale)
+        picture.center = CGPoint(x: bounds.midX, y: bounds.midY)
+    }
+}
+
+/// UI tests: judges every display frame until `judge` returns nil (its reasons a frame wasn't whole, or none),
+/// or for 30 s at most, then reports the frames, the broken ones and every reason seen (gatefold#537).
+@MainActor
+final class TurnFrameWatch: NSObject {
+    private var link: CADisplayLink?
+    private var frames = 0, broken = 0
+    private var why = Set<String>()
+    private let judge: () -> [String]?
+    private let ended: (Int, Int, Set<String>) -> Void
+    private let until = ContinuousClock.now + .seconds(30)
+
+    init(judge: @escaping () -> [String]?, ended: @escaping (Int, Int, Set<String>) -> Void) {
+        self.judge = judge
+        self.ended = ended
+    }
+
+    func start() {
+        let link = CADisplayLink(target: self, selector: #selector(tick(_:)))
+        link.add(to: .main, forMode: .common)
+        self.link = link
+    }
+
+    func stop() {
+        link?.invalidate()
+        link = nil
+    }
+
+    @objc private func tick(_ link: CADisplayLink) {
+        guard ContinuousClock.now < until, let reasons = judge() else {
+            if ContinuousClock.now >= until { why.insert("no end in 30 s") }
+            stop()
+            ended(frames, broken, why)
+            return
+        }
+        frames += 1
+        if !reasons.isEmpty { broken += 1; why.formUnion(reasons) }
+    }
+}
+
 /// Counts display frames while `standing` holds (the risen leaf of an unfold waiting on its spread), then stops.
 @MainActor
 final class LeafWatch: NSObject {
@@ -3305,5 +3725,16 @@ extension EPUBNavigatorViewController {
             if let error = error as? EPUBNavigatorViewController.EPUBError, case .spreadNotLoaded = error { throw SpreadChanged() }
             return nil
         }
+    }
+}
+
+/// Tests only: the held load's marker, which counts how often a UI test has read it (each read of the screen asks
+/// every element for its value), so a hold can wait on the test's reads rather than on time.
+private final class ReadCountingMarker: UIView {
+    private(set) var reads = 0
+    private var value: String?
+    override var accessibilityValue: String? {
+        get { reads += 1; return value }
+        set { value = newValue }
     }
 }

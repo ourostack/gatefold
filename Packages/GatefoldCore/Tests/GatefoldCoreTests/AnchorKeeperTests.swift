@@ -209,4 +209,50 @@ struct AnchorKeeperTests {
         keeper.restoreDidComplete()
         #expect(keeper.anchor == anchor)
     }
+
+    // gatefold#534: a tap's turn, then the iPad turned on its side before the turn lands.
+    @Test func aTurnUnderWayAsTheReflowBeginsIsTheRestoresPlaceBeforeAndAfterItLands() {
+        var keeper = AnchorKeeper(anchor: anchor)
+        // The turn has let go and not landed: his moves are 2 as the reflow begins.
+        keeper.reflowWillBegin(.rotation, move: 2)
+        let turned = ReadingAnchor(href: "c.xhtml", progression: 0.43, text: "the page he turned to")
+        keeper.turnUnderReflow(turned)
+        #expect(keeper.restoreMayMove(move: 2), "the restore gave way before the turn landed")
+        // Its landing makes his moves 3: the turn the restore puts back, not a move since.
+        keeper.turnUnderReflowLanded()
+        #expect(keeper.restoreMayMove(move: 3), "the restore gave way to the turn it puts back")
+        let readiums = VisibleRange(href: "c.xhtml", start: 0.38, end: 0.42, text: "the page before the turn")
+        #expect(keeper.reflowDidSettle(visible: readiums) == .jump(turned))
+        keeper.restoreDidComplete()
+        #expect(keeper.anchor == turned)
+    }
+
+    @Test func aTurnUnderWayWithNoWordsReadIsAMoveTheRestoreGivesWayTo() {
+        var keeper = AnchorKeeper(anchor: anchor)
+        keeper.reflowWillBegin(.rotation, move: 2)
+        keeper.turnUnderReflowLanded()
+        keeper.turnUnderReflowUnread()
+        #expect(!keeper.restoreMayMove(move: 3))
+        #expect(keeper.anchor == anchor)
+    }
+
+    @Test func aTurnsPageIsNeverTakenOutsideAReflow() {
+        var keeper = AnchorKeeper(anchor: anchor)
+        keeper.turnUnderReflow(ReadingAnchor(href: "c.xhtml", progression: 0.43, text: "elsewhere"))
+        keeper.turnUnderReflowLanded()
+        #expect(keeper.anchor == anchor)
+        #expect(keeper.reflowMove == 0)
+    }
+
+    // gatefold#534: the reflow check is by words only.
+    @Test func theVerdictIsHisWordsNeverProgressions() {
+        let around = (start: 0.38, end: 0.45)
+        #expect(VisibleRange(href: "c.xhtml", start: around.start, end: around.end, text: nil).verdict(for: anchor) == .unread)
+        #expect(VisibleRange(href: "c.xhtml", start: around.start, end: around.end, text: "an entirely different page").verdict(for: anchor) == .lost)
+        let elsewhere = VisibleRange(href: "c.xhtml", start: 0.9, end: 0.9, text: "the top line. " + anchor.text!)
+        #expect(elsewhere.verdict(for: anchor) == .visible)
+        #expect(elsewhere.offset(of: anchor) == 14)
+        #expect(VisibleRange(href: "other.xhtml", start: 0.4, end: 0.4, text: anchor.text).verdict(for: anchor) == .lost)
+        #expect(VisibleRange(href: "c.xhtml", start: 0.4, end: 0.4, text: "x").verdict(for: ReadingAnchor(href: "c.xhtml", progression: 0.4, text: nil)) == .wordless)
+    }
 }

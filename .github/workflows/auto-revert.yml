@@ -1,0 +1,22 @@
+name: Auto-revert red main
+
+# Reverts the pull request that keeps main red, with this repository's own GITHUB_TOKEN. The central cron's PAT cannot write
+# here (403 on the verify branch), so it never confirmed a red. Rule and guards: ourostack/.github tools/red-main/README.md.
+on:
+  schedule:
+    - cron: "4-59/10 * * * *"
+  workflow_run:
+    workflows: [App, Real unfold]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+  checks: read
+
+jobs:
+  auto-revert:
+    uses: ourostack/.github/.github/workflows/auto-revert-reusable.yml@main

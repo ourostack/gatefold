@@ -44,6 +44,55 @@ import Testing
     }
 }
 
+/// The iPad's portrait page (gatefold#536): 900 pt of page in a 1032 pt window, 66 pt of margin each side.
+@Suite struct TapZoneTests {
+    @Test func aTapInTheMarginBesideThePageTurns() {
+        // 3% and 97% of the window, in the page's coordinates.
+        #expect(TapZones.zone(x: 1032 * 0.03 - 66, viewWidth: 900, spread: false) == .back)
+        #expect(TapZones.zone(x: 1032 * 0.97 - 66, viewWidth: 900, spread: false) == .forward)
+    }
+
+    @Test func thePagesOwnEdgeStillTurnsAndItsMiddleWakesTheControls() {
+        #expect(TapZones.zone(x: 37, viewWidth: 900, spread: false) == .back)
+        #expect(TapZones.zone(x: 863, viewWidth: 900, spread: false) == .forward)
+        #expect(TapZones.zone(x: 140, viewWidth: 900, spread: false) == .middle)
+        #expect(TapZones.zone(x: 450, viewWidth: 900, spread: false) == .middle)
+    }
+
+    @Test func theSpreadsEdgesTurnAtThreeAndNinetySevenPercent() {
+        #expect(TapZones.zone(x: 1376 * 0.03, viewWidth: 1376, spread: true) == .back)
+        #expect(TapZones.zone(x: 1376 * 0.97, viewWidth: 1376, spread: true) == .forward)
+    }
+}
+
+@Suite struct PageSwipeTests {
+    /// The spazz run's brush: 20 pt, quick, either way.
+    @Test func aQuickTwentyPointBrushTurnsNothing() {
+        #expect(!PageSwipe.turns(forward: true, travel: -20, velocity: -900, width: 900))
+        #expect(!PageSwipe.turns(forward: false, travel: 20, velocity: 900, width: 900))
+    }
+
+    @Test func aQuickSwipeAFingertipLongTurns() {
+        #expect(PageSwipe.turns(forward: true, travel: -44, velocity: -600, width: 900))
+        #expect(PageSwipe.turns(forward: false, travel: 60, velocity: 600, width: 1376))
+    }
+
+    @Test func aSlowDragTurnsOnlyPastAQuarterOfThePage() {
+        #expect(!PageSwipe.turns(forward: true, travel: -200, velocity: -50, width: 900))
+        #expect(PageSwipe.turns(forward: true, travel: -240, velocity: -50, width: 900))
+    }
+
+    @Test func aSwipeThrownBackTurnsNothing() {
+        #expect(!PageSwipe.turns(forward: true, travel: -400, velocity: 600, width: 900))
+        #expect(!PageSwipe.turns(forward: false, travel: 400, velocity: -600, width: 900))
+    }
+
+    /// Half the window, as the reviewers' swipes: still a turn.
+    @Test func aFullSwipeTurns() {
+        #expect(PageSwipe.turns(forward: true, travel: -516, velocity: -1500, width: 900))
+    }
+}
+
 @Suite struct ScrubberIntentTests {
     @Test func aTapIsNoJump() {
         #expect(!ScrubberIntent.isDeliberate(translation: .zero))

@@ -94,6 +94,8 @@ enum LaunchOptions {
     /// bar is up, and of nothing covered while it is hidden, in place of the screen's own report: what the open Duo
     /// held upright reports, so the reader's answer to it is tested without a hinge (`DuoLayoutUITests`).
     static var fakeStatusColumn: Bool { isUITest && defaults.bool(forKey: "GatefoldStatusColumn") }
+    /// UI tests only: `reader.chromeOverText` counts the lines of text that show under a control with no paper behind them.
+    static var chromeBackingProbe: Bool { isUITest && defaults.bool(forKey: "GatefoldChromeBackingProbe") }
     static var resetState: Bool { defaults.bool(forKey: "GatefoldReset") }
     static var skipWelcome: Bool { defaults.bool(forKey: "GatefoldSkipWelcome") }
     /// Measure a cold open: no book is opened ahead of the tap and WebKit isn't started early. Also the
@@ -106,6 +108,11 @@ enum LaunchOptions {
     /// Tests only: the first reflow after his first move waits 120 s for its page to answer its first script, as
     /// CI's landscape spread did while its chapter loaded (gatefold#94, #133); every restore of it waits.
     static var slowRestorePage: Bool { isUITest && defaults.bool(forKey: "GatefoldSlowRestorePage") }
+    /// Tests only: a new column count reaches Readium only once the reflow's restore has finished, so Readium lays
+    /// the page out again after the restore's verdict every time, as CI's loaded iPad did turned back upright: it
+    /// kept its own place, a page before or after his (merge-queue runs 44355208879, 44371614305 and 44378147938,
+    /// gatefold#482).
+    static var lateColumns: Bool { isUITest && defaults.bool(forKey: "GatefoldLateColumns") }
     /// Tests only, with `slowRestorePage`: the page shown unsettled is noted as Readium names it and never by
     /// its words, as on a device whose page scripts wait on the stalled install too (gatefold#133).
     static var shownPageWithoutWords: Bool { isUITest && defaults.bool(forKey: "GatefoldShownPageWithoutWords") }
@@ -147,13 +154,20 @@ enum LaunchOptions {
     /// position), as on a device that suspends or ends Gatefold a moment after he leaves, before the write it
     /// had under way lands (gatefold#301). Other writes (the launch jump's) land as ever.
     static var holdTurnWrites: Bool { isUITest && defaults.bool(forKey: "GatefoldHoldTurnWrites") }
+    /// UI tests only: a tap's turn holds this many seconds once Readium is on the page beneath, before its leaf
+    /// falls and it lands, so a turn of the iPad straight after the tap always begins under the turn (gatefold#534).
+    static var holdTapTurnLanding: Double? {
+        guard isUITest, defaults.object(forKey: "GatefoldHoldTapTurnLanding") != nil else { return nil }
+        return defaults.double(forKey: "GatefoldHoldTapTurnLanding")
+    }
     /// UI tests only: the leave's ordinary place write never lands (it holds before it maps its position), as
     /// when the jump's chapter still loading holds that write's read of the page until iOS has ended Gatefold
     /// (gatefold#309). Only what leaving writes at once reaches the reopen.
     static var holdLeaveWrites: Bool { isUITest && defaults.bool(forKey: "GatefoldHoldLeaveWrites") }
     /// Debug only: Back's first this many sends are taken at their chapter's start, the chapter still
     /// loading meanwhile, as a web view still loading takes a jump (gatefold#170). Counted in sends, not
-    /// looks, so a Back that stops sending stays short. Armed once per launch, by its first Back.
+    /// looks, so a Back that stops sending stays short. Armed once per launch, by its first Back. The rest
+    /// go once the trip has waited on the load past `JumpLanding.reads`, however that waiting came.
     static var holdBackSends: Int? {
         #if DEBUG
         defaults.object(forKey: "GatefoldHoldBackSends") == nil ? nil : defaults.integer(forKey: "GatefoldHoldBackSends")
@@ -197,8 +211,9 @@ enum LaunchOptions {
         false
         #endif
     }
-    /// Tests only: the first page counts as still loading for this many looks, so the opening cover
-    /// stays up as it does on a slow device or a stuck load (#94), and a test can tap through it (#104).
+    /// Tests only: the first page counts as still loading until the page beneath has reported its words, the
+    /// test has read the screen a few times since, and for this many looks after, so the opening cover stays up
+    /// as it does on a slow device or a stuck load (#94), and a test can tap through it (#104).
     static var holdOpeningLoadLooks: Int? { defaults.object(forKey: "GatefoldHoldOpeningLoad") == nil ? nil : defaults.integer(forKey: "GatefoldHoldOpeningLoad") }
     /// Tests only: seconds an unanswered offer waits before it folds into its tab (10 by default), so
     /// a test on a slow host can tap Catch up without racing the fold.

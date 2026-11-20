@@ -1,0 +1,6 @@
+{
+  "changelog": {
+    "path": "changelog.d/ouro-ui-{versionSlug}.md",
+    "text": "---\ntitle: The Parts Arrive From the Workshop\nkind: polish\ntry: Turn a few pages and open a menu or two; Gatefold now builds with {releases}.\n---\nGatefold's buttons, menus and sheets are made from a shared kit of parts. This build takes the kit's newest release, so anything that looks or feels different from the last build is worth a note.\n"
+  }
+}

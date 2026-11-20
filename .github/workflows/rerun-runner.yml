@@ -2,7 +2,8 @@ name: Rerun shards the runner stopped
 
 # When an App run's first attempt failed only because of its runners (no app code ran, a lost runner, a job stopped
 # from outside), rerun its failed jobs once on fresh runners, rather than waiting for a person (gatefold#135, #404).
-# Any test failure leaves the run as it is. It reads job annotations and logs and calls the rerun API only; it checks
+# Any test failure leaves the run as it is. A merge-queue run is left to requeue.yml: by the time it ends the queue has
+# dropped its entry, so rerunning its jobs only spends macOS runners on a commit nothing will merge. It reads job annotations and logs and calls the rerun API only; it checks
 # out this repository's default branch, never the run's code (scripts/ci-rerun-runner.py).
 on:
   workflow_run:
@@ -21,6 +22,7 @@ jobs:
     if: >-
       (github.event.workflow_run.conclusion == 'failure' || github.event.workflow_run.conclusion == 'cancelled')
       && github.event.workflow_run.run_attempt == 1
+      && github.event.workflow_run.event != 'merge_group'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
