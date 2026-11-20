@@ -4,8 +4,9 @@ import XCTest
 /// Fine-Tune's Justify is his choice of look, never a move. Build 47's random-gesture run on the iPad flipped it and
 /// the page came back starting 661 characters before his words, his place halfway down a page he had already read
 /// (`UNEXPECTED-MOVE`, finetune-justify-switch-close): Justify also set the line height, so the book was cut into new
-/// pages. Flipped on and then off, at four places in the book, the page must still start with the words he was
-/// reading. Pages are compared by a hash of their words, never the words (no book text in a log). Judged in reads.
+/// pages. On the folded Duo every new look also reworked the margins the book had opened with. Flipped on and then
+/// off, at four places in the book, the page must still start with the words he was reading. Pages are compared by a
+/// hash of their words, never the words (no book text in a log). Judged in reads.
 @MainActor
 final class JustifyPlaceUITests: XCTestCase {
     private var app: XCUIApplication!

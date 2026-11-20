@@ -350,10 +350,13 @@ final class ReaderModel {
             injectedPage = page
             return
         }
-        let opening = Self.epubPreferences(prefs, theme: prefs.resolvedTheme(systemIsDark: false), columns: .one, viewWidth: layout.pageFrame.width > 0 ? layout.pageFrame.width : 402, language: Self.hyphenationLanguage(publication),
+        let openingWidth = layout.pageFrame.width > 0 ? layout.pageFrame.width : 402
+        let opening = Self.epubPreferences(prefs, theme: prefs.resolvedTheme(systemIsDark: false), columns: .one, viewWidth: openingWidth, language: Self.hyphenationLanguage(publication),
                                            fixedLayout: publication.metadata.layout == .fixed)
-        marginsLaidFor = Self.marginBand(columns: .one, viewWidth: layout.pageFrame.width > 0 ? layout.pageFrame.width : 402)
+        let openingBand = Self.marginBand(columns: .one, viewWidth: openingWidth)
+        marginsLaidFor = openingBand
         appliedPageMargins = opening.pageMargins
+        marginsBasis = MarginsBasis(choice: prefs.margins, columns: .one, tabletop: false, band: openingBand)
         do {
             hostController = try ReaderHostController(
                 model: self,
@@ -2285,6 +2288,8 @@ final class ReaderModel {
 
     /// The steps the page's margins were last laid out at (`applyPreferences`, or the opening).
     @ObservationIgnored private var marginsLaidFor: MarginBand?
+    /// What the page's margins (`appliedPageMargins`) were last worked out from.
+    @ObservationIgnored private var marginsBasis: MarginsBasis?
     /// The margin multiplier the page was last given. Within a step it can differ from the one the width would
     /// call for, and the counters lay pages out with the page's own (`ReaderHostController.countPages`), so the
     /// counts are keyed on it (`screenLayout`).
@@ -2293,6 +2298,24 @@ final class ReaderModel {
         let widePage: Bool
         let gutter: Double
     }
+    /// What the page's margins are worked out from: his Margins, the columns, tabletop and the width's step.
+    struct MarginsBasis: Equatable {
+        let choice: PageMargins
+        let columns: GatefoldCore.ColumnCount
+        let tabletop: Bool
+        let band: MarginBand
+    }
+
+    /// The margins a new look gives the page: the ones it was laid out with while nothing they are worked out from has
+    /// changed, else `fresh`. Within a step the width alone never moves them (`marginsFollowLayout`), and a look that
+    /// isn't about them mustn't either: on the folded Duo the book opens with margins worked out for the placeholder
+    /// width, and the first change of Justify, a font or the paper worked them out afresh, cut the book into new pages
+    /// and left his words dozens of words down the page; a change of paper has no restore to bring them back.
+    static func pageMargins(fresh: Double?, applied: Double?, laidFor: MarginsBasis?, now: MarginsBasis) -> Double? {
+        guard let applied, laidFor == now else { return fresh }
+        return applied
+    }
+
     /// The steps `epubPreferences`' margins take at this width: a wide page's share or a narrow one's, and
     /// Readium's gutter.
     static func marginBand(columns: GatefoldCore.ColumnCount, viewWidth: CGFloat) -> MarginBand {
@@ -4008,12 +4031,16 @@ final class ReaderModel {
 
     func applyPreferences(reflow: Bool) {
         let prefs = preferences
-        let epub = Self.epubPreferences(prefs, theme: theme, columns: layout.columns, viewWidth: layout.pageFrame.width, tabletop: layout.posture == .tabletop,
+        var epub = Self.epubPreferences(prefs, theme: theme, columns: layout.columns, viewWidth: layout.pageFrame.width, tabletop: layout.posture == .tabletop,
                                         language: Self.hyphenationLanguage(publication), fixedLayout: publication.metadata.layout == .fixed)
+        let band = Self.marginBand(columns: layout.columns, viewWidth: layout.pageFrame.width)
+        let basis = MarginsBasis(choice: prefs.margins, columns: layout.columns, tabletop: layout.posture == .tabletop, band: band)
+        epub.pageMargins = Self.pageMargins(fresh: epub.pageMargins, applied: appliedPageMargins, laidFor: marginsBasis, now: basis)
         if let host {
             host.apply(epub, columns: layout.columns == .two ? 2 : 1, reflow: reflow)
-            marginsLaidFor = Self.marginBand(columns: layout.columns, viewWidth: layout.pageFrame.width)
+            marginsLaidFor = band
             appliedPageMargins = epub.pageMargins
+            marginsBasis = basis
         }
         host?.disablePanningIfNeeded()
     }
