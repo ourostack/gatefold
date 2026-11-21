@@ -137,7 +137,14 @@ final class ReviewerChecksUITests: XCTestCase {
     private func pageNumbersSwitch() -> XCUIElement {
         let t = app.switches["appearance.pageNumbers"].firstMatch
         XCTAssertTrue(appears(t, reads: 50), "the Page Numbers switch")
-        for _ in 0..<4 where !t.isHittable { el("appearance.panel").swipeUp() }
+        // `isHittable` records a failure when the switch has no activation point yet (main, 2026-11-20), so the switch
+        // is judged by its frame inside the panel's, and given a moment to settle after each swipe.
+        let panel = el("appearance.panel")
+        func inView() -> Bool { !t.frame.isEmpty && panel.frame.contains(CGPoint(x: t.frame.midX, y: t.frame.midY)) }
+        for _ in 0..<4 where !inView() {
+            panel.swipeUp()
+            RunLoop.current.run(until: Date().addingTimeInterval(0.5))
+        }
         return t
     }
 
