@@ -25,7 +25,7 @@ packages:
   # Ouro UI for Apple: the shelf's empty states, the sync banner, Fine-Tune's rows and their buttons are its OuroHX.
   OuroUIApple:
     url: https://github.com/ourostack/ouro-ui-apple
-    minorVersion: 1.6.0
+    minorVersion: 1.7.0
   GatefoldCore:
     path: Packages/GatefoldCore
   GatefoldCloud:
