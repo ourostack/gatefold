@@ -342,6 +342,7 @@ final class RotationMidTransitionUITests: XCTestCase {
         _ = readsUntil(reads: 300) { settledSince(beforeBack) }
         let back = settle(30)
         func at(_ text: String) -> Int { text.range(of: nextWords).map { text.distance(from: text.startIndex, to: $0.lowerBound) } ?? -1 }
+        _ = readsUntil(reads: 100) { String(saved.prefix(24)) == nextWords }
         let check = el("reader.anchorCheck").label
         print("TAPTURN pageHead=\(hash(head(page))) nextHead=\(hash(head(next))) nextWords=\(hash(nextWords)) spreadAt=\(at(spread)) backHead=\(hash(head(back))) backAt=\(at(back)) saved=\(hash(String(saved.prefix(24)))) check=[\(check)]")
         XCTAssertGreaterThanOrEqual(at(spread), 0, "on its side, the spread holds the first words of the page he turned to")
@@ -387,7 +388,10 @@ final class RotationMidTransitionUITests: XCTestCase {
         _ = readsUntil(reads: 100) { el("reader.posture").label == "single" }
         _ = readsUntil(reads: 300) { settledSince(beforeTurn) }
         let upright = settle(30), uprightFile = shownFile
-        let savedFile = String(((el("reader.savedPlace").value as? String) ?? "").split(separator: "@").first ?? "")
+        // The place is saved a moment after the page settles, so read it until it is the chapter he turned to.
+        var savedFile = ""
+        func readSavedFile() { savedFile = String(((el("reader.savedPlace").value as? String) ?? "").split(separator: "@").first ?? "") }
+        _ = readsUntil(reads: 100) { readSavedFile(); return savedFile == nextFile }
         let beforeBack = reflow.number
         XCUIDevice.shared.orientation = .landscapeLeft
         _ = readsUntil(reads: 100) { el("reader.posture").label == "spread" }
