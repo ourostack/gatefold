@@ -43,10 +43,10 @@ struct ReaderScreen: View {
     @State private var slipHeight: CGFloat = 0
     /// Where the line the bottom paper would reach begins (global points), when there is one.
     @State private var footerLine: CGFloat?
-    /// Where each floating control stands (global points), as `ReaderChrome` reports them.
-    @State private var chromePieces: [String: CGRect] = [:]
-    /// UI tests only: how many lines of text show under a control with no paper behind them, once measured.
-    @State private var chromeOverText = ""
+    /// UI tests only (`reader.lineFrames`): every line of text on screen, in window points, and its measuring pass.
+    @State private var lineFrames = ""
+    /// The screen's safe area, read beside the reader, which ignores it (see `.ignoresSafeArea()` below).
+    @State private var screenSafeArea = EdgeInsets()
 
     var body: some View {
         GeometryReader { proxy in
@@ -80,17 +80,9 @@ struct ReaderScreen: View {
             let push: CGFloat = aheadOpen
                 ? max(0, slipTop + slipHeight + 14 - (layout.pageFrame.minY + pageTopClearance(layout, clearance: clearance)))
                 : 0
-            // The page steps back while the controls or a slip are up, so nothing sits on its text.
-            let lifted = (model.chromeVisible && layout.deck == nil) || (model.slip != nil && !model.slipFolded && push == 0)
-            // A tall iPad page shrinks little at its top: with the controls up it lifts about a lower
-            // anchor so its first line clears the title capsule. The Duo's placement already clears its
-            // bars (and its status column), so it keeps the plain lift.
-            let chromeLift = UIDevice.current.userInterfaceIdiom == .pad && model.chromeVisible && layout.deck == nil && push == 0
-                ? PageSafeArea.chromeLift(textTop: layout.pageFrame.minY + pageTopClearance(layout, clearance: clearance),
-                                          height: proxy.size.height, barBottom: barTop + ReaderChrome.topBarHeight)
-                : PageSafeArea.Lift(scale: 0.96, anchorY: 0.5)
-            // Reduce Motion drops the plain lift, but not one that keeps a line out from under the capsule.
-            let liftNeeded = chromeLift.anchorY != 0.5
+            // The page steps back while a slip is up, so nothing sits on its text. Never for the controls: they stand
+            // in the bands beside it, over a page that holds still (gatefold build 53).
+            let lifted = model.slip != nil && !model.slipFolded && push == 0
             // The opening cover is up or fading (no reopen picture over it): the controls sit above it.
             let controlsOverCover = !model.coverLifted && model.reopenPicture == nil
             // The Cloud's offer sits above the opening cover with the controls, so his tap on it is never
@@ -102,8 +94,7 @@ struct ReaderScreen: View {
 
                 page(layout, clearance: clearance)
                     .frame(width: proxy.size.width, height: proxy.size.height, alignment: .topLeading)
-                    .scaleEffect(lifted && (!reduceMotion || liftNeeded) ? chromeLift.scale : 1,
-                                 anchor: UnitPoint(x: 0.5, y: chromeLift.anchorY))
+                    .scaleEffect(lifted && !reduceMotion ? 0.96 : 1)
                     .animation(reduceMotion ? .easeOut(duration: 0.2) : .spring(duration: 0.25), value: lifted)
                     .offset(y: push)
                     .mask {
@@ -120,11 +111,10 @@ struct ReaderScreen: View {
                     .animation(reduceMotion ? .easeOut(duration: 0.2) : .spring(duration: 0.4, bounce: 0.1), value: push)
 
                 scrims(proxy: proxy, layout: layout, safeTop: safeTop, barTop: barTop)
-                    .task(id: "\(footerNeed(proxy: proxy, layout: layout))-\(columnKey(layout))-\(model.totalProgression)-\(model.location?.href.string ?? "")-\(model.location?.locations.progression ?? -1)-\(proxy.size.width)x\(proxy.size.height)-\(model.pageReady)") {
+                    .task(id: "\(footerNeed(proxy: proxy, layout: layout))-\(model.totalProgression)-\(model.location?.href.string ?? "")-\(model.location?.locations.progression ?? -1)-\(proxy.size.width)x\(proxy.size.height)-\(model.pageReady)") {
                         // Let a turn or a reflow settle before reading where the lines are; then again
                         // as a jump's veil lifts and its page settles on the words (the lines move, or
                         // were hidden at the first look), so the paper never ends across a line.
-                        if LaunchOptions.chromeBackingProbe { chromeOverText = "" }
                         for (pass, wait) in [120, 600, 1400].enumerated() {
                             try? await Task.sleep(for: .milliseconds(wait))
                             guard !Task.isCancelled else { return }
@@ -147,7 +137,8 @@ struct ReaderScreen: View {
                     model: model,
                     layout: layout,
                     insets: proxy.safeAreaInsets,
-                    clearance: clearance,
+                    screenSafeArea: screenSafeArea,
+                    occlusions: occlusions(in: proxy),
                     onClose: onClose,
                     showAppearance: $showAppearance,
                     showContents: $showContents,
@@ -157,14 +148,6 @@ struct ReaderScreen: View {
                 // Above the opening cover while the first page loads: a tap on the cover brings them up,
                 // and Close works however long the load takes (#104; a stuck load took every tap for a minute).
                 // They stay above it through its fade, so controls already up don't blink under it.
-                .onPreferenceChange(ChromePieces.self) { pieces in
-                    MainActor.assumeIsolated {
-                        // The paper needs only the column, to the point; the UI tests' probe reads every piece.
-                        let kept = (LaunchOptions.chromeBackingProbe ? pieces : pieces.filter { $0.key == ReaderChrome.column })
-                            .mapValues { $0.integral }
-                        if kept != chromePieces { chromePieces = kept }
-                    }
-                }
                 .zIndex(controlsOverCover ? 3.5 : 0)
 
                 if showAppearance {
@@ -244,6 +227,18 @@ struct ReaderScreen: View {
                 }
 
                 probes(layout)
+                    .task(id: "\(model.chromeVisible)-\(model.location?.locations.progression ?? -1)-\(model.pageReady)-\(proxy.size.width)x\(proxy.size.height)") {
+                        guard LaunchOptions.lineFramesProbe else { return }
+                        lineFrames = ""
+                        for (pass, wait) in [300, 900, 1500].enumerated() {
+                            try? await Task.sleep(for: .milliseconds(wait))
+                            guard !Task.isCancelled, let host = model.host else { return }
+                            let lines = await host.textLines(in: proxy.frame(in: .global))
+                            lineFrames = "pass \(pass + 1): " + lines.map {
+                                "\(Int($0.minX.rounded())),\(Int($0.minY.rounded())),\(Int($0.width.rounded())),\(Int($0.height.rounded()))"
+                            }.joined(separator: ";")
+                        }
+                    }
             }
             .sensoryFeedback(.success, trigger: model.slipCount) { _, _ in model.slipKind == .landed }
             // Once a status column has sat under the controls at this size, the status bar stays hidden with
@@ -271,6 +266,12 @@ struct ReaderScreen: View {
             }
         }
         .ignoresSafeArea()
+        // Behind the reader and not ignoring the safe area, so it reads the screen's own (the controls stand in it).
+        .background {
+            GeometryReader { screen in
+                Color.clear.onChange(of: screen.safeAreaInsets, initial: true) { _, insets in screenSafeArea = insets }
+            }
+        }
         .observingHinge($hinge)
         .onChange(of: hinge) { old, new in
             // The hinge has started to move: hold a picture of the page before a Duo moves the app
@@ -367,15 +368,18 @@ struct ReaderScreen: View {
         max(proxy.safeAreaInsets.bottom, 12) + 8 + (model.chromeVisible ? ReaderChrome.bottomBarHeight : 0)
     }
 
-    /// The theme's own paper under the bars, fading to clear over 24 pt, so glass never sits on text.
+    /// The theme's own paper under a slip, so it never sits on text: at the top under an "ahead" offer shown with the
+    /// controls up, fading to clear over 24 pt, and at the foot under the Back pill alone or a "landed" slip. Never for
+    /// the controls themselves: they stand in the bands beside the page, and the page shows whole under them
+    /// (gatefold build 53, where this paper hid half the page).
     @ViewBuilder
     private func scrims(proxy: GeometryProxy, layout: ReaderLayout, safeTop: CGFloat, barTop: CGFloat) -> some View {
         let fade: CGFloat = 24
         let paper = model.theme.background
         // Without the controls the page moves out of the ahead slip's way (see `push`), so it needs no paper.
         let aheadSlip = model.slip != nil && model.slipKind == .ahead && !model.slipFolded && model.chromeVisible
-        let top = (model.chromeVisible ? barTop + ReaderChrome.topBarHeight : safeTop) + (aheadSlip ? 8 + slipHeight + 16 : 0)
-        if model.chromeVisible || aheadSlip {
+        if aheadSlip {
+            let top = barTop + ReaderChrome.topBarHeight + 8 + slipHeight + 16
             LinearGradient(stops: [.init(color: paper, location: 0), .init(color: paper, location: top / (top + fade)), .init(color: paper.opacity(0), location: 1)],
                            startPoint: .top, endPoint: .bottom)
                 .frame(width: proxy.size.width, height: top + fade)
@@ -386,7 +390,7 @@ struct ReaderScreen: View {
         let bottom = footerNeed(proxy: proxy, layout: layout)
         if bottom > 0 {
             // The paper ends in the gap above the first line it would reach, so no line is ever half
-            // covered or half faded beside the Back pill or under the bar. Until that line is measured
+            // covered or half faded beside the Back pill. Until that line is measured
             // (a moment, while the footer fades in) it ends where it must.
             let need = proxy.size.height - bottom
             let top = footerLine.map { min(need, $0 - proxy.frame(in: .global).minY) } ?? need
@@ -403,9 +407,8 @@ struct ReaderScreen: View {
     private func footerNeed(proxy: GeometryProxy, layout: ReaderLayout) -> CGFloat {
         let landedSlip = model.slip != nil && model.slipKind == .landed
         let backAlone = model.showJumpBack && !model.chromeVisible && layout.deck == nil && model.backLocator != nil
-        guard (model.chromeVisible && layout.deck == nil) || landedSlip || backAlone else { return 0 }
+        guard landedSlip || backAlone else { return 0 }
         return max(
-            model.chromeVisible && layout.deck == nil ? max(proxy.safeAreaInsets.bottom, 12) + ReaderChrome.bottomBarHeight + (model.backLocator != nil ? 52 : 0) : 0,
             // After a Jump the Back pill gets its own paper footer: it never sits on a line.
             backAlone ? max(proxy.safeAreaInsets.bottom, 12) + 52 : 0,
             landedSlip ? slipBottomBand(proxy) + slipHeight + 16 : 0
@@ -415,54 +418,12 @@ struct ReaderScreen: View {
     /// Measures the line the bottom paper would reach, whenever the paper or the page changes.
     private func measureFooterLine(proxy: GeometryProxy, layout: ReaderLayout, pass: Int = 0) async {
         let bottom = footerNeed(proxy: proxy, layout: layout)
-        guard bottom > 0 else { footerLine = nil; chromeOverText = ""; return }
+        guard bottom > 0 else { footerLine = nil; return }
         let global = proxy.frame(in: .global)
         let need = global.minY + proxy.size.height - bottom
-        var line = await model.host?.lineTop(crossing: (need - 1)...(need + 1))
-        // The trailing column (Contents, Share, Your Page, Search) stands far taller than the bottom bar. Where
-        // the page runs under it (the folded Duo's cover screen, whose page has no margin beside it), the paper
-        // reaches above the first line it would stand on, as it does for the bar (gatefold#538). On a page inset
-        // to a book's measure (the iPad) the column stands in the margin and no line reaches it.
-        if let column = chromeColumn(layout), column.minY < need {
-            if let above = await model.host?.lineTop(crossing: column.minY...need, across: column.minX...column.maxX) {
-                line = min(line ?? above, above)
-            }
-        }
+        let line = await model.host?.lineTop(crossing: (need - 1)...(need + 1))
         readerLog.notice("footer paper: needs \(need, privacy: .public), line measured at \(line.map { "\($0)" } ?? "none", privacy: .public)")
         withAnimation(.easeOut(duration: 0.15)) { footerLine = line }
-        if LaunchOptions.chromeBackingProbe {
-            await measureChromeOverText(proxy: proxy, layout: layout, paperTop: min(need, line ?? need), pass: pass)
-        }
-    }
-
-    /// The trailing column's frame (global points) while the controls are up, if it is on screen.
-    private func chromeColumn(_ layout: ReaderLayout) -> CGRect? {
-        guard model.chromeVisible, layout.deck == nil, let column = chromePieces[ReaderChrome.column], !column.isEmpty else { return nil }
-        return column
-    }
-
-    /// The column's frame to the point, so the paper is measured again once it settles.
-    private func columnKey(_ layout: ReaderLayout) -> String {
-        chromeColumn(layout).map { "\(Int($0.minX)),\(Int($0.minY)),\(Int($0.width)),\(Int($0.height))" } ?? "none"
-    }
-
-    /// UI tests only (`reader.chromeOverText`): for each control, the lines of text under it, and those of them
-    /// that show with nothing behind them, neither the top paper (solid down to the top bar's foot) nor the bottom
-    /// paper (from `paperTop` down), as `name under/bare`, with the measuring pass. `paperTop` is the paper as
-    /// measured here, the value `scrims` draws from, not read back from the screen.
-    private func measureChromeOverText(proxy: GeometryProxy, layout: ReaderLayout, paperTop: CGFloat, pass: Int) async {
-        guard model.chromeVisible, layout.deck == nil, let host = model.host else { chromeOverText = ""; return }
-        let global = proxy.frame(in: .global)
-        let clearance = ChromeClearance.resolve(container: proxy.size, occlusions: occlusions(in: proxy))
-        let topPaper = global.minY + max(ReaderChrome.safeTop(proxy.safeAreaInsets), clearance.top) + ReaderChrome.topBarHeight
-        var pieces: [String] = []
-        for (name, frame) in chromePieces.sorted(by: { $0.key < $1.key }) where !frame.isEmpty {
-            let lines = await host.textLines(in: frame)
-            let shown = lines.filter { $0.maxY > topPaper + 0.5 && $0.minY < paperTop - 0.5 }
-            pieces.append("\(name) \(lines.count)/\(shown.count)")
-        }
-        chromeOverText = "pass \(pass): " + pieces.joined(separator: ", ")
-        readerLog.notice("chrome backing: \(self.chromeOverText, privacy: .public)")
     }
 
     @ViewBuilder
@@ -505,11 +466,11 @@ struct ReaderScreen: View {
                 .accessibilityIdentifier("reader.columns")
                 .accessibilityValue(model.columnsProbe)
                 .allowsHitTesting(false)
-            Text("chrome over text")
+            Text("line frames")
                 .font(.system(size: 1))
                 .opacity(0.01)
-                .accessibilityIdentifier("reader.chromeOverText")
-                .accessibilityValue(chromeOverText)
+                .accessibilityIdentifier("reader.lineFrames")
+                .accessibilityValue(lineFrames)
                 .allowsHitTesting(false)
             Text("turn wait")
                 .font(.system(size: 1))

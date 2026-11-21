@@ -1,71 +1,55 @@
 import GatefoldCore
+import OuroHX
 import SwiftUI
 
-/// Floating glass controls, each its own piece of glass at the page's corners and edge, with no bar
-/// across the top or bottom: Bookmark top-leading, Close top-trailing, and down the trailing edge one
-/// vertical pill (Contents, Share, Your Page) with Search beneath it. Hidden until the middle
-/// of the page is tapped; every target is 44 pt.
+/// The reader's controls, the way Apple Books lays them (iOS 27.2): Close at the top leading corner and Bookmark at the
+/// trailing one, and along the foot the scrubber, then Contents, Share and Your Page in one capsule, and Search. They
+/// stand in the bands the hardware already takes, beside the camera at the top and over the home indicator at the foot
+/// (Ouro HX's `.ouroImmersiveControls`), over a page that never moves for them (gatefold build 53: the page stepped
+/// back, paper hid half its words). Hidden until the middle of the page is tapped; every target is 44 pt.
 struct ReaderChrome: View {
     let model: ReaderModel
     let layout: ReaderLayout
     let insets: EdgeInsets
-    /// Room left for the camera and status column on the folded Duo's cover screen.
-    var clearance = ChromeClearance()
+    /// The screen's own safe area: the reader ignores it, so nothing inside it can read it.
+    var screenSafeArea = EdgeInsets()
+    /// What the system covers (the folded Duo's camera and status column), in the reader's points.
+    var occlusions: [CGRect] = []
     var onClose: () -> Void
     @Binding var showAppearance: Bool
     @Binding var showContents: Bool
     @Binding var showSearch: Bool
 
     var body: some View {
-        // Inside the safe area on both sides, and clear of the camera's column where there is one.
-        let lead = 16 + max(insets.leading, clearance.leading)
-        let trail = 16 + max(insets.trailing, clearance.trailing)
         let up = model.chromeVisible && layout.deck == nil
-        ZStack {
-            // A breath of ink over the page while the controls are up, so they read as a layer above it.
-            // None while Your Page is open: every change shows on the page as it is.
-            if up && !showAppearance {
-                model.theme.text.opacity(0.06)
-                    .allowsHitTesting(false)
-                    .accessibilityHidden(true)
-                    .transition(.opacity)
+        ZStack(alignment: .bottom) {
+            // No dim and no paper under the controls: the page shows as it is, every line where it was (build 53).
+            // After a Jump the way back stays up for a while without the controls, low on the page.
+            if !model.chromeVisible, model.showJumpBack, model.backLocator != nil, layout.deck == nil {
+                backButton
+                    .padding(.bottom, max(insets.bottom, 12) + 8)
+                    .transition(.scale.combined(with: .opacity))
             }
-            VStack(spacing: 0) {
-                if model.chromeVisible {
+            Color.clear
+                .allowsHitTesting(false)
+                .ouroImmersiveControls(isPresented: model.chromeVisible, safeArea: screenSafeArea, occlusions: occlusions) {
                     HStack(spacing: 12) {
-                        bookmarkButton
-                            .chromePiece("bookmark")
-                        Spacer(minLength: 0)
                         GlassIconButton(systemName: "xmark", label: "Close Book", id: "reader.close", action: onClose)
-                            .chromePiece("close")
+                        Spacer(minLength: 0)
+                        bookmarkButton
                     }
-                    .padding(.leading, lead)
-                    .padding(.trailing, trail)
-                    .padding(.top, 8)
-                    .transition(.move(edge: .top).combined(with: .opacity))
+                } bottom: {
+                    if layout.deck == nil { bottomBar }
                 }
-                Spacer(minLength: 0)
-                if layout.deck == nil {
-                    bottomRow(trail: trail)
-                        .padding(.leading, lead)
-                        .padding(.trailing, trail)
-                        .padding(.bottom, 8)
-                }
-            }
-            .safeAreaPadding(.vertical, 4)
-            .padding(.top, max(Self.safeTop(insets), clearance.top))
-            .padding(.bottom, max(insets.bottom, 12))
         }
         .animation(Motion.chrome, value: up)
         .animation(Motion.chrome, value: showAppearance)
+        .animation(Motion.chrome, value: model.showJumpBack)
         .tint(model.theme.text)
         .environment(\.glassTint, model.theme.background.opacity(0.7))
     }
 
     static func safeTop(_ insets: EdgeInsets) -> CGFloat { max(insets.top, 12) }
-
-    /// The trailing column's name among the pieces (`ChromePieces`): Contents, Share, Your Page and Search.
-    static let column = "column"
 
     /// The status bar's room in portrait, remembered from any screen that shows it. With the status bar
     /// hidden an iPhone's Dynamic Island leaves the safe area, and it isn't among the occlusion regions
@@ -82,9 +66,23 @@ struct ReaderChrome: View {
             size.height > size.width ? max(safeTop, remembered) : safeTop
         }
     }
-    /// The bars' heights, for the paper fade beneath them.
+    /// The bars' heights, for the slips that stand clear of them.
     static let topBarHeight: CGFloat = 4 + 8 + 44 + 8
     static let bottomBarHeight: CGFloat = 4 + 8 + 48 + 8
+
+    private var backButton: some View {
+        Button {
+            Task { await model.goBack() }
+        } label: {
+            Label(model.backLabel, systemImage: "arrow.uturn.backward")
+                .font(.subheadline.weight(.medium))
+                .padding(.horizontal, 14)
+                .frame(minHeight: 36)
+        }
+        .frame(minHeight: 44)
+        .buttonStyle(.glass(.regular.tint(model.theme.background.opacity(0.7))))
+        .accessibilityIdentifier("reader.back")
+    }
 
     private var bookmarkButton: some View {
         GlassIconButton(
@@ -99,81 +97,60 @@ struct ReaderChrome: View {
         .accessibilityValue(model.isBookmarked ? "Bookmarked" : "")
     }
 
-    private func bottomRow(trail: CGFloat) -> some View {
-        HStack(alignment: .bottom, spacing: 12) {
-            VStack(spacing: 8) {
-                // After a Jump the way back stays up for a while, with or without the controls.
-                if model.backLocator != nil, model.chromeVisible || model.showJumpBack {
-                    Button {
-                        Task { await model.goBack() }
-                    } label: {
-                        Label(model.backLabel, systemImage: "arrow.uturn.backward")
-                            .font(.subheadline.weight(.medium))
-                            .padding(.horizontal, 14)
-                            .frame(minHeight: 36)
-                    }
-                    .frame(minHeight: 44)
-                    .buttonStyle(.glass(.regular.tint(model.theme.background.opacity(0.7))))
-                    .accessibilityIdentifier("reader.back")
-                    .chromePiece("back")
-                    // One pill for every way back (no identity per place): Back leaves a way back of
-                    // its own, and a new identity tore the tapped pill out from under his finger.
+    /// The foot's bar: Back after a Jump, where Apple Books keeps it (lower leading), the scrubber, then the
+    /// capsule of Contents, Share and Your Page, and Search.
+    private var bottomBar: some View {
+        HStack(alignment: .center, spacing: 10) {
+            // One pill for every way back (no identity per place): Back leaves a way back of its own, and a new
+            // identity tore the tapped pill out from under his finger.
+            if model.backLocator != nil {
+                backButton
                     .transition(.scale.combined(with: .opacity))
-                }
-                if model.chromeVisible && !showAppearance {
-                    // Where you are in the book, and a scrubber to go anywhere: a slim floating capsule.
-                    VStack(spacing: 2) {
-                        Scrubber(model: model)
-                        // Position and pages left are page furniture, his to show (both off by
-                        // default); the scrubber still tells VoiceOver where he is.
-                        if model.preferences.showsPositionLabel || model.preferences.showsPagesLeft {
-                            HStack {
-                                if model.preferences.showsPositionLabel { Text(model.pageLabel) }
-                                Spacer()
-                                if model.preferences.showsPagesLeft, let left = model.pagesLeftLabel { Text(left) }
-                            }
-                            // Caption size, at 4.5:1 or better on the tinted glass in every theme.
-                            .font(.caption.monospacedDigit())
-                            .foregroundStyle(model.theme.text.opacity(0.8))
-                            .accessibilityIdentifier("reader.positionLine")
-                        }
-                    }
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 6)
-                    .frame(maxWidth: 420)
-                    .readerGlass(model.theme.background.opacity(0.7), in: .capsule)
-                    .chromePiece("scrubber")
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
-                }
             }
-            .frame(maxWidth: .infinity)
-            if model.chromeVisible {
-                GlassEffectContainer(spacing: 10) {
-                    VStack(spacing: 10) {
-                        VStack(spacing: 0) {
-                            PillButton(systemName: "list.bullet", label: "Contents and Bookmarks", id: "reader.contents") { showContents = true }
-                            ShareLink(item: shareLine) {
-                                Image(systemName: "square.and.arrow.up")
-                                    .font(.system(size: 17, weight: .semibold))
-                                    .frame(width: 44, height: 44)
-                                    .contentShape(.rect)
-                            }
-                            .buttonStyle(.plain)
-                            .accessibilityLabel("Share")
-                            .accessibilityIdentifier("reader.share")
-                            PillButton(systemName: "textformat.size", label: "Your Page", id: "reader.appearance") { showAppearance = true }
+            if !showAppearance {
+                // Where you are in the book, and a scrubber to go anywhere: a slim capsule.
+                VStack(spacing: 2) {
+                    Scrubber(model: model)
+                    // Position and pages left are page furniture, his to show (both off by
+                    // default); the scrubber still tells VoiceOver where he is.
+                    if model.preferences.showsPositionLabel || model.preferences.showsPagesLeft {
+                        HStack {
+                            if model.preferences.showsPositionLabel { Text(model.pageLabel) }
+                            Spacer()
+                            if model.preferences.showsPagesLeft, let left = model.pagesLeftLabel { Text(left) }
                         }
-                        .padding(.vertical, 4)
-                        .readerGlass(model.theme.background.opacity(0.7), interactive: true, in: .capsule)
-                        GlassIconButton(systemName: "magnifyingglass", label: "Search in Book", id: "reader.search") { showSearch = true }
+                        // Caption size, at 4.5:1 or better on the tinted glass in every theme.
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(model.theme.text.opacity(0.8))
+                        .accessibilityIdentifier("reader.positionLine")
                     }
                 }
-                .foregroundStyle(model.theme.text)
-                // The bottom paper reaches above this column wherever it stands on a line (gatefold#538).
-                .chromePiece(Self.column)
-                .transition(.move(edge: .trailing).combined(with: .opacity))
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+                .frame(maxWidth: 420, minHeight: 44)
+                .readerGlass(model.theme.background.opacity(0.7), in: Capsule(style: .continuous))
+                .transition(.opacity)
+            } else {
+                Spacer(minLength: 0)
             }
+            HStack(spacing: 0) {
+                PillButton(systemName: "list.bullet", label: "Contents and Bookmarks", id: "reader.contents") { showContents = true }
+                ShareLink(item: shareLine) {
+                    Image(systemName: "square.and.arrow.up")
+                        .font(.system(size: 17, weight: .semibold))
+                        .frame(width: 44, height: 44)
+                        .contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Share")
+                .accessibilityIdentifier("reader.share")
+                PillButton(systemName: "textformat.size", label: "Your Page", id: "reader.appearance") { showAppearance = true }
+            }
+            .padding(.horizontal, 4)
+            .readerGlass(model.theme.background.opacity(0.7), interactive: true, in: Capsule(style: .continuous))
+            GlassIconButton(systemName: "magnifyingglass", label: "Search in Book", id: "reader.search") { showSearch = true }
         }
+        .foregroundStyle(model.theme.text)
     }
 
     /// What Share hands on: the book, its chapter, and how far along.
@@ -229,7 +206,7 @@ struct GlassIconButton: View {
                 .frame(width: 44, height: 44)
         }
         .buttonStyle(.plain)
-        .readerGlass(glassTint, interactive: true, in: .circle)
+        .readerGlass(glassTint, interactive: true, in: Capsule(style: .continuous))
         .accessibilityLabel(label)
         .accessibilityIdentifier(id)
     }
@@ -249,10 +226,10 @@ struct Scrubber: View {
             let width = geo.size.width
             let value = dragging ?? pending ?? model.totalProgression
             ZStack(alignment: .leading) {
-                Capsule().fill(.secondary.opacity(0.25)).frame(height: 3)
-                Capsule().fill(model.theme.accent).frame(width: max(3, width * value), height: 3)
+                Capsule(style: .continuous).fill(.secondary.opacity(0.25)).frame(height: 3)
+                Capsule(style: .continuous).fill(model.theme.accent).frame(width: max(3, width * value), height: 3)
                 ForEach(Array(model.chapterMap.ticks.enumerated()), id: \.offset) { _, tick in
-                    Capsule().fill(.secondary.opacity(0.5)).frame(width: 1.5, height: 7)
+                    Capsule(style: .continuous).fill(.secondary.opacity(0.5)).frame(width: 1.5, height: 7)
                         .offset(x: width * tick - 0.75)
                 }
                 Circle()
@@ -316,7 +293,7 @@ struct Scrubber: View {
         .frame(maxWidth: 180)
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
-        .glassEffect(.regular, in: .rect(cornerRadius: 14))
+        .glassEffect(.regular, in: .rect(cornerRadius: 14, style: .continuous))
     }
 }
 
@@ -373,27 +350,8 @@ struct TabletopDeck: View {
                 .frame(width: 56, height: 56)
         }
         .buttonStyle(.plain)
-        .glassEffect(.regular.interactive(), in: .circle)
+        .glassEffect(.regular.interactive(), in: Capsule(style: .continuous))
         .accessibilityLabel(label)
         .accessibilityIdentifier(id)
-    }
-}
-
-/// Where each floating control stands (global points), by name: the paper beneath the controls reads it, so no
-/// control stands on a line with nothing behind it (gatefold#538).
-struct ChromePieces: PreferenceKey {
-    static let defaultValue: [String: CGRect] = [:]
-    static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) {
-        value.merge(nextValue()) { $1 }
-    }
-}
-
-extension View {
-    func chromePiece(_ name: String) -> some View {
-        background {
-            GeometryReader { geo in
-                Color.clear.preference(key: ChromePieces.self, value: [name: geo.frame(in: .global)])
-            }
-        }
     }
 }
