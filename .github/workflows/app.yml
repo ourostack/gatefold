@@ -372,6 +372,60 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Slowest shards first: the jobs of a matrix start in this order, and a late start of a long shard sets how long main's verdict takes.
+          - shard: ipad-rotate-restore
+            # Main only: #133's leave-while-the-restore-waits tests, out of ipad-rotate-stalled, which they
+            # overran (stopped 19 min 58 s in on #256 and 21 min 58 s in on #195). Without sleeps (#266): 463 + 327,
+            # the slowest of 3 passes each in probe 43110085155 (they were 586 + 504), and 317 s, with sleeps,
+            # for the leave noted at his kept place in probe 43107820601
+            tests: >-
+              RotationRepro/testRotateThenLeaveWhileTheRestoreWaitsOnItsPage
+              RotationRepro/testRotateThenLeaveWhileTheRestoreWaitsOnItsPageWithoutItsWords
+              RotationRepro/testRotateThenLeaveWhileTheRestoreWaitsOnHisKeptPlaceWithoutItsWords
+            pr_tests: none
+            cold: true
+            timeout: 97 # 30 + 2 x 24.9 + 5 + 12
+            lane: 7
+          - shard: ipad-rotate-midturn
+            # Rotation: 182 + 160, then on main the rotate-then-leave repro, 545, after the mid-turn tests as #167 runs
+            # it. On today's main the repro passes with #176's fix taken out in every order tried (#193), so never give
+            # it a shard of its own until #193 is fixed. On a pull request only the mid-turn tests run, unless it
+            # touches the reader's place code.
+            tests: >-
+              RotationMidTransitionUITests RotationRepro/testRotateThenLeaveWithoutTurning
+            skip: >-
+              RotationMidTransitionUITests/testTurningDuringAContentsJump
+            pr_tests: >-
+              NavigationPlaceUITests/testAContentsJumpKeepsThePlace
+              RotationMidTransitionUITests/testTurningDuringAPageTurn
+            # On a pull request: Place kept through a jump and a rotation (#130), on place changes (359 s).
+            pr_when: place-jumps
+            cold: true
+            timeout: 112 # 30 + 2 x 32.1 + 5 + 12
+            lane: 6
+          - shard: ipad-rotate-chapter-start
+            # Main only, like ipad-rotate-stalled (gatefold#250), and the two leaves whose span is read late
+            # (gatefold#346; the ordinary-reopen one is here for the budget, ipad-rotate-restore is full)
+            tests: >-
+              RotationRepro/testRotateThenLeaveWithoutItsWordsAndReopenOnTheChapterStart
+              RotationRepro/testRotateThenLeaveWithItsSpanReadLateAndReopenOnTheChapterStart
+              RotationRepro/testRotateThenLeaveWhileTheRestoreWaitsWithItsSpanReadLate
+            skip: ""
+            pr_tests: none
+            cold: true
+            timeout: 98 # 30 + 2 x 25.3 + 5 + 12
+            lane: 17
+          - shard: ipad-rotate-contents
+            # Rotation, on this job's new iPad: 237, and the frames of a turn and back (gatefold#537), 150 estimated
+            # from 44 locally
+            tests: >-
+              RotationMidTransitionUITests/testTurningDuringAContentsJump
+              RotationFrameUITests
+            skip: ""
+            pr_tests: none
+            cold: true
+            timeout: 60 # 30 + 2 x 6.5 + 5 + 12
+            lane: 11
           - shard: ipad-place-portrait
             # 299 s median
             tests: >-
@@ -455,34 +509,6 @@ jobs:
             cold: false
             timeout: 77 # 30 + 2 x 14.7 + 5 + 12
             lane: 16
-          - shard: ipad-rotate-contents
-            # Rotation, on this job's new iPad: 237, and the frames of a turn and back (gatefold#537), 150 estimated
-            # from 44 locally
-            tests: >-
-              RotationMidTransitionUITests/testTurningDuringAContentsJump
-              RotationFrameUITests
-            skip: ""
-            pr_tests: none
-            cold: true
-            timeout: 60 # 30 + 2 x 6.5 + 5 + 12
-            lane: 11
-          - shard: ipad-rotate-midturn
-            # Rotation: 182 + 160, then on main the rotate-then-leave repro, 545, after the mid-turn tests as #167 runs
-            # it. On today's main the repro passes with #176's fix taken out in every order tried (#193), so never give
-            # it a shard of its own until #193 is fixed. On a pull request only the mid-turn tests run, unless it
-            # touches the reader's place code.
-            tests: >-
-              RotationMidTransitionUITests RotationRepro/testRotateThenLeaveWithoutTurning
-            skip: >-
-              RotationMidTransitionUITests/testTurningDuringAContentsJump
-            pr_tests: >-
-              NavigationPlaceUITests/testAContentsJumpKeepsThePlace
-              RotationMidTransitionUITests/testTurningDuringAPageTurn
-            # On a pull request: Place kept through a jump and a rotation (#130), on place changes (359 s).
-            pr_when: place-jumps
-            cold: true
-            timeout: 112 # 30 + 2 x 32.1 + 5 + 12
-            lane: 6
           - shard: ipad-rotate-stalled
             # Main only: 470 (#266's probe 43110085155, the slowest of 3 passes)
             tests: >-
@@ -499,31 +525,6 @@ jobs:
             cold: true
             timeout: 66 # 30 + 2 x 9.4 + 5 + 12
             lane: 9
-          - shard: ipad-rotate-restore
-            # Main only: #133's leave-while-the-restore-waits tests, out of ipad-rotate-stalled, which they
-            # overran (stopped 19 min 58 s in on #256 and 21 min 58 s in on #195). Without sleeps (#266): 463 + 327,
-            # the slowest of 3 passes each in probe 43110085155 (they were 586 + 504), and 317 s, with sleeps,
-            # for the leave noted at his kept place in probe 43107820601
-            tests: >-
-              RotationRepro/testRotateThenLeaveWhileTheRestoreWaitsOnItsPage
-              RotationRepro/testRotateThenLeaveWhileTheRestoreWaitsOnItsPageWithoutItsWords
-              RotationRepro/testRotateThenLeaveWhileTheRestoreWaitsOnHisKeptPlaceWithoutItsWords
-            pr_tests: none
-            cold: true
-            timeout: 97 # 30 + 2 x 24.9 + 5 + 12
-            lane: 7
-          - shard: ipad-rotate-chapter-start
-            # Main only, like ipad-rotate-stalled (gatefold#250), and the two leaves whose span is read late
-            # (gatefold#346; the ordinary-reopen one is here for the budget, ipad-rotate-restore is full)
-            tests: >-
-              RotationRepro/testRotateThenLeaveWithoutItsWordsAndReopenOnTheChapterStart
-              RotationRepro/testRotateThenLeaveWithItsSpanReadLateAndReopenOnTheChapterStart
-              RotationRepro/testRotateThenLeaveWhileTheRestoreWaitsWithItsSpanReadLate
-            skip: ""
-            pr_tests: none
-            cold: true
-            timeout: 98 # 30 + 2 x 25.3 + 5 + 12
-            lane: 17
           - shard: ipad-place-justify
             # Main only: Justify on and off keeps the page he was reading (build 47), two of its four places. Estimates
             # until CI has run them, from 157 s locally each
