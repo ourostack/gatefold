@@ -51,12 +51,12 @@ public actor CloudSession {
     /// Sign-in calls the Cloud refuses spuriously are asked again, a second apart. Since November 2026
     /// it answers a real account's lookup with 404 "No one account has been found", and about one
     /// correct password in three with 403 error 1204, the same answer a wrong password gets (seen live
-    /// 2026-11-13). The password only twice: a wrong one costs every attempt against the Cloud's
+    /// 2026-11-13). The password only three times: a wrong one costs every attempt against the Cloud's
     /// per-account login limit (429 "Too many login attempts"). The lookup flaps longer (seen live
     /// 2026-11-15: eight 404s in a row for a real account), so it is asked six times, waiting a little
     /// longer each time (1, 2, 3, 4, 5 seconds).
     static let lookupAttempts = 6
-    static let passwordAttempts = 2
+    static let passwordAttempts = 3
 
     private func performSignInCall(_ endpoint: Endpoint, attempts: Int, backoff: Bool = false,
                                    refusedWhen refused: (HTTPURLResponse) -> Bool) async throws -> (Data, HTTPURLResponse) {

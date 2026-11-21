@@ -85,6 +85,10 @@ enum WireDecoder {
         guard let providers = try loose(data)["providers"]?.array else { throw WireError.unexpectedShape("providers") }
         return providers.compactMap { p in
             guard let alias = p["alias"]?.string else { return nil }
+            if p["is_2fa_enabled"]?.bool == true {
+                CloudDrift.shared.note("/auth/login: provider requires an unsupported second factor")
+                return nil
+            }
             return CloudStore(alias: alias, name: p["name"]?.string ?? alias, shopID: p["shop_id"]?.string ?? "",
                               iconURL: p["icon"]?.url, loggedBy: p["logged_by"]?.string)
         }

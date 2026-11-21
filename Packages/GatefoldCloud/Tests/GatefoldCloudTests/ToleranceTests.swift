@@ -48,6 +48,30 @@ struct ToleranceTests {
         #expect(noted("/books: the list is no longer under items"))
     }
 
+    @Test func skipsPasswordProvidersThatRequireAnUnsupportedSecondFactor() throws {
+        let stores = try WireDecoder.stores(Data(#"{"providers":[{"alias":"pocketbook_de","logged_by":"password","is_2fa_enabled":true}]}"#.utf8))
+        #expect(stores.isEmpty)
+        #expect(noted("/auth/login: provider requires an unsupported second factor"))
+    }
+
+    @Test func stillReadsProvidersWithoutTheSecondFactorField() throws {
+        let stores = try WireDecoder.stores(Data(#"{"providers":[{"alias":"pocketbook_de","logged_by":"password"}]}"#.utf8))
+        #expect(stores.first?.usesPassword == true)
+    }
+
+    @Test func signsInAfterTwoTransientPartnerRefusals() async throws {
+        let t = ScriptedTransport()
+        await t.on("POST", "/auth/login/pocketbook_de",
+                   .json(#"{"error_code":1204,"error_msg":"Authorization partner user failed"}"#, status: 403),
+                   .json(#"{"error_code":1204,"error_msg":"Authorization partner user failed"}"#, status: 403),
+                   .json(#"{"access_token":"a1","refresh_token":"r1","expires_in":3600}"#))
+        await t.on("GET", "/api/v1.0/user", .data(try Fixture.data("user.json")))
+        let session = CloudSession(transport: t, credentials: StaticCredentials(ClientCredentials(id: "i", secret: "s")),
+                                   tokenStore: InMemoryTokenStore(), sleep: { _ in })
+        _ = try await session.signIn(email: "reader@example.com", password: "pw", store: testStore())
+        #expect(await t.requests("POST", "/auth/login/pocketbook_de").count == 3)
+    }
+
     @Test func notesBooksItCannotKeep() throws {
         let page = try WireDecoder.booksPage(Data(#"{"total":2,"items":[{"fast_hash":"abc"},{"name":"no-hash.epub"}]}"#.utf8))
         #expect(page.items.count == 1 && page.listed == 2)
