@@ -2,6 +2,9 @@ name: App
 
 # The macOS jobs below run on pushes to main only, never on a pull request or in the merge queue (`changes` output `native`); the gate jobs
 # report success without them there, so a pull request is judged by the Linux checks. A red main is the alarm.
+# The one exception is Build for testing: there it compiles the app and both test targets whenever the change touches
+# anything the build reads (`changes` output `compile`, fail-closed), and the required `Build and unit-test the app`
+# is red unless it passed, so code that doesn't compile can't merge (#577 did, and blocked TestFlight until #579).
 #
 # Two tiers (gatefold#39, #198). A pull request runs the build, the unit tests, GatefoldCore and at most five UI shards,
 # picked by the paths it touches: an iPad and a Duo smoke on every app change, and the place and taps guards when it
@@ -85,6 +88,7 @@ jobs:
     outputs:
       app: ${{ steps.diff.outputs.app }}
       native: ${{ steps.diff.outputs.native }}
+      compile: ${{ steps.diff.outputs.compile }}
       full: ${{ steps.diff.outputs.full }}
       fired: ${{ steps.diff.outputs.fired }}
       edited-ipad: ${{ steps.diff.outputs.edited-ipad }}
@@ -144,12 +148,31 @@ jobs:
           EVENT: ${{ github.event_name }}
           BASE: ${{ github.event.pull_request.base.sha }}
           HEAD: ${{ github.event.pull_request.head.sha }}
+          GROUP_BASE: ${{ github.event.merge_group.base_sha }}
+          GROUP_HEAD: ${{ github.event.merge_group.head_sha }}
         run: |
           set -eu
           # The macOS jobs (simulator UI shards, Release build, unit tests) run on pushes to main, never on a pull request or in the
           # merge queue, so a pull request is judged by the Linux checks alone and a red main is the alarm. Gates report success
           # without them when `native` is false.
           if [ "$EVENT" = pull_request ] || [ "$EVENT" = merge_group ]; then echo "native=false" >> "$GITHUB_OUTPUT"; else echo "native=true" >> "$GITHUB_OUTPUT"; fi
+          # The one macOS job there: `build` compiles the app and both test targets, so code that doesn't compile can't
+          # merge (#577 did, and main's Build for testing went red). It runs unless every changed file is one the build
+          # never reads: Markdown at the top, docs, changelog fragments, distribution, screenshots, tools, the listing
+          # shots' own target, scripts, and workflows other than this one. Anything else, an empty diff or one git can't
+          # read compiles: it fails closed. A merge-queue entry diffs its group's commit against the queue's base.
+          if [ "$EVENT" = pull_request ] || [ "$EVENT" = merge_group ]; then
+            if [ "$EVENT" = merge_group ]; then range="$GROUP_BASE $GROUP_HEAD"; else range="$BASE...$HEAD"; fi
+            # shellcheck disable=SC2086 # the range is one or two revisions
+            git diff --name-only $range > compile.txt || : > compile.txt
+            nobuild='^([^/]+\.md|(docs|changelog\.d|distribution|screenshots|tools|GatefoldListingShots|scripts|\.github/scripts)/.+|\.github/workflows/[^/]+|\.github/[^/]+)$'
+            if [ -s compile.txt ] && ! grep -qvE "$nobuild" compile.txt && ! grep -qxF .github/workflows/app.yml compile.txt; then
+              echo "::notice::Nothing here reaches the app's build: Build for testing doesn't run."
+              echo "compile=false" >> "$GITHUB_OUTPUT"
+            else
+              echo "compile=true" >> "$GITHUB_OUTPUT"
+            fi
+          fi
           if [ "$EVENT" != pull_request ]; then printf 'app=true\nfull=true\nfired=\nedited-ipad=\nedited-duo=\nsmoke-ipad=0\nsmoke-duo=0\n' >> "$GITHUB_OUTPUT"; exit 0; fi
           git diff --name-only "$BASE...$HEAD" > changed.txt
           cat changed.txt
@@ -206,9 +229,15 @@ jobs:
   build:
     name: Build for testing
     needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.native != 'false' && needs.changes.outputs.app != 'false' && needs.changes.outputs.proven != 'true' }}
+    # On main, for the shards. On a pull request and in the merge queue, to compile only: `compile` (above) picks it,
+    # nothing downloads it, and the required `Build and unit-test the app` needs it to pass.
+    if: >-
+      ${{ !cancelled() && needs.changes.outputs.app != 'false' && needs.changes.outputs.proven != 'true'
+      && (needs.changes.outputs.native != 'false' || needs.changes.outputs.compile != 'false') }}
     runs-on: xcode-27
-    timeout-minutes: 35
+    # The compile-only build: twice the slowest of main's last 26 green builds (160 to 346 s, median 277 s; runs
+    # 44921715866 back, 2026-11-21). Main's keeps its 35.
+    timeout-minutes: ${{ needs.changes.outputs.native == 'false' && 12 || 35 }}
     outputs:
       artifact: ${{ steps.name.outputs.artifact }}
     permissions:
@@ -236,14 +265,18 @@ jobs:
       - name: Build the app and its tests for the simulator, once
         # About 13 to 16 min measured in each job that used to build (gatefold#39).
         timeout-minutes: 25
+        env:
+          NATIVE: ${{ needs.changes.outputs.native }}
         run: |
           set -o pipefail
           xcodebuild build-for-testing -project Gatefold.xcodeproj -scheme Gatefold \
             -destination 'generic/platform=iOS Simulator' ARCHS="$(uname -m)" \
             -derivedDataPath "$RUNNER_TEMP/dd" 2>&1 | tee "$RUNNER_TEMP/build.log" | tail -60
           ls "$RUNNER_TEMP"/dd/Build/Products/*.xctestrun
-          tar -czf "$RUNNER_TEMP/products.tgz" -C "$RUNNER_TEMP/dd/Build" Products
+          # A pull request's or the merge queue's build only proves it compiles: no shard downloads it.
+          if [ "$NATIVE" != false ]; then tar -czf "$RUNNER_TEMP/products.tgz" -C "$RUNNER_TEMP/dd/Build" Products; fi
       - uses: actions/upload-artifact@v4
+        if: needs.changes.outputs.native != 'false'
         with:
           name: ${{ steps.name.outputs.artifact }}
           path: ${{ runner.temp }}/products.tgz
@@ -1397,22 +1430,31 @@ jobs:
   app:
     # The required check for the app's Release build and unit tests: green when both passed, or when only Markdown
     # changed (gatefold#42). Always runs, so the check reports on every pull request; a failed or cancelled job turns
-    # it red.
+    # it red. On a pull request and in the merge queue it is green only when Build for testing compiled the app and both
+    # test targets, or when nothing changed that the build reads (`compile`).
     name: Build and unit-test the app
-    needs: [changes, release, unit]
+    needs: [changes, build, release, unit]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
       - env:
           APP: ${{ needs.changes.outputs.app }}
+          BUILD: ${{ needs.build.result }}
           RELEASE: ${{ needs.release.result }}
           UNIT: ${{ needs.unit.result }}
           NATIVE: ${{ needs.changes.outputs.native }}
+          COMPILE: ${{ needs.changes.outputs.compile }}
           PROVEN: ${{ needs.changes.outputs.proven }}
           PROOF: ${{ needs.changes.outputs.proof }}
         run: |
-          if [ "$NATIVE" = false ]; then echo "The macOS checks run on main after the merge, not on a pull request or in the merge queue."; exit 0; fi
+          if [ "$NATIVE" = false ]; then
+            echo "The Release build and the unit tests run on main after the merge, not on a pull request or in the merge queue."
+            if [ "$COMPILE" = false ]; then echo "Nothing this change touches reaches the app's build; nothing to compile."; exit 0; fi
+            echo "Build for testing (the app and both test targets compile): $BUILD"
+            [ "$BUILD" = success ] || { echo "::error title=Build for testing::The app or its tests don't compile here (or the build didn't finish): see the job \"Build for testing\"."; exit 1; }
+            exit 0
+          fi
           if [ "$APP" = false ]; then echo "Only Markdown changed; nothing to build."; exit 0; fi
           if [ "$PROVEN" = true ]; then echo "::notice::Passed by proof: the Release build and the unit tests passed on this tree in $PROOF"; exit 0; fi
           echo "Release build: $RELEASE; unit tests: $UNIT"
