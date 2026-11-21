@@ -385,6 +385,15 @@ final class NavigationPlaceUITests: XCTestCase {
         let held = app.descendants(matching: .any)["reader.loadingHeld"]
         XCTAssertTrue(held.waitForExistence(timeout: 10), "the jump is held, never sent")
         // He leaves while it is still held: no turn, no wait for the page.
+        // The place is saved a moment after the page settles; leave once the saved words are on the page, as a slow
+        // runner would otherwise reopen on the old page (main, 2026-11-20).
+        let savedProbe = app.descendants(matching: .any)["reader.savedWords"]
+        let flat = { (t: String) in t.split(whereSeparator: \.isWhitespace).joined(separator: " ").lowercased() }
+        for _ in 1...150 {
+            let saved = flat(String(((savedProbe.value as? String) ?? "").prefix(24)))
+            if !saved.isEmpty, flat(settled).contains(saved) { break }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        }
         XCUIDevice.shared.press(.home)
         if !app.wait(for: .runningBackground, timeout: 3) {
             XCUIApplication(bundleIdentifier: "com.apple.springboard").activate()
