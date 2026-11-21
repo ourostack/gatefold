@@ -94,8 +94,8 @@ enum LaunchOptions {
     /// bar is up, and of nothing covered while it is hidden, in place of the screen's own report: what the open Duo
     /// held upright reports, so the reader's answer to it is tested without a hinge (`DuoLayoutUITests`).
     static var fakeStatusColumn: Bool { isUITest && defaults.bool(forKey: "GatefoldStatusColumn") }
-    /// UI tests only: `reader.chromeOverText` counts the lines of text that show under a control with no paper behind them.
-    static var chromeBackingProbe: Bool { isUITest && defaults.bool(forKey: "GatefoldChromeBackingProbe") }
+    /// UI tests only: `reader.lineFrames` lists where every line of text on screen stands, in window points.
+    static var lineFramesProbe: Bool { isUITest && defaults.bool(forKey: "GatefoldLineFramesProbe") }
     static var resetState: Bool { defaults.bool(forKey: "GatefoldReset") }
     static var skipWelcome: Bool { defaults.bool(forKey: "GatefoldSkipWelcome") }
     /// Measure a cold open: no book is opened ahead of the tap and WebKit isn't started early. Also the
