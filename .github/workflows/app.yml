@@ -235,7 +235,9 @@ jobs:
       ${{ !cancelled() && needs.changes.outputs.app != 'false' && needs.changes.outputs.proven != 'true'
       && (needs.changes.outputs.native != 'false' || needs.changes.outputs.compile != 'false') }}
     runs-on: xcode-27
-    timeout-minutes: 35
+    # The compile-only build: twice the slowest of main's last 26 green builds (160 to 346 s, median 277 s; runs
+    # 44921715866 back, 2026-11-21). Main's keeps its 35.
+    timeout-minutes: ${{ needs.changes.outputs.native == 'false' && 12 || 35 }}
     outputs:
       artifact: ${{ steps.name.outputs.artifact }}
     permissions:
