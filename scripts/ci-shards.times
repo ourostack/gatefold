@@ -127,7 +127,7 @@ iPhone Duo|ReviewerChecksUITests/testPageNumbersAreOnOrOffInEveryBook	1075	# p95
 iPhone Duo|ReviewerChecksUITests/testTheDefaultSpreadIsAsFullAsAppleBooks	1	# p95 of 104, slowest 4
 iPhone Duo|ReviewerChecksUITests/testTheLastPagesNumberIsTheCount	254	# p95 of 100, slowest 299
 iPhone Duo|SingleColumnUITests/testAOnePageScreenStaysOneColumnThroughTheReviewSteps	240	# estimate (#307's 240; one pass, 236)
-iPhone Duo|ChromeBackingUITests/testTheControlsNeverStandOnBareText	150	# estimate until CI has run it (gatefold#538)
+iPhone Duo|ControlsOverPageUITests/testShowingTheControlsLeavesEveryLineTurningPages	60	# estimate until CI has run it (build 53; about 40 s locally)
 iPad Pro 13-inch|RotationMidTransitionUITests/testAColdTurnOnItsSideOpensAWholeSpreadWithNoStandingLeaf	250	# estimate (new on main), as the slowest RotationMidTransition test; replace once CI has timed it
 iPhone Duo|ScrollModeUITests/testASidewaysSwipeInScrollKeepsThePlace	120	# estimate: 40 locally at load 900, until CI has run it
 iPhone Duo|ScrollModeUITests/testATapOnTheStatusBarKeepsThePlace	90	# estimate: 32 locally at load 900, until CI has run it
@@ -145,3 +145,4 @@ iPhone Duo|JustifyPlaceUITests/testJustifyKeepsHisPageAtThreeQuarters	200	# esti
 iPad Pro 13-inch|JustifyPlaceUITests/testJustifyThenReopenKeepsHisPage	200	# estimate until CI has run it: 90 to 124 s locally (build 47 Duo reopen)
 iPhone Duo|JustifyPlaceUITests/testJustifyThenReopenKeepsHisPage	200	# estimate until CI has run it: 90 to 124 s on the iPad locally (build 47 Duo reopen)
 iPad Pro 13-inch|RotationMidTransitionUITests/testATurnIntoTheNextChapterThenUprightAtOnceKeepsTheChapterHeTurnedTo	150	# estimate (new, build 47 review): 74 s locally, twice that for a hosted runner; replace once CI has timed it
+iPad Pro 13-inch|ControlsOverPageUITests/testShowingTheControlsLeavesEveryLineTurningPages	60	# estimate until CI has run it (build 53; about 50 s locally)
