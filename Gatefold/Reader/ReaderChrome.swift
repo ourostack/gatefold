@@ -19,6 +19,9 @@ struct ReaderChrome: View {
     @Binding var showAppearance: Bool
     @Binding var showContents: Bool
     @Binding var showSearch: Bool
+    /// The foot's width, and the way back's own (its label on one line), to judge whether it fits beside the scrubber.
+    @State private var barWidth: CGFloat = 0
+    @State private var backWidth: CGFloat = 0
 
     var body: some View {
         let up = model.chromeVisible && layout.deck == nil
@@ -76,10 +79,13 @@ struct ReaderChrome: View {
         } label: {
             Label(model.backLabel, systemImage: "arrow.uturn.backward")
                 .font(.subheadline.weight(.medium))
+                .lineLimit(1)
                 .padding(.horizontal, 14)
                 .frame(minHeight: 36)
         }
         .frame(minHeight: 44)
+        // Never narrower than its label: squeezed, it wrapped a fragment a line (review panel 2026-11-22).
+        .fixedSize()
         .buttonStyle(.glass(.regular.tint(model.theme.background.opacity(0.7))))
         .accessibilityIdentifier("reader.back")
     }
@@ -97,15 +103,48 @@ struct ReaderChrome: View {
         .accessibilityValue(model.isBookmarked ? "Bookmarked" : "")
     }
 
+    /// The scrubber's least width beside the way back, and what the rest of the bar takes: the capsule's three 44 pt
+    /// buttons and its 4 pt ends, Search, and the gaps between the four pieces.
+    static let scrubberMinWidth: CGFloat = 120
+    static let barToolsWidth: CGFloat = (3 * 44 + 8) + 44 + 3 * 10
+
+    /// Whether the way back fits in the bar beside a usable scrubber; where it doesn't (the folded Duo), it stands on
+    /// its own row just above the bar, as it does with the controls down.
+    static func backFitsInBar(barWidth: CGFloat, backWidth: CGFloat) -> Bool {
+        barWidth - backWidth - barToolsWidth >= scrubberMinWidth
+    }
+
+    private var measuredBack: some View {
+        backButton.transition(.scale.combined(with: .opacity))
+    }
+
     /// The foot's bar: Back after a Jump, where Apple Books keeps it (lower leading), the scrubber, then the
     /// capsule of Contents, Share and Your Page, and Search.
     private var bottomBar: some View {
+        let inline = Self.backFitsInBar(barWidth: barWidth, backWidth: backWidth)
+        return barRow(inline: inline)
+            .frame(maxWidth: .infinity)
+            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { barWidth = $0 }
+            // The way back's width is known before it shows, so it comes up in its place the first time.
+            .background {
+                backButton.hidden().accessibilityHidden(true)
+                    .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { backWidth = $0 }
+            }
+            // An overlay never changes the bar's layout, so the bar holds still when the way back comes.
+            .overlay(alignment: .top) {
+                if model.backLocator != nil, !inline {
+                    measuredBack
+                        .alignmentGuide(.top) { $0[.bottom] + 8 }
+                }
+            }
+    }
+
+    private func barRow(inline: Bool) -> some View {
         HStack(alignment: .center, spacing: 10) {
             // One pill for every way back (no identity per place): Back leaves a way back of its own, and a new
             // identity tore the tapped pill out from under his finger.
-            if model.backLocator != nil {
-                backButton
-                    .transition(.scale.combined(with: .opacity))
+            if model.backLocator != nil, inline {
+                measuredBack
             }
             if !showAppearance {
                 // Where you are in the book, and a scrubber to go anywhere: a slim capsule.
