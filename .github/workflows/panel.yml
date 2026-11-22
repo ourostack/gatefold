@@ -88,15 +88,18 @@ jobs:
           set -euo pipefail
           out="$RUNNER_TEMP/shots/${{ matrix.slug }}"
           mkdir -p "$out"
+          status=0
           for look in light dark; do
             bundle="$RUNNER_TEMP/panel-$look.xcresult"
-            [ -d "$bundle" ] || { echo "::warning::no result bundle for $look"; continue; }
+            [ -d "$bundle" ] || { echo "::error::no result bundle for $look"; status=1; continue; }
             raw="$RUNNER_TEMP/raw-$look"
             mkdir -p "$raw"
             xcrun xcresulttool export attachments --path "$bundle" --output-path "$raw"
-            python3 -I scripts/ci-panel-shots.py "$raw" "$out" "${{ matrix.slug }}"
+            # Fails a look with fewer than the walk's 14 screens (GatefoldUITests/PanelCaptureUITests.swift).
+            python3 -I scripts/ci-panel-shots.py "$raw" "$out" "${{ matrix.slug }}" 14 || status=1
           done
           ls -l "$out"
+          exit $status
       - uses: actions/upload-artifact@v4
         if: ${{ !cancelled() }}
         with:
@@ -111,3 +114,4 @@ jobs:
             ${{ runner.temp }}/build.log
             ${{ runner.temp }}/panel-*.log
             ${{ runner.temp }}/panel-*.xcresult
+            ${{ runner.temp }}/raw-*/manifest.json
