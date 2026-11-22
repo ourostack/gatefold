@@ -194,6 +194,10 @@ struct SettingsPanel: View {
                     }
                 }
             }
+            // The chips scroll from one edge of the panel to the other, starting in line with the rows below: cut
+            // off at the panel's inner margin, the last chip looked broken rather than scrollable.
+            .contentMargins(.horizontal, 16, for: .scrollContent)
+            .padding(.horizontal, -16)
             .accessibilityIdentifier("appearance.fonts")
             SettingRow(symbol: "arrow.up.and.down.text.horizontal", title: "Line Spacing") {
                 Picker("Line Spacing", selection: Binding(
