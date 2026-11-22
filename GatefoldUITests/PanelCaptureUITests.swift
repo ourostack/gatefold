@@ -48,7 +48,11 @@ final class PanelCaptureUITests: XCTestCase {
         _ = el("library.grid").waitForExistence(timeout: 180)
         sleep(8)
         shot("01-library")
-        app.terminate()
+        // Home first: ended in front on the shelf while it warms books, the app fails XCTest's terminate
+        // ("Failed to terminate bot.ouro.gatefold:0", gatefold#363; the Duo's light walk in Review panel shots run
+        // 45056636210). After a Home press it ends in a second or two.
+        XCUIDevice.shared.press(.home)
+        app.quit()
 
         app.launchArguments = common + ["-GatefoldDownloadAll", "YES",
                                         "-GatefoldOpenBook", "gutenberg-pride-and-prejudice", "-GatefoldGoTo", "0.31"]
