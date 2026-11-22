@@ -1,7 +1,8 @@
 import XCTest
 
-/// A review panel's screenshots, never a check: walks the library and the reader's main screens (turns, controls up
-/// and down, Contents, Your Page, Fine-Tune, a scrubber jump, search) and keeps a screenshot of each as an attachment.
+/// A review panel's screenshots, never a check: walks the reader's main screens (turns, controls up and down,
+/// Contents, Your Page, Fine-Tune, a scrubber jump, search), closes the book onto the library, and keeps a screenshot
+/// of each as an attachment: 14 a walk, which panel.yml checks.
 /// `.github/workflows/panel.yml` runs it on demand only, once per appearance, and exports the attachments; no main
 /// shard runs it. PANEL_TAG names the set (for example "light"), PANEL_THEME the reader theme. Public-domain books only.
 @MainActor
@@ -42,39 +43,31 @@ final class PanelCaptureUITests: XCTestCase {
                       "-GatefoldTheme", theme,
                       "-GatefoldFakeShelf",
                       "moby-dick,pride-and-prejudice,frankenstein,dracula,alice-in-wonderland,sherlock-holmes,emma"]
+        // One launch, the book first and the shelf last by Close Book: no terminate. Ended in front on the shelf
+        // while it warms books, the app fails XCTest's terminate (gatefold#363, Review panel shots run 45056636210),
+        // and on the Duo a Home press before it left the relaunched walk with no shots after the shelf (run 45062075206).
         app = XCUIApplication()
-        app.launchArguments = common + ["-GatefoldReset", "YES", "-GatefoldDownloadAll", "YES"]
-        app.launch()
-        _ = el("library.grid").waitForExistence(timeout: 180)
-        sleep(8)
-        shot("01-library")
-        // Home first: ended in front on the shelf while it warms books, the app fails XCTest's terminate
-        // ("Failed to terminate bot.ouro.gatefold:0", gatefold#363; the Duo's light walk in Review panel shots run
-        // 45056636210). After a Home press it ends in a second or two.
-        XCUIDevice.shared.press(.home)
-        app.quit()
-
-        app.launchArguments = common + ["-GatefoldDownloadAll", "YES",
+        app.launchArguments = common + ["-GatefoldReset", "YES", "-GatefoldDownloadAll", "YES",
                                         "-GatefoldOpenBook", "gutenberg-pride-and-prejudice", "-GatefoldGoTo", "0.31"]
         app.launch()
         XCTAssertTrue(el("reader.page").waitForExistence(timeout: 300))
         settle()
-        shot("02-open-book")
-        at(0.93, 0.5).tap(); settle(); shot("03-page-turn-forward")
-        at(0.93, 0.5).tap(); settle(); shot("04-page-turn-forward-2")
-        at(0.07, 0.5).tap(); settle(); shot("05-page-turn-back")
+        shot("01-open-book")
+        at(0.93, 0.5).tap(); settle(); shot("02-page-turn-forward")
+        at(0.93, 0.5).tap(); settle(); shot("03-page-turn-forward-2")
+        at(0.07, 0.5).tap(); settle(); shot("04-page-turn-back")
 
-        controlsUp(); shot("06-controls-up")
+        controlsUp(); shot("05-controls-up")
 
-        app.buttons["reader.contents"].tap(); sleep(3); shot("07-contents")
+        app.buttons["reader.contents"].tap(); sleep(3); shot("06-contents")
         if el("contents.close").exists { el("contents.close").tap(); sleep(2) }
 
         controlsUp()
-        app.buttons["reader.appearance"].tap(); sleep(3); shot("08-your-page")
+        app.buttons["reader.appearance"].tap(); sleep(3); shot("07-your-page")
         let fineTune = app.buttons["appearance.customize"]
         if fineTune.waitForExistence(timeout: 10) {
             if !HitCheck.hittable(fineTune, in: app) { el("appearance.panel").swipeUp(); sleep(1) }
-            fineTune.tap(); sleep(3); shot("09-fine-tune")
+            fineTune.tap(); sleep(3); shot("08-fine-tune")
         }
         if el("appearance.back").exists { el("appearance.back").tap(); sleep(1) }
         if el("appearance.close").exists { el("appearance.close").tap(); sleep(2) }
@@ -84,8 +77,8 @@ final class PanelCaptureUITests: XCTestCase {
         if scrubber.waitForExistence(timeout: 5) {
             scrubber.coordinate(withNormalizedOffset: CGVector(dx: 0.3, dy: 0.5))
                 .press(forDuration: 0.1, thenDragTo: scrubber.coordinate(withNormalizedOffset: CGVector(dx: 0.62, dy: 0.5)))
-            settle(); shot("10-after-scrubber-jump")
-            controlsUp(); shot("11-scrubber-controls-after-jump")
+            settle(); shot("09-after-scrubber-jump")
+            controlsUp(); shot("10-scrubber-controls-after-jump")
         }
 
         controlsUp()
@@ -94,12 +87,20 @@ final class PanelCaptureUITests: XCTestCase {
             let field = app.searchFields.firstMatch
             if field.waitForExistence(timeout: 10) {
                 field.tap(); field.typeText("Darcy"); sleep(6)
-                shot("12-search-results")
+                shot("11-search-results")
                 let result = app.buttons["search.result"].firstMatch
-                if result.exists { result.tap(); settle(); shot("13-after-search-jump") }
+                if result.exists { result.tap(); settle(); shot("12-after-search-jump") }
             }
         }
-        controlsDown(); shot("14-page-controls-down")
+        controlsDown(); shot("13-page-controls-down")
+
+        controlsUp()
+        let close = app.buttons["reader.close"].firstMatch
+        XCTAssertTrue(close.waitForExistence(timeout: 10), "Close Book is there")
+        close.tap()
+        XCTAssertTrue(el("library.grid").waitForExistence(timeout: 60), "the shelf came back")
+        sleep(8)
+        shot("14-library")
         XCUIDevice.shared.orientation = .portrait
     }
 }

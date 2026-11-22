@@ -1,12 +1,14 @@
 """Names the screenshots `xcrun xcresulttool export attachments` wrote, for the review panel (.github/workflows/panel.yml).
 
-    python3 -I scripts/ci-panel-shots.py <exported dir> <out dir> <prefix>
+    python3 -I scripts/ci-panel-shots.py <exported dir> <out dir> <prefix> [<expected screenshots>]
     python3 -I scripts/ci-panel-shots.py --selftest
 
 The export writes each attachment under a generated file name and lists it in manifest.json with the name the test
 gave it, plus "_<n>_<UUID>" before the extension. This copies each to <out dir>/<prefix>-<its name><extension>, so
 PanelCaptureUITests' "light-01-library" lands as duo-light-01-library.png. A name seen twice gets -2, -3 and so on.
-Fails when the manifest is missing or lists nothing, so an empty set never uploads as if it were the panel.
+Fails when the manifest is missing or lists nothing, or, given <expected screenshots>, when it holds fewer PNGs than
+that (a failure's own attachments and screen recordings aside): a walk that stopped early, or whose shots never reached
+the result bundle, never uploads as if it were the panel (the Duo's set in run 45062075206 held its first shot only).
 """
 import json
 import os
@@ -35,6 +37,11 @@ def clean(name):
     stem = SUFFIX.sub("", stem)
     stem = re.sub(r"[^A-Za-z0-9._-]+", "-", stem).strip("-") or "shot"
     return stem, ext or ".png"
+
+
+def shots(names):
+    """The walk's own screenshots among the written names."""
+    return [n for n in names if n.endswith(".png") and "-failure-" not in n]
 
 
 def name_all(src, out, prefix):
@@ -74,6 +81,9 @@ def selftest():
             json.dump(manifest, f)
         got = name_all(src, out, "duo")
         assert got == ["duo-light-01-library.png", "duo-light-01-library-2.png", "duo-failure-odd-name-here.png"], got
+        assert shots(got + ["duo-Screen-Recording.mp4"]) == got[:2], shots(got)
+        assert main(["x", src, out, "duo", "2"]) == 0
+        assert main(["x", src, out, "duo", "3"]) == 1
         with open(os.path.join(out, "duo-light-01-library-2.png")) as f:
             assert f.read() == "b.png"
         with open(os.path.join(src, "manifest.json"), "w") as f:
@@ -90,11 +100,15 @@ def main(argv):
     if argv[1:] == ["--selftest"]:
         selftest()
         return 0
-    if len(argv) != 4:
+    if len(argv) not in (4, 5):
         print(__doc__, file=sys.stderr)
         return 2
-    for name in name_all(argv[1], argv[2], argv[3]):
+    names = name_all(argv[1], argv[2], argv[3])
+    for name in names:
         print(name)
+    if len(argv) == 5 and len(shots(names)) < int(argv[4]):
+        print(f"::error::{argv[1]} holds {len(shots(names))} screenshots, not the walk's {argv[4]}")
+        return 1
     return 0
 
 
