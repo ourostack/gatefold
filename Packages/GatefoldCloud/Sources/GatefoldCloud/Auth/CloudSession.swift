@@ -35,6 +35,8 @@ public actor CloudSession {
     public private(set) var renewals = 0
     /// Of those, the ones that needed the kept password because the renewal was refused.
     public private(set) var reSignIns = 0
+    /// How the latest try to sign in again with the kept password went, for telemetry.
+    public private(set) var lastReSignIn: ReSignInNote?
 
     public init(transport: HTTPTransport, credentials: ClientCredentialsProvider, tokenStore: TokenStore,
                 base: URL = CloudSession.defaultBase, language: String = "en", now: @escaping @Sendable () -> Date = { Date() },
@@ -270,8 +272,34 @@ public actor CloudSession {
     /// password never runs into the Cloud's login limit on every launch; he signs in by hand and the new
     /// one is kept.
     private func signInAgain(_ session: StoredSession, startedIn: Int) async throws -> CloudToken {
-        guard let password = session.password else { throw CloudError.authenticationRequired }
-        if let pause = reSignInPause, now() < pause.until { throw pause.error }
+        do {
+            let token = try await trySigningInAgain(session, startedIn: startedIn)
+            noteReSignIn(hadKeptPassword: true, "ok")
+            return token
+        } catch let failure as ReSignInFailure {
+            noteReSignIn(hadKeptPassword: session.password != nil, failure.kind)
+            throw failure.error
+        } catch {
+            noteReSignIn(hadKeptPassword: session.password != nil, (error as? CloudError)?.kind ?? String(describing: type(of: error)))
+            throw error
+        }
+    }
+
+    private func noteReSignIn(hadKeptPassword: Bool, _ kind: String) {
+        lastReSignIn = ReSignInNote(tries: (lastReSignIn?.tries ?? 0) + 1, hadKeptPassword: hadKeptPassword, errorKind: kind)
+    }
+
+    /// A re-sign-in that ended for a reason worth its own name in telemetry.
+    private struct ReSignInFailure: Error {
+        let kind: String
+        let error: Error
+    }
+
+    private func trySigningInAgain(_ session: StoredSession, startedIn: Int) async throws -> CloudToken {
+        guard let password = session.password else {
+            throw ReSignInFailure(kind: "no_kept_password", error: CloudError.authenticationRequired)
+        }
+        if let pause = reSignInPause, now() < pause.until { throw ReSignInFailure(kind: "paused", error: pause.error) }
         var session = session
         do {
             session.token = try await passwordGrant(email: session.login ?? session.account.email, password: password, store: session.account.store)
@@ -284,12 +312,12 @@ public actor CloudSession {
                 let wait = Self.reSignInFirstPause
                 let error = CloudError.rateLimited(retryAfter: wait)
                 reSignInPause = (now().addingTimeInterval(wait), wait, error)
-                throw error
+                throw ReSignInFailure(kind: "refused_kept", error: error)
             }
             session.password = nil
             session.refusedReSignIns = nil
             _ = try? await keep(session, startedIn: startedIn)
-            throw CloudError.authenticationRequired
+            throw ReSignInFailure(kind: "refused_forgotten", error: CloudError.authenticationRequired)
         } catch is CancellationError {
             throw CancellationError()
         } catch {
@@ -372,5 +400,22 @@ public actor CloudSession {
         f.timeZone = TimeZone(identifier: "GMT")
         f.dateFormat = "EEE, dd MMM yyyy HH:mm:ss zzz"
         return f.date(from: s)
+    }
+}
+
+/// How one try to sign in again with the kept password went: counts and fixed names only, never the password.
+public struct ReSignInNote: Sendable, Equatable {
+    /// Tries so far this launch, this one included.
+    public var tries: Int
+    /// A password was kept to sign in again with (false: a session saved before gatefold#412 kept none).
+    public var hadKeptPassword: Bool
+    /// `ok`, `no_kept_password`, `paused`, `refused_kept` (refused once, kept), `refused_forgotten`
+    /// (refused again, forgotten), or the error's short name.
+    public var errorKind: String
+
+    public init(tries: Int, hadKeptPassword: Bool, errorKind: String) {
+        self.tries = tries
+        self.hadKeptPassword = hadKeptPassword
+        self.errorKind = errorKind
     }
 }

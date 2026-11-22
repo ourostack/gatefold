@@ -23,6 +23,12 @@ actor StubSync: SyncService {
     func queueLibrary(_ results: [Result<[CloudBook], any Error>]) { libraryQueue = results }
     func setEmptyAccountReads(_ n: Int) { emptyAccountReads = n }
     func setRemote(_ position: ReadingPosition?) { remote = position }
+    /// When set, `remotePosition` fails this way, after leaving `failedReSignIn` as the session's note.
+    var remoteError: CloudError?
+    var failedReSignIn: ReSignInNote?
+    private var lastReSignIn: ReSignInNote?
+    func setRemoteFailure(_ error: CloudError, reSignIn: ReSignInNote?) { remoteError = error; failedReSignIn = reSignIn }
+    func reSignIn() async -> ReSignInNote? { lastReSignIn }
     /// How long the Cloud takes to answer where the other device is (a phone's real round trip).
     var remoteDelay: Duration = .zero
     func setRemoteDelay(_ delay: Duration) { remoteDelay = delay }
@@ -46,6 +52,10 @@ actor StubSync: SyncService {
     func remotePosition(for book: CloudBook) async throws -> ReadingPosition? {
         remoteReads += 1
         if remoteDelay > .zero { try? await Task.sleep(for: remoteDelay) }
+        if let remoteError {
+            if let failedReSignIn { lastReSignIn = failedReSignIn }
+            throw remoteError
+        }
         return remote
     }
     func push(_ position: ReadingPosition, for book: CloudBook) async { pushed.append((position, book.fastHash)) }

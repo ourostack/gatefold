@@ -413,6 +413,8 @@ public actor PocketBookCloud: SyncService {
         return try WireDecoder.fileInfo(data).position.map { markOwn($0, fastHash: book.fastHash, account: email) }
     }
 
+    public func reSignIn() async -> ReSignInNote? { await session.lastReSignIn }
+
     public func push(_ position: ReadingPosition, for book: CloudBook) async {
         var p = position
         p.source = .gatefold
@@ -574,7 +576,7 @@ public actor PocketBookCloud: SyncService {
             let generation = accountGeneration
             inFlight = item.id
             defer { inFlight = nil }
-            let (renewalsBefore, reSignInsBefore) = await (session.renewals, session.reSignIns)
+            let (renewalsBefore, reSignInsBefore, noteBefore) = await (session.renewals, session.reSignIns, session.lastReSignIn)
             do {
                 let outcome = try await send(item)
                 let signIns = await (session.renewals, session.reSignIns)
@@ -586,6 +588,7 @@ public actor PocketBookCloud: SyncService {
                     default: break
                     }
                     var report = placeReport(item, result: .sent, signIns: (renewalsBefore, reSignInsBefore), signIns)
+                    report.note(reSignIn: await session.lastReSignIn, since: noteBefore)
                     if case .superseded = outcome {
                         report.result = .skipped
                         report.reason = .remoteNewer
@@ -618,6 +621,7 @@ public actor PocketBookCloud: SyncService {
                 if case .position = item.operation {
                     var report = placeReport(item, result: .failed, signIns: (renewalsBefore, reSignInsBefore), signIns)
                     report.note(error)
+                    report.note(reSignIn: await session.lastReSignIn, since: noteBefore)
                     switch Self.disposition(of: error) {
                     case .drop where !newerArrived: report.reason = .dropped
                     case .retry where state.items[i].attempts + 1 >= Self.maxAttempts && !(error as? CloudError).map(\.isTransient).orFalse && !newerArrived:

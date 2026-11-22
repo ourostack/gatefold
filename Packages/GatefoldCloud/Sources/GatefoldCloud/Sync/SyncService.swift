@@ -40,12 +40,15 @@ public protocol SyncService: Sendable {
     func flushOutbox() async
     /// Sends whatever is due now; `trigger` says why, in the place reports (telemetry).
     func flushOutbox(trigger: PlaceReport.Trigger) async
+    /// How the latest try to sign in again went (telemetry); nil before any.
+    func reSignIn() async -> ReSignInNote?
 
     func changes() -> AsyncStream<CloudChange>
 }
 
 public extension SyncService {
     func flushOutbox(trigger: PlaceReport.Trigger) async { await flushOutbox() }
+    func reSignIn() async -> ReSignInNote? { nil }
 }
 
 /// Fans each change out to every live subscriber.

@@ -103,7 +103,7 @@ struct GatefoldPlaceTelemetryTests {
     static let allowedPush: Set<String> = [
         "result", "reason", "app_phase", "has_cfi", "http_status", "error_domain", "error_code", "error_kind", "remote_newer",
         "remote_ahead", "remote_source", "trigger", "sign_in_renewed", "signed_in_again", "sign_in_expired", "background_expired",
-        "attempts", "seconds_since_turn", "queued",
+        "attempts", "seconds_since_turn", "queued", "had_kept_password", "resign_in_error_kind",
     ]
     static let config = GatefoldTelemetry.Configuration(apiKey: "phc_test", captureURL: URL(string: "https://example.invalid/e/")!)
 
@@ -136,6 +136,47 @@ struct GatefoldPlaceTelemetryTests {
         let p = GatefoldTelemetry.properties(of: report, phase: "active")
         #expect(p["sign_in_expired"] == .bool(true))
         #expect(p["error_kind"] == .string("authenticationRequired"))
+    }
+
+    /// Ari, build 53: "sign in again" with nothing to say whether a password was kept. Now it says.
+    @Test func aReSignInSaysWhetherAPasswordWasKeptAndHowItWent() {
+        var push = PlaceReport(direction: .push, result: .failed, reason: .signInNeeded)
+        push.note(CloudError.authenticationRequired)
+        push.note(reSignIn: ReSignInNote(tries: 1, hadKeptPassword: false, errorKind: "no_kept_password"), since: nil)
+        let p = GatefoldTelemetry.properties(of: push, phase: "active")
+        #expect(Set(p.keys).isSubset(of: Self.allowedPush))
+        #expect(p["had_kept_password"] == .bool(false))
+        #expect(p["resign_in_error_kind"] == .string("no_kept_password"))
+        var pull = PlaceReport(direction: .pull, result: .failed, reason: .error)
+        pull.note(reSignIn: ReSignInNote(tries: 3, hadKeptPassword: true, errorKind: "refused_kept"), since: ReSignInNote(tries: 2, hadKeptPassword: true, errorKind: "ok"))
+        let q = GatefoldTelemetry.properties(of: pull, phase: "active")
+        #expect(q["had_kept_password"] == .bool(true))
+        #expect(q["resign_in_error_kind"] == .string("refused_kept"))
+    }
+
+    @Test func aCallThatNeverTriedToSignInAgainLeavesItOut() {
+        var report = PlaceReport(direction: .push, result: .failed)
+        let same = ReSignInNote(tries: 2, hadKeptPassword: true, errorKind: "ok")
+        report.note(reSignIn: same, since: same)
+        let p = GatefoldTelemetry.properties(of: report, phase: "active")
+        #expect(p["had_kept_password"] == nil)
+        #expect(p["resign_in_error_kind"] == nil)
+    }
+
+    @MainActor @Test func aPlaceFetchThatNeededASignInSaysHowTheReSignInWent() async throws {
+        let sync = StubSync()
+        let reports = Box()
+        let defaults = try #require(UserDefaults(suiteName: "telemetry-pull-\(UUID().uuidString)"))
+        let telemetry = GatefoldTelemetry(configuration: Self.config, defaults: defaults, send: { reports.requests.append($0) })
+        let store = LibraryStore(sync: sync, root: URL.temporaryDirectory.appending(path: "pull-\(UUID().uuidString)"))
+        var book = LibraryBook(id: "b", title: "T", author: "A", origin: .cloud, added: Date(timeIntervalSince1970: 0))
+        book.cloud = CloudBook(fastHash: "b", name: "b.epub")
+        await sync.setRemoteFailure(.authenticationRequired, reSignIn: ReSignInNote(tries: 1, hadKeptPassword: false, errorKind: "no_kept_password"))
+        _ = await store.remotePosition(for: book, telemetry: telemetry)
+        let event = try Self.event(reports.requests.first)
+        #expect(event.name == "gatefold_place_pull")
+        #expect(event.properties["had_kept_password"] as? Bool == false)
+        #expect(event.properties["resign_in_error_kind"] as? String == "no_kept_password")
     }
 
     @Test func aPullSaysWhoWroteTheCloudsPlaceAndWhetherItIsNewer() throws {

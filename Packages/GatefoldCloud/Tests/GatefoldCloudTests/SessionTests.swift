@@ -302,6 +302,39 @@ struct SessionTests {
         #expect(saved.account.displayName == "Gatefold Test One", "keeps the account details")
     }
 
+    @Test func eachReSignInLeavesANoteOfHowItWent() async throws {
+        let t = ScriptedTransport()
+        let store = InMemoryTokenStore()
+        let clock = TestClock()
+        let session = try await signedIn(t, clock: clock, store: store)
+        #expect(await session.lastReSignIn == nil)
+        clock.advance(8000)
+        await t.on("POST", "/auth/renew-token", .json(#"{"error_code":223,"error_msg":"Unknown token"}"#, status: 403))
+        await t.on("POST", "/auth/login/pocketbook_de", .json(#"{"error_code":1204,"error_msg":"Authorization partner user failed"}"#, status: 403))
+        _ = try? await session.send(.get("/books"))
+        #expect(await session.lastReSignIn == ReSignInNote(tries: 1, hadKeptPassword: true, errorKind: "refused_kept"))
+        clock.advance(30)
+        _ = try? await session.send(.get("/books"))
+        #expect(await session.lastReSignIn == ReSignInNote(tries: 2, hadKeptPassword: true, errorKind: "paused"))
+        clock.advance(31)
+        _ = try? await session.send(.get("/books"))
+        #expect(await session.lastReSignIn == ReSignInNote(tries: 3, hadKeptPassword: true, errorKind: "refused_forgotten"))
+        _ = try? await session.send(.get("/books"))
+        #expect(await session.lastReSignIn == ReSignInNote(tries: 4, hadKeptPassword: false, errorKind: "no_kept_password"))
+    }
+
+    @Test func aReSignInThatWorksIsNotedToo() async throws {
+        let t = ScriptedTransport()
+        let store = InMemoryTokenStore(StoredSession(account: CloudAccount(email: "reader@example.com", store: testStore()),
+                                                     token: CloudToken(accessToken: "a", refreshToken: nil, expiresAt: utc("2026-01-01T00:00:00Z")),
+                                                     password: "pw"))
+        let session = makeSession(t, store: store, clock: TestClock())
+        await t.on("POST", "/auth/login/pocketbook_de", .json(tokenJSON("b1", refresh: "s1")))
+        await t.on("GET", "/books", .json(#"{"total":0,"items":[]}"#))
+        _ = try await session.send(.get("/books"))
+        #expect(await session.lastReSignIn == ReSignInNote(tries: 1, hadKeptPassword: true, errorKind: "ok"))
+    }
+
     @Test func aSessionWithNoRefreshTokenSignsInAgainWithTheKeptPassword() async throws {
         let t = ScriptedTransport()
         let store = InMemoryTokenStore(StoredSession(account: CloudAccount(email: "reader@example.com", store: testStore()),
