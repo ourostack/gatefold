@@ -166,3 +166,5 @@ iPad Pro 13-inch|FineTuneTapUITests/testFineTuneShowsEveryWordWhole	150	# an est
 iPhone Duo|FineTuneTapUITests/testFineTuneShowsEveryWordWhole	180	# an estimate until CI has timed it
 iPhone Duo|DuoLayoutUITests/testSearchShowsTheMatchAndMarksItOnThePage	150	# an estimate until CI has timed it
 iPad Pro 13-inch|ScrubberPlaceUITests/testTheScrubberStandsWhereThePageIsAfterEachJump	180	# an estimate until CI has timed it
+iPad Pro 13-inch|ContentsCloseUITests/testEveryPanelClosesTheSameWay	200	# an estimate until CI has timed it
+iPhone Duo|ContentsCloseUITests/testEveryPanelClosesTheSameWay	260	# an estimate until CI has timed it
