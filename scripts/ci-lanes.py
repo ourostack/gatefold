@@ -49,6 +49,8 @@ EXEMPT = {
     ("cloud-canary.yml", "canary"): "github.event_name != 'pull_request'",
     # The live gate on a cloud fix: a dispatched run (its `if`), in the canary's own group; never a pull_request run.
     ("cloud-fix-gate.yml", "live"): "github.event_name != 'pull_request'",
+    # The review panel's screenshots: dispatch only (its `on` and `if`), at most two legs at once; never a pull request.
+    ("panel.yml", "capture"): "github.event_name != 'pull_request'",
     # Publishing has its own group and runs from main; the check holds testflight.yml to having no pull_request trigger.
     ("testflight.yml", "publish"): None,
 }
