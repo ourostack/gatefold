@@ -71,8 +71,10 @@ jobs:
       - name: Find the ouro-ui-apple revision the build resolved
         id: pin
         run: |
-          python3 -I -c 'import json,sys; p = next(p for p in json.load(open(sys.argv[1]))["pins"] if p["identity"] == "ouro-ui-apple"); print("version=" + p["state"].get("version", "")); print("revision=" + p["state"]["revision"])' \
-            Gatefold.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved >> "$GITHUB_OUTPUT"
+          set -euo pipefail
+          checkout="$RUNNER_TEMP/dd/SourcePackages/checkouts/ouro-ui-apple"
+          echo "revision=$(git -C "$checkout" rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "version=$(git -C "$checkout" describe --tags --exact-match 2>/dev/null || git -C "$checkout" rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@v4
         with:
           repository: ourostack/ouro-ui-apple
