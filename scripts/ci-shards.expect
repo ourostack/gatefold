@@ -8,6 +8,10 @@ main|iPad Pro 13-inch|ContentsCloseUITests/testFlickingThroughTheListKeepsConten
 main|iPad Pro 13-inch|ControlsOverPageUITests/testShowingTheControlsLeavesEveryLineTurningPages
 main|iPad Pro 13-inch|CountingPlaceholderUITests/testAFreshOpenNeverLeavesTheNumbersSlotBlank
 main|iPad Pro 13-inch|CountingPlaceholderUITests/testAFreshOpenOnItsSideNeverLeavesTheNumbersSlotBlank
+main|iPad Pro 13-inch|FineTunePlaceUITests/testAFontChangeKeepsHisPage
+main|iPad Pro 13-inch|FineTunePlaceUITests/testALineSpacingChangeKeepsHisPage
+main|iPad Pro 13-inch|FineTunePlaceUITests/testAMarginsChangeKeepsHisPage
+main|iPad Pro 13-inch|FineTunePlaceUITests/testATextSizeChangeKeepsHisPage
 main|iPad Pro 13-inch|FineTuneTapUITests/testAQuickTouchChangesEverySwitchOnce
 main|iPad Pro 13-inch|FineTuneTapUITests/testAQuickTouchChangesEverySwitchOnceInLandscape
 main|iPad Pro 13-inch|FineTuneTapUITests/testATapOnTheRowsNameChangesItsSwitch
@@ -112,6 +116,10 @@ main|iPhone Duo|FeelReaderUITests/testOpenLandscapePaged
 main|iPhone Duo|FeelReaderUITests/testOpenLandscapeScroll
 main|iPhone Duo|FeelReaderUITests/testOpenPortraitPaged
 main|iPhone Duo|FeelReaderUITests/testOpenPortraitScroll
+main|iPhone Duo|FineTunePlaceUITests/testAFontChangeKeepsHisPage
+main|iPhone Duo|FineTunePlaceUITests/testALineSpacingChangeKeepsHisPage
+main|iPhone Duo|FineTunePlaceUITests/testAMarginsChangeKeepsHisPage
+main|iPhone Duo|FineTunePlaceUITests/testATextSizeChangeKeepsHisPage
 main|iPhone Duo|FineTuneTapUITests/testAQuickTouchChangesEverySwitchOnce
 main|iPhone Duo|FineTuneTapUITests/testAQuickTouchChangesEverySwitchOnceInLandscape
 main|iPhone Duo|FineTuneTapUITests/testATapOnTheRowsNameChangesItsSwitch
