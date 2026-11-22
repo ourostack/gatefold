@@ -148,12 +148,7 @@ struct ContentsSheet: View {
             .pickerStyle(.segmented)
             .frame(maxWidth: 320)
             .frame(maxWidth: .infinity)
-            Button("Close", systemImage: "xmark") { dismiss() }
-                .labelStyle(.iconOnly)
-                .buttonStyle(.glassProminent)
-                .buttonBorderShape(.circle)
-                .controlSize(.large)
-                .accessibilityIdentifier("contents.close")
+            PanelCloseButton(id: "contents.close") { dismiss() }
         }
         .padding(.horizontal, 16)
         .padding(.top, 20)
@@ -204,5 +199,23 @@ struct TextSizeControl: View {
         .buttonStyle(.plain)
         .accessibilityLabel(up ? "Larger Text" : "Smaller Text")
         .accessibilityIdentifier("\(idPrefix).\(up ? "larger" : "smaller")")
+    }
+}
+
+/// The one way a panel over the page closes (Contents, Search, Your Page): the system's close button, an X in plain
+/// glass at the panel's top trailing corner. The review panel of 2026-11-22 found five: a filled accent X on Contents,
+/// a grey X on Your Page's leading side, Done on the iPad's Search and an outlined X on the Duo's. A level pushed
+/// inside a panel (Fine-Tune) goes back with a chevron instead.
+struct PanelCloseButton: View {
+    let id: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(role: .close, action: action)
+            .buttonStyle(.glass)
+            .buttonBorderShape(.circle)
+            .controlSize(.large)
+            .accessibilityLabel("Close")
+            .accessibilityIdentifier(id)
     }
 }
