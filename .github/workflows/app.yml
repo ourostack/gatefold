@@ -710,7 +710,7 @@ jobs:
             # On a pull request: Page and taps: quick touches (#175), a row name, spread turns, on chrome, curl and settings changes (334 s).
             pr_when: taps
             cold: false
-            timeout: 72 # 30 + 2 x 12.1 + 5 + 12
+            timeout: 66 # 30 + 2 x 9.1 + 5 + 12
             lane: 10
           - shard: ipad-taps-rest
             # The catch-all for new Fine-Tune tests: 183, margin taps on a fresh spread (gatefold#304), and taps after
