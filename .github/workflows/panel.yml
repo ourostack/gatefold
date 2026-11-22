@@ -1,0 +1,113 @@
+name: Review panel shots
+
+# Screenshots for a review panel: GatefoldUITests/PanelCaptureUITests walks the library and the reader (turns, controls
+# up and down, Contents, Your Page, Fine-Tune, a scrubber jump, search) in light and in dark, on the iPhone Duo and the
+# iPad that main's UI shards use, and keeps each screen as an attachment. This job exports them by name and uploads
+# them as the artifact `panel-shots-<device>`. On demand only: it proves nothing, so it never runs on a push or a pull
+# request, and two legs at most share the Macs with main's shards. Public-domain books only (the test fixtures).
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: panel-${{ github.run_id }}
+
+jobs:
+  capture:
+    name: Panel shots (${{ matrix.device }})
+    # Dispatch only (its `on`); exempt from the pull-request lanes in scripts/ci-lanes.py while this `if` holds.
+    if: github.event_name != 'pull_request'
+    runs-on: xcode-27
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        include:
+          - device: iPhone Duo
+            sim: gatefold-duo
+            slug: duo
+          - device: iPad Pro 13-inch
+            sim: gatefold-ipad
+            slug: ipad
+    # The build (13 to 16 min, gatefold#39) runs while the simulator boots (up to 20 min), then two walks of about 5 min
+    # each: about 30 min, so 60 is twice that.
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/select-xcode
+        with:
+          xcode: "27.2"
+      - name: Keep the runner's agent ahead of the simulator's boot (gatefold#404)
+        run: nohup python3 -I scripts/ci-runner-priority.py 1500 > /dev/null 2>&1 &
+      - name: Start the ${{ matrix.device }} booting
+        run: python3 -I scripts/ci-simulator.py start "${{ matrix.sim }}" "${{ matrix.device }}"
+      - name: Install the Metal toolchain (the page curl is a Metal shader)
+        run: xcodebuild -downloadComponent MetalToolchain
+      - name: Generate the Xcode project from project.yml
+        run: |
+          brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
+          xcodegen generate
+      - name: Build the app and the panel test for the simulator
+        timeout-minutes: 25
+        run: |
+          set -o pipefail
+          xcodebuild build-for-testing -project Gatefold.xcodeproj -scheme Gatefold \
+            -destination 'generic/platform=iOS Simulator' ARCHS="$(uname -m)" \
+            -only-testing:GatefoldUITests/PanelCaptureUITests \
+            -derivedDataPath "$RUNNER_TEMP/dd" 2>&1 | tee "$RUNNER_TEMP/build.log" | tail -40
+      - name: The ${{ matrix.device }} finished booting
+        timeout-minutes: 30
+        env:
+          CI_SIMULATOR_BUDGET: "1740"
+        run: python3 -I scripts/ci-simulator.py wait "${{ matrix.sim }}" "${{ matrix.device }}" 1200
+      - name: Walk the reader in light, then in dark
+        timeout-minutes: 20
+        run: |
+          set -uo pipefail
+          runs=("$RUNNER_TEMP"/dd/Build/Products/*.xctestrun)
+          xctestrun="${runs[0]}"
+          status=0
+          for look in light dark; do
+            theme=daylight; [ "$look" = dark ] && theme=midnight
+            xcrun simctl ui "$UDID" appearance "$look"
+            TEST_RUNNER_PANEL_TAG="$look" TEST_RUNNER_PANEL_THEME="$theme" \
+              xcodebuild test-without-building -xctestrun "$xctestrun" -destination "$DESTINATION" \
+              -only-testing:GatefoldUITests/PanelCaptureUITests \
+              -resultBundlePath "$RUNNER_TEMP/panel-$look.xcresult" > "$RUNNER_TEMP/panel-$look.log" 2>&1 || status=1
+            grep -E "Test Case .*(passed|failed)|TEST (EXECUTE )?(SUCCEEDED|FAILED)|\.swift:[0-9]+: error" "$RUNNER_TEMP/panel-$look.log" \
+              | awk '{ if (match($0, /XCTAssert[A-Za-z]* failed/)) $0 = substr($0, 1, RSTART + RLENGTH - 1) " (text withheld)"; print }' || true
+          done
+          exit $status
+      - name: Export the screenshots by name
+        if: ${{ !cancelled() }}
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/shots/${{ matrix.slug }}"
+          mkdir -p "$out"
+          for look in light dark; do
+            bundle="$RUNNER_TEMP/panel-$look.xcresult"
+            [ -d "$bundle" ] || { echo "::warning::no result bundle for $look"; continue; }
+            raw="$RUNNER_TEMP/raw-$look"
+            mkdir -p "$raw"
+            xcrun xcresulttool export attachments --path "$bundle" --output-path "$raw"
+            python3 -I scripts/ci-panel-shots.py "$raw" "$out" "${{ matrix.slug }}"
+          done
+          ls -l "$out"
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: panel-shots-${{ matrix.slug }}
+          path: ${{ runner.temp }}/shots
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: panel-logs-${{ matrix.slug }}
+          path: |
+            ${{ runner.temp }}/build.log
+            ${{ runner.temp }}/panel-*.log
+            ${{ runner.temp }}/panel-*.xcresult
