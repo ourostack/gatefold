@@ -1380,6 +1380,13 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             if placingGeneration == generation { placingGeneration = -1 }
             if let moved { after = moved }
         }
+        // One page, after a new look: the page starts with his words, as a spread's left page does.
+        if columns == 1, model.keeper.reflowing == .typography, preferences.scroll != true, let target {
+            placingGeneration = generation
+            let moved = await keepOnTop(target, current: current)
+            if placingGeneration == generation { placingGeneration = -1 }
+            if let moved { after = moved }
+        }
         guard current() else { return }
         if let picture = restorePicture {
             if settlePicture === picture { await releaseSettlePicture() }
@@ -1468,6 +1475,44 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         }
         readerLog.notice("reflow: the restore judged the page in \(first, privacy: .public) columns, before its \(self.columns, privacy: .public) landed; \(landed ? "landed" : "still not landed", privacy: .public) after \(String(format: "%.1f", (ContinuousClock.now - start) / .seconds(1)), privacy: .public) s")
         return true
+    }
+
+    /// One page after a new look (a font, the text's size, its spacing, the margins): the restore finds the page
+    /// that holds his words, but the look cut the chapter into new pages, and that page began 5 to 174 words before
+    /// them on CI's Duo and iPad (FineTunePlaceUITests, App run 45056180041). A column break before his first word
+    /// starts a page with them, and the page goes to it. Returns what's on screen after the move; nil when no break
+    /// was needed (his words already open the page) or the page went away under it.
+    private func keepOnTop(_ anchor: ReadingAnchor, current: () -> Bool) async -> VisibleRange? {
+        guard let text = anchor.text?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty,
+              let saved = weakModel?.locator(for: anchor) else { return nil }
+        // A move on a page he can see is held behind a picture of it and shown as one change.
+        var picture: UIView?
+        let seen = !pageCovered && settlePicture == nil
+        if seen, holdSettlePicture() { picture = settlePicture }
+        defer { if let picture, settlePicture === picture { dropSettlePicture() } }
+        let pinned = ((try? await navigator.answer(ReaderJS.pinPage(text))) as? NSNumber)?.intValue == 1
+        guard pinned, current() else { return nil }
+        if seen, picture == nil { noteVisibleMove("column break, one page") }
+        let beat: () async -> Void = { try? await Task.sleep(for: .milliseconds(160)) }
+        // Where the words are in the page as it is laid out now, not where the place was saved.
+        let words = await self.progression(of: text) ?? saved.locations.progression
+        guard current() else { return nil }
+        _ = await navigator.go(to: saved.copy(locations: { $0.progression = words }), options: .init(animated: false))
+        var (visible, reads) = await LaidOutPage.read({ await self.liveVisibleRange() }, beat: beat, current: current)
+        if current(), let shown = visible, shown.text != nil, !shown.contains(anchor) {
+            // Never a page without his words: the restore's own jump again.
+            let landing = await RestoreLanding.land(
+                go: { _ = await self.navigator.go(to: saved, options: .init(animated: false)) },
+                read: { await self.liveVisibleRange() },
+                beat: beat,
+                arrived: { $0.contains(anchor) },
+                current: { current() && !Task.isCancelled })
+            visible = landing.range
+            reads += landing.reads
+        }
+        if let picture, settlePicture === picture, current() { await releaseSettlePicture() }
+        readerLog.notice("page: a column break at his words starts the page; page read \(reads, privacy: .public) times, his words \(visible?.contains(anchor) == true, privacy: .public)")
+        return visible
     }
 
     /// Moves the spread so `anchor`'s words start its left page: a blank verso before the file's first
