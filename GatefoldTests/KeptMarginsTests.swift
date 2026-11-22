@@ -40,3 +40,16 @@ struct KeptMarginsTests {
         #expect(ReaderModel.pageMargins(fresh: 1.4, applied: nil, laidFor: nil, now: basis(width: 466)) == 1.4)
     }
 }
+
+/// Justify Off sets the text ragged rather than leaving the book's own alignment, which for a Gutenberg book is
+/// justified: the switch read Off over a justified page (review panel 2026-11-22).
+@MainActor
+struct JustifyAlignmentTests {
+    @Test func offSetsTheTextRaggedAndOnJustifiesIt() {
+        var prefs = ReaderPreferences()
+        prefs.justify = false
+        #expect(ReaderModel.epubPreferences(prefs, theme: .daylight, columns: .one, viewWidth: 466).textAlign == .start)
+        prefs.justify = true
+        #expect(ReaderModel.epubPreferences(prefs, theme: .daylight, columns: .one, viewWidth: 466).textAlign == .justify)
+    }
+}
