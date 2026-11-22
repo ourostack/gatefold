@@ -28,10 +28,10 @@ private struct Harness {
     let reports = DownloadReports()
     let placeReports = PlaceReports()
 
-    func cloud() -> PocketBookCloud {
+    func cloud(autoFlush: Bool = false) -> PocketBookCloud {
         let clock = self.clock
         return PocketBookCloud(
-            configuration: .init(storageDirectory: directory, autoFlush: false),
+            configuration: .init(storageDirectory: directory, autoFlush: autoFlush),
             transport: transport, credentials: creds, tokenStore: tokens, pushedPlaces: places,
             downloadReports: reports, placeReports: placeReports,
             now: { clock.now }, jitter: { 1.0 }, sleep: { _ in }
@@ -566,6 +566,21 @@ struct PositionSyncTests {
         for await change in stream where change == .authenticationRequired { break }
     }
 
+    /// Ari, build 53: opening a book fetched the e-reader's place four times, each "sign in again", and
+    /// nothing asked him to. A fetch that finds the sign-in expired announces it, as a refused send does.
+    @Test func aPlaceFetchThatFindsTheSignInExpiredAnnouncesIt() async throws {
+        let h = Harness()
+        await h.transport.on("GET", "/fileops/info", .json("{}", status: 401))
+        await h.transport.on("POST", "/auth/renew-token", .json("{}", status: 401))
+        let cloud = h.cloud()
+        let stream = cloud.changes()
+        await #expect(throws: CloudError.authenticationRequired) { _ = try await cloud.remotePosition(for: CloudBook(fastHash: frankenstein)) }
+        let announced = Task { for await change in stream where change == .authenticationRequired { return true }; return false }
+        let timeout = Task { try await Task.sleep(for: .seconds(2)); announced.cancel() }
+        #expect(await announced.value)
+        timeout.cancel()
+    }
+
     @Test func recognisesItsOwnPositionWhenReadingBack() async throws {
         let h = Harness()
         await h.transport.on("POST", "/books/read-position", .ok)
@@ -1007,6 +1022,34 @@ struct PlaceReportTests {
         #expect(report.signInExpired)
         #expect(report.errorKind == "authenticationRequired")
         #expect(await cloud.pendingChanges() == 1)
+    }
+
+    /// Ari, build 53: a session saved before passwords were kept (build 39) could not renew itself, so his
+    /// place waited on a sign-in by hand. The place he read meanwhile must go out the moment he signs in,
+    /// not wait for the next page turn or be dropped.
+    @Test func aPlaceReadWhileSignedOutGoesOutRightAfterSignIn() async throws {
+        let h = Harness()
+        await h.transport.on("GET", "/fileops/info", .json("{}", status: 401))
+        await h.transport.on("POST", "/auth/renew-token", .json("{}", status: 401))
+        let cloud = h.cloud(autoFlush: true)
+        await cloud.push(position, for: CloudBook(fastHash: frankenstein))
+        await cloud.flushOutbox(trigger: .debounce)
+        #expect(h.placeReports.reports.last?.reason == .signInNeeded)
+        #expect(await cloud.pendingChanges() == 1, "kept, not dropped")
+
+        await h.transport.on("POST", "/auth/login/pocketbook_de", .json(tokenJSON("b1", refresh: "s1")))
+        await h.transport.on("GET", "/api/v1.0/user", .data(try Fixture.data("user.json")))
+        await h.transport.on("GET", "/fileops/info", remote("2026-10-31T21:00:00Z"))
+        await h.transport.on("POST", "/books/read-position", .ok)
+        _ = try await cloud.signIn(email: "reader@example.com", password: "pw", store: testStore())
+
+        for _ in 0..<200 where await cloud.pendingChanges() > 0 { try await Task.sleep(for: .milliseconds(25)) }
+        #expect(await cloud.pendingChanges() == 0)
+        let sent = try #require(await h.transport.requests("POST", "/books/read-position").last)
+        #expect(sent.headers["Authorization"] == "Bearer b1")
+        let report = try #require(h.placeReports.reports.last)
+        #expect(report.result == .sent)
+        #expect(report.trigger == .signIn)
     }
 
     @Test func aRenewedSignInIsReported() async throws {

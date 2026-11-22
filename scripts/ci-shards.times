@@ -146,3 +146,5 @@ iPad Pro 13-inch|JustifyPlaceUITests/testJustifyThenReopenKeepsHisPage	200	# est
 iPhone Duo|JustifyPlaceUITests/testJustifyThenReopenKeepsHisPage	200	# estimate until CI has run it: 90 to 124 s on the iPad locally (build 47 Duo reopen)
 iPad Pro 13-inch|RotationMidTransitionUITests/testATurnIntoTheNextChapterThenUprightAtOnceKeepsTheChapterHeTurnedTo	150	# estimate (new, build 47 review): 74 s locally, twice that for a hosted runner; replace once CI has timed it
 iPad Pro 13-inch|ControlsOverPageUITests/testShowingTheControlsLeavesEveryLineTurningPages	60	# estimate until CI has run it (build 53; about 50 s locally)
+iPad Pro 13-inch|SignInPromptUITests/testLaterPutsTheSlipAwayForThisOpen	45	# estimate until CI has run it (build 53)
+iPad Pro 13-inch|SignInPromptUITests/testTheReaderAsksToSignInAgainAndOneTapOpensSignIn	50	# estimate until CI has run it (build 53)

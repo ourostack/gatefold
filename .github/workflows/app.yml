@@ -840,14 +840,16 @@ jobs:
           - shard: ipad-reviewer-rest
             # Main only, the catch-all for new reviewer checks: 842 + 88, about 240 for one column on a portrait page (#303),
             # about 90 for the pages behind the shelf staying out of accessibility (#357), and about 20 for the shelf
-            # reading no reader words, and about 60 for showing the controls moving no line (build 53)
+            # reading no reader words, about 60 for showing the controls moving no line (build 53), and an estimated 90
+            # for the reader's sign-in slip (build 53)
             tests: >-
               ReviewerChecksUITests SingleColumnUITests ShelfAccessibilityUITests ReaderVisibleTextUITests ControlsOverPageUITests
+              SignInPromptUITests
             skip: >-
               ReviewerChecksUITests/testTheLastPagesNumberIsTheCount ReviewerChecksUITests/testPageNumbersAreOnOrOffInEveryBook ReviewerChecksUITests/testEveryReopenReturnsTheSameWords
             pr_tests: none
             cold: false
-            timeout: 80 # 30 + 2 x 16.3 + 5 + 12
+            timeout: 83 # 30 + 2 x 17.9 + 5 + 12
             lane: 2
           - shard: ipad-reviewer-contents
             # Main only: Contents closes on a swipe down from its header or its list's top, and on a pull past the list's
