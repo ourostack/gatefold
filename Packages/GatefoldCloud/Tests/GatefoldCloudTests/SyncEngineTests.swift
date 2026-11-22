@@ -1069,6 +1069,62 @@ struct PlaceReportTests {
         #expect(!report.signedInAgain)
     }
 
+    /// Ari, build 53: the place report said "sign in again" but not why. A session saved before passwords were
+    /// kept says so, separately from a password the Cloud refused.
+    @Test func aSignInWithNoKeptPasswordSaysSo() async throws {
+        let h = Harness()
+        await h.transport.on("GET", "/fileops/info", .json("{}", status: 401))
+        await h.transport.on("POST", "/auth/renew-token", .json("{}", status: 401))
+        let cloud = h.cloud()
+        await cloud.push(position, for: CloudBook(fastHash: frankenstein))
+        await cloud.flushOutbox()
+        let report = try #require(h.placeReports.reports.last)
+        #expect(report.reason == .signInNeeded)
+        #expect(report.hadKeptPassword == false)
+        #expect(report.reSignInErrorKind == "no_kept_password")
+    }
+
+    @Test func aKeptPasswordTheCloudRefusedSaysSo() async throws {
+        let h = Harness(tokens: InMemoryTokenStore(StoredSession(
+            account: CloudAccount(email: "reader@example.com", store: testStore()),
+            token: CloudToken(accessToken: "a1", refreshToken: "r1", expiresAt: Date.distantFuture), password: "pw")))
+        await h.transport.on("GET", "/fileops/info", .json("{}", status: 401))
+        await h.transport.on("POST", "/auth/renew-token", .json("{}", status: 401))
+        await h.transport.on("POST", "/auth/login/pocketbook_de", .json(#"{"error_code":1204,"error_msg":"Authorization partner user failed"}"#, status: 403))
+        let cloud = h.cloud()
+        await cloud.push(position, for: CloudBook(fastHash: frankenstein))
+        await cloud.flushOutbox()
+        let report = try #require(h.placeReports.reports.last)
+        #expect(report.hadKeptPassword == true)
+        #expect(report.reSignInErrorKind == "refused_kept")
+    }
+
+    @Test func aSendThatNeverTriedToSignInAgainLeavesItOut() async throws {
+        let h = Harness()
+        await h.transport.on("GET", "/fileops/info", remote("2026-10-31T21:00:00Z"))
+        await h.transport.on("POST", "/books/read-position", .ok)
+        let cloud = h.cloud()
+        await cloud.push(position, for: CloudBook(fastHash: frankenstein))
+        await cloud.flushOutbox()
+        let report = try #require(h.placeReports.reports.last)
+        #expect(report.result == .sent)
+        #expect(report.hadKeptPassword == nil)
+        #expect(report.reSignInErrorKind == nil)
+    }
+
+    @Test func aPlaceFetchCarriesTheReSignInItTriggered() async throws {
+        let h = Harness()
+        await h.transport.on("GET", "/fileops/info", .json("{}", status: 401))
+        await h.transport.on("POST", "/auth/renew-token", .json("{}", status: 401))
+        let cloud = h.cloud()
+        #expect(await cloud.reSignIn() == nil)
+        _ = try? await cloud.remotePosition(for: CloudBook(fastHash: frankenstein))
+        let note = try #require(await cloud.reSignIn())
+        #expect(note.tries == 1)
+        #expect(note.hadKeptPassword == false)
+        #expect(note.errorKind == "no_kept_password")
+    }
+
     @Test func noteKeepsTheStatusButNeverTheMessage() {
         var report = PlaceReport(direction: .push, result: .failed)
         report.note(CloudError.http(status: 422, message: "position: File not found."))

@@ -407,12 +407,14 @@ final class LibraryStore {
     func remotePosition(for book: LibraryBook, telemetry: GatefoldTelemetry = .shared) async -> ReadingPosition? {
         guard let cloud = book.cloud else { return nil }
         let remote: ReadingPosition?
+        let reSignInBefore = await sync.reSignIn()
         do {
             remote = try await sync.remotePosition(for: cloud)
             telemetry.capture(Self.pullReport(remote: remote, local: book))
         } catch {
             var report = PlaceReport(direction: .pull, result: .failed, reason: .error)
             report.note(error)
+            report.note(reSignIn: await sync.reSignIn(), since: reSignInBefore)
             telemetry.capture(report)
             remote = nil
         }

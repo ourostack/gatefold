@@ -67,6 +67,10 @@ public struct PlaceReport: Sendable, Equatable {
     public var signedInAgain: Bool
     /// The Cloud turned the sign-in away for good: he has to sign in again by hand.
     public var signInExpired: Bool
+    /// Set when this call tried to sign in again: a password was kept for it.
+    public var hadKeptPassword: Bool?
+    /// Set when this call tried to sign in again: how it went (`ReSignInNote.errorKind`).
+    public var reSignInErrorKind: String?
     /// Tries so far for this place, this one included.
     public var attempts: Int
     /// The place carried an exact CFI (false: a whole percent only).
@@ -126,6 +130,13 @@ public struct PlaceReport: Sendable, Equatable {
         errorDomain = ns.domain
         errorCode = ns.code
         errorKind = String(describing: type(of: error))
+    }
+
+    /// Notes the re-sign-in this call tried, if it tried one (`before` is the session's note when it began).
+    public mutating func note(reSignIn after: ReSignInNote?, since before: ReSignInNote?) {
+        guard let after, after.tries != (before?.tries ?? 0) else { return }
+        hadKeptPassword = after.hadKeptPassword
+        reSignInErrorKind = after.errorKind
     }
 
     /// Who wrote a place, as a fixed name.

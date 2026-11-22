@@ -101,6 +101,8 @@ final class GatefoldTelemetry: @unchecked Sendable {
         if let v = report.remoteSource { p["remote_source"] = .string(v) }
         if let v = report.remoteNewer { p["remote_newer"] = .bool(v) }
         if let v = report.remoteAhead { p["remote_ahead"] = .bool(v) }
+        if let v = report.hadKeptPassword { p["had_kept_password"] = .bool(v) }
+        if let v = report.reSignInErrorKind { p["resign_in_error_kind"] = .string(v) }
         if report.direction == .push {
             p["trigger"] = .string(report.trigger.rawValue)
             p["sign_in_renewed"] = .bool(report.signInRenewed)
