@@ -4,7 +4,8 @@ name: Stuck-run watchdog
 # it is still running (scripts/ci-stuck.py). A lost runner leaves its job in_progress forever, and a merge queue behind
 # it waits: merge-group run 44213268613 stalled the queue for about 2 h until it was force-cancelled by hand. Each
 # cancel is listed in the step summary, and a merge-group run's pull request gets a comment. Linux only, one page of
-# runs per quiet tick; HTTP 403 or 429 stops it. On a pull request that edits it, only its selftest runs.
+# runs per quiet tick; HTTP 403 or 429 stops it. On a pull request that edits it or any workflow, only its selftest
+# runs: the selftest reads every workflow's limit, and #580's build timeout broke it on main unseen.
 on:
   schedule:
     - cron: "*/5 * * * *"
@@ -12,7 +13,7 @@ on:
   pull_request:
     paths:
       - "scripts/ci-stuck.py"
-      - ".github/workflows/stuck-runs.yml"
+      - ".github/workflows/*.yml"
 
 permissions:
   contents: read
