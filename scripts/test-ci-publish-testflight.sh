@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Offline test of scripts/ci-publish-testflight.sh's upload step (gatefold#337) against a fake kit, xcodebuild,
+# Offline test of scripts/ci-publish-testflight.sh's upload step (gatefold#337) and its TestFlight push switch (5a) against a fake kit, xcodebuild,
 # xcodegen, unzip and plutil: no network, no App Store Connect, no secrets.
 #   bash scripts/test-ci-publish-testflight.sh
 # The fake kit answers the upload with FAKE_UPLOAD_EXIT, FAKE_UPLOAD_STDOUT and FAKE_UPLOAD_STDERR, and a build
@@ -17,11 +17,41 @@ printf 'Fixed a thing.\n' > "$work/whats-new.txt"
 
 cat > "$work/bin/node" <<'FAKE'
 #!/usr/bin/env bash
-# Fake `node <kit> ...`: the kit's JSON answers.
+# Fake `node <kit> ...`: the kit's JSON answers. Fake `node scripts/asc-build-auto-notify.mjs ...`: the PATCH,
+# answering FAKE_PATCH_STATUS.
+if [[ "$1" == */asc-build-auto-notify.mjs ]]; then
+  echo "auto-notify $4 $5" >> "$FAKE/kit-calls"
+  [[ "$2" == fake-cli.js && -f "$3" ]] || { echo "fake auto-notify: bad kit or config" >&2; exit 2; }
+  if [ "$FAKE_PATCH_STATUS" = 200 ]; then
+    echo "$5" > "$FAKE/auto-notify"
+    echo "{\"detailId\":\"$4\",\"status\":200,\"autoNotifyEnabled\":$5}"
+  else
+    echo "{\"detailId\":\"$4\",\"status\":$FAKE_PATCH_STATUS,\"code\":\"fake\",\"message\":\"fake failure\"}"
+    exit 1
+  fi
+  exit 0
+fi
 shift
 echo "$*" >> "$FAKE/kit-calls"
 case "$1 $2" in
   "asc get")
+    # With FAKE_STEP5 unset, step 5's first call fails. With it set, step 5 and the read-back get answers: the
+    # group is internal unless FAKE_GROUP_INTERNAL=false, and lists the build once published or with FAKE_IN_GROUP=1.
+    if [ -n "${FAKE_STEP5:-}" ]; then
+      case "$*" in
+        *"--path /v1/builds/fake-build/buildBetaDetail "*) echo '{"ok":true,"result":{"data":{"id":"fake-detail"}}}'; exit 0 ;;
+        *"--path /v1/apps/fake-app/betaGroups "*)
+          echo "{\"ok\":true,\"result\":{\"data\":[{\"id\":\"fake-group\",\"attributes\":{\"name\":\"Gatefold Internal\",\"isInternalGroup\":${FAKE_GROUP_INTERNAL:-true}}}]}}"; exit 0 ;;
+        *"--path /v1/betaGroups/fake-group/builds "*)
+          if [ -f "$FAKE/published" ] || [ "${FAKE_IN_GROUP:-}" = 1 ]; then echo '{"ok":true,"result":{"data":[{"id":"fake-build"}]}}'
+          else echo '{"ok":true,"result":{"data":[]}}'; fi; exit 0 ;;
+        *"--path /v1/buildBetaDetails/fake-detail "*)
+          echo "{\"ok\":true,\"result\":{\"data\":{\"id\":\"fake-detail\",\"attributes\":{\"internalBuildState\":\"IN_BETA_TESTING\",\"autoNotifyEnabled\":$(cat "$FAKE/auto-notify" 2>/dev/null || echo true)}}}}"; exit 0 ;;
+        *"--path /v1/builds/fake-build/betaBuildLocalizations "*)
+          echo '{"ok":true,"result":{"data":[{"attributes":{"locale":"en-US","whatsNew":"Fixed a thing."}}]}}'; exit 0 ;;
+        *"--path /v1/betaGroups/fake-group/betaTesters "*) echo '{"ok":true,"result":{"data":[{"id":"t"}]}}'; exit 0 ;;
+      esac
+    fi
     case "$*" in
       *"--path /v1/apps "*) echo '{"ok":true,"result":{"data":[{"id":"fake-app"}]}}' ;;
       *"filter[version]="*)
@@ -36,6 +66,16 @@ case "$1 $2" in
     jq -n --arg stdout "$FAKE_UPLOAD_STDOUT" --arg stderr "$FAKE_UPLOAD_STDERR" --argjson code "$FAKE_UPLOAD_EXIT" \
       --arg argv "$*" '{ok: ($code == 0), mode: "apply", command: ($argv | split(" ")), exitCode: $code, stdout: $stdout, stderr: $stderr}'
     exit "$FAKE_UPLOAD_EXIT" ;;
+  "testflight publish")
+    # Keeps the manifest it was given; apply does what the real kit does with the manifest's autoNotifyEnabled.
+    mode="$(sed -nE 's/.*--mode ([a-z-]+).*/\1/p' <<< "$*")" manifest="$(sed -nE 's/.*--manifest ([^ ]+).*/\1/p' <<< "$*")"
+    cp "$manifest" "$FAKE/publish-manifest-$mode.json"
+    if [ "$mode" = apply ]; then
+      touch "$FAKE/published"
+      jq -r '.channels[0].testflight.build.autoNotifyEnabled // empty' "$manifest" > "$FAKE/auto-notify.next"
+      [ -s "$FAKE/auto-notify.next" ] && cp "$FAKE/auto-notify.next" "$FAKE/auto-notify"
+    fi
+    echo '{"ok":true}' ;;
   *) echo "fake kit: unexpected $*" >&2; exit 2 ;;
 esac
 FAKE
@@ -176,6 +216,44 @@ polled duplicate-of-27 && bad "  ...and never asks for the build" duplicate-of-2
 
 run delivered-exit-0 0 VALID "$delivered"
 expect delivered-exit-0 "exit 0: goes on to the poll as before" "Build 28 is processed (fake-build)" "upload failed" "::warning"
+
+# Step 5a: TestFlight's new-build push. run5 <name> <PATCH status> [<env>...]: a whole publish (upload exit 0,
+# processed), with step 5 answered.
+run5() { ( export FAKE_STEP5=1 FAKE_PATCH_STATUS="$2" "${@:3}"; run "$1" 0 VALID "" ); }
+manifest_build() { jq -c '.channels[0].testflight.build | {autoNotifyEnabled, notifyTesters}' "$work/$1.fake/publish-manifest-apply.json" 2>/dev/null; }
+no_leak() { ! grep -rqF -e "$KEY_ID" -e "$ISSUER_ID" -e "$KEY_PATH" -e fake-github-token "$work/$1" "$work/$1.out"; }
+
+run5 push-off 200
+if [ "$(cat "$work/push-off.exit")" = 0 ] \
+  && grep -q "TestFlight's new-build push is off for build 28 (HTTP 200)" "$work/push-off" \
+  && patch_line="$(grep -n '^auto-notify fake-detail false$' "$work/push-off.fake/kit-calls" | cut -d: -f1)" \
+  && apply_line="$(grep -n 'testflight publish --mode apply' "$work/push-off.fake/kit-calls" | cut -d: -f1)" \
+  && [ -n "$patch_line" ] && [ -n "$apply_line" ] && (( patch_line < apply_line )) \
+  && [ "$(manifest_build push-off)" = '{"autoNotifyEnabled":false,"notifyTesters":false}' ] \
+  && [ "$(jq -r .autoNotifyEnabled "$work/push-off.out/testflight-publish-summary.json")" = false ] && no_leak push-off; then
+  ok "an internal-only build: push turned off before it joins the group, and the kit neither turns it on nor notifies"
+else bad "an internal-only build: push turned off before it joins the group, and the kit neither turns it on nor notifies" push-off; fi
+
+run5 push-off-fails 500
+if [ "$(cat "$work/push-off-fails.exit")" != 0 ] \
+  && grep -q "could not turn off TestFlight's new-build push for build 28; not publishing it" "$work/push-off-fails" \
+  && grep -q '"status":500' "$work/push-off-fails" && [ ! -e "$work/push-off-fails.fake/published" ]; then
+  ok "a failed PATCH on a build not yet in its group: the publish fails loudly and never publishes"
+else bad "a failed PATCH on a build not yet in its group: the publish fails loudly and never publishes" push-off-fails; fi
+
+run5 push-off-fails-distributed 500 FAKE_IN_GROUP=1
+if [ "$(cat "$work/push-off-fails-distributed.exit")" = 0 ] \
+  && grep -q "::warning title=TestFlight push not turned off::Build 28 is already in Gatefold Internal" "$work/push-off-fails-distributed"; then
+  ok "a failed PATCH on a build already in its group: logged as a warning, and the publish goes on"
+else bad "a failed PATCH on a build already in its group: logged as a warning, and the publish goes on" push-off-fails-distributed; fi
+
+run5 push-on-external 200 FAKE_GROUP_INTERNAL=false
+if [ "$(cat "$work/push-on-external.exit")" = 0 ] \
+  && grep -q "TestFlight's new-build push stays on for build 28: it also goes to Gatefold Internal (App Store Connect calls it external)" "$work/push-on-external" \
+  && ! grep -q '^auto-notify' "$work/push-on-external.fake/kit-calls" \
+  && [ "$(manifest_build push-on-external)" = '{"autoNotifyEnabled":true,"notifyTesters":true}' ]; then
+  ok "a build that goes to an external group: push left on, no PATCH, the manifest unchanged"
+else bad "a build that goes to an external group: push left on, no PATCH, the manifest unchanged" push-on-external; fi
 
 [ "$fails" = 0 ] || { echo "$fails failed (work dir $work)"; exit 1; }
 echo "all passed"
