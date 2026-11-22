@@ -870,8 +870,15 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
 
     // MARK: Reflow and the reading anchor
 
+    /// A new look (a font, the text's size, its spacing, the margins) began a reflow that hasn't settled yet. Kept
+    /// apart from the keeper's reason, which the next reflow's replaces: on CI's iPad a bigger text size began a
+    /// second reflow, named a rotation, before the first had settled, and its restore left his words 23 to 152 words
+    /// down the page (FineTunePlaceUITests, App run 45062330388).
+    private var newLookUnsettled = false
+
     private func beginReflow(_ reason: ReflowReason) {
         readerLog.notice("reflow begins: \(String(describing: reason), privacy: .public)")
+        if reason == .typography { newLookUnsettled = true }
         if LaunchOptions.stallReflow == false, LaunchOptions.slowRestorePage, slowRestoreDeadline == nil, model.hisMoves > 0 {
             slowRestoreDeadline = .now + .seconds(120)
             readerLog.notice("reflow: its page answers only in 120 s, for the test (GatefoldSlowRestorePage)")
@@ -1205,6 +1212,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         readerLog.notice("reflow: he moved while the restore ran; it gives way to his move")
         model.keeper.restoreGaveWay()
         settledGeneration = generation
+        newLookUnsettled = false
         reflowRetries = 0
         showPageAsItIs()
         // His move's own report took his place, or reflowDidFinish's owed-place path does now (with its guards
@@ -1381,7 +1389,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             if let moved { after = moved }
         }
         // One page, after a new look: the page starts with his words, as a spread's left page does.
-        if columns == 1, model.keeper.reflowing == .typography, preferences.scroll != true, let target {
+        if columns == 1, newLookUnsettled, preferences.scroll != true, let target {
             placingGeneration = generation
             let moved = await keepOnTop(target, current: current)
             if placingGeneration == generation { placingGeneration = -1 }
@@ -1409,6 +1417,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         // Settled now, not when the swing below has played: the 12 s watchdog took a slow, finished
         // restore whose swing was still running for a stalled one and started it again.
         settledGeneration = generation
+        newLookUnsettled = false
         reflowRetries = 0
         disablePanningIfNeeded()
         var cover = reflowCover
