@@ -892,7 +892,7 @@ jobs:
             skip: ""
             pr_tests: none
             cold: false
-            timeout: 72 # 30 + 2 x 12.2 + 5 + 12
+            timeout: 78 # 30 + 2 x 15.5 + 5 + 12
             lane: 4
           - shard: ipad-reviewer-reopen
             # Main only: 994, out of ipad-reviewer-rest, as duo-reviewer-reopen is on the Duo
@@ -999,7 +999,7 @@ jobs:
             skip: ""
             pr_tests: none
             cold: false
-            timeout: 79 # 30 + 2 x 15.7 + 5 + 12
+            timeout: 87 # 30 + 2 x 20.0 + 5 + 12
             lane: 5
           - shard: duo-scroll
             # Scroll mode keeps the place: a sideways swipe, a status-bar tap, a chapter's end and back (estimates until CI has run them)

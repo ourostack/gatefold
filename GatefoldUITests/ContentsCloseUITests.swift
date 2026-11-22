@@ -205,4 +205,32 @@ final class ContentsCloseUITests: XCTestCase {
         expectContentsClosed("the close button")
         expectSamePage(as: before, "flicking through Contents and closing it")
     }
+
+    /// Every panel over the page closes one way: a Close button with an X at its top trailing corner. The review panel
+    /// of 2026-11-22 found five: a filled X on Contents, a grey X on Your Page's leading side, Done on the iPad's Search
+    /// and an outlined X on the Duo's. Fine-Tune, a level pushed inside Your Page, keeps its back chevron.
+    func testEveryPanelClosesTheSameWay() {
+        continueAfterFailure = true
+        for (sheet, id) in [("contents", "contents.close"), ("search", "search.close"), ("appearance", "appearance.close")] {
+            app.launchArguments = common + ["-GatefoldReset", "YES", "-GatefoldDownloadAll", "YES", "-GatefoldNoLatency", "YES",
+                                            "-GatefoldOpenBook", "gutenberg-pride-and-prejudice", "-GatefoldSheet", sheet]
+            app.launch()
+            let close = app.buttons[id].firstMatch
+            let up = readsUntil(reads: 300) { close.exists && close.isHittable }
+            let shot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+            shot.name = "close-\(sheet)"
+            shot.lifetime = .keepAlways
+            add(shot)
+            XCTAssertTrue(up.ok, "\(sheet) has its Close button, \(id)")
+            guard up.ok else { app.terminate(); continue }
+            let window = app.windows.firstMatch.frame
+            let frame = close.frame
+            XCTAssertEqual(close.label, "Close", "\(sheet)'s close button is named Close")
+            XCTAssertGreaterThan(frame.midX, window.midX, "\(sheet)'s Close stands at the trailing side (\(frame) in \(window))")
+            XCTAssertEqual(frame.width, frame.height, accuracy: 1, "\(sheet)'s Close is a round X, not a word (\(frame))")
+            close.tap()
+            XCTAssertTrue(readsUntil(reads: 50) { !close.exists }.ok, "\(sheet)'s Close closes it")
+            app.terminate()
+        }
+    }
 }
