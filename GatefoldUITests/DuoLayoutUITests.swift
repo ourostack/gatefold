@@ -187,4 +187,32 @@ final class DuoLayoutUITests: XCTestCase {
                            file: file, line: line)
         }
     }
+
+    /// Search shows each match and marks it on the page. On the folded Duo the review panel of 2026-11-22 found each
+    /// result's three lines spent on the words before the match, so the bold match never showed, and the page it
+    /// jumped to had nothing marked. A result now opens a few words before its match, and the jump underlines it.
+    func testSearchShowsTheMatchAndMarksItOnThePage() {
+        open(["-GatefoldSheet", "search"])
+        let field = app.searchFields.firstMatch
+        XCTAssertTrue(readsUntil(reads: 300) { field.exists }.ok, "Search opened")
+        field.tap()
+        field.typeText("Darcy")
+        let result = app.buttons["search.result"].firstMatch
+        XCTAssertTrue(readsUntil(reads: 300) { result.exists }.ok, "a result")
+        shot("search-results")
+        let label = result.label
+        let match = label.range(of: "Darcy")
+        XCTAssertNotNil(match, "the result shows its match: \(label.count) characters")
+        if let match {
+            let before = label.distance(from: label.startIndex, to: match.lowerBound)
+            XCTAssertLessThanOrEqual(before, 60, "the match comes within the result's first words, after \(before) characters")
+        }
+        result.tap()
+        let marked = readsUntil(reads: 300) {
+            let value = el("reader.underline").value as? String ?? ""
+            return (Int(value.split(separator: " ").last ?? "") ?? 0) > 0
+        }
+        shot("search-landed")
+        XCTAssertTrue(marked.ok, "the match is marked on the page it jumped to (\(el("reader.underline").value as? String ?? "no probe"))")
+    }
 }

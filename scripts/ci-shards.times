@@ -164,3 +164,4 @@ iPhone Duo|FineTunePlaceUITests/testALineSpacingChangeKeepsHisPage	200	# estimat
 iPhone Duo|FineTunePlaceUITests/testAMarginsChangeKeepsHisPage	200	# estimate until CI has run it, from Justify's 200 on the Duo (Fine-Tune keeps the place, 2026-11-22)
 iPad Pro 13-inch|FineTuneTapUITests/testFineTuneShowsEveryWordWhole	150	# an estimate until CI has timed it
 iPhone Duo|FineTuneTapUITests/testFineTuneShowsEveryWordWhole	180	# an estimate until CI has timed it
+iPhone Duo|DuoLayoutUITests/testSearchShowsTheMatchAndMarksItOnThePage	150	# an estimate until CI has timed it
