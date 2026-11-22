@@ -429,11 +429,12 @@ struct SearchSheet: View {
                 }
                 ForEach(Array(results.enumerated()), id: \.offset) { _, locator in
                     Button {
-                        Task { await model.go(to: locator, rememberBack: true) }
+                        Task { await model.go(to: locator, rememberBack: true, markingTheMatch: true) }
                         dismiss()
                     } label: {
                         VStack(alignment: .leading, spacing: 3) {
-                            (Text(locator.text.before ?? "").foregroundStyle(.secondary)
+                            // The last few words before the match, so the match shows in the first lines.
+                            (Text(SearchSnippet.lead(locator.text.before ?? "")).foregroundStyle(.secondary)
                              + Text(locator.text.highlight ?? "").bold()
                              + Text(locator.text.after ?? "").foregroundStyle(.secondary))
                                 .font(.subheadline)

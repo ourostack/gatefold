@@ -3690,7 +3690,9 @@ final class ReaderModel {
     }
 
     /// A highlight's exact place: Readium finds its words, so the page is the one they are on.
-    func go(to locator: Locator, rememberBack: Bool) async {
+    /// `markingTheMatch`: a search result's match is underlined where it landed, as the other device's place is, so
+    /// his eye finds it (review panel 2026-11-22: the hit had no mark on the page).
+    func go(to locator: Locator, rememberBack: Bool, markingTheMatch: Bool = false) async {
         reflowTouches = 0
         hisMoves += 1
         hasMoved = true
@@ -3700,6 +3702,10 @@ final class ReaderModel {
         jumpOnItsWay = (locator, moves, lastReported ?? page?.currentLocation)
         let jump = await veiled(toward: locator.href) { _ = await self.page?.go(to: locator) }
         if endedQuietly(jump, back: back) { return }
+        if markingTheMatch {
+            host?.underline(locator, color: theme.palette.accent)
+            watchUnderline()
+        }
         await captureAnchor()
     }
 
