@@ -968,7 +968,7 @@ jobs:
               PositionUITests/testTabletopDeckTurnsAndResizes PositionUITests/testFontChangeKeepsThePlace
             pr_tests: none
             cold: false
-            timeout: 89 # 30 + 2 x 20.9 + 5 + 12
+            timeout: 94 # 30 + 2 x 23.4 + 5 + 12
             lane: 10
           - shard: duo-sheets
             # A sheet closed without choosing keeps his place (gatefold#535): Contents pulled away or closed after a

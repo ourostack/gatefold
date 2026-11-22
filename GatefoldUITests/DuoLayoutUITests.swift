@@ -161,6 +161,50 @@ final class DuoLayoutUITests: XCTestCase {
                        "no reflow for opening and closing Contents (\(before.reflows) then \(after.reflows))")
     }
 
+    /// After a scrubber jump with the controls up, the folded Duo's foot had no room for "Back to where you were" beside
+    /// the scrubber: the pill took a few characters' width, its label wrapped a fragment a line ("Bac / k to / whe"), it
+    /// covered the scrubber, and the taller pill pushed the bar up over the text (review panel 2026-11-22, duo-*-09/10).
+    /// The pill keeps its label on one line, clear of the scrubber, and Search stays where it stood before the jump.
+    func testBackAfterAJumpKeepsItsLabelAndLeavesTheBarWhereItWas() {
+        open([])
+        let page = el("reader.page")
+        let search = app.buttons["reader.search"]
+        let scrubber = el("reader.scrubber")
+        for _ in 0..<3 where !search.exists {
+            page.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+            _ = readsUntil(reads: 25) { search.exists }
+        }
+        XCTAssertTrue(search.exists && scrubber.exists, "the controls came up")
+        // The bar's frames before the jump, once the controls have finished arriving: 5 equal looks running.
+        var bar = CGRect.null, same = 0
+        _ = readsUntil(reads: 60) {
+            let now = search.exists ? search.frame : .null
+            same = now == bar ? same + 1 : 0
+            bar = now
+            return same >= 5
+        }
+        scrubber.coordinate(withNormalizedOffset: CGVector(dx: 0.3, dy: 0.5))
+            .press(forDuration: 0.1, thenDragTo: scrubber.coordinate(withNormalizedOffset: CGVector(dx: 0.62, dy: 0.5)))
+        let back = app.buttons["reader.back"].firstMatch
+        XCTAssertTrue(readsUntil(reads: 100) { back.exists && search.exists }.ok, "the way back came up with the controls")
+        // Let the pill's arrival finish: 5 equal looks running.
+        var pill = CGRect.null
+        same = 0
+        _ = readsUntil(reads: 60) {
+            let now = back.exists ? back.frame : .null
+            same = now == pill ? same + 1 : 0
+            pill = now
+            return same >= 5
+        }
+        shot("back-after-jump")
+        XCTAssertLessThanOrEqual(pill.height, 50, "the pill's label sits on one line (pill \(pill))")
+        XCTAssertGreaterThanOrEqual(pill.width, 150, "the pill is as wide as its label (pill \(pill))")
+        if scrubber.exists {
+            XCTAssertFalse(pill.intersects(scrubber.frame), "the pill \(pill) is clear of the scrubber \(scrubber.frame)")
+        }
+        XCTAssertEqual(search.frame.minY, bar.minY, accuracy: 0.5, "the bar holds still for the pill (Search at \(bar), then \(search.frame))")
+    }
+
     private func checkScrollingTop(_ extra: [String], file: StaticString = #filePath, line: UInt = #line) {
         open(["-GatefoldPageTurn", "scroll"] + extra)
         let page = el("reader.page")
