@@ -2,7 +2,8 @@ name: Ouro actions
 
 # Gatefold's actions (actions/gatefold.actions.mts) against the vendored generator: the vendored files match ouro-ui-core's
 # hashes, nothing generated has drifted, and the actions' claims report is uploaded as the `actions-xray` artifact for the
-# Ouro adoption ledger. Node only, no simulator, so it doesn't wait on the iPad shards in app.yml.
+# Ouro adoption ledger. Node only, no simulator, so it doesn't wait on the iPad shards in app.yml. On main, the App Intents
+# X-ray below runs beside it.
 
 on:
   pull_request:
@@ -36,4 +37,59 @@ jobs:
         with:
           name: actions-xray
           path: xray-actions/
+          if-no-files-found: error
+
+  # Gatefold's App Intents X-ray (ouro-ui-apple's ouro-ax-xray, metadata stage): the `ax-xray` artifact the Ouro adoption
+  # ledger reads for "AX must claims pass in CI". The ledger counts only reports from a push to this repository's main
+  # (ourostack/ouro-ui#3009), so it runs here on main and by hand, never on a pull request or in the merge queue. It
+  # builds the app itself: app.yml's build is skipped whenever the merge queue already passed the tree, so there is no
+  # build artifact to reuse on most pushes. xcode-27 is the only image with the iOS 27 SDK Gatefold needs. The metadata
+  # stage reads the built app's Metadata.appintents and boots no simulator. ouro-ui-apple's release run of the same
+  # X-ray took 5 to 8 min (runs 44960978337, 44989824056), so the timeout is about twice that.
+  app-intents-xray:
+    name: App Intents X-ray
+    if: ${{ github.event_name != 'pull_request' && github.event_name != 'merge_group' }}
+    runs-on: xcode-27
+    timeout-minutes: 16
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/select-xcode
+        with:
+          xcode: "27.2"
+      - name: Install the Metal toolchain (the page curl is a Metal shader)
+        run: xcodebuild -downloadComponent MetalToolchain
+      - name: Generate the Xcode project from project.yml
+        run: |
+          brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
+          xcodegen generate
+      - name: Build the app for the simulator
+        run: |
+          set -o pipefail
+          xcodebuild build -project Gatefold.xcodeproj -scheme Gatefold -configuration Debug \
+            -destination 'generic/platform=iOS Simulator' ARCHS="$(uname -m)" \
+            -derivedDataPath "$RUNNER_TEMP/dd" CODE_SIGNING_ALLOWED=NO 2>&1 | tail -40
+      - name: Find the ouro-ui-apple revision the build resolved
+        id: pin
+        run: |
+          python3 -I -c 'import json,sys; p = next(p for p in json.load(open(sys.argv[1]))["pins"] if p["identity"] == "ouro-ui-apple"); print("version=" + p["state"].get("version", "")); print("revision=" + p["state"]["revision"])' \
+            Gatefold.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        with:
+          repository: ourostack/ouro-ui-apple
+          ref: ${{ steps.pin.outputs.revision }}
+          path: .ci/ouro-ui-apple
+          persist-credentials: false
+      - name: Build the X-ray (ouro-ui-apple ${{ steps.pin.outputs.version }})
+        working-directory: .ci/ouro-ui-apple
+        run: swift build -c release --product ouro-ax-xray
+      - name: X-ray the App Intents (xray-app-intents/report.json)
+        run: |
+          .ci/ouro-ui-apple/.build/release/ouro-ax-xray --app "$RUNNER_TEMP/dd/Build/Products/Debug-iphonesimulator/Gatefold.app" \
+            --commit "$(git rev-parse --short HEAD)" --name Gatefold --out xray-app-intents --format md >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload the App Intents X-ray (artifact ax-xray)
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ax-xray
+          path: xray-app-intents/
           if-no-files-found: error
