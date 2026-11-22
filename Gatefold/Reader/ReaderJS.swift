@@ -282,6 +282,54 @@ enum ReaderJS {
           if (pin) { const parent = pin.parentNode; pin.remove(); if (parent) { parent.normalize(); } removed = 1; }
           return removed;
         },
+        // One page's twin of `pinToTop`: starts the page at `quote` when it isn't on the page's
+        // first line. A new look (a font, the text's size, its spacing, the margins) cuts the chapter into new pages,
+        // and the page that holds his words began dozens of words before them (FineTunePlaceUITests). A break from
+        // an earlier look goes first: this layout's lines decide where the page starts. When his first word is the end
+        // of one begun on the page before, the break goes before that whole word, never inside it, so the page still
+        // holds his opening words (`VisibleRange.contains`).
+        // Returns 1 when a break went in.
+        pinPage: function (quote) {
+          const laidOut = parseInt(getComputedStyle(document.documentElement).columnCount, 10);
+          if (!isNaN(laidOut) && laidOut !== 1) { return 0; }
+          // Taking an earlier break out moves the page under the reader, so the new one then always goes in.
+          const old = document.getElementById("gatefold-pin");
+          if (old) { const parent = old.parentNode; old.remove(); if (parent) { parent.normalize(); } }
+          const words = norm(quote).split(" ").slice(0, 8).map(function (w) { return w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); });
+          if (!words.length || !words[0]) { return null; }
+          const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+          const nodes = []; let text = "";
+          while (walker.nextNode()) { nodes.push([walker.currentNode, text.length]); text += walker.currentNode.data; }
+          const m = new RegExp(words.join("\\s+")).exec(text);
+          if (!m) { return null; }
+          let at = m.index;
+          const letter = /[\p{L}\p{N}]/u;
+          if (letter.test(text[at])) { while (at > 0 && letter.test(text[at - 1])) { at -= 1; } }
+          for (const [node, start] of nodes) {
+            if (start + node.data.length <= at) { continue; }
+            const offset = at - start;
+            const range = document.createRange();
+            range.setStart(node, offset);
+            range.setEnd(node, Math.min(node.data.length, offset + 1));
+            if (!old) {
+              const rect = range.getBoundingClientRect();
+              const w = window.innerWidth;
+              if (rect.left < 0 || rect.left >= w) { return 0; }
+              const head = first(0, w);
+              if (!head) { return 0; }
+              const line = parseFloat(getComputedStyle(node.parentElement || document.body).lineHeight) || 24;
+              if (rect.top - head.getBoundingClientRect().top < line * 0.5) { return 0; }
+            }
+            const rest = offset > 0 ? node.splitText(offset) : node;
+            const pin = document.createElement("span");
+            pin.id = "gatefold-pin";
+            pin.setAttribute("aria-hidden", "true");
+            pin.style.cssText = "display:block;height:0;margin:0;padding:0;break-before:column;-webkit-column-break-before:always;";
+            rest.parentNode.insertBefore(pin, rest);
+            return 1;
+          }
+          return null;
+        },
         // Starts a new column at `quote`, so on an unfold the reader's words open the left page instead
         // of sitting halfway down it. Only when they would be more than two lines down. Returns 1 when
         // a break went in.
@@ -408,6 +456,10 @@ enum ReaderJS {
     static func pinToTop(_ quote: String) -> String {
         let q = (try? JSONEncoder().encode(quote)).map { String(decoding: $0, as: UTF8.self) } ?? "\"\""
         return "window.gatefold ? window.gatefold.pinToTop(\(q)) : null"
+    }
+    static func pinPage(_ quote: String) -> String {
+        let q = (try? JSONEncoder().encode(quote)).map { String(decoding: $0, as: UTF8.self) } ?? "\"\""
+        return "window.gatefold ? window.gatefold.pinPage(\(q)) : null"
     }
     static let removeVerso = "window.gatefold ? window.gatefold.removeVerso() : null"
     /// 1 on a page our script hasn't been installed on yet: one loaded since the last look.
