@@ -110,6 +110,11 @@ final class AppModel {
             prefs?.adoptGlobalFurniture()
             if let moved = prefs, let data = try? JSONEncoder().encode(moved) { UserDefaults.standard.set(data, forKey: Keys.preferences) }
         }
+        if prefs?.alignVersion != PreferencesStore.currentAlign {
+            // Saved while Justify Off left the book's own (justified) alignment: it reads On, as the page looked.
+            prefs?.adoptTruthfulJustify()
+            if let moved = prefs, let data = try? JSONEncoder().encode(moved) { UserDefaults.standard.set(data, forKey: Keys.preferences) }
+        }
         self.preferences = prefs!
         self.hasOnboarded = LaunchOptions.skipWelcome || UserDefaults.standard.bool(forKey: Keys.onboarded)
         if LaunchOptions.pageFurniture {

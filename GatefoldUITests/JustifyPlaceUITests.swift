@@ -108,14 +108,14 @@ final class JustifyPlaceUITests: XCTestCase {
         return (0...(all.count - his.count)).first { Array(all[$0..<($0 + his.count)]) == his }
     }
 
-    /// Justify on and then off, at `at`: after each flip the page starts with his first whole words.
+    /// Justify off and then on again (it starts on), at `at`: after each flip the page starts with his first whole words.
     private func flipKeepsHisPage(at: String) {
         let before = open(at: at)
         // The first word can be the end of one begun on the page before: his first whole words follow it.
         let his = Array(words(before).dropFirst().prefix(6))
         XCTAssertFalse(his.isEmpty, "\(at): the page had words")
         let justify = openJustify()
-        for what in ["Justify on at \(at)", "Justify off at \(at)"] {
+        for what in ["Justify off at \(at)", "Justify on again at \(at)"] {
             let after = flip(justify, what)
             let at = wordsBefore(his, in: after)
             say("\(what): \(hash(before)) -> \(hash(after)); his first words \(at.map { "\($0) words down" } ?? "off the page")")
@@ -125,14 +125,14 @@ final class JustifyPlaceUITests: XCTestCase {
         }
     }
 
-    /// Justify on, then the app ended from the Home Screen and opened again: the page he comes back to starts with the
+    /// Justify off, then the app ended from the Home Screen and opened again: the page he comes back to starts with the
     /// words the flip left him on. Build 47's Duo run came back on the page from before its Fine-Tune changes: the
     /// screen had been laid out with other margins than the place was saved against.
     func testJustifyThenReopenKeepsHisPage() {
         let before = open(at: "0.47")
         let his = Array(words(before).dropFirst().prefix(6))
         let justify = openJustify()
-        let flipped = flip(justify, "Justify on before a reopen")
+        let flipped = flip(justify, "Justify off before a reopen")
         let at = wordsBefore(his, in: flipped)
         XCTAssertNotNil(at, "the flip kept his first whole words on the page (\(hash(before)) to \(hash(flipped)))")
         // What the flip left on screen is his place now: its first whole words are what a reopen must start with.

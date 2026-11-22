@@ -174,7 +174,9 @@ public struct ReaderPreferences: Codable, Equatable, Sendable {
     public var fontScale = 1.0
     public var lineSpacing: LineSpacing = .normal
     public var margins: PageMargins = .normal
-    public var justify = false
+    /// On, as the page starts: justified, with hyphens. Off sets the text ragged (it used to leave the book's own
+    /// alignment, so a Gutenberg page stayed justified while the switch read Off: review panel 2026-11-22).
+    public var justify = true
     public var pageTurn: PageTurnStyle = .curl
     /// Page furniture, his choice and off unless he turns it on: the number under each page, the
     /// position in the book ("12 of 340") and pages left in the chapter. None of them changes the
@@ -279,6 +281,7 @@ public struct PreferencesStore: Codable, Equatable, Sendable {
         self.defaults = defaults
         self.densityVersion = Self.currentDensity
         self.furnitureVersion = Self.currentFurniture
+        self.alignVersion = Self.currentAlign
     }
 
     /// Page numbers, the position label and pages left are his, not a book's look: they always come
@@ -325,6 +328,23 @@ public struct PreferencesStore: Codable, Equatable, Sendable {
             perBook[id] = p == defaults ? nil : p
         }
         furnitureVersion = Self.currentFurniture
+    }
+
+    /// Justify as saved: nil before Off meant ragged, `currentAlign` after.
+    public private(set) var alignVersion: Int?
+    public static let currentAlign = 1
+
+    /// Once, for settings saved while Off left the book's own alignment: Off reads On, since the page he saw was
+    /// justified, so it looks as it did and the switch tells the truth. Off chosen after this stays Off.
+    public mutating func adoptTruthfulJustify() {
+        guard (alignVersion ?? 0) < Self.currentAlign else { return }
+        defaults.justify = true
+        for id in Array(perBook.keys) {
+            var p = perBook[id]!
+            p.justify = true
+            perBook[id] = p == defaults ? nil : p
+        }
+        alignVersion = Self.currentAlign
     }
 
     public mutating func useAsDefault(from bookID: String) {
