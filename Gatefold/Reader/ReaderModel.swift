@@ -388,6 +388,8 @@ final class ReaderModel {
     /// (`PageSafeArea.placing`). A fixed-layout page keeps Readium's own insets.
     var scrollsReflowable: Bool { pageTurn == .scroll && publication.metadata.layout != .fixed }
     var totalProgression: Double { location?.locations.totalProgression ?? 0 }
+    /// Where the scrubber's thumb stands when he isn't dragging it.
+    var scrubberPlace: Double { totalProgression }
     /// The heading above the first line on screen, for books without contents.
     var heading: String?
     /// The running head held on the old page's chapter while a jump's veil or riffle still shows that
