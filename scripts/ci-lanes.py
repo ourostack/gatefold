@@ -51,6 +51,8 @@ EXEMPT = {
     ("cloud-fix-gate.yml", "live"): "github.event_name != 'pull_request'",
     # The review panel's screenshots: dispatch only (its `on` and `if`), at most two legs at once; never a pull request.
     ("panel.yml", "capture"): "github.event_name != 'pull_request'",
+    # The App Intents X-ray for the adoption ledger: pushes to main and dispatch only (its `if`); never a pull request.
+    ("actions.yml", "app-intents-xray"): "github.event_name != 'pull_request'",
     # Publishing has its own group and runs from main; the check holds testflight.yml to having no pull_request trigger.
     ("testflight.yml", "publish"): None,
 }
