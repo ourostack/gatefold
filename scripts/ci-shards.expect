@@ -93,6 +93,7 @@ main|iPad Pro 13-inch|RotationRepro/testRotateThenLeaveWithItsSpanReadLateAndReo
 main|iPad Pro 13-inch|RotationRepro/testRotateThenLeaveWithoutItsWordsAndReopenOnTheChapterStart
 main|iPad Pro 13-inch|RotationRepro/testRotateThenLeaveWithoutTurning
 main|iPad Pro 13-inch|RotationRepro/testRotateThenLeaveWithoutTurningAfterStalledReflows
+main|iPad Pro 13-inch|ScrubberPlaceUITests/testTheScrubberStandsWhereThePageIsAfterEachJump
 main|iPad Pro 13-inch|ShelfAccessibilityUITests/testNoPageBehindTheShelfReachesAccessibility
 main|iPad Pro 13-inch|SignInPromptUITests/testLaterPutsTheSlipAwayForThisOpen
 main|iPad Pro 13-inch|SignInPromptUITests/testTheReaderAsksToSignInAgainAndOneTapOpensSignIn

@@ -2732,7 +2732,10 @@ final class ReaderModel {
         }
         let reportedBefore = lastReported
         lastReported = locator
-        if LaunchOptions.isUITest { shownPlaceProbe = Self.probeTag(locator) }
+        if LaunchOptions.isUITest {
+            shownPlaceProbe = Self.probeTag(locator)
+            shownTotalProbe = locator.locations.totalProgression ?? totalProgression(of: locator) ?? -1
+        }
         if !placeOnly {
             location = locator
             // The reader turning on: the other device's line has done its job.
@@ -4011,6 +4014,8 @@ final class ReaderModel {
     private(set) var savedPlaceProbe = ""
     /// UI tests: the same for the page Readium last reported, written or not.
     private(set) var shownPlaceProbe = ""
+    /// UI tests: where in the book the navigator last reported the page on screen, -1 when it can't be placed.
+    private(set) var shownTotalProbe: Double = -1
     /// UI tests: "counted" once an ahead slip is up showing counted screen pages (gatefold#314).
     var aheadCountProbe: String { slipKind == .ahead && slip != nil && aheadSlipParts != nil ? (aheadPagesCounted ? "counted" : "estimated") : "" }
     private static func probeTag(_ l: Locator) -> String {

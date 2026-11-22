@@ -277,6 +277,17 @@ struct Scrubber: View {
             Task { await model.adjustScrubber(forward: direction == .increment) }
         }
         .accessibilityIdentifier("reader.scrubber")
+        .overlay {
+            // UI tests: where the thumb stands and where the page on screen is, as fractions of the book.
+            if LaunchOptions.isUITest {
+                Text("scrubber thumb")
+                    .font(.system(size: 1))
+                    .opacity(0.01)
+                    .accessibilityIdentifier("reader.scrubberThumb")
+                    .accessibilityValue(String(format: "thumb %.4f page %.4f", dragging ?? pending ?? model.totalProgression, model.shownTotalProbe))
+                    .allowsHitTesting(false)
+            }
+        }
     }
 
     private func preview(at progression: Double) -> some View {
