@@ -191,6 +191,7 @@ struct SettingsPanel: View {
                     }
                 }
             }
+            .accessibilityIdentifier("appearance.fonts")
             SettingRow(symbol: "arrow.up.and.down.text.horizontal", title: "Line Spacing") {
                 Picker("Line Spacing", selection: Binding(
                     get: { prefs.lineSpacing },
