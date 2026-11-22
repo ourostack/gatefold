@@ -578,6 +578,26 @@ jobs:
             cold: false
             timeout: 72 # 30 + 2 x 12.4 + 5 + 12
             lane: 3
+          - shard: ipad-place-finetune
+            # Main only: Fine-Tune's font and text size keep the page he was reading (FineTunePlaceUITests). Estimates
+            # until CI has run them, from Justify's 270 on the iPad
+            tests: >-
+              FineTunePlaceUITests/testAFontChangeKeepsHisPage FineTunePlaceUITests/testATextSizeChangeKeepsHisPage
+            skip: ""
+            pr_tests: none
+            cold: false
+            timeout: 65 # 30 + 2 x 9.0 + 5 + 12
+            lane: 10
+          - shard: ipad-place-finetune-more
+            # Main only: line spacing and margins, and the catch-all for new Fine-Tune place tests
+            tests: >-
+              FineTunePlaceUITests
+            skip: >-
+              FineTunePlaceUITests/testAFontChangeKeepsHisPage FineTunePlaceUITests/testATextSizeChangeKeepsHisPage
+            pr_tests: none
+            cold: false
+            timeout: 65 # 30 + 2 x 9.0 + 5 + 12
+            lane: 11
     permissions:
       contents: read
       actions: write
@@ -1061,6 +1081,26 @@ jobs:
             hinge: true
             timeout: 95 # 30 + 2 x 24.0 + 5 + 12
             lane: 2
+          - shard: duo-place-finetune
+            # Main only: Fine-Tune's font and text size keep the page he was reading on the cover screen
+            # (FineTunePlaceUITests). Estimates until CI has run them, from Justify's 200 on the Duo
+            tests: >-
+              FineTunePlaceUITests/testAFontChangeKeepsHisPage FineTunePlaceUITests/testATextSizeChangeKeepsHisPage
+            skip: ""
+            pr_tests: none
+            cold: false
+            timeout: 61 # 30 + 2 x 6.7 + 5 + 12
+            lane: 12
+          - shard: duo-place-finetune-more
+            # Main only: line spacing and margins, and the catch-all for new Fine-Tune place tests
+            tests: >-
+              FineTunePlaceUITests
+            skip: >-
+              FineTunePlaceUITests/testAFontChangeKeepsHisPage FineTunePlaceUITests/testATextSizeChangeKeepsHisPage
+            pr_tests: none
+            cold: false
+            timeout: 61 # 30 + 2 x 6.7 + 5 + 12
+            lane: 13
     permissions:
       contents: read
       actions: write
