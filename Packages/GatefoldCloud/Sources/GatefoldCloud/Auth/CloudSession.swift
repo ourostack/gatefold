@@ -258,9 +258,17 @@ public actor CloudSession {
         return kept
     }
 
+    /// The Cloud answers about one correct password in three with 403 error 1204, the same answer a wrong
+    /// one gets (seen live 2026-11-13, gatefold#457), so one refused re-sign-in proves nothing. Two in a
+    /// row, at least a minute apart, are taken as a changed password: four tries against the Cloud's
+    /// per-account login limit at most.
+    static let reSignInRefusalsBeforeForgetting = 2
+
     /// Signs in again with the kept password, once, after the Cloud refused to renew the token.
-    /// A refused password is forgotten, so a changed password never runs into the Cloud's login limit
-    /// on every launch; he signs in by hand and the new one is kept.
+    /// A refusal keeps the password and pauses (the call gets `rateLimited`, so it is tried again later).
+    /// After `reSignInRefusalsBeforeForgetting` refusals in a row the password is forgotten, so a changed
+    /// password never runs into the Cloud's login limit on every launch; he signs in by hand and the new
+    /// one is kept.
     private func signInAgain(_ session: StoredSession, startedIn: Int) async throws -> CloudToken {
         guard let password = session.password else { throw CloudError.authenticationRequired }
         if let pause = reSignInPause, now() < pause.until { throw pause.error }
@@ -269,7 +277,17 @@ public actor CloudSession {
             session.token = try await passwordGrant(email: session.login ?? session.account.email, password: password, store: session.account.store)
         } catch CloudError.invalidCredentials {
             guard generation == startedIn else { throw CloudError.notSignedIn }
+            let refusals = (session.refusedReSignIns ?? 0) + 1
+            guard refusals >= Self.reSignInRefusalsBeforeForgetting else {
+                session.refusedReSignIns = refusals
+                _ = try? await keep(session, startedIn: startedIn)
+                let wait = Self.reSignInFirstPause
+                let error = CloudError.rateLimited(retryAfter: wait)
+                reSignInPause = (now().addingTimeInterval(wait), wait, error)
+                throw error
+            }
             session.password = nil
+            session.refusedReSignIns = nil
             _ = try? await keep(session, startedIn: startedIn)
             throw CloudError.authenticationRequired
         } catch is CancellationError {
@@ -284,6 +302,7 @@ public actor CloudSession {
         reSignInPause = nil
         guard generation == startedIn else { throw CloudError.notSignedIn }
         if Task.isCancelled { throw CancellationError() }
+        session.refusedReSignIns = nil
         let kept = try await keep(session, startedIn: startedIn)
         renewals += 1
         reSignIns += 1

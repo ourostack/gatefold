@@ -315,9 +315,10 @@ struct SessionTests {
         #expect(await store.load()?.token.accessToken == "b1")
     }
 
-    /// A password changed on another device: the kept one is refused. It is forgotten, so the app never
-    /// spends his login attempts on it again (the Cloud locks an account out with 429 after a few).
-    @Test func aKeptPasswordTheCloudRefusesIsForgottenAndAsksForSignIn() async throws {
+    /// The Cloud answers about one correct password in three with 403 error 1204, the same answer a wrong
+    /// one gets (seen live 2026-11-13, gatefold#457). One refused re-sign-in is not proof the password is
+    /// wrong: it is kept, and asked again after a pause, so a flaky moment never costs him his sign-in.
+    @Test func aKeptPasswordRefusedOnceIsKeptAndTriedAgainAfterAPause() async throws {
         let t = ScriptedTransport()
         let store = InMemoryTokenStore()
         let clock = TestClock()
@@ -325,13 +326,80 @@ struct SessionTests {
         clock.advance(8000)
         await t.on("POST", "/auth/renew-token", .json(#"{"error_code":223,"error_msg":"Unknown token"}"#, status: 403))
         await t.on("POST", "/auth/login/pocketbook_de", .json(#"{"error_code":1204,"error_msg":"Authorization partner user failed"}"#, status: 403))
-        await #expect(throws: CloudError.authenticationRequired) { _ = try await session.send(.get("/books")) }
+        do {
+            _ = try await session.send(.get("/books"))
+            Issue.record("a refused re-sign-in must not succeed")
+        } catch let error as CloudError {
+            #expect(error.isTransient, "worth trying again later, not a confirmed sign-out: \(error)")
+            #expect(error != .authenticationRequired)
+        }
         #expect(await t.requests("POST", "/auth/login/pocketbook_de").count == 3, "the typed sign-in, then the kept password twice")
+        #expect(await store.load()?.password == "pw", "kept")
+
+        clock.advance(30)
+        _ = try? await session.send(.get("/books"))
+        #expect(await t.requests("POST", "/auth/login/pocketbook_de").count == 3, "no password sent during the pause")
+
+        clock.advance(31)
+        await t.on("POST", "/auth/login/pocketbook_de", .json(tokenJSON("b1", refresh: "s1")))
+        await t.on("GET", "/books", .json(#"{"total":0,"items":[]}"#))
+        _ = try await session.send(.get("/books"))
+        #expect(await store.load()?.token.accessToken == "b1")
+        #expect(await store.load()?.password == "pw")
+        #expect(await session.reSignIns == 1)
+    }
+
+    /// A password changed on another device: the kept one is refused every time. After two refused
+    /// re-sign-ins it is forgotten, so the app never spends more of his login attempts on it (the Cloud
+    /// locks an account out with 429 after a few), and he is asked to sign in.
+    @Test func aKeptPasswordRefusedTwiceIsForgottenAndAsksForSignIn() async throws {
+        let t = ScriptedTransport()
+        let store = InMemoryTokenStore()
+        let clock = TestClock()
+        let session = try await signedIn(t, clock: clock, store: store)
+        clock.advance(8000)
+        await t.on("POST", "/auth/renew-token", .json(#"{"error_code":223,"error_msg":"Unknown token"}"#, status: 403))
+        await t.on("POST", "/auth/login/pocketbook_de", .json(#"{"error_code":1204,"error_msg":"Authorization partner user failed"}"#, status: 403))
+        _ = try? await session.send(.get("/books"))
+        clock.advance(61)
+        await #expect(throws: CloudError.authenticationRequired) { _ = try await session.send(.get("/books")) }
+        #expect(await t.requests("POST", "/auth/login/pocketbook_de").count == 5, "the typed sign-in, then two re-sign-ins of two tries")
         let saved = try #require(await store.load())
         #expect(saved.password == nil)
         #expect(saved.account.email == "reader@example.com", "keeps his name, shelf and place")
+        clock.advance(3600)
         await #expect(throws: CloudError.authenticationRequired) { _ = try await session.send(.get("/books")) }
-        #expect(await t.requests("POST", "/auth/login/pocketbook_de").count == 3, "never tried again")
+        #expect(await t.requests("POST", "/auth/login/pocketbook_de").count == 5, "never tried again")
+    }
+
+    /// The count of refused re-sign-ins survives a relaunch, so relaunching never resets his login attempts.
+    @Test func refusedReSignInsAreCountedAcrossLaunches() async throws {
+        let t = ScriptedTransport()
+        let store = InMemoryTokenStore()
+        let clock = TestClock()
+        let first = try await signedIn(t, clock: clock, store: store)
+        clock.advance(8000)
+        await t.on("POST", "/auth/renew-token", .json(#"{"error_code":223,"error_msg":"Unknown token"}"#, status: 403))
+        await t.on("POST", "/auth/login/pocketbook_de", .json(#"{"error_code":1204,"error_msg":"Authorization partner user failed"}"#, status: 403))
+        _ = try? await first.send(.get("/books"))
+        let relaunched = makeSession(t, store: store, clock: clock)
+        await #expect(throws: CloudError.authenticationRequired) { _ = try await relaunched.send(.get("/books")) }
+        #expect(await store.load()?.password == nil)
+    }
+
+    /// Signing in by hand starts the count again.
+    @Test func signingInByHandClearsRefusedReSignIns() async throws {
+        let t = ScriptedTransport()
+        let store = InMemoryTokenStore()
+        let clock = TestClock()
+        let session = try await signedIn(t, clock: clock, store: store)
+        clock.advance(8000)
+        await t.on("POST", "/auth/renew-token", .json(#"{"error_code":223,"error_msg":"Unknown token"}"#, status: 403))
+        await t.on("POST", "/auth/login/pocketbook_de", .json(#"{"error_code":1204,"error_msg":"Authorization partner user failed"}"#, status: 403))
+        _ = try? await session.send(.get("/books"))
+        await t.on("POST", "/auth/login/pocketbook_de", .json(tokenJSON("c1", refresh: "t1")))
+        _ = try await session.signIn(email: "reader@example.com", password: "pw", store: testStore())
+        #expect(await store.load()?.refusedReSignIns == nil)
     }
 
     @Test func aReSignInThatFailsOnTheNetworkKeepsThePassword() async throws {

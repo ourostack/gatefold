@@ -12,6 +12,10 @@ public struct StoredSession: Sendable, Codable, Hashable, CustomStringConvertibl
     public var password: String?
     /// The address he typed to sign in, which `/user` may spell differently. Kept with the password.
     public var login: String?
+    /// Re-sign-ins in a row the Cloud refused the kept password on. The Cloud refuses a correct password
+    /// now and then with the same answer as a wrong one, so the password is forgotten only after
+    /// `CloudSession.reSignInRefusalsBeforeForgetting` of them. Nil after a sign-in that worked.
+    public var refusedReSignIns: Int?
     public init(account: CloudAccount, token: CloudToken, password: String? = nil, login: String? = nil) {
         self.account = account
         self.token = token
