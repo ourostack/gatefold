@@ -73,8 +73,10 @@ jobs:
         run: |
           set -euo pipefail
           checkout="$RUNNER_TEMP/dd/SourcePackages/checkouts/ouro-ui-apple"
-          echo "revision=$(git -C "$checkout" rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-          echo "version=$(git -C "$checkout" describe --tags --exact-match 2>/dev/null || git -C "$checkout" rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+          revision="$(git -C "$checkout" rev-parse HEAD)"
+          version="$(git -C "$checkout" describe --tags --exact-match 2>/dev/null || echo "$revision")"
+          echo "revision=$revision" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@v4
         with:
           repository: ourostack/ouro-ui-apple
