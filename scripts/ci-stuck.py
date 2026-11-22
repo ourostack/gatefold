@@ -38,14 +38,35 @@ class Stop(Exception):
     """GitHub said 403 or 429: stop calling it."""
 
 
+def choice(value):
+    """The largest minutes an expression of the form `${{ cond && 12 || 35 }}` can give, or None. Each `||` branch
+    but the last must end `&& <literal>` and the last must be a literal; anything else (an input, fromJSON, a `||`
+    inside a condition) can't be read here, so it is None."""
+    m = re.fullmatch(r"\$\{\{(.*)\}\}", value.strip())
+    if not m:
+        return None
+    *picks, last = m.group(1).split("||")
+    got = [re.fullmatch(r".*&&\s*(\d+)\s*", p, re.S) for p in picks] + [re.fullmatch(r"\s*(\d+)\s*", last)]
+    return max(int(g.group(1)) for g in got) if picks and all(got) else None
+
+
 def limit(text):
-    """A workflow file's longest job timeout in minutes: the largest literal `timeout-minutes:` or matrix `timeout:`,
-    or DEFAULT when a job that runs on a runner sets none (an expression counts as none: it can't be read here)."""
+    """A workflow file's longest job timeout in minutes: the largest literal `timeout-minutes:` or matrix `timeout:`
+    (or the larger literal of a job's `cond && N || M`), or DEFAULT when a job that runs on a runner sets none (any
+    other expression counts as none: it can't be read here)."""
     nums = [int(n) for n in re.findall(r"^\s*(?:-\s+)?timeout(?:-minutes)?:\s*(\d+)\s*(?:#.*)?$", text, re.M)]
     body = text.split("\njobs:\n", 1)[1] if "\njobs:\n" in text else ""
     for block in re.split(r"\n(?=  [A-Za-z0-9_-]+:[ \t]*\n)", "\n" + body):
-        if re.search(r"^    runs-on:", block, re.M) and not re.search(r"^    timeout-minutes:\s*\d+", block, re.M):
+        if not re.search(r"^    runs-on:", block, re.M):
+            continue
+        own = re.search(r"^    timeout-minutes:[ \t]*(.*?)[ \t]*(?:#.*)?$", block, re.M)
+        value = own.group(1) if own else ""
+        if value.isdigit():
+            continue
+        picked = choice(value)
+        if picked is None:
             return DEFAULT
+        nums.append(picked)
     return max(nums) if nums else DEFAULT
 
 
@@ -207,12 +228,18 @@ def selftest():
     assert limit(wf + "  c:\n    uses: ./w.yml\n    strategy:\n      matrix:\n        include:\n"
                       "          - timeout: 118 # 30 + 2 x 35.2\n") == 118, "a reusable caller's matrix timeout"
     assert limit(wf + "  d:\n    runs-on: x\n    timeout-minutes: ${{ inputs.t }}\n") == DEFAULT, "an expression"
+    pick = "  e:\n    runs-on: x\n    timeout-minutes: ${{ needs.changes.outputs.native == 'false' && 12 || %s }}\n"
+    assert limit(wf + pick % 35) == 75, "#580's build job: a choice between literals is its larger literal"
+    assert limit(wf + pick % 90) == 90, "a choice's larger literal can be the workflow's limit"
+    assert limit(wf + pick % "inputs.t") == DEFAULT, "a choice with a branch that isn't a literal"
+    assert limit(wf + "  f:\n    runs-on: x\n    timeout-minutes: ${{ (a || b) && 12 || 35 }}\n") == DEFAULT, \
+        "an expression it can't split safely"
     here = limits_here()
     # Read, not pinned: a pinned 75 failed every watchdog run once #463 set 77, and a floor of 118 for App failed
     # them again when a shard's limit fell to 107. Each must be a literal the parser found (30 or more), below the
     # 360-minute default it falls back to.
     assert 30 <= here[RU] < DEFAULT and 30 <= here[APP] < DEFAULT, f"this repository's limits: {here}"
-    print(f"ci-stuck selftest: {len(cases) + 6} cases pass")
+    print(f"ci-stuck selftest: {len(cases) + 10} cases pass")
 
 
 def main(argv):
