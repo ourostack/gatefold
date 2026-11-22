@@ -6,8 +6,8 @@ import XCTest
 /// Ouro Feel (ourostack/ouro-ui-apple) over the reader on the iPhone Duo: closed, open in portrait and open on its
 /// side, in scroll mode and in paged (curl) mode. In each it checks, with Feel's own checks:
 ///
-/// - **still while idle:** with no touch, no control or the running head appears, goes or moves, and the status bar
-///   neither shows nor hides, with the controls away and with them up;
+/// - **still while idle:** with no touch, no control, running head or the page itself appears, goes or moves, and the
+///   status bar neither shows nor hides, with the controls away and with them up;
 /// - **covered content:** the running heads cover no line of the page;
 /// - **inside the window:** every control and the page itself lie inside the window;
 /// - **place kept through stray input:** a tap on the page, a tap at the top edge (the status bar), a swipe across
@@ -57,10 +57,12 @@ final class FeelReaderUITests: XCTestCase {
         let at = "\(posture.rawValue), \(mode == .scroll ? "scroll" : "paged")"
         print("FEEL: \(name) window \(app.windows.firstMatch.frame) (\(at))")
 
-        // Reading, with the controls away. Ten seconds, since a look at the reader's tree can take over a second
-        // on a loaded runner and the check needs at least three.
+        // Reading, with the controls away. The page itself is watched too: in scroll mode no running head is drawn
+        // (ReaderScreen's `runningHead`), so with the controls away the page is all there is, and Feel had nothing to
+        // watch ("no controls or chrome were on screen", run 45067767496). A page that moves at rest is a red.
         let heads = ["reader.runningHead", "reader.runningHead.book"].filter { el($0).exists }
-        check(feel.stillWhileIdle(for: 10, watch: heads), "still while idle, reading", at)
+        let reading = heads + ["reader.page"]
+        check(feel.stillWhileIdle(for: idleWindow(watch: reading), watch: reading), "still while idle, reading", at)
         if heads.isEmpty {
             print("FEEL: \(name) no running head is drawn (\(at)), so none can cover the text")
         } else {
@@ -70,7 +72,7 @@ final class FeelReaderUITests: XCTestCase {
 
         // The controls up: they too must hold still with no touch, and lie inside the window.
         guard controls(up: true, at) else { return }
-        check(feel.stillWhileIdle(for: 10), "still while idle, controls up", at)
+        check(feel.stillWhileIdle(for: idleWindow(watch: [])), "still while idle, controls up", at)
         check(feel.insideWindow(poses: [.current]), "inside the window, controls up", at)
         guard controls(up: false, at) else { return }
 
@@ -80,6 +82,19 @@ final class FeelReaderUITests: XCTestCase {
         if mode == .scroll { stray.append(.swipeAcrossAndBack) }
         stray.append(.background)
         check(feel.placeHeld(across: stray, reads: 8, read: { self.words }), "place kept through stray input", at)
+    }
+
+    /// How long to watch so Feel's still-while-idle gets `looks` looks at the screen, counted in looks at this runner's
+    /// pace and never under ten seconds. Feel takes its window in seconds and needs at least three looks; on a runner
+    /// still busy from the simulator's boot one look took about 8 s, so ten seconds held only two (run 45067767496,
+    /// closed, paged). One look of Feel's own is timed first, and only its time is kept. HangGuard caps the window.
+    private func idleWindow(looks: Int = 5, watch: [String]) -> TimeInterval {
+        let began = Date()
+        _ = feel.stillWhileIdle(for: 0.001, every: 0, watch: watch)
+        let look = Date().timeIntervalSince(began)
+        let window = min(max(10, look * Double(looks)), HangGuard.seconds(reads: looks))
+        print("FEEL: \(name) one look took \(String(format: "%.1f", look)) s, so the window is \(String(format: "%.1f", window)) s")
+        return window
     }
 
     /// Where a tap lands on the page and not on the open Duo's hinge, which runs down the middle upright and across
