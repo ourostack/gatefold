@@ -8,6 +8,10 @@ struct ReaderScreen: View {
 
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(AppModel.self) private var app
+    /// "Later" on the sign-in slip: it stays down until the book is opened again.
+    @State private var signInLater = false
+    @State private var reconnecting = false
     /// Opaque at the top to clear at the foot, drawn once by Core Graphics (which doesn't dither), so a
     /// pushed page's fade is the same pixels every time.
     private static let footFade: UIImage = {
@@ -208,6 +212,18 @@ struct ReaderScreen: View {
                     .zIndex(slipOverCover ? 3.6 : 2)
                 }
 
+                if Self.showsSignInSlip(needsReconnect: app.needsReconnect != nil, later: signInLater, offerUp: model.slip != nil,
+                                        pageReady: model.pageReady, atTheEnd: model.endLeaf != nil) {
+                    // Ari, build 53: the Cloud wanted him to sign in again while he read, and only the shelf said so.
+                    // His places stayed on the phone. The reader says it too, in the offer's band.
+                    SignInSlipView(theme: model.theme) { reconnecting = true } onLater: { signInLater = true }
+                        .frame(width: slipWidth)
+                        .offset(x: slipX, y: model.chromeVisible ? barTop + 8 + ReaderChrome.topBarHeight : slipTop)
+                        .animation(Motion.chrome, value: model.chromeVisible)
+                        .transition(reduceMotion ? .opacity : .move(edge: .top).combined(with: .opacity))
+                        .zIndex(2)
+                }
+
                 if let picture = model.reopenPicture {
                     // Reopened at launch: his page as he left it, until the live one is laid out beneath.
                     ReopenPictureView(image: picture, leaf: model.reopenLeaf, isSpread: model.reopenSpread, theme: model.theme,
@@ -289,6 +305,9 @@ struct ReaderScreen: View {
         .persistentSystemOverlays(model.chromeVisible ? .automatic : .hidden)
         .animation(reduceMotion ? .easeOut(duration: 0.2) : Motion.open, value: showAppearance)
         .onChange(of: showAppearance, initial: true) { _, open in model.tuning = open }
+        .sheet(isPresented: $reconnecting) {
+            NavigationStack { SignInFlow(prefilledEmail: app.needsReconnect, onDone: { reconnecting = false }) }
+        }
         .sheet(isPresented: $showSearch) {
             SearchSheet(model: model)
         }
@@ -886,6 +905,14 @@ struct ReaderScreen: View {
 
 /// A silk ribbon that drops onto the page when it's bookmarked: a two-step bounce and one sway,
 /// and a light tap as it settles. Swipe it up to take it out.
+extension ReaderScreen {
+    /// The sign-in slip shows while the Cloud wants him to sign in again, once the page is up, unless he chose
+    /// Later for this open, the InkPad's offer is up (one slip at a time) or the book is finished.
+    static func showsSignInSlip(needsReconnect: Bool, later: Bool, offerUp: Bool, pageReady: Bool, atTheEnd: Bool) -> Bool {
+        needsReconnect && !later && !offerUp && pageReady && !atTheEnd
+    }
+}
+
 struct Ribbon: View {
     static let width: CGFloat = 20
     let isOn: Bool

@@ -401,7 +401,14 @@ public actor PocketBookCloud: SyncService {
     }
 
     public func remotePosition(for book: CloudBook) async throws -> ReadingPosition? {
-        let (data, _) = try await session.send(Self.fileInfo(book.fastHash))
+        let data: Data
+        do {
+            (data, _) = try await session.send(Self.fileInfo(book.fastHash))
+        } catch CloudError.authenticationRequired {
+            // Opening a book fetches the place before any is sent: ask to sign in again now, not after a turn.
+            broadcaster.emit(.authenticationRequired)
+            throw CloudError.authenticationRequired
+        }
         let email = await session.account?.email
         return try WireDecoder.fileInfo(data).position.map { markOwn($0, fastHash: book.fastHash, account: email) }
     }

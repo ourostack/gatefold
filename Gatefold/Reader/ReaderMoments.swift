@@ -99,6 +99,75 @@ struct SyncSlipView: View {
     }
 }
 
+/// The Cloud wants him to sign in again: his places are waiting on the phone until he does. One tap opens
+/// sign-in with his email filled in; Later puts it away until the book is opened again.
+struct SignInSlipView: View {
+    let theme: ReaderTheme
+    var onSignIn: () -> Void
+    var onLater: () -> Void
+
+    static let title = "Your place is waiting to reach your e-reader"
+    static let detail = "PocketBook Cloud would like you to sign in again. Your place goes over the moment you do."
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                Image(systemName: "key.fill")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(theme.accent)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(Self.title)
+                        .font(.display(.subheadline))
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text(Self.detail)
+                        .font(.footnote)
+                        .foregroundStyle(theme.text.opacity(0.8))
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.top, 2)
+                }
+            }
+            HStack(spacing: 10) {
+                Spacer(minLength: 0)
+                Button(action: onLater) {
+                    Text("Later")
+                        .font(.subheadline.weight(.medium))
+                        .padding(.horizontal, 14)
+                        .frame(minWidth: 64, minHeight: 44)
+                        .contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(theme.text)
+                .accessibilityIdentifier("reader.signInLater")
+                Button(action: onSignIn) {
+                    Text("Sign In")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(theme.onAccent)
+                        .padding(.horizontal, 18)
+                        .frame(minWidth: 72, minHeight: 44)
+                        .background(theme.accent, in: Capsule(style: .continuous))
+                        .contentShape(Capsule(style: .continuous))
+                }
+                .buttonStyle(PressScale())
+                .accessibilityIdentifier("reader.signIn")
+            }
+        }
+        .foregroundStyle(theme.text)
+        .padding(.horizontal, 16)
+        .padding(.top, 12)
+        .padding(.bottom, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(theme.background.mix(with: theme.text, by: theme.palette.isDark ? 0.10 : 0.045))
+                .shadow(color: .black.opacity(theme.palette.isDark ? 0.5 : 0.14), radius: 10, y: 4)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("reader.signInSlip")
+        .accessibilityLabel(Self.title)
+        .onAppear { AccessibilityNotification.Announcement(Self.title).post() }
+    }
+}
+
 /// The last leaf: the cover with its silk ribbon hanging out below, "The End", and a line about the
 /// read itself (where it began, where it finished).
 struct EndLeafView: View {

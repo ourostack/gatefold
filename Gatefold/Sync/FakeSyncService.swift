@@ -41,9 +41,19 @@ public actor FakeSyncService: SyncService {
     /// Screenshot and test states: a healthy Cloud, an empty shelf, no network, or a sign-in that expired.
     /// The `…OnRefresh` ones answer the first fetch and then misbehave, as pull-to-refresh met them on
     /// a phone (build 13): the refresh is called off, the Cloud has server trouble, or it lists nothing.
-    public enum Scenario: String, Sendable { case normal, empty, offline, expired, cancelledOnRefresh, serverTroubleOnRefresh, emptyOnRefresh }
+    /// `expiresWhileReading`: the shelf comes over, then the Cloud turns his places away (fetched or sent) until he
+    /// signs in again, as Ari's did on build 53. Like the real Cloud, each refusal announces `.authenticationRequired`.
+    public enum Scenario: String, Sendable { case normal, empty, offline, expired, cancelledOnRefresh, serverTroubleOnRefresh, emptyOnRefresh, expiresWhileReading }
 
     private var signedIn: CloudAccount?
+    /// `expiresWhileReading`: the Cloud is turning places away. It happens once; a sign-in clears it.
+    private var expired = false
+    private var hasExpired = false
+    private func turnsAway() -> Bool {
+        if scenario == .expiresWhileReading, !hasExpired { hasExpired = true; expired = true }
+        if expired { broadcast(.authenticationRequired) }
+        return expired
+    }
     private let scenario: Scenario
     private var positions: [String: ReadingPosition] = [:]
     private var annotationsByBook: [String: [CloudAnnotation]] = [:]
@@ -109,6 +119,7 @@ public actor FakeSyncService: SyncService {
         guard password != "wrong", !password.isEmpty else { throw CloudError.invalidCredentials }
         let account = CloudAccount(email: email, store: store)
         signedIn = account
+        expired = false
         broadcast(.signedIn(account))
         return account
     }
@@ -134,7 +145,7 @@ public actor FakeSyncService: SyncService {
         case .cancelledOnRefresh where libraryFetches > 1: throw CancellationError()
         case .serverTroubleOnRefresh where libraryFetches > 1: throw CloudError.server(status: 503)
         case .emptyOnRefresh where libraryFetches == 2: return [] // once, and nothing announced: a listing that came back blank
-        case .cancelledOnRefresh, .serverTroubleOnRefresh, .emptyOnRefresh: break
+        case .cancelledOnRefresh, .serverTroubleOnRefresh, .emptyOnRefresh, .expiresWhileReading: break
         }
         let all = books()
         // Like PocketBookCloud: every fetch announces the library it found.
@@ -189,10 +200,13 @@ public actor FakeSyncService: SyncService {
 
     public func remotePosition(for book: CloudBook) async throws -> ReadingPosition? {
         try await pause()
+        // Opening a book asks where the e-reader is: that is where Ari's build 53 first met the expired sign-in.
+        if turnsAway() { throw CloudError.authenticationRequired }
         return positions[book.id]
     }
 
     public func push(_ position: ReadingPosition, for book: CloudBook) async {
+        if turnsAway() { return }
         positions[book.id] = position
     }
 
