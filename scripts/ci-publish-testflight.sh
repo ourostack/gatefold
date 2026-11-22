@@ -168,7 +168,7 @@ done
 date -u +%FT%TZ > "$out/processed-at.txt"
 echo "Build $build is processed ($build_id)"
 
-# 5. Group, What's New, export compliance and the tester notification, through the kit.
+# 5. Group, What's New, export compliance and, unless 5a turns it off, the tester notification, through the kit.
 asc_get --path "/v1/builds/$build_id/buildBetaDetail" > "$out/asc-build-beta-detail.json"
 detail_id="$(jq -r '.result.data.id // empty' "$out/asc-build-beta-detail.json")"
 [[ -n "$detail_id" ]] || fail "no build beta detail for $build_id"
@@ -178,6 +178,35 @@ group_id="$(jq -r --arg name "$GROUP_NAME" '.result.data[]? | select(.attributes
 notes="$(cat "$GATEFOLD_WHATS_NEW_FILE")"
 jq --arg notes "$notes" '(.channels[] | select(.id == "ios-testflight") | .testflight.build.whatsNew) = $notes' \
   "$MANIFEST" > "$out/apple-distribution.release.json"
+
+# 5a. No TestFlight push for internal-only builds: Ari hears about each build from Slugger, and his phone should hear
+# only from Slugger. When every group the build goes to is internal (in the manifest and in App Store Connect),
+# autoNotifyEnabled goes off before the build joins its group, and the kit is told not to turn it back on or send
+# the tester notification. A build that also goes to an external group keeps TestFlight's push.
+external_groups="$(jq -r '[.channels[] | select(.id == "ios-testflight") | .testflight.groups[] | select(.type != "internal") | .name] | join(", ")' "$MANIFEST")"
+group_internal="$(jq -r --arg id "$group_id" '.result.data[]? | select(.id == $id) | .attributes.isInternalGroup' "$out/asc-beta-groups.json")"
+[[ "$group_internal" == "true" ]] || external_groups="${external_groups:+$external_groups, }$GROUP_NAME (App Store Connect calls it external)"
+auto_notify=true
+if [[ -z "$external_groups" ]]; then
+  # A rerun's build may already be in its group, and so already announced; then a failed PATCH changes nothing.
+  asc_get --path "/v1/betaGroups/$group_id/builds" --query limit=200 > "$out/asc-group-builds-before.json"
+  distributed="$(jq -r --arg id "$build_id" 'any(.result.data[]?; .id == $id)' "$out/asc-group-builds-before.json")"
+  if node scripts/asc-build-auto-notify.mjs "$APPLE_DISTRIBUTION_KIT_BIN" "$APPLE_DISTRIBUTION_KIT_CONFIG" "$detail_id" false \
+    > "$out/asc-auto-notify-off.json"; then
+    auto_notify=false
+    echo "TestFlight's new-build push is off for build $build (HTTP $(jq -r .status "$out/asc-auto-notify-off.json"))"
+  elif [[ "$distributed" == "true" ]]; then
+    echo "::warning title=TestFlight push not turned off::Build $build is already in $GROUP_NAME, and turning off its push failed: $(jq -c . "$out/asc-auto-notify-off.json" 2>/dev/null)"
+  else
+    cat "$out/asc-auto-notify-off.json" >&2 || true
+    fail "could not turn off TestFlight's new-build push for build $build; not publishing it"
+  fi
+  jq '(.channels[] | select(.id == "ios-testflight") | .testflight.build) |= (.autoNotifyEnabled = false | .notifyTesters = false)' \
+    "$out/apple-distribution.release.json" > "$out/apple-distribution.release.json.tmp"
+  mv "$out/apple-distribution.release.json.tmp" "$out/apple-distribution.release.json"
+else
+  echo "TestFlight's new-build push stays on for build $build: it also goes to $external_groups"
+fi
 for mode in dry-run apply; do
   kit testflight publish --mode "$mode" --manifest "$out/apple-distribution.release.json" --channel ios-testflight \
     --app-id "$app_id" --build-id "$build_id" --build-beta-detail-id "$detail_id" \
@@ -204,6 +233,10 @@ for _ in $(seq 1 20); do
   sleep 15
 done
 [[ "$internal_state" == "IN_BETA_TESTING" ]] || fail "build $build is ${internal_state:-in no state}, not IN_BETA_TESTING"
+if [[ "$auto_notify" == false ]]; then
+  [[ "$(jq -r '.result.data.attributes.autoNotifyEnabled' "$out/asc-build-beta-detail-after.json")" == "false" ]] \
+    || fail "build $build has TestFlight's new-build push on after publishing"
+fi
 asc_get --path "/v1/builds/$build_id/betaBuildLocalizations" > "$out/asc-notes.json"
 jq -e --arg want "$notes" 'any(.result.data[]?; .attributes.locale == "en-US" and ((.attributes.whatsNew // "") | gsub("^\\s+|\\s+$"; "")) == ($want | gsub("^\\s+|\\s+$"; "")))' \
   "$out/asc-notes.json" > /dev/null || fail "What's New on build $build does not match"
@@ -222,8 +255,8 @@ jq -n --arg sourceSha "$(git rev-parse HEAD)" --arg version "$version" --arg bui
   --arg buildId "$build_id" --arg groupName "$GROUP_NAME" --arg groupId "$group_id" \
   --arg internalBuildState "$internal_state" --arg uploadedAt "$(cat "$out/uploaded-at.txt")" \
   --arg processedAt "$(cat "$out/processed-at.txt")" --arg availableAt "$(date -u +%FT%TZ)" \
-  --argjson testerCheck "$testers" \
+  --argjson testerCheck "$testers" --argjson autoNotifyEnabled "$auto_notify" \
   '{sourceSha:$sourceSha, version:$version, buildNumber:$buildNumber, buildId:$buildId, groupName:$groupName,
     groupId:$groupId, internalBuildState:$internalBuildState, uploadedAt:$uploadedAt, processedAt:$processedAt,
-    availableAt:$availableAt, testersChecked:$testerCheck}' | tee "$out/testflight-publish-summary.json"
+    availableAt:$availableAt, testersChecked:$testerCheck, autoNotifyEnabled:$autoNotifyEnabled}' | tee "$out/testflight-publish-summary.json"
 echo "Gatefold $version ($build) is in $GROUP_NAME with its notes, in beta testing."
