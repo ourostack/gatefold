@@ -22,7 +22,9 @@ packages:
     # Packages/GatefoldCloud/Package.swift on the same revision: both are the package `swift-toolkit`.
     url: https://github.com/ourostack/swift-toolkit
     revision: a0eb21330d0f8c37476859922bd967073e7b73f4
-  # Ouro UI for Apple: the shelf's empty states, the sync banner, Fine-Tune's rows and their buttons are its OuroHX.
+  # Ouro UI for Apple: the shelf's empty states, the sync banner, Fine-Tune's rows and their buttons are its OuroHX;
+  # the UI tests' Ouro Feel checks are its OuroFeel (Feel's reader checks shipped in 0.11.0,
+  # ourostack/ouro-ui-apple#200).
   OuroUIApple:
     url: https://github.com/ourostack/ouro-ui-apple
     minorVersion: 1.8.0
@@ -89,6 +91,13 @@ targets:
       - target: Gatefold
       # Pure judgments a UI test shares with the unit tests (`ReopenMatch`).
       - package: GatefoldCore
+      # Ouro Feel's checks (FeelReaderUITests), and the hinge that opens the Duo for them (`OuroDuoHinge`).
+      - package: OuroUIApple
+        product: OuroFeel
+      - package: OuroUIApple
+        product: OuroFeelCore
+      - package: OuroUIApple
+        product: OuroHXTesting
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: bot.ouro.gatefold.uitests
