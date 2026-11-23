@@ -70,6 +70,8 @@ jobs:
           runs=("$RUNNER_TEMP"/dd/Build/Products/*.xctestrun)
           xctestrun="${runs[0]}"
           status=0
+          # The reader's own notes (each jump's timings among them), kept with the shots.
+          xcrun simctl spawn "$UDID" log stream --style compact --predicate 'subsystem == "bot.ouro.gatefold"' > "$RUNNER_TEMP/reader.log" 2>&1 &
           for look in light dark; do
             theme=daylight; [ "$look" = dark ] && theme=midnight
             xcrun simctl ui "$UDID" appearance "$look"
@@ -107,10 +109,11 @@ jobs:
           path: ${{ runner.temp }}/shots
           retention-days: 14
       - uses: actions/upload-artifact@v4
-        if: failure()
+        if: ${{ !cancelled() }}
         with:
           name: panel-logs-${{ matrix.slug }}
           path: |
+            ${{ runner.temp }}/reader.log
             ${{ runner.temp }}/build.log
             ${{ runner.temp }}/panel-*.log
             ${{ runner.temp }}/panel-*.xcresult

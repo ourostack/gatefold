@@ -2634,6 +2634,16 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         jumpStarting = true
         veilJump = jump
         let jumpTapped = ContinuousClock.now
+        // Where a jump's time goes (review panel 2026-11-22: a scrubber jump took 10.9 s, Readium back in 0.2 s).
+        let signpostID = Self.jumpSignposter.makeSignpostID()
+        let signpost = Self.jumpSignposter.beginInterval("jump", id: signpostID, "\(jump)")
+        let tappedAt = Date()
+        let loadTrace = LaunchOptions.isUITest ? traceJumpLoad(jump: jump, since: jumpTapped) : nil
+        defer {
+            loadTrace?.cancel()
+            Self.jumpSignposter.endInterval("jump", signpost)
+            if LaunchOptions.isUITest { Task { await self.logPageTiming(jump: jump, tappedAt: tappedAt) } }
+        }
         // UI tests: the old page reads as still loading (spinner up, page bare) while it is pictured.
         let heldBefore = heldLoadLooks
         if LaunchOptions.isUITest, let looks = LaunchOptions.holdOldPageLoadLooks, looks > 0 {
@@ -2731,8 +2741,10 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         let dim = UIViewPropertyAnimator(duration: 0.15, curve: .easeOut) { wash.alpha = 0.4 }
         dim.startAnimation()
         await body()
+        Self.jumpSignposter.emitEvent("arrived", id: signpostID)
         readerLog.notice("veil: jump \(jump, privacy: .public) arrived \(ReaderModel.ms(since: jumpTapped), privacy: .public) ms after it began")
         _ = await renderedSnapshot(afterChange: true)
+        Self.jumpSignposter.emitEvent("pictured", id: signpostID)
         readerLog.notice("veil: jump \(jump, privacy: .public) pictured its page \(ReaderModel.ms(since: jumpTapped), privacy: .public) ms after it began, \(self.lastSnapshotLooks, privacy: .public) looks")
         // The head changes chapter with the page, cross-fading as the veil lifts.
         if veil === cover { withAnimation(.easeInOut(duration: 0.2)) { weakModel?.heldRunningHead = nil } }
@@ -2748,6 +2760,68 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     }
     /// The jump whose veil is up, or whose old page is being pictured for one.
     private var veilJump: Int?
+
+    /// Jumps as signpost intervals (tap to lift), with Readium's return and the new page's picture as events.
+    static let jumpSignposter = OSSignposter(subsystem: "bot.ouro.gatefold", category: "jump")
+
+    /// UI tests: each change in the web views in view while a jump is out (which file, still loading or not,
+    /// shown or hidden by Readium, Readium's spinner), with its time since the tap.
+    private func traceJumpLoad(jump: Int, since tapped: ContinuousClock.Instant) -> Task<Void, Never> {
+        Task { @MainActor [weak self] in
+            var last = ""
+            while !Task.isCancelled {
+                guard let self, let host = self.navigator.view else { return }
+                var webs: [String] = []
+                func walk(_ v: UIView) {
+                    if let w = v as? WKWebView {
+                        if w.convert(w.bounds, to: host).intersects(host.bounds) {
+                            webs.append("\(w.url?.lastPathComponent ?? "none") loading \(w.isLoading) shown \(w.scrollView.alpha > 0.01)")
+                        }
+                        return
+                    }
+                    v.subviews.forEach(walk)
+                }
+                walk(host)
+                let now = "spinner \(self.readiumSpinner != nil); " + webs.joined(separator: "; ")
+                if now != last {
+                    readerLog.notice("jump load: jump \(jump, privacy: .public) at \(ReaderModel.ms(since: tapped), privacy: .public) ms: \(now, privacy: .public)")
+                    last = now
+                }
+                try? await Task.sleep(for: .milliseconds(50))
+            }
+        }
+    }
+
+    /// UI tests: the landed page's own load, as WebKit timed it: when its navigation began after the tap, its
+    /// phases (response, DOM interactive, DOMContentLoaded, load), the slowest files it fetched, and its fonts.
+    private func logPageTiming(jump: Int, tappedAt: Date) async {
+        guard let host = navigator.view else { return }
+        var best: (web: WKWebView, area: CGFloat)?
+        func walk(_ v: UIView) {
+            if let w = v as? WKWebView {
+                let seen = w.convert(w.bounds, to: host).intersection(host.bounds)
+                let area = seen.isNull ? 0 : seen.width * seen.height
+                if !w.isHidden, area > (best?.area ?? 0) { best = (w, area) }
+                return
+            }
+            v.subviews.forEach(walk)
+        }
+        walk(host)
+        guard let web = best?.web else { return }
+        let tap = Int(tappedAt.timeIntervalSince1970 * 1000)
+        let js = """
+        (() => { const n = performance.getEntriesByType('navigation')[0] || {}, r = (x) => Math.round(x || 0);
+          const res = performance.getEntriesByType('resource').map((e) => [e.name.split('/').pop().slice(-48), r(e.startTime), r(e.responseEnd), e.initiatorType]);
+          res.sort((a, b) => b[2] - a[2]);
+          return JSON.stringify({ file: location.pathname.split('/').pop(), began: r(performance.timeOrigin - \(tap)),
+            response: r(n.responseEnd), interactive: r(n.domInteractive), domLoaded: r(n.domContentLoadedEventEnd),
+            loadStart: r(n.loadEventStart), loadEnd: r(n.loadEventEnd), now: r(performance.now()),
+            fonts: document.fonts.status + ' ' + document.fonts.size, resources: res.length, slowest: res.slice(0, 8),
+            html: document.documentElement.outerHTML.length, width: document.scrollingElement.scrollWidth }); })()
+        """
+        guard let timing = (try? await web.evaluateJavaScript(js)) as? String else { return }
+        readerLog.notice("jump load: jump \(jump, privacy: .public) page timing \(timing, privacy: .public)")
+    }
     /// A jump's veil is over the page: his taps don't reach it.
     var veilIsUp: Bool { veil != nil || jumpStarting }
 
