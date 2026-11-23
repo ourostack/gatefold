@@ -44,12 +44,13 @@ jobs:
   place:
     name: Place
     runs-on: xcode-27
-    # PR lane (gatefold#286): one lane per place, shared by every open pull request; see "macOS lanes" in app.yml.
-    # Never cancel-in-progress.
+    # Lane (gatefold#286): one lane per place, shared by every open pull request, and on main pushes a main lane per place
+    # (each main commit has a run of its own); see "macOS lanes" in app.yml. Never cancel-in-progress.
     concurrency:
       group: >-
         ${{ github.event_name == 'pull_request'
         && format('gatefold-macos-pr-lane-unfold-{0}', inputs.lane)
+        || github.event_name == 'push' && format('gatefold-macos-main-lane-unfold-{0}', inputs.lane)
         || format('real-unfold-{0}-{1}-{2}{3}', github.run_id, github.run_attempt, inputs.place, inputs.try) }}
       queue: max
     timeout-minutes: ${{ inputs.timeout }}

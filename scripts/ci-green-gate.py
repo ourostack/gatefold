@@ -12,7 +12,7 @@ run counts, so a rerun that turned green counts as green.
 States:
   green       every required check concluded success, skipped or neutral
   pending     a required check has not reported or has not finished; a later completion asks again
-  superseded  none failed, but one was cancelled (replaced by a newer push to main, gatefold#246, or stopped)
+  superseded  none failed, but one was cancelled (stopped; before 2026-11-23 also a run a newer push to main replaced)
   red         a required check failed, timed out or could not start
 It exits 0 for every state; the workflow decides what each one means. It exits 2 when it cannot ask GitHub.
 """
