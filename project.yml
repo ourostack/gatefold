@@ -21,7 +21,7 @@ packages:
     # ourostack/swift-toolkit#1 and #2). Keep
     # Packages/GatefoldCloud/Package.swift on the same revision: both are the package `swift-toolkit`.
     url: https://github.com/ourostack/swift-toolkit
-    revision: b31bc56abb80d9009592fe79a580673ca6d17a56
+    revision: 2104afb90c78655e3f725a0548e49f5e729edb1a
   # Ouro UI for Apple: the shelf's empty states, the sync banner, Fine-Tune's rows and their buttons are its OuroHX;
   # the UI tests' Ouro Feel checks are its OuroFeel (Feel's reader checks shipped in 0.11.0,
   # ourostack/ouro-ui-apple#200).
