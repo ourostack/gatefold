@@ -1455,6 +1455,7 @@ final class ReaderModel {
             for _ in 0..<44 {
                 guard let self, !Task.isCancelled, let host = self.host else { return }
                 self.underlineProbe = "underline \(await host.underlineProbe())"
+                readerLog.notice("search mark: probe \(self.underlineProbe, privacy: .public)")
                 try? await Task.sleep(for: .milliseconds(250))
             }
         }
@@ -3714,6 +3715,7 @@ final class ReaderModel {
         }
         if endedQuietly(jump, back: back) { return }
         if markingTheMatch {
+            readerLog.notice("search mark: after jump \(jump, privacy: .public), moves \(self.moves, privacy: .public) vs \(move, privacy: .public), closed \(self.isClosed, privacy: .public), host \(self.host != nil, privacy: .public)")
             guard moves == move, !isClosed else { return }
             host?.underline(locator, color: theme.palette.accent, fades: false)
             watchUnderline()

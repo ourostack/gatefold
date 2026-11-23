@@ -2885,7 +2885,9 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             return v.subviews.flatMap(walk)
         }
         for web in walk(navigator.view) {
-            if let n = (try? await web.evaluateJavaScript(js)) as? Int { count += n }
+            let r = try? await web.evaluateJavaScript(js)
+            if let n = r as? Int { count += n }
+            readerLog.notice("search mark: web \(web.url?.lastPathComponent ?? "-", privacy: .public) at x \(web.convert(web.bounds, to: nil).minX, privacy: .public) loading \(web.isLoading, privacy: .public) boxes \(String(describing: r), privacy: .public); all sync \(String(describing: try? await web.evaluateJavaScript("document.querySelectorAll('.gatefold-sync').length")), privacy: .public)")
         }
         return count
     }
