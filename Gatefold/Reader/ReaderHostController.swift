@@ -19,6 +19,8 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     /// finds it ready instead of waiting seconds for a new web view (`prepareStandby`).
     private var standby: (navigator: EPUBNavigatorViewController, locator: Locator, ready: Task<Void, Never>)?
     private var noticer: TouchNoticer?
+    /// When a tap last brought the controls up, so a tap's log line says how soon after it came (gatefold#614).
+    private var controlsUpAt: Date?
     var currentLocation: Locator? { navigator.currentLocation }
     private(set) weak var weakModel: ReaderModel?
     /// The reader outlives this controller in every path but a mid-turn close; callers in tasks guard `weakModel`.
@@ -2227,7 +2229,8 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             return true
         }
         let zone = TapZones.zone(x: point.x, viewWidth: width, spread: model.layout.columns == .two)
-        readerLog.notice("tap: \(zone.rawValue, privacy: .public) at x \(Int(point.x), privacy: .public) of \(Int(width), privacy: .public), controls \(self.model.chromeVisible, privacy: .public)")
+        let sinceUp = model.chromeVisible ? controlsUpAt.map { ", up \(Int(Date().timeIntervalSince($0) * 1000)) ms" } ?? "" : ""
+        readerLog.notice("tap: \(zone.rawValue, privacy: .public) at x \(Int(point.x), privacy: .public) y \(Int(point.y), privacy: .public) of \(Int(width), privacy: .public), controls \(self.model.chromeVisible, privacy: .public)\(sinceUp, privacy: .public)")
         if model.chromeVisible {
             model.controlsTapped(visible: false)
             return true
@@ -2239,7 +2242,9 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         switch zone {
         case .back: turn(forward: false)
         case .forward: turn(forward: true)
-        case .middle: model.controlsTapped(visible: true)
+        case .middle:
+            controlsUpAt = Date()
+            model.controlsTapped(visible: true)
         }
         return true
     }
