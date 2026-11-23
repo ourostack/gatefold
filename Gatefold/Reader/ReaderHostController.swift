@@ -2392,9 +2392,10 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         if !complete {
             weakModel?.dragDidNotTurn()
             // Put the navigator back where it was before lifting the overlay.
-            _ = curl.mirrored
+            let back = curl.mirrored
                 ? await navigator.goForward(options: .init(animated: false))
                 : await navigator.goBackward(options: .init(animated: false))
+            readerLog.notice("turn laid back: navigator returned \(back, privacy: .public)")
             try? await Task.sleep(for: .milliseconds(120))
         }
         let uncovered = curl.beneath
@@ -2462,6 +2463,14 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             panEnded = nil
             Task {
                 if let hold = LaunchOptions.holdDragPrepare { try? await Task.sleep(for: .seconds(hold)) }
+                // The finger lifted, on a drag that turns nothing, before this ran (a busy main thread): nothing moves.
+                // Preparing would put Readium on the page beneath, and laying the leaf back did not always bring it
+                // back: that page stayed, and its words were saved as his place (gatefold#627).
+                if panEnded == false {
+                    readerLog.notice("swipe: lifted before its turn was prepared; nothing moves")
+                    weakModel?.dragDidNotTurn()
+                    return
+                }
                 guard await prepareTurn(forward: panForward, startingAt: point) else { return }
                 updateFinger(pan.location(in: view))
                 // The finger lifted while the destination was still being prepared.

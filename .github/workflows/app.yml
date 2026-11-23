@@ -726,8 +726,9 @@ jobs:
             timeout: 66 # 30 + 2 x 9.1 + 5 + 12
             lane: 10
           - shard: ipad-taps-rest
-            # The catch-all for new Fine-Tune tests: 183, margin taps on a fresh spread (gatefold#304), and taps after
-            # swipes on a book opened from the shelf (gatefold#321; no pass on main yet)
+            # The catch-all for new Fine-Tune tests: 183, margin taps on a fresh spread (gatefold#304), taps after
+            # swipes on a book opened from the shelf (gatefold#321; no pass on main yet), and a brush lifted before its
+            # turn is prepared (gatefold#627; an estimate until CI has timed it)
             tests: >-
               FineTuneTapUITests MarginTapUITests SwallowedTapUITests
             skip: >-
@@ -735,7 +736,7 @@ jobs:
               FineTuneTapUITests/testAQuickTouchChangesEverySwitchOnce FineTuneTapUITests/testATapOnTheRowsNameChangesItsSwitch FineTuneTapUITests/testEveryTapFlipsJustifyPortrait FineTuneTapUITests/testEveryTapFlipsPageNumbersPortrait FineTuneTapUITests/testEveryTapFlipsPositionLabelPortrait FineTuneTapUITests/testEveryTapFlipsPagesLeftPortrait FineTuneTapUITests/testEveryTapFlipsJustifyLandscape FineTuneTapUITests/testEveryTapFlipsPageNumbersLandscape FineTuneTapUITests/testEveryTapFlipsPositionLabelLandscape FineTuneTapUITests/testEveryTapFlipsPagesLeftLandscape
             pr_tests: none
             cold: false
-            timeout: 80 # 30 + 2 x 16.1 + 5 + 12
+            timeout: 93 # 30 + 2 x 22.9 + 5 + 12
             lane: 2
           - shard: ipad-taps-edges
             # Main only: a 20-pt brush turns nothing and taps at 3% and 97% of the window turn, both ways up

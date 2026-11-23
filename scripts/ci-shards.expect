@@ -31,6 +31,7 @@ main|iPad Pro 13-inch|JustifyPlaceUITests/testJustifyKeepsHisPageAtAnEighth
 main|iPad Pro 13-inch|JustifyPlaceUITests/testJustifyKeepsHisPageAtTheMiddle
 main|iPad Pro 13-inch|JustifyPlaceUITests/testJustifyKeepsHisPageAtThreeQuarters
 main|iPad Pro 13-inch|JustifyPlaceUITests/testJustifyThenReopenKeepsHisPage
+main|iPad Pro 13-inch|MarginTapUITests/testABrushLiftedBeforeItsTurnIsPreparedNeverTurns
 main|iPad Pro 13-inch|MarginTapUITests/testABrushNeverTurnsInPortrait
 main|iPad Pro 13-inch|MarginTapUITests/testABrushNeverTurnsOnItsSide
 main|iPad Pro 13-inch|MarginTapUITests/testAnEdgeTapAlwaysTurnsInPortrait
