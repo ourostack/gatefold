@@ -839,6 +839,9 @@ final class ReaderModel {
             revealing = false
             guard !pageReady, !isClosed else { return }
             readerLog.notice("first page ready after \(Date().timeIntervalSince(self.isWarming ? self.openedAt : self.askedAt), privacy: .public) s\(self.isWarming ? " (behind the shelf)" : "", privacy: .public)")
+            GatefoldTelemetry.shared.capture("gatefold_open", properties: GatefoldTelemetry.openProperties(
+                msToFirstPage: Int(Date().timeIntervalSince(self.isWarming ? self.openedAt : self.askedAt) * 1000),
+                behindShelf: self.isWarming, forced: false))
             showPage()
         }
     }
@@ -1063,6 +1066,8 @@ final class ReaderModel {
             await holdForOpenPlace()
             guard !pageReady, !isClosed else { return }
             readerLog.notice("first page forced ready after \(Date().timeIntervalSince(self.openedAt), privacy: .public) s")
+            GatefoldTelemetry.shared.capture("gatefold_open", properties: GatefoldTelemetry.openProperties(
+                msToFirstPage: Int(Date().timeIntervalSince(self.openedAt) * 1000), behindShelf: self.isWarming, forced: true))
             showPage()
         }
     }
