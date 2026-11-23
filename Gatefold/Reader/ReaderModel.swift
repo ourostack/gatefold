@@ -3709,7 +3709,7 @@ final class ReaderModel {
             // 45096599422: a search jump into the preface showed the page before the match, its mark off screen).
             await settle(on: Self.matchInContext(locator), move: move)
             guard moves == move, !isClosed else { return }
-            host?.underline(locator, color: theme.palette.accent)
+            host?.underline(locator, color: theme.palette.accent, fades: false)
             watchUnderline()
         }
         await captureAnchor()
