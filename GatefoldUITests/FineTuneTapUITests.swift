@@ -289,4 +289,30 @@ final class FineTuneTapUITests: XCTestCase {
         toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.2, dy: 0.5)).tap()
         assertChangedOnce(toggle, from: before, "a tap on the row's name changes it")
     }
+
+    /// Fine-Tune fits a narrow panel without cutting anything off. On the folded Duo the review panel of 2026-11-22
+    /// found Line Spacing and Margins squeezed to "Sn…", "Cla…" and "Ro…", and the font chips cut off at the panel's
+    /// inner margin. Each segmented control is at least as wide as the same control laid out on its own, and the
+    /// chips scroll from one edge of the panel to the other.
+    func testFineTuneShowsEveryWordWhole() {
+        openFineTune()
+        let panel = app.descendants(matching: .any)["appearance.panel"].firstMatch.frame
+        let shot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        shot.name = "fine-tune-fit"
+        shot.lifetime = .keepAlways
+        add(shot)
+        for (id, titles) in [("appearance.lineSpacing", ["Snug", "Easy", "Airy"]), ("appearance.margins", ["Slim", "Classic", "Roomy"])] {
+            let control = app.segmentedControls[id].firstMatch
+            XCTAssertTrue(control.waitForExistence(timeout: 10), "\(id) is there")
+            let alone = UISegmentedControl(items: titles)
+            alone.sizeToFit()
+            XCTAssertGreaterThanOrEqual(control.frame.width, alone.intrinsicContentSize.width - 2,
+                                        "\(id) keeps every label whole: \(control.frame.width) of \(alone.intrinsicContentSize.width)")
+            XCTAssertLessThanOrEqual(control.frame.maxX, panel.maxX, "\(id) stays inside the panel")
+        }
+        let fonts = app.descendants(matching: .any)["appearance.fonts"].firstMatch
+        XCTAssertTrue(fonts.exists, "the font chips are there")
+        XCTAssertEqual(fonts.frame.minX, panel.minX, accuracy: 1, "the chips run to the panel's leading edge (\(fonts.frame) in \(panel))")
+        XCTAssertEqual(fonts.frame.maxX, panel.maxX, accuracy: 1, "the chips run to the panel's trailing edge (\(fonts.frame) in \(panel))")
+    }
 }

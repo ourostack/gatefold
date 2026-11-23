@@ -735,7 +735,7 @@ jobs:
               FineTuneTapUITests/testAQuickTouchChangesEverySwitchOnce FineTuneTapUITests/testATapOnTheRowsNameChangesItsSwitch FineTuneTapUITests/testEveryTapFlipsJustifyPortrait FineTuneTapUITests/testEveryTapFlipsPageNumbersPortrait FineTuneTapUITests/testEveryTapFlipsPositionLabelPortrait FineTuneTapUITests/testEveryTapFlipsPagesLeftPortrait FineTuneTapUITests/testEveryTapFlipsJustifyLandscape FineTuneTapUITests/testEveryTapFlipsPageNumbersLandscape FineTuneTapUITests/testEveryTapFlipsPositionLabelLandscape FineTuneTapUITests/testEveryTapFlipsPagesLeftLandscape
             pr_tests: none
             cold: false
-            timeout: 75 # 30 + 2 x 13.6 + 5 + 12
+            timeout: 80 # 30 + 2 x 16.1 + 5 + 12
             lane: 2
           - shard: ipad-taps-edges
             # Main only: a 20-pt brush turns nothing and taps at 3% and 97% of the window turn, both ways up
@@ -961,7 +961,7 @@ jobs:
               FineTuneTapUITests/testEveryTapFlipsJustifyPortrait FineTuneTapUITests/testEveryTapFlipsPageNumbersPortrait FineTuneTapUITests/testEveryTapFlipsPositionLabelPortrait FineTuneTapUITests/testEveryTapFlipsPagesLeftPortrait FineTuneTapUITests/testAQuickTouchChangesEverySwitchOnce FineTuneTapUITests/testATapOnTheRowsNameChangesItsSwitch
             pr_tests: none
             cold: false
-            timeout: 66 # 30 + 2 x 9.1 + 5 + 12
+            timeout: 72 # 30 + 2 x 12.1 + 5 + 12
             lane: 7
           - shard: duo-position
             # 151 + 137

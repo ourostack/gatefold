@@ -24,6 +24,7 @@ main|iPad Pro 13-inch|FineTuneTapUITests/testEveryTapFlipsPagesLeftLandscape
 main|iPad Pro 13-inch|FineTuneTapUITests/testEveryTapFlipsPagesLeftPortrait
 main|iPad Pro 13-inch|FineTuneTapUITests/testEveryTapFlipsPositionLabelLandscape
 main|iPad Pro 13-inch|FineTuneTapUITests/testEveryTapFlipsPositionLabelPortrait
+main|iPad Pro 13-inch|FineTuneTapUITests/testFineTuneShowsEveryWordWhole
 main|iPad Pro 13-inch|JustifyPlaceUITests/testJustifyKeepsHisPageAtAThird
 main|iPad Pro 13-inch|JustifyPlaceUITests/testJustifyKeepsHisPageAtAnEighth
 main|iPad Pro 13-inch|JustifyPlaceUITests/testJustifyKeepsHisPageAtTheMiddle
@@ -135,6 +136,7 @@ main|iPhone Duo|FineTuneTapUITests/testEveryTapFlipsPagesLeftLandscape
 main|iPhone Duo|FineTuneTapUITests/testEveryTapFlipsPagesLeftPortrait
 main|iPhone Duo|FineTuneTapUITests/testEveryTapFlipsPositionLabelLandscape
 main|iPhone Duo|FineTuneTapUITests/testEveryTapFlipsPositionLabelPortrait
+main|iPhone Duo|FineTuneTapUITests/testFineTuneShowsEveryWordWhole
 main|iPhone Duo|JustifyPlaceUITests/testJustifyKeepsHisPageAtAThird
 main|iPhone Duo|JustifyPlaceUITests/testJustifyKeepsHisPageAtAnEighth
 main|iPhone Duo|JustifyPlaceUITests/testJustifyKeepsHisPageAtTheMiddle
