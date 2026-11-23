@@ -160,6 +160,12 @@ enum LaunchOptions {
         guard isUITest, defaults.object(forKey: "GatefoldHoldTapTurnLanding") != nil else { return nil }
         return defaults.double(forKey: "GatefoldHoldTapTurnLanding")
     }
+    /// UI tests only: a drag's turn waits this many seconds before it is prepared, so the finger has always
+    /// lifted first, as on a busy device whose main thread ran the drag's start late (gatefold#627).
+    static var holdDragPrepare: Double? {
+        guard isUITest, defaults.object(forKey: "GatefoldHoldDragPrepare") != nil else { return nil }
+        return defaults.double(forKey: "GatefoldHoldDragPrepare")
+    }
     /// UI tests only: the leave's ordinary place write never lands (it holds before it maps its position), as
     /// when the jump's chapter still loading holds that write's read of the page until iOS has ended Gatefold
     /// (gatefold#309). Only what leaving writes at once reaches the reopen.

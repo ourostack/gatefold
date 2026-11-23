@@ -19,7 +19,7 @@ final class MarginTapUITests: XCTestCase {
             "-GatefoldUITest", "YES", "-GatefoldFakeCloud", "YES", "-GatefoldReset", "YES", "-GatefoldSkipWelcome", "YES", "-GatefoldSignedIn", "YES",
             "-GatefoldDownloadAll", "YES", "-GatefoldNoLatency", "YES", "-GatefoldOpenBook", "gutenberg-alice-in-wonderland",
             "-GatefoldGoTo", "0.12", "-GatefoldTheme", "daylight", "-GatefoldPageTurn", "curl",
-        ]
+        ] + extra
         app.launch()
         let page = app.descendants(matching: .any)["reader.page"]
         XCTAssertTrue(readsUntil(reads: Self.reads, "the reader opens") { page.exists }.ok, "the reader opens")
@@ -76,6 +76,12 @@ final class MarginTapUITests: XCTestCase {
     /// turned it, where Apple Books ignores one.
     func testABrushNeverTurnsInPortrait() throws { try brush(.portrait, posture: "single") }
     func testABrushNeverTurnsOnItsSide() throws { try brush(.landscapeLeft, posture: "spread") }
+    /// On a busy iPad the drag's start ran after the finger had lifted: the turn was prepared anyway, the page beneath
+    /// stayed on screen, and its words were saved as his place (gatefold#627, run 45205295629). The hold makes that
+    /// order happen every time.
+    func testABrushLiftedBeforeItsTurnIsPreparedNeverTurns() throws {
+        try brush(.portrait, posture: "single", extra: ["-GatefoldHoldDragPrepare", "1.5"])
+    }
 
     /// The same run's taps at 3% and 97% of the window's width did nothing at all in portrait. The window's width,
     /// not the page's: the portrait page is inset to a book's measure, and those taps land in the margin beside it.
@@ -99,7 +105,7 @@ final class MarginTapUITests: XCTestCase {
         func savedWords() -> String { (el("reader.savedWords").value as? String) ?? "" }
     }
 
-    private func open(_ orientation: UIDeviceOrientation, posture expected: String) throws -> Reader {
+    private func open(_ orientation: UIDeviceOrientation, posture expected: String, extra: [String] = []) throws -> Reader {
         guard UIDevice.current.userInterfaceIdiom == .pad else { throw XCTSkip("The iPad's margins and spread run on the iPad") }
         XCUIDevice.shared.orientation = orientation
         let app = XCUIApplication()
@@ -107,7 +113,7 @@ final class MarginTapUITests: XCTestCase {
             "-GatefoldUITest", "YES", "-GatefoldFakeCloud", "YES", "-GatefoldReset", "YES", "-GatefoldSkipWelcome", "YES", "-GatefoldSignedIn", "YES",
             "-GatefoldDownloadAll", "YES", "-GatefoldNoLatency", "YES", "-GatefoldOpenBook", "gutenberg-alice-in-wonderland",
             "-GatefoldGoTo", "0.12", "-GatefoldTheme", "daylight", "-GatefoldPageTurn", "curl",
-        ]
+        ] + extra
         app.launch()
         let reader = Reader(app: app)
         XCTAssertTrue(readsUntil(reads: Self.reads, "the reader opens") { reader.el("reader.page").exists }.ok, "the reader opens")
@@ -131,8 +137,8 @@ final class MarginTapUITests: XCTestCase {
     /// (`ReaderModel.load`). The spread showed 0.125 of the chapter, the place said 0.16, and the brush's report
     /// wrote his first words in its stead, on the same page (run 44699693594, gatefold#536). That is the place
     /// catching up with his page, not a move: a written place must then name words on the page he saw.
-    private func brush(_ orientation: UIDeviceOrientation, posture: String) throws {
-        let r = try open(orientation, posture: posture)
+    private func brush(_ orientation: UIDeviceOrientation, posture: String, extra: [String] = []) throws {
+        let r = try open(orientation, posture: posture, extra: extra)
         for dx in [-20, 20] as [CGFloat] {
             let shown = ReaderReads.settle(r.app, "the page before the \(dx)-pt brush") { print("BRUSH \($0)") }.words
             let before = (landed: r.landed(), place: r.place(), saved: r.savedPlace(), words: r.savedWords())

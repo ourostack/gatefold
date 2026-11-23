@@ -2461,6 +2461,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             if model.chromeVisible { model.setChrome(false) }
             panEnded = nil
             Task {
+                if let hold = LaunchOptions.holdDragPrepare { try? await Task.sleep(for: .seconds(hold)) }
                 guard await prepareTurn(forward: panForward, startingAt: point) else { return }
                 updateFinger(pan.location(in: view))
                 // The finger lifted while the destination was still being prepared.
