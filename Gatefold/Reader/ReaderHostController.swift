@@ -2769,25 +2769,47 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     private func traceJumpLoad(jump: Int, since tapped: ContinuousClock.Instant) -> Task<Void, Never> {
         Task { @MainActor [weak self] in
             var last = ""
+            var timedReads: Set<String> = []
+            var beat = ContinuousClock.now
             while !Task.isCancelled {
                 guard let self, let host = self.navigator.view else { return }
+                // The main thread held: this loop sleeps 50 ms, so a longer gap is time it waited for the main actor.
+                let gap = ReaderModel.ms(since: beat)
+                if gap > 150 { readerLog.notice("jump load: jump \(jump, privacy: .public) main held \(gap, privacy: .public) ms before \(ReaderModel.ms(since: tapped), privacy: .public) ms") }
                 var webs: [String] = []
+                var reading: [String] = []
                 func walk(_ v: UIView) {
                     if let w = v as? WKWebView {
                         if w.convert(w.bounds, to: host).intersects(host.bounds) {
-                            webs.append("\(w.url?.lastPathComponent ?? "none") loading \(w.isLoading) shown \(w.scrollView.alpha > 0.01)")
+                            webs.append("\(w.url?.lastPathComponent ?? "none") loading \(w.isLoading) progress \(String(format: "%.2f", w.estimatedProgress)) shown \(w.scrollView.alpha > 0.01)")
+                            if w.isLoading, let path = w.url?.path, path.count > 1 { reading.append(String(path.dropFirst())) }
                         }
                         return
                     }
                     v.subviews.forEach(walk)
                 }
                 walk(host)
+                // The same file read straight from the book, as Readium's scheme handler reads it: if this is slow
+                // too, the book's container is what the page waits on.
+                for path in reading where !timedReads.contains(path) {
+                    timedReads.insert(path)
+                    nonisolated(unsafe) let publication = self.navigator.publication
+                    Task.detached {
+                        let began = ContinuousClock.now
+                        guard let url = AnyURL(string: path), let resource = publication.get(url) else {
+                            readerLog.notice("jump load: jump \(jump, privacy: .public) no resource at \(path, privacy: .public)"); return
+                        }
+                        let bytes = (try? await resource.read().get())?.count ?? -1
+                        readerLog.notice("jump load: jump \(jump, privacy: .public) read \(path, privacy: .public) (\(bytes, privacy: .public) bytes) in \(Int((ContinuousClock.now - began) / .milliseconds(1)), privacy: .public) ms, done \(Int((ContinuousClock.now - tapped) / .milliseconds(1)), privacy: .public) ms after the tap")
+                    }
+                }
                 let now = "spinner \(self.readiumSpinner != nil); " + webs.joined(separator: "; ")
                 if now != last {
                     readerLog.notice("jump load: jump \(jump, privacy: .public) at \(ReaderModel.ms(since: tapped), privacy: .public) ms: \(now, privacy: .public)")
                     last = now
                 }
                 try? await Task.sleep(for: .milliseconds(50))
+                beat = ContinuousClock.now
             }
         }
     }
