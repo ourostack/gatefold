@@ -11,7 +11,7 @@ let package = Package(
     dependencies: [
         // Readium is iOS-only, so the adapter target links it on iOS and compiles to nothing on macOS.
         // Our fork's main, on the same revision as the app (project.yml): 3.11.1 plus #109's fixes (swift-toolkit#1, #2).
-        .package(url: "https://github.com/ourostack/swift-toolkit.git", revision: "a0eb21330d0f8c37476859922bd967073e7b73f4"),
+        .package(url: "https://github.com/ourostack/swift-toolkit.git", revision: "b31bc56abb80d9009592fe79a580673ca6d17a56"),
         // One definition of a whole percent, shared with the reader.
         .package(path: "../GatefoldCore"),
     ],

@@ -2781,7 +2781,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
                 func walk(_ v: UIView) {
                     if let w = v as? WKWebView {
                         if w.convert(w.bounds, to: host).intersects(host.bounds) {
-                            webs.append("\(w.url?.lastPathComponent ?? "none") loading \(w.isLoading) progress \(String(format: "%.2f", w.estimatedProgress)) shown \(w.scrollView.alpha > 0.01)")
+                            webs.append("\(w.url?.lastPathComponent ?? "none") pid \((w.value(forKey: "_webProcessIdentifier") as? Int32) ?? -1) loading \(w.isLoading) progress \(String(format: "%.2f", w.estimatedProgress)) shown \(w.scrollView.alpha > 0.01)")
                             if w.isLoading, let path = w.url?.path, path.count > 1 { reading.append(String(path.dropFirst())) }
                         }
                         return
