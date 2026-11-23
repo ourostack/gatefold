@@ -163,3 +163,5 @@ iPhone Duo|FineTunePlaceUITests/testAFontChangeKeepsHisPage	200	# estimate until
 iPhone Duo|FineTunePlaceUITests/testATextSizeChangeKeepsHisPage	200	# estimate until CI has run it, from Justify's 200 on the Duo (Fine-Tune keeps the place, 2026-11-22)
 iPhone Duo|FineTunePlaceUITests/testALineSpacingChangeKeepsHisPage	200	# estimate until CI has run it, from Justify's 200 on the Duo (Fine-Tune keeps the place, 2026-11-22)
 iPhone Duo|FineTunePlaceUITests/testAMarginsChangeKeepsHisPage	200	# estimate until CI has run it, from Justify's 200 on the Duo (Fine-Tune keeps the place, 2026-11-22)
+iPad Pro 13-inch|ContentsCloseUITests/testEveryPanelClosesTheSameWay	200	# an estimate until CI has timed it
+iPhone Duo|ContentsCloseUITests/testEveryPanelClosesTheSameWay	260	# an estimate until CI has timed it

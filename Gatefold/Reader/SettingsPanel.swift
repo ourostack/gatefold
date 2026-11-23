@@ -66,14 +66,17 @@ struct SettingsPanel: View {
         HStack(spacing: 12) {
             if customizing {
                 RoundIcon(systemName: "chevron.backward", label: "Back", id: "appearance.back") { customizing = false }
-            } else {
-                RoundIcon(systemName: "xmark", label: "Close", id: "appearance.close", action: onClose)
             }
             Text(customizing ? "Fine-Tune" : "Your Page")
                 .font(.headline)
                 .accessibilityAddTraits(.isHeader)
             Spacer(minLength: 0)
+            // Closed the way every panel over the page is: an X at the top trailing corner. Fine-Tune goes back first.
+            if !customizing {
+                PanelCloseButton(id: "appearance.close", action: onClose)
+            }
         }
+        .frame(minHeight: 44)
     }
 
     // MARK: The first page
@@ -453,7 +456,12 @@ struct SearchSheet: View {
             .navigationTitle("Search")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
+                // Closed the way every panel over the page is: an X at the top trailing corner, never Done.
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button(role: .close) { dismiss() }
+                        .accessibilityLabel("Close")
+                        .accessibilityIdentifier("search.close")
+                }
             }
         }
         .presentationDetents([.medium, .large])
