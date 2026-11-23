@@ -1544,14 +1544,20 @@ jobs:
   # check of this run passed, and its name carries the tree it tested. A run of the PR lists skips it, so it proves
   # nothing. A run that passed by proof ends with it too (the proof it relied on is of this same tree), so main's push
   # after a merge group that passed by proof finds it on the commit the queue merged.
+  # It runs on `always()` and judges only its needs, the required checks themselves (`ci-retry.py proof`): `success()`
+  # also reads every job those depend on, so one shard GitHub cancelled (gatefold#404) skipped it even after the shard
+  # passed its retry and every gate passed (main run 45092813067, 0089a96). Any check failed, cancelled or skipped
+  # fails this job; it never skips on a full run. `ci-retry.py --selftest` holds this job to that.
   proof:
     name: Full suite passed on tree ${{ needs.changes.outputs.tree }}
     needs: [changes, core, app, ipad-place-gate, ipad-undo-gate, ipad-taps-gate, ipad-reviewer-gate, duo-gate]
-    if: ${{ success() && needs.changes.outputs.full == 'true' && needs.changes.outputs.app == 'true' && needs.changes.outputs.native == 'true' && needs.changes.outputs.tree != '' }}
+    if: ${{ always() && needs.changes.outputs.full == 'true' && needs.changes.outputs.app == 'true' && needs.changes.outputs.native == 'true' && needs.changes.outputs.tree != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - env:
           RESULTS: ${{ toJSON(needs) }}
-        run: |
-          echo "$RESULTS" | python3 -Ic 'import json,sys; r={k:v["result"] for k,v in json.load(sys.stdin).items()}; print(r); sys.exit(any(v!="success" for v in r.values()))'
+        run: python3 -I scripts/ci-retry.py proof

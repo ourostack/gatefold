@@ -3,6 +3,7 @@
 
     python3 -I scripts/ci-retry.py plan      # GH_TOKEN, GH_REPO, RUN_ID set; writes matrix= and count= to $GITHUB_OUTPUT
     python3 -I scripts/ci-retry.py verdict   # writes <job id>=ok|bad for each UI shard job to $GITHUB_OUTPUT
+    python3 -I scripts/ci-retry.py proof     # RESULTS = toJSON(needs) of App's proof job; fails unless each passed
 
 WORKFLOW names the workflow whose run is judged: app.yml (the default; its UI shards) or real-unfold.yml (its places,
 which real-unfold-place.yml runs; the one job `unfold` is judged as a group).
@@ -97,6 +98,28 @@ def classify(jobs, prefixes):
     return out, sorted(s for s, (_, c) in first.items() if c == "cancelled")
 
 
+# App's proof job ("Full suite passed on tree <tree>") needs exactly the required checks, which judge the shards after
+# their retries; it runs on always() and passes only when each of those passed (see `proof_ok`).
+PROOF_NEEDS = ["changes", "core", "app", "ipad-place-gate", "ipad-undo-gate", "ipad-taps-gate", "ipad-reviewer-gate", "duo-gate"]
+
+
+def proof_ok(results):
+    """results: {need: result} from toJSON(needs). (ok, lines): ok only when every one of PROOF_NEEDS is there and
+    passed. A failed, cancelled, skipped or missing check is red: the job fails, never skips."""
+    lines = [f"{n}: {results.get(n) or 'missing'}" for n in PROOF_NEEDS]
+    return all(results.get(n) == "success" for n in PROOF_NEEDS), lines
+
+
+def proof_job(text):
+    """(if, needs, run) of app.yml's `proof` job, as written."""
+    m = re.search(r"^  proof:\n((?:(?:    .*|\s*)\n)+?)(?=^  \S|\Z)", text, re.M)
+    block = m.group(1) if m else ""
+    cond = re.search(r"^    if: (.*)$", block, re.M)
+    needs = re.search(r"^    needs: \[(.*)\]$", block, re.M)
+    return (cond.group(1) if cond else "", [n.strip() for n in needs.group(1).split(",")] if needs else [],
+            "python3 -I scripts/ci-retry.py proof" in block)
+
+
 def gh_jobs(run_id):
     out = subprocess.run(["gh", "api", "--paginate", f"repos/{{owner}}/{{repo}}/actions/runs/{run_id}/jobs?filter=latest",
                           "--jq", ".jobs[]|{name, conclusion}|tojson"], check=True, capture_output=True, text=True).stdout
@@ -113,6 +136,13 @@ def emit(**kv):
 
 
 def main(mode):
+    if mode == "proof":
+        results = {k: (v or {}).get("result") for k, v in json.loads(os.environ.get("RESULTS") or "{}").items()}
+        ok, lines = proof_ok(results)
+        print("\n".join(lines))
+        if not ok:
+            print("::error::Not every required check passed, so this run proves nothing about its tree.")
+        sys.exit(0 if ok else 1)
     real = os.environ.get("WORKFLOW") == "real-unfold.yml"
     entries, prefixes = (real_places if real else app_shards)(open(REAL if real else APP).read())
     key = "place" if real else "shard"
@@ -173,6 +203,20 @@ def selftest():
     check(r[0] == {"unfold": "bad"}, "a retry that was cancelled too is bad")
     r = classify([u("0.12", "success"), u("0.31", "success")], groups)
     check(r == ({"unfold": "ok"}, []), "every place passed")
+    # App's proof job: judged by its needs, the required checks, never by the shard jobs under them.
+    green = {n: "success" for n in PROOF_NEEDS}
+    r = classify([t("iPad place", "a", "cancelled"), j("Retry (a) / Tests", "success")], prefixes)[0]
+    gate = "success" if r["ipad-place"] == "ok" else "failure"  # each gate: shards success, or cancelled and retried ok
+    check(proof_ok({**green, "ipad-place-gate": gate})[0], "a cancelled shard that passed its retry: the proof is green")
+    check(not proof_ok({**green, "duo-gate": "failure"})[0], "a failed gate: the proof is red")
+    check(not proof_ok({**green, "ipad-taps-gate": "skipped"})[0], "a skipped gate: the proof is red")
+    check(not proof_ok({**green, "app": "cancelled"})[0], "a cancelled check: the proof is red")
+    check(not proof_ok({k: v for k, v in green.items() if k != "core"})[0], "a missing check: the proof is red")
+    cond, needs, runs = proof_job(text)
+    check(cond.startswith("${{ always() && ") and "success()" not in cond and "cancelled()" not in cond,
+          f"the proof job runs on always(), so a cancelled job under a gate can't skip it: {cond}")
+    check(needs == PROOF_NEEDS, f"the proof job needs exactly the required checks, no shard job: {needs}")
+    check(runs, "the proof job judges with `ci-retry.py proof`")
     print("checks passed" if not bad else f"{bad} failed")
     return 1 if bad else 0
 
@@ -180,7 +224,7 @@ def selftest():
 if __name__ == "__main__":
     if sys.argv[1:] == ["--selftest"]:
         sys.exit(selftest())
-    elif sys.argv[1:] in (["plan"], ["verdict"]):
+    elif sys.argv[1:] in (["plan"], ["verdict"], ["proof"]):
         main(sys.argv[1])
     else:
         sys.exit(__doc__)
