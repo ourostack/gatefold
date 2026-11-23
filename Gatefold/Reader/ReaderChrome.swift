@@ -265,7 +265,7 @@ struct Scrubber: View {
     var body: some View {
         GeometryReader { geo in
             let width = geo.size.width
-            let value = dragging ?? pending ?? model.totalProgression
+            let value = dragging ?? pending ?? model.scrubberPlace
             ZStack(alignment: .leading) {
                 Capsule(style: .continuous).fill(.secondary.opacity(0.25)).frame(height: 3)
                 Capsule(style: .continuous).fill(model.theme.accent).frame(width: max(3, width * value), height: 3)
