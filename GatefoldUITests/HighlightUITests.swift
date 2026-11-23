@@ -11,7 +11,7 @@ final class HighlightUITests: XCTestCase {
     private var app: XCUIApplication!
     private let env = ProcessInfo.processInfo.environment
 
-    override func setUp() async throws {
+    override func setUp() {
         continueAfterFailure = false
         XCUIDevice.shared.orientation = .portrait
         app = XCUIApplication()

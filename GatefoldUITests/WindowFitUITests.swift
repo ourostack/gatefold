@@ -8,7 +8,7 @@ import XCTest
 final class WindowFitUITests: XCTestCase {
     private var app: XCUIApplication!
     override func setUp() { continueAfterFailure = true; app = XCUIApplication() }
-    override func tearDown() async throws { XCUIDevice.shared.orientation = .portrait }
+    override func tearDown() { XCUIDevice.shared.orientation = .portrait }
 
     private func el(_ id: String) -> XCUIElement { app.descendants(matching: .any)[id].firstMatch }
 

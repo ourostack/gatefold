@@ -9,7 +9,7 @@ import XCTest
 @MainActor
 final class SpreadTurnSettleUITests: XCTestCase {
     override func setUp() { continueAfterFailure = false }
-    override func tearDown() async throws { XCUIDevice.shared.orientation = .portrait }
+    override func tearDown() { XCUIDevice.shared.orientation = .portrait }
 
     func testSpreadTurnsLandWithoutSliding() throws {
         guard UIDevice.current.userInterfaceIdiom == .pad else { throw XCTSkip("The spread runs on the iPad") }

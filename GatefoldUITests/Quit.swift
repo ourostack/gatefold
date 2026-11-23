@@ -11,6 +11,11 @@ extension XCUIApplication {
     /// The error is allowed only once the app is in fact gone. A terminate that fails while the app still runs is
     /// a real failure. Allowing it stopped the test right there and the test passed, with the app still running,
     /// and each time on CI the runner then exited with code 75 (gatefold#161).
+    ///
+    /// The allowed error is still an issue, so with continueAfterFailure off it ends the test. In a class with an
+    /// async setUp or tearDown, Xcode 26 and later end the whole test runner to do that (exit 75), and xcodebuild
+    /// fails the shard though every test passed (gatefold#395). UI test classes keep setUp and tearDown sync;
+    /// scripts/ci-shards.py fails an async one.
     func quit(timeout: TimeInterval = 30) {
         if state != .notRunning {
             let options = XCTExpectedFailure.Options()

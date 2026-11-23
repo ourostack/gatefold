@@ -7,7 +7,7 @@ import XCTest
 final class PlaceUndoUITests: XCTestCase {
     private var app: XCUIApplication!
 
-    override func setUp() async throws {
+    override func setUp() {
         continueAfterFailure = false
         app = XCUIApplication()
     }

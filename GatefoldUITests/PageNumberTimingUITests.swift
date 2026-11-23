@@ -12,7 +12,7 @@ final class PageNumberTimingUITests: XCTestCase {
     /// few tenths of a second; the app logs its own time, "pages: first number after").
     private let budget: TimeInterval = 3
 
-    override func setUp() async throws {
+    override func setUp() {
         continueAfterFailure = true
         app = XCUIApplication()
     }

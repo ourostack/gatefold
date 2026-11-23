@@ -14,12 +14,12 @@ final class ReviewerChecksUITests: XCTestCase {
     private var app: XCUIApplication!
     private var pad: Bool { UIDevice.current.userInterfaceIdiom == .pad }
 
-    override func setUp() async throws {
+    override func setUp() {
         continueAfterFailure = true
         app = XCUIApplication()
     }
 
-    override func tearDown() async throws { XCUIDevice.shared.orientation = .portrait }
+    override func tearDown() { XCUIDevice.shared.orientation = .portrait }
 
     private let base = ["-GatefoldUITest", "YES", "-GatefoldFakeCloud", "YES", "-GatefoldSkipWelcome", "YES",
                         "-GatefoldSignedIn", "YES", "-GatefoldAllowReopen", "YES", "-GatefoldNoLatency", "YES"]

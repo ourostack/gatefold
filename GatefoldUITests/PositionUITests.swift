@@ -11,13 +11,13 @@ import XCTest
 final class PositionUITests: XCTestCase {
     private var app: XCUIApplication!
 
-    override func setUp() async throws {
+    override func setUp() {
         continueAfterFailure = false
         XCUIDevice.shared.orientation = .portrait
         app = XCUIApplication()
     }
 
-    override func tearDown() async throws {
+    override func tearDown() {
         XCUIDevice.shared.orientation = .portrait
     }
 

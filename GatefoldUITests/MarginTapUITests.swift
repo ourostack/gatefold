@@ -7,7 +7,7 @@ import XCTest
 @MainActor
 final class MarginTapUITests: XCTestCase {
     override func setUp() { continueAfterFailure = false }
-    override func tearDown() async throws { XCUIDevice.shared.orientation = .portrait }
+    override func tearDown() { XCUIDevice.shared.orientation = .portrait }
 
     func testEveryMarginTapOnAFreshSpreadTurns() throws {
         // The Duo's spread needs a hinge the UI test can't move (real-unfold.yml); its 951 pt spread's zone is in

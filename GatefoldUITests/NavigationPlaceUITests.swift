@@ -8,14 +8,14 @@ import UIKit
 final class NavigationPlaceUITests: XCTestCase {
     private var app: XCUIApplication!
 
-    override func setUp() async throws {
+    override func setUp() {
         continueAfterFailure = false
         app = XCUIApplication()
         // The iPad on its side lays out a spread after a portrait first layout: the reflow that held the move.
         if UIDevice.current.userInterfaceIdiom == .pad { XCUIDevice.shared.orientation = .landscapeLeft }
     }
 
-    override func tearDown() async throws {
+    override func tearDown() {
         XCUIDevice.shared.orientation = .portrait
     }
 

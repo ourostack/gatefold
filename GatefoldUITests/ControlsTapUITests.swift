@@ -15,13 +15,13 @@ import XCTest
 final class ControlsTapUITests: XCTestCase {
     private var app: XCUIApplication!
 
-    override func setUp() async throws {
+    override func setUp() {
         continueAfterFailure = true
         XCUIDevice.shared.orientation = .portrait
         app = XCUIApplication()
     }
 
-    override func tearDown() async throws { app.terminate() }
+    override func tearDown() { app.terminate() }
 
     private let common = [
         "-GatefoldUITest", "YES", "-GatefoldFakeCloud", "YES", "-GatefoldSkipWelcome", "YES",

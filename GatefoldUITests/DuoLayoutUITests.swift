@@ -14,8 +14,8 @@ import XCTest
 @MainActor
 final class DuoLayoutUITests: XCTestCase {
     private var app: XCUIApplication!
-    override func setUp() async throws { continueAfterFailure = true; app = XCUIApplication() }
-    override func tearDown() async throws { app.terminate() }
+    override func setUp() { continueAfterFailure = true; app = XCUIApplication() }
+    override func tearDown() { app.terminate() }
 
     private func el(_ id: String) -> XCUIElement { app.descendants(matching: .any)[id].firstMatch }
 
