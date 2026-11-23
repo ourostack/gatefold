@@ -2747,7 +2747,10 @@ final class ReaderModel {
         if !placeOnly {
             location = locator
             // The reader turning on: the other device's line has done its job.
-            if !landing, duringTurn || touchedSinceLocation { host?.clearUnderline() }
+            if !landing, duringTurn || touchedSinceLocation {
+                readerLog.notice("search mark: cleared by a report (during turn \(duringTurn, privacy: .public), touched \(self.touchedSinceLocation, privacy: .public)) at \(Self.placeTag(locator), privacy: .public)")
+                host?.clearUnderline()
+            }
             refreshAheadTab()
             // The navigator opens on the saved place, so its first report is a page worth showing: don't
             // keep the cover up while the rest of the book is indexed.

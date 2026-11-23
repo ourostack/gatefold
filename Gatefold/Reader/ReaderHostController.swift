@@ -2854,6 +2854,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         let decoration = Decoration(id: "sync", locator: locator, style: .init(id: fades ? .gatefoldSync : .gatefoldMatch,
                                                                                       config: ThemePalette.hexString(color)))
         navigator.apply(decorations: [decoration], in: "gatefold-sync")
+        readerLog.notice("search mark: applied (fades \(fades, privacy: .public)) at \(locator.href.string.split(separator: "/").last.map(String.init) ?? "-", privacy: .public)")
         underlineTask?.cancel()
         underlineTask = nil
         guard fades else { return }
@@ -2865,6 +2866,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     }
 
     func clearUnderline() {
+        readerLog.notice("search mark: cleared (\(Thread.callStackSymbols.dropFirst().prefix(3).joined(separator: " < "), privacy: .public))")
         underlineTask?.cancel()
         underlineTask = nil
         navigator.apply(decorations: [], in: "gatefold-sync")
