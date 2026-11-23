@@ -181,6 +181,28 @@ final class GatefoldTelemetry: @unchecked Sendable {
     /// The smallest bucket above `seconds`; 3600 for an hour or more.
     static func bucket(_ seconds: TimeInterval) -> Int { buckets.first { seconds < Double($0) } ?? 3600 }
 
+    /// Upper bounds, in milliseconds, for the time a page takes to show: fine below a second, coarse above.
+    static let msBuckets = [250, 500, 1000, 2000, 4000, 8000, 16000, 32000, 64000]
+    /// The smallest bucket above `ms`; 64000 for a minute or more.
+    static func msBucket(_ ms: Int) -> Int { msBuckets.first { ms < $0 } ?? 64000 }
+
+    /// A jump to a far page (scrubber, search, contents) as he saw it: how long from his tap until the new page
+    /// had arrived beneath the veil, and until the veil lifted. Bucketed milliseconds and the kind of veil; nothing
+    /// about the book or the place.
+    static func jumpProperties(riffled: Bool, msToArrive: Int, msToLift: Int) -> [String: Value] {
+        ["veil": .string(riffled ? "riffle" : "dim"),
+         "ms_to_arrive": .int(msBucket(msToArrive)),
+         "ms_to_lift": .int(msBucket(msToLift))]
+    }
+
+    /// A book's first page as he saw it: how long from his tap (or, behind the shelf, from the open) until it
+    /// showed, and whether it had to be forced past a load that never finished.
+    static func openProperties(msToFirstPage: Int, behindShelf: Bool, forced: Bool) -> [String: Value] {
+        ["ms_to_first_page": .int(msBucket(msToFirstPage)),
+         "behind_shelf": .bool(behindShelf),
+         "forced": .bool(forced)]
+    }
+
     private static func name(of state: DownloadState) -> String {
         switch state {
         case .cloudOnly: "cloud_only"

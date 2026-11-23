@@ -2709,9 +2709,11 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             // The thumb starts riffling at once and keeps going while the far chapter loads, so the
             // wait is the riffle, never a dimmed page.
             var arrived = false
+            var arrivedMs: Int?
             let travel = Task { @MainActor in
                 await body()
                 arrived = true
+                arrivedMs = ReaderModel.ms(since: jumpTapped)
                 readerLog.notice("veil: jump \(jump, privacy: .public) arrived \(ReaderModel.ms(since: jumpTapped), privacy: .public) ms after it began (riffle)")
             }
             await riffleLeaves(from: old, cover: cover, forward: forward, arrived: { arrived }) { [weak self] in
@@ -2724,6 +2726,8 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             // the jump is back: the model's put-back and its words wait on the landing, not on the leaves.
             await travel.value
             readerLog.notice("veil: jump \(jump, privacy: .public) lifted \(ReaderModel.ms(since: jumpTapped), privacy: .public) ms after it began")
+            GatefoldTelemetry.shared.capture("gatefold_jump", properties: GatefoldTelemetry.jumpProperties(
+                riffled: true, msToArrive: arrivedMs ?? ReaderModel.ms(since: jumpTapped), msToLift: ReaderModel.ms(since: jumpTapped)))
             cover.removeFromSuperview()
             if veil === cover { veil = nil; veilJump = nil }
             return
@@ -2731,7 +2735,8 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         let dim = UIViewPropertyAnimator(duration: 0.15, curve: .easeOut) { wash.alpha = 0.4 }
         dim.startAnimation()
         await body()
-        readerLog.notice("veil: jump \(jump, privacy: .public) arrived \(ReaderModel.ms(since: jumpTapped), privacy: .public) ms after it began")
+        let arrivedMs = ReaderModel.ms(since: jumpTapped)
+        readerLog.notice("veil: jump \(jump, privacy: .public) arrived \(arrivedMs, privacy: .public) ms after it began")
         _ = await renderedSnapshot(afterChange: true)
         readerLog.notice("veil: jump \(jump, privacy: .public) pictured its page \(ReaderModel.ms(since: jumpTapped), privacy: .public) ms after it began, \(self.lastSnapshotLooks, privacy: .public) looks")
         // The head changes chapter with the page, cross-fading as the veil lifts.
@@ -2743,6 +2748,8 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         }
         cover.removeFromSuperview()
         readerLog.notice("veil: jump \(jump, privacy: .public) lifted \(ReaderModel.ms(since: jumpTapped), privacy: .public) ms after it began")
+        GatefoldTelemetry.shared.capture("gatefold_jump", properties: GatefoldTelemetry.jumpProperties(
+            riffled: false, msToArrive: arrivedMs, msToLift: ReaderModel.ms(since: jumpTapped)))
         // Its own cover only: one abandoned meanwhile (`abandonVeil`) may have made way for a newer one.
         if veil === cover { veil = nil; veilJump = nil }
     }
