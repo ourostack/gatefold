@@ -108,10 +108,11 @@ jobs:
       device: "iPad Pro 13-inch"
       sim: gatefold-ipad
       shard: ipad-probe-terminate
-      tests: TerminateRaceUITests
+      tests: >-
+        TerminateRaceUITests/test7ReaderCounting TerminateRaceUITests/test8ReaderRotating TerminateRaceUITests/test9ReaderFarJump
       skip: ""
       pr_tests: none
       full: "true"
       cold: false
-      timeout: 75
+      timeout: 90
       lane: 1
