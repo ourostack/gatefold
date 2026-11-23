@@ -117,7 +117,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
                 // demand; a turn into a chapter still loading holds the old page (`renderedSnapshot`).
                 preloadPreviousPositionCount: 0,
                 preloadNextPositionCount: 0,
-                decorationTemplates: HTMLDecorationTemplate.defaultTemplates().merging([.gatefoldSync: .gatefoldSync()]) { a, _ in a }
+                decorationTemplates: HTMLDecorationTemplate.defaultTemplates().merging([.gatefoldSync: .gatefoldSync(), .gatefoldMatch: .gatefoldMatch()]) { a, _ in a }
                     .merging(Self.highlightTemplates) { a, _ in a }
             )
         )
@@ -2843,15 +2843,20 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     private var underlineTask: Task<Void, Never>?
 
     /// Underlines the other device's words with the ribbon colour: drawn in over 0.6 s, held while the
-    /// Back pill is up (8 s), then faded. A page turn takes it away sooner (`clearUnderline`).
-    func underline(_ locator: Locator, color: UInt32) {
+    /// Back pill is up (8 s), then faded. A page turn takes it away sooner (`clearUnderline`). A search match
+    /// (`fades: false`) stays until then, as Apple Books' does: on a timer, whether he saw it at all hung on how
+    /// fast its jump landed (review panel 2026-11-22, ipad-light-13).
+    func underline(_ locator: Locator, color: UInt32, fades: Bool = true) {
         guard let quote = locator.text.highlight, !quote.isEmpty else { return }
         // The mark ends where a word does, not where the quote's character count did.
         let edge = WordEdge.complete(highlight: quote, after: locator.text.after)
         let locator = locator.copy(text: { $0.highlight = edge.highlight; $0.after = edge.after })
-        let decoration = Decoration(id: "sync", locator: locator, style: .init(id: .gatefoldSync, config: ThemePalette.hexString(color)))
+        let decoration = Decoration(id: "sync", locator: locator, style: .init(id: fades ? .gatefoldSync : .gatefoldMatch,
+                                                                                      config: ThemePalette.hexString(color)))
         navigator.apply(decorations: [decoration], in: "gatefold-sync")
         underlineTask?.cancel()
+        underlineTask = nil
+        guard fades else { return }
         underlineTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(9))
             guard !Task.isCancelled else { return }
@@ -3547,6 +3552,7 @@ private final class TouchNoticer: UIGestureRecognizer {
 
 extension Decoration.Style.Id {
     static var gatefoldSync: Self { "gatefoldSync" }
+    static var gatefoldMatch: Self { "gatefoldMatch" }
 }
 
 extension HTMLDecorationTemplate {
@@ -3569,6 +3575,28 @@ extension HTMLDecorationTemplate {
         }
         @keyframes gatefold-draw { to { clip-path: inset(0 0 0 0); } }
         @keyframes gatefold-fade { from { opacity: 1; } to { opacity: 0; } }
+        """
+    ) }
+
+    /// A search match's underline: the sync one's look, drawn in the same way, with no fade. It keeps the sync
+    /// class, so `clearUnderline` and the UI tests' probe treat it as the same mark.
+    static func gatefoldMatch() -> HTMLDecorationTemplate { HTMLDecorationTemplate(
+        layout: .boxes,
+        element: { decoration in
+            let tint = (decoration.style.config as? String) ?? "#9A3B26"
+            return "<div class=\"gatefold-sync gatefold-match\" style=\"--gf-tint: \(tint);\"/>"
+        },
+        stylesheet: """
+        .gatefold-sync.gatefold-match {
+            box-sizing: border-box;
+            border-bottom: 2px solid var(--gf-tint);
+            clip-path: inset(0 100% 0 0);
+            animation: gatefold-match-draw 0.6s ease-out forwards;
+        }
+        @media (prefers-reduced-motion: reduce) {
+            .gatefold-sync.gatefold-match { clip-path: none; animation: none; }
+        }
+        @keyframes gatefold-match-draw { to { clip-path: inset(0 0 0 0); } }
         """
     ) }
 }
