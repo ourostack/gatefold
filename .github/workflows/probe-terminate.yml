@@ -98,8 +98,16 @@ jobs:
           overwrite: true
 
   probe:
-    name: iPad probe shard
+    name: iPad probe shard (${{ matrix.shard }})
     needs: yield
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - shard: ipad-probe-control
+            starve: false
+          - shard: ipad-probe-starved
+            starve: true
     permissions:
       contents: read
       actions: write
@@ -107,12 +115,13 @@ jobs:
     with:
       device: "iPad Pro 13-inch"
       sim: gatefold-ipad
-      shard: ipad-probe-terminate
+      shard: ${{ matrix.shard }}
       tests: >-
-        TerminateRaceUITests/test7ReaderCounting TerminateRaceUITests/test8ReaderRotating TerminateRaceUITests/test9ReaderFarJump
+        TerminateRaceUITests/test7ReaderCounting TerminateRaceUITests/test8ReaderRotating TerminateRaceUITests/test1Quiet
       skip: ""
       pr_tests: none
       full: "true"
       cold: false
+      starve: ${{ matrix.starve }}
       timeout: 90
       lane: 1

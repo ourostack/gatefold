@@ -66,6 +66,8 @@ final class TerminateRaceUITests: XCTestCase {
         XCUIDevice.shared.orientation = .portrait
     }
 
+    /// Known probe bug (run 45254316044): the "Chapter XXX" row never appeared within 20 s of the Contents tap, so no
+    /// round reached its terminate; not chased (it is not a #363 failure).
     /// A book open, a far jump through Contents (as testAJumpFromAPageStillLoadingStartsAtOnce does), then the
     /// terminate as soon as Back is up, while the far chapter loads and the pages are counted.
     func test9ReaderFarJump() {

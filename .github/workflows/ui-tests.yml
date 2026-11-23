@@ -80,6 +80,10 @@ on:
           artifacts take the suffix, since the cancelled job's names are used
         type: string
         default: ""
+      starve:
+        description: "Probe only, gatefold#363 - starve the simulator's CPU (maild kicked, 3 busy loops inside it) before the tests"
+        type: boolean
+        default: false
       timeout:
         description: >-
           The job's limit in minutes: 30 of setup (the simulator wait step's own limit; gatefold#198), twice its
@@ -280,6 +284,18 @@ jobs:
         with:
           limit: ${{ inputs.timeout }}
           boot: "30" # the simulator wait step's timeout-minutes, above
+      - name: Probe (gatefold#363) - log maild's launchd state each minute, and starve the simulator when asked
+        env:
+          STARVE: ${{ inputs.starve }}
+        run: |
+          nohup sh -c 'while :; do echo "== $(date -u +%T)"; xcrun simctl spawn "$0" launchctl print system/com.apple.email.maild 2>&1 | grep -E "state|runs|last exit|pid|spawn type|event triggers|reason|immediate" ; sleep 60; done' "$UDID" > "$RUNNER_TEMP/maild.log" 2>&1 &
+          xcrun simctl spawn "$UDID" launchctl print system/com.apple.email.maild > "$RUNNER_TEMP/maild-plist.txt" 2>&1 || true
+          if [ "$STARVE" = true ]; then
+            xcrun simctl spawn "$UDID" launchctl kickstart system/com.apple.email.maild || echo "kickstart failed"
+            for i in 1 2 3; do nohup xcrun simctl spawn "$UDID" /bin/sh -c 'while :; do :; done' > /dev/null 2>&1 & done
+            sleep 20
+            ps -Ao pcpu,comm | sort -rn | head -8
+          fi
       - name: This shard's tests
         # Gets its tests' whole budget whenever setup ended within `boot` minutes (gatefold#198, #353), then 2 min for
         # ci-within to stop them, and ends at least 10 min before the job's limit: a job cut off at its limit skips
@@ -386,6 +402,8 @@ jobs:
             ${{ runner.temp }}/rb.log
             ${{ runner.temp }}/reader.log
             ${{ runner.temp }}/warm.log
+            ${{ runner.temp }}/maild.log
+            ${{ runner.temp }}/maild-plist.txt
             ${{ runner.temp }}/load.log
             ${{ runner.temp }}/load.log.threads
             ${{ runner.temp }}/crashes
