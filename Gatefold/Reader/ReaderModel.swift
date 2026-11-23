@@ -3690,7 +3690,9 @@ final class ReaderModel {
     }
 
     /// A highlight's exact place: Readium finds its words, so the page is the one they are on.
-    func go(to locator: Locator, rememberBack: Bool) async {
+    /// `markingTheMatch`: a search result's match is underlined where it landed, as the other device's place is, so
+    /// his eye finds it (review panel 2026-11-22: the hit had no mark on the page).
+    func go(to locator: Locator, rememberBack: Bool, markingTheMatch: Bool = false) async {
         reflowTouches = 0
         hisMoves += 1
         hasMoved = true
@@ -3698,9 +3700,26 @@ final class ReaderModel {
         let back = rememberBack ? rememberPlace() : nil
         defer { publishBack(back) }
         jumpOnItsWay = (locator, moves, lastReported ?? page?.currentLocation)
+        let move = moves
         let jump = await veiled(toward: locator.href) { _ = await self.page?.go(to: locator) }
         if endedQuietly(jump, back: back) { return }
+        if markingTheMatch {
+            // Into another chapter, Readium places the page by progression before the chapter has laid out, so the
+            // match can be pages on; once it has, its words are found and gone to, as a landing's are (CI App run
+            // 45096599422: a search jump into the preface showed the page before the match, its mark off screen).
+            await settle(on: Self.matchInContext(locator), move: move)
+            guard moves == move, !isClosed else { return }
+            host?.underline(locator, color: theme.palette.accent)
+            watchUnderline()
+        }
         await captureAnchor()
+    }
+
+    /// A search match with the words either side of it: the match alone is often one word, too short for `settle`
+    /// to find on the page, and the words around it say which of its places it is.
+    static func matchInContext(_ locator: Locator) -> Locator {
+        let before = String((locator.text.before ?? "").suffix(20)), after = String((locator.text.after ?? "").prefix(20))
+        return locator.copy(text: { $0 = Locator.Text(highlight: before + (locator.text.highlight ?? "") + after) })
     }
 
     func go(to bookmark: Bookmark) async {
