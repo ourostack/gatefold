@@ -8,12 +8,12 @@ import XCTest
 final class CountingPlaceholderUITests: XCTestCase {
     private var app: XCUIApplication!
 
-    override func setUp() async throws {
+    override func setUp() {
         continueAfterFailure = false
         app = XCUIApplication()
     }
 
-    override func tearDown() async throws {
+    override func tearDown() {
         XCUIDevice.shared.orientation = .portrait
     }
 

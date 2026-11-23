@@ -7,7 +7,7 @@ import XCTest
 final class ReopenLandingUITests: XCTestCase {
     private var app: XCUIApplication!
 
-    override func setUp() async throws {
+    override func setUp() {
         continueAfterFailure = true
         app = XCUIApplication()
     }

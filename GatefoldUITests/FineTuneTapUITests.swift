@@ -9,12 +9,12 @@ import XCTest
 final class FineTuneTapUITests: XCTestCase {
     private var app: XCUIApplication!
 
-    override func setUp() async throws {
+    override func setUp() {
         continueAfterFailure = true
         app = XCUIApplication()
     }
 
-    override func tearDown() async throws {
+    override func tearDown() {
         XCUIDevice.shared.orientation = .portrait
     }
 

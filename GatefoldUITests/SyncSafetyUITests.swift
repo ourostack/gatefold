@@ -11,7 +11,7 @@ final class SyncSafetyUITests: XCTestCase {
     /// Words that only ever come from a raw Swift or Foundation error.
     private let rawFragments = ["CancellationError", "operation couldn", "Swift.", "NSURLError", "error 1."]
 
-    override func setUp() async throws {
+    override func setUp() {
         continueAfterFailure = false
         app = XCUIApplication()
     }

@@ -8,7 +8,7 @@ import XCTest
 /// processes ran flat out (ReopenAfterControlsUITests, run 43384467106). Judged in looks, never seconds.
 @MainActor
 final class ShelfAccessibilityUITests: XCTestCase {
-    override func setUp() async throws { continueAfterFailure = false }
+    override func setUp() { continueAfterFailure = false }
 
     func testNoPageBehindTheShelfReachesAccessibility() throws {
         let app = XCUIApplication()

@@ -17,7 +17,8 @@ main and full-list pull requests) this fails when
     <setup> is the `boot` ui-tests.yml gives the time-left action (gatefold#198), <slowest> the minutes its tests'
     slowest passes add up to in scripts/ci-shards.times, for whichever of its two lists (main or PR) runs longer, and
     5 the test step's minutes no test gets (LAUNCH below; gatefold#260),
-  - a test that a shard runs has no slowest pass in scripts/ci-shards.times, or a line there names no test CI runs.
+  - a test that a shard runs has no slowest pass in scripts/ci-shards.times, or a line there names no test CI runs,
+  - a UI test source has an `async` setUp, tearDown or test method (ASYNC_WHY below; gatefold#395).
 --list prints every "tier|device|test" with its shard. --expect FILE fails unless that set equals the file's (the first
 word of each line; blank lines and lines starting with # ignored). CI checks against scripts/ci-shards.expect, so a
 test leaves CI only by a visible edit there: after adding or removing a test, `write` rewrites the file from the shards
@@ -45,6 +46,32 @@ SOURCES = os.path.join(ROOT, "GatefoldUITests")
 TIERS = ("pr", "main")
 EXPECT = os.path.join(ROOT, "scripts", "ci-shards.expect")
 WRITE = "python3 -I scripts/ci-shards.py write"
+
+
+# Since Xcode 26, an issue recorded with continueAfterFailure off, in an async test or a class with an async setUp or
+# tearDown, ends the test runner (exit 75, EX_TEMPFAIL) so xcodebuild relaunches it for the next test: XCTest stops a
+# test with an Objective-C exception, which Swift concurrency can't unwind (https://developer.apple.com/forums/thread/809989).
+# xcodebuild then fails the shard with "The test runner exited with code 75", even when that issue was an expected one
+# (Quit.swift's allowed "Failed to terminate") and every test passed (gatefold#395, run 45205295629). So no UI test
+# source has one, whatever its continueAfterFailure says today.
+ASYNC = re.compile(r"\bfunc\s+(setUp|tearDown|setUpWithError|tearDownWithError|test\w*)\s*\([^)]*\)\s*async\b")
+ASYNC_WHY = ("is async: an issue with continueAfterFailure off then ends the test runner with exit 75 and fails the "
+             "shard (gatefold#395). Make it sync (`setUpWithError() throws` for a setUp that throws)")
+
+
+def async_in(text, name):
+    """Where `name`'s text declares an async setUp, tearDown or test method, as problems."""
+    return [f"GatefoldUITests/{name}:{n}: `{m.group(0)}` {ASYNC_WHY}"
+            for n, line in enumerate(text.splitlines(), 1) for m in [ASYNC.search(line)] if m]
+
+
+def async_problems(sources_dir):
+    problems = []
+    for name in sorted(os.listdir(sources_dir)):
+        if name.endswith(".swift"):
+            with open(os.path.join(sources_dir, name), encoding="utf-8") as f:
+                problems += async_in(f.read(), name)
+    return problems
 
 
 def read_tests(sources_dir):
@@ -322,6 +349,7 @@ def check(args):
         text = f.read()
     lists = []
     problems, runs = plan(text, read_tests(SOURCES), lists)
+    problems += async_problems(SOURCES)
     times, bad = read_times(TIMES)
     problems += [f"{TIMES_NAME} {p}" for p in bad]
     with open(SHARD, encoding="utf-8") as f:
@@ -403,6 +431,18 @@ extension XCUIApplication {
 }
 """, {})
     assert tests == {"AUITests": ["testOne", "testTwo"], "BUITests": ["testThree"]}, tests
+    # gatefold#395: an async setUp, tearDown or test is named with its line; sync ones and async helpers are not.
+    flagged = async_in("""final class CUITests: XCTestCase {
+    override func setUp() async throws { continueAfterFailure = false }
+    override func tearDown() async throws {}
+    override func setUpWithError() throws {}
+    override func tearDown() {}
+    func testOne() async throws {}
+    func testTwo() throws {}
+    private func helper() async {}
+}""", "C.swift")
+    assert [p.split(":")[1] for p in flagged] == ["2", "3", "6"], flagged
+    assert all("exit 75" in p and "gatefold#395" in p for p in flagged), flagged
 
     def wf(entries, app=""):
         return f"""name: App

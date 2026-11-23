@@ -19,8 +19,8 @@ final class ReopenAfterControlsUITests: XCTestCase {
     /// The reopen pictures in Caches survive a reset, but are read only for a launch reopen, which the reset clears.
     private static let methods = 5
 
-    override func setUp() async throws { continueAfterFailure = true; app = XCUIApplication() }
-    override func tearDown() async throws { XCUIDevice.shared.orientation = .portrait }
+    override func setUp() { continueAfterFailure = true; app = XCUIApplication() }
+    override func tearDown() { XCUIDevice.shared.orientation = .portrait }
 
     /// Any type, never `app.buttons`: a control that is a menu can be typed PopUpButton, and a Button lookup then
     /// finds nothing (gatefold#165).

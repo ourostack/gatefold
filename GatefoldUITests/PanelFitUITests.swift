@@ -5,7 +5,7 @@ import XCTest
 @MainActor
 final class PanelFitUITests: XCTestCase {
     override func setUp() { continueAfterFailure = false }
-    override func tearDown() async throws { XCUIDevice.shared.orientation = .portrait }
+    override func tearDown() { XCUIDevice.shared.orientation = .portrait }
 
     /// Anchored low, as Apple Books' sheet is (aris-device/5): the panel's foot near the screen's foot,
     /// the page above it in view. Build 14 floated it mid-screen on the folded Duo (y 135–559 of 678).

@@ -14,7 +14,7 @@ final class LiveSyncUITests: XCTestCase {
     /// Frankenstein (Project Gutenberg #84) on test account 1.
     private let frankenstein = "book.56f8619536655be4a1541a40c5702d32"
 
-    override func setUp() async throws {
+    override func setUpWithError() throws {
         continueAfterFailure = false
         try XCTSkipIf(env["GATEFOLD_LIVE_EMAIL"] == nil, "live Cloud tests are opt-in")
         app = XCUIApplication()

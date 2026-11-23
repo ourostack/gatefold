@@ -16,7 +16,7 @@ extension XCUIApplication {
 /// `readerVisibleText` before the reader is up reads empty, so a test can wait on it from the moment of launch.
 @MainActor
 final class ReaderVisibleTextUITests: XCTestCase {
-    override func setUp() async throws { continueAfterFailure = false }
+    override func setUp() { continueAfterFailure = false }
 
     /// On the shelf there is no reader yet: the read is empty, never a failed query.
     func testTheShelfReadsNoWords() {

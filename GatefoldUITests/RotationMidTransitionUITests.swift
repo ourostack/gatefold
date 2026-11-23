@@ -9,8 +9,8 @@ import XCTest
 @MainActor
 final class RotationMidTransitionUITests: XCTestCase {
     private var app: XCUIApplication!
-    override func setUp() async throws { continueAfterFailure = true; app = XCUIApplication() }
-    override func tearDown() async throws { XCUIDevice.shared.orientation = .portrait }
+    override func setUp() { continueAfterFailure = true; app = XCUIApplication() }
+    override func tearDown() { XCUIDevice.shared.orientation = .portrait }
 
     private func el(_ id: String) -> XCUIElement { app.descendants(matching: .any)[id].firstMatch }
     /// Reads of the app until `done`, never seconds (gatefold#94, as FineTuneTap in #121): each read waits at least

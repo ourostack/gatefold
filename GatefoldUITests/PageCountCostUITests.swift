@@ -6,7 +6,7 @@ import XCTest
 final class PageCountCostUITests: XCTestCase {
     private var app: XCUIApplication!
 
-    override func setUp() async throws {
+    override func setUp() {
         continueAfterFailure = true
         app = XCUIApplication()
     }

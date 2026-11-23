@@ -9,7 +9,7 @@ import XCTest
 final class ScrollModeUITests: XCTestCase {
     private var app: XCUIApplication!
 
-    override func setUp() async throws {
+    override func setUp() {
         continueAfterFailure = false
         app = XCUIApplication()
     }

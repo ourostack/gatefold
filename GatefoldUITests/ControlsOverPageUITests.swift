@@ -14,13 +14,13 @@ import XCTest
 final class ControlsOverPageUITests: XCTestCase {
     private var app: XCUIApplication!
 
-    override func setUp() async throws {
+    override func setUp() {
         continueAfterFailure = true
         XCUIDevice.shared.orientation = .portrait
         app = XCUIApplication()
     }
 
-    override func tearDown() async throws { app.terminate() }
+    override func tearDown() { app.terminate() }
 
     private func el(_ id: String) -> XCUIElement { app.descendants(matching: .any)[id].firstMatch }
     private var page: XCUIElement { el("reader.page") }

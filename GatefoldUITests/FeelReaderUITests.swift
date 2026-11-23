@@ -30,11 +30,11 @@ final class FeelReaderUITests: XCTestCase {
     private enum Posture: String { case closed, openPortrait = "open, portrait", openLandscape = "open, on its side" }
     private enum Mode: String { case scroll, paged = "curl" }
 
-    override func setUp() async throws {
+    override func setUp() {
         continueAfterFailure = true
     }
 
-    override func tearDown() async throws {
+    override func tearDown() {
         app?.terminate()
         // Leave the Duo as the next test expects it: upright and closed. Three quarter turns right, since Device Hub
         // could not press its Rotate Left (run 43759594068), which left the next tests on their side.

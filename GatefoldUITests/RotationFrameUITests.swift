@@ -10,8 +10,8 @@ import XCTest
 @MainActor
 final class RotationFrameUITests: XCTestCase {
     private var app: XCUIApplication!
-    override func setUp() async throws { continueAfterFailure = true; app = XCUIApplication() }
-    override func tearDown() async throws { XCUIDevice.shared.orientation = .portrait }
+    override func setUp() { continueAfterFailure = true; app = XCUIApplication() }
+    override func tearDown() { XCUIDevice.shared.orientation = .portrait }
 
     private func el(_ id: String) -> XCUIElement { app.descendants(matching: .any)[id].firstMatch }
     private var words: String { (el("reader.visibleText").value as? String) ?? "" }

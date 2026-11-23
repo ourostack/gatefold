@@ -34,7 +34,7 @@ import GatefoldCore
 final class RotationRepro: XCTestCase {
     private var app: XCUIApplication!
 
-    override func setUp() async throws {
+    override func setUp() {
         continueAfterFailure = true
         app = XCUIApplication()
     }
