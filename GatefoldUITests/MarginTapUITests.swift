@@ -142,8 +142,11 @@ final class MarginTapUITests: XCTestCase {
             _ = readsUntil(reads: Self.reads, "the page stands still after the \(dx)-pt brush") { (r.el("reader.turning").value as? String) == "0" }
             let after = ReaderReads.settle(r.app, "the page after the \(dx)-pt brush") { print("BRUSH \($0)") }.words
             print("BRUSH \(dx) pt: landed \(before.landed)->\(r.landed()) place \(before.place)->\(r.place()) words \(before.words.isEmpty ? "none" : "his")->\(r.savedWords().isEmpty ? "none" : "his") page same \(Self.opening(after) == Self.opening(shown)) after \(moved.reads) reads")
+            // The job log withholds book text, so the opening words go there as hashes: equal hashes, the same words
+            // (gatefold#627). The words themselves are in the xcresult's failure message.
+            print("BRUSH \(dx) pt: opening words before \(Self.wordsHash(Self.opening(shown))) after \(Self.wordsHash(Self.opening(after)))")
             XCTAssertEqual(r.landed(), before.landed, "a \(dx)-pt brush turns no page")
-            XCTAssertEqual(Self.opening(after), Self.opening(shown), "a \(dx)-pt brush leaves the page he sees where it was")
+            XCTAssertEqual(Self.opening(after), Self.opening(shown), "a \(dx)-pt brush leaves the page he sees where it was (opening words \(Self.wordsHash(Self.opening(shown))) became \(Self.wordsHash(Self.opening(after))))")
             if before.words.isEmpty {
                 // The catch-up's write comes after its words are read, which a starved runner can hold for seconds.
                 let caught = readsUntil(reads: Self.brushReads, "a place for the page after the \(dx)-pt brush") { !r.savedWords().isEmpty }
@@ -170,6 +173,13 @@ final class MarginTapUITests: XCTestCase {
     }
 
     private static func flat(_ text: String) -> String { text.split(whereSeparator: \.isWhitespace).joined(separator: " ") }
+    /// A short, stable name for some words (32-bit FNV-1a, hex), for a log that must not carry book text.
+    static func wordsHash(_ text: String) -> String {
+        var h: UInt32 = 0x811c9dc5
+        for byte in text.utf8 { h = (h ^ UInt32(byte)) &* 0x0100_0193 }
+        return "#" + String(format: "%08x", h)
+    }
+
     /// The words that open a page or a place: enough to tell two pages apart.
     private static func opening(_ text: String) -> String { flat(text).split(separator: " ").prefix(12).joined(separator: " ") }
 
