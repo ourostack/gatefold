@@ -233,6 +233,30 @@ struct GatefoldPlaceTelemetryTests {
         #expect(event.properties["app_phase"] as? String == "background")
     }
 
+    /// A jump's and an open's timing go out bucketed, under a fixed set of names, with nothing about the book.
+    @Test func aJumpSendsOnlyItsBucketedTimes() {
+        let p = GatefoldTelemetry.jumpProperties(riffled: false, msToArrive: 180, msToLift: 7593)
+        #expect(Set(p.keys) == ["veil", "ms_to_arrive", "ms_to_lift"])
+        #expect(p["veil"] == .string("dim"))
+        #expect(p["ms_to_arrive"] == .int(250))
+        #expect(p["ms_to_lift"] == .int(8000))
+        #expect(GatefoldTelemetry.jumpProperties(riffled: true, msToArrive: 0, msToLift: 90_000)["ms_to_lift"] == .int(64000))
+    }
+
+    @Test func anOpenSendsOnlyItsBucketedTimeAndHowItShowed() {
+        let p = GatefoldTelemetry.openProperties(msToFirstPage: 10_400, behindShelf: true, forced: false)
+        #expect(Set(p.keys) == ["ms_to_first_page", "behind_shelf", "forced"])
+        #expect(p["ms_to_first_page"] == .int(16000))
+        #expect(p["behind_shelf"] == .bool(true))
+        #expect(p["forced"] == .bool(false))
+    }
+
+    @Test func aBucketIsTheBoundJustAbove() {
+        #expect(GatefoldTelemetry.msBucket(249) == 250)
+        #expect(GatefoldTelemetry.msBucket(250) == 500)
+        #expect(GatefoldTelemetry.msBucket(63_999) == 64000)
+    }
+
     @Test func nothingIsKeptWithoutAConfiguration() throws {
         let sent = Box()
         let defaults = try #require(UserDefaults(suiteName: "telemetry-off-\(UUID().uuidString)"))

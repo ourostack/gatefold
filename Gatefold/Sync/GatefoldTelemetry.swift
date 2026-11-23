@@ -181,6 +181,12 @@ final class GatefoldTelemetry: @unchecked Sendable {
     /// The smallest bucket above `seconds`; 3600 for an hour or more.
     static func bucket(_ seconds: TimeInterval) -> Int { buckets.first { seconds < Double($0) } ?? 3600 }
 
+    // Stub: the timing builders exist but send nothing, so the tests' assertions (not the build) fail.
+    static let msBuckets: [Int] = []
+    static func msBucket(_ ms: Int) -> Int { 0 }
+    static func jumpProperties(riffled: Bool, msToArrive: Int, msToLift: Int) -> [String: Value] { [:] }
+    static func openProperties(msToFirstPage: Int, behindShelf: Bool, forced: Bool) -> [String: Value] { [:] }
+
     private static func name(of state: DownloadState) -> String {
         switch state {
         case .cloudOnly: "cloud_only"
