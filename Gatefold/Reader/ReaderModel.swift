@@ -388,8 +388,12 @@ final class ReaderModel {
     /// (`PageSafeArea.placing`). A fixed-layout page keeps Readium's own insets.
     var scrollsReflowable: Bool { pageTurn == .scroll && publication.metadata.layout != .fixed }
     var totalProgression: Double { location?.locations.totalProgression ?? 0 }
-    /// Where the scrubber's thumb stands when he isn't dragging it.
-    var scrubberPlace: Double { totalProgression }
+    /// Where the scrubber's thumb stands when he isn't dragging it: on the page on screen. A jump's veil keeps
+    /// the old page up until the new one has painted, while Readium already names the new place; the thumb
+    /// waits with the page (review panel 2026-11-22, ipad-dark-12).
+    var scrubberPlace: Double { veiledFrom ?? totalProgression }
+    /// The place of the page a jump's veil keeps on screen, while it is up.
+    private var veiledFrom: Double?
     /// The heading above the first line on screen, for books without contents.
     var heading: String?
     /// The running head held on the old page's chapter while a jump's veil or riffle still shows that
@@ -1513,6 +1517,10 @@ final class ReaderModel {
     private func veiled(riffle: Bool = false, forward: Bool = true, step: Int? = nil, toward: AnyURL? = nil,
                         keepsItsOwnWatch: Bool = false, _ body: @escaping () async -> Void) async -> Int {
         let jump = step ?? takeStep()
+        // The outermost veil holds the thumb on the page it keeps up, until it lifts.
+        let holdsThumb = veiledFrom == nil
+        if holdsThumb { veiledFrom = totalProgression }
+        defer { if holdsThumb { veiledFrom = nil } }
         let watch = VeilWatch()
         let his = hisSteps
         let movesAtStart = moves
