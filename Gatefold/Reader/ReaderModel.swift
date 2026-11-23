@@ -3701,13 +3701,19 @@ final class ReaderModel {
         defer { publishBack(back) }
         jumpOnItsWay = (locator, moves, lastReported ?? page?.currentLocation)
         let move = moves
-        let jump = await veiled(toward: locator.href) { _ = await self.page?.go(to: locator) }
-        if endedQuietly(jump, back: back) { return }
-        if markingTheMatch {
+        let jump = await veiled(toward: locator.href) {
+            _ = await self.page?.go(to: locator)
+            guard markingTheMatch else { return }
             // Into another chapter, Readium places the page by progression before the chapter has laid out, so the
             // match can be pages on; once it has, its words are found and gone to, as a landing's are (CI App run
             // 45096599422: a search jump into the preface showed the page before the match, its mark off screen).
-            await settle(on: Self.matchInContext(locator), move: move)
+            // Under the veil, so it lifts on the match's page: after it, he saw the wrong page and then the turn
+            // (review panel 2026-11-22, duo-dark-12 and -13).
+            _ = await self.host?.waitWhileLoading()
+            await self.settle(on: Self.matchInContext(locator), move: move)
+        }
+        if endedQuietly(jump, back: back) { return }
+        if markingTheMatch {
             guard moves == move, !isClosed else { return }
             host?.underline(locator, color: theme.palette.accent)
             watchUnderline()
