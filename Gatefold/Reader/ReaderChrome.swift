@@ -21,7 +21,7 @@ struct ReaderChrome: View {
     @Binding var showSearch: Bool
     /// The foot's width, and the way back's own (its label on one line), to judge whether it fits beside the scrubber.
     @State private var barWidth: CGFloat = 0
-    @State private var backWidth: CGFloat = 0
+    @State private var backSize: CGSize = .zero
 
     var body: some View {
         let up = model.chromeVisible && layout.deck == nil
@@ -121,20 +121,22 @@ struct ReaderChrome: View {
     /// The foot's bar: Back after a Jump, where Apple Books keeps it (lower leading), the scrubber, then the
     /// capsule of Contents, Share and Your Page, and Search.
     private var bottomBar: some View {
-        let inline = Self.backFitsInBar(barWidth: barWidth, backWidth: backWidth)
+        let inline = Self.backFitsInBar(barWidth: barWidth, backWidth: backSize.width)
         return barRow(inline: inline)
             .frame(maxWidth: .infinity)
             .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { barWidth = $0 }
             // The way back's width is known before it shows, so it comes up in its place the first time.
             .background {
                 backButton.hidden().accessibilityHidden(true)
-                    .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { backWidth = $0 }
+                    .onGeometryChange(for: CGSize.self) { $0.size } action: { backSize = $0 }
             }
             // An overlay never changes the bar's layout, so the bar holds still when the way back comes.
             .overlay(alignment: .top) {
                 if model.backLocator != nil, !inline {
                     measuredBack
-                        .alignmentGuide(.top) { $0[.bottom] + 8 }
+                        // Its own height and a gap above the bar's top: an alignment guide here was ignored, and
+                        // the pill sat on the bar over the scrubber and the tools (App run 45077295788).
+                        .offset(y: -(backSize.height + 8))
                 }
             }
     }
