@@ -35,6 +35,7 @@ struct GatefoldApp: App {
                 #if DEBUG
                 .task { LaunchMarkRenderer.renderIfAsked() }
                 .task { await SystemInsetInjector.runIfAsked() }
+                .task { await TerminateRaceProbe.runIfAsked() }
                 #endif
         }
         .onChange(of: scenePhase) { _, phase in
@@ -437,6 +438,55 @@ final class BackgroundTaskEnd {
 }
 
 #if DEBUG
+/// Probe only (gatefold#363): `-GatefoldProbeWebProcesses <mode>` makes web views with no book, so a UI test can
+/// terminate the app while its web processes are in one known state.
+///   held       6 web views made at once and kept
+///   launching  one more web view every 0.25 s, all kept (process launches, no ends)
+///   releasing  12 made and loaded, then one released every 0.5 s (process ends, no launches)
+///   churn      one made every 0.25 s, the oldest released past 3 (launches and ends)
+@MainActor
+enum TerminateRaceProbe {
+    static var views: [WKWebView] = []
+    static var made = 0
+    static func make() -> WKWebView {
+        made += 1
+        let n = made
+        let view = WKWebView(frame: CGRect(x: 0, y: 0, width: 20, height: 20), configuration: WKWebViewConfiguration())
+        view.alpha = 0.02
+        UIApplication.shared.connectedScenes.compactMap { ($0 as? UIWindowScene)?.keyWindow }.first?.addSubview(view)
+        view.loadHTMLString("<p>probe \(n)</p>", baseURL: nil)
+        readerLog.notice("probe web: made \(n, privacy: .public) at \(LaunchClock.sinceLaunch, privacy: .public) s")
+        views.append(view)
+        return view
+    }
+    static func release() {
+        guard !views.isEmpty else { return }
+        let view = views.removeFirst()
+        view.removeFromSuperview()
+        readerLog.notice("probe web: released one, \(views.count, privacy: .public) left at \(LaunchClock.sinceLaunch, privacy: .public) s")
+    }
+    static func runIfAsked() async {
+        guard let mode = UserDefaults.standard.string(forKey: "GatefoldProbeWebProcesses") else { return }
+        readerLog.notice("probe web: mode \(mode, privacy: .public)")
+        try? await Task.sleep(for: .seconds(2))
+        switch mode {
+        case "held":
+            for _ in 0..<6 { _ = make() }
+        case "launching":
+            for _ in 0..<60 { _ = make(); try? await Task.sleep(for: .milliseconds(250)) }
+        case "releasing":
+            for _ in 0..<12 { _ = make() }
+            try? await Task.sleep(for: .seconds(15))
+            while !views.isEmpty { release(); try? await Task.sleep(for: .milliseconds(500)) }
+        case "churn":
+            for _ in 0..<240 { _ = make(); if views.count > 3 { release() }; try? await Task.sleep(for: .milliseconds(250)) }
+        default:
+            break
+        }
+        readerLog.notice("probe web: mode \(mode, privacy: .public) done")
+    }
+}
+
 /// Draws the launch screen's mark from the welcome's own closed gatefold, so the hand-off is seamless:
 /// `-GatefoldRenderLaunchMark YES` writes LaunchMark.png and LaunchMark-dark.png to the app's tmp.
 @MainActor

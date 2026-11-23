@@ -1,0 +1,117 @@
+name: Probe terminate race
+
+# Probe only, never merged (gatefold#363): builds the app and runs TerminateRaceUITests on one iPad shard.
+on:
+  push:
+    branches: [probe/terminate-race]
+
+concurrency:
+  group: probe-terminate-${{ github.sha }}
+
+jobs:
+  # Yields to main: waits while any App push run on main has a job queued, so this probe never takes a Mac main is
+  # waiting for (checked each minute, up to 5 h).
+  yield:
+    name: Wait for main's queued App jobs
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    permissions:
+      actions: read
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -u
+          while :; do
+            queued=0
+            for id in $(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/app.yml/runs?branch=main&event=push&per_page=20" \
+                --jq '.workflow_runs[] | select(.status != "completed") | .id' 2>/dev/null); do
+              n=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$id/jobs?filter=latest&per_page=100" --paginate \
+                --jq '[.jobs[] | select(.status == "queued" or .status == "waiting" or .status == "pending")] | length' 2>/dev/null | paste -sd+ - | bc)
+              queued=$((queued + ${n:-0}))
+            done
+            [ "$queued" = 0 ] && { echo "$(date -u +%T) main has no App job queued: going"; break; }
+            echo "$(date -u +%T) main has $queued App jobs queued: waiting"
+            sleep 60
+          done
+
+  build:
+    name: Build for testing
+    needs: yield
+    # On main, for the shards. On a pull request and in the merge queue, to compile only: `compile` (above) picks it,
+    # nothing downloads it, and the required `Build and unit-test the app` needs it to pass.
+    runs-on: xcode-27
+    # The compile-only build: twice the slowest of main's last 26 green builds (160 to 346 s, median 277 s; runs
+    # 44921715866 back, 2026-11-21). Main's keeps its 35.
+    timeout-minutes: 35
+    outputs:
+      artifact: ${{ steps.name.outputs.artifact }}
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - uses: actions/checkout@v4
+      # Here, not in `changes` (not required): a red build turns every required check red.
+      - name: The simulator boot and wait logic passes its selftest (#78)
+        run: python3 -I scripts/ci-simulator.py --selftest
+      - uses: ./.github/actions/select-xcode
+        with:
+          xcode: "27.2"
+      - name: The test-step stopper passes its selftest (#126)
+        run: python3 -I scripts/ci-within.py --selftest
+      - id: name
+        name: Name the build by commit and Xcode version
+        run: echo "artifact=gatefold-tests-${{ github.sha }}-xcode-$(xcodebuild -version | tr -s ' \n' '-' | sed 's/-$//; s/^Xcode-//; s/-Build-version-/-/')" >> "$GITHUB_OUTPUT"
+      - name: Install the Metal toolchain (the page curl is a Metal shader)
+        run: xcodebuild -downloadComponent MetalToolchain
+      - name: Generate the Xcode project from project.yml
+        run: |
+          brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
+          xcodegen generate
+      - name: Build the app and its tests for the simulator, once
+        # About 13 to 16 min measured in each job that used to build (gatefold#39).
+        timeout-minutes: 25
+        env:
+          NATIVE: "true"
+        run: |
+          set -o pipefail
+          xcodebuild build-for-testing -project Gatefold.xcodeproj -scheme Gatefold \
+            -destination 'generic/platform=iOS Simulator' ARCHS="$(uname -m)" \
+            -derivedDataPath "$RUNNER_TEMP/dd" 2>&1 | tee "$RUNNER_TEMP/build.log" | tail -60
+          ls "$RUNNER_TEMP"/dd/Build/Products/*.xctestrun
+          # A pull request's or the merge queue's build only proves it compiles: no shard downloads it.
+          if [ "$NATIVE" != false ]; then tar -czf "$RUNNER_TEMP/products.tgz" -C "$RUNNER_TEMP/dd/Build" Products; fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ${{ steps.name.outputs.artifact }}
+          path: ${{ runner.temp }}/products.tgz
+          # Long enough for "Re-run failed jobs" a few days later.
+          retention-days: 5
+          compression-level: 0
+          overwrite: true
+      - uses: actions/upload-artifact@v4
+        if: failure() || cancelled()
+        with:
+          name: build-log
+          path: ${{ runner.temp }}/build.log
+          overwrite: true
+
+  probe:
+    name: iPad probe shard
+    needs: yield
+    permissions:
+      contents: read
+      actions: write
+    uses: ./.github/workflows/ui-tests.yml
+    with:
+      device: "iPad Pro 13-inch"
+      sim: gatefold-ipad
+      shard: ipad-probe-terminate
+      tests: TerminateRaceUITests
+      skip: ""
+      pr_tests: none
+      full: "true"
+      cold: false
+      timeout: 75
+      lane: 1
