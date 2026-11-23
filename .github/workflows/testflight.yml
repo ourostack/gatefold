@@ -40,6 +40,8 @@ jobs:
       checks: read
       # The gate counts only main's own push runs' checks (scripts/ci-green-gate.py), found by their check suites.
       actions: read
+      # Published builds are recorded as deployments (scripts/ci-testflight-builds.py), read back as local tags.
+      deployments: read
     outputs:
       sha: ${{ steps.sha.outputs.sha }}
       state: ${{ steps.gate.outputs.state }}
@@ -62,6 +64,12 @@ jobs:
         run: git merge-base --is-ancestor "$SHA" origin/main || { echo "::error::$SHA is not on main."; exit 1; }
       - name: The gate passes its selftest
         run: python3 -I scripts/ci-green-gate.py --selftest
+      - name: Each published build is tagged testflight/build-N in this clone
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 -I scripts/ci-testflight-builds.py --selftest
+          python3 -I scripts/ci-testflight-builds.py tags
       - name: Every required check passed on this commit
         id: gate
         env:
@@ -103,7 +111,7 @@ jobs:
             say "${COVERED_BY:0:7}, newer on main, is green too and carries ${SHA:0:7}: it publishes instead."
             echo "publish=false" >> "$GITHUB_OUTPUT"; exit 0
           fi
-          # Each published build is tagged testflight/build-N. A tag at or after this commit means it is out already.
+          # Each published build is tagged testflight/build-N (above). A tag at or after this commit means it is out already.
           done_at="$(git tag --list 'testflight/build-*' --contains "$SHA")"
           if [[ -n "$done_at" ]]; then
             say "${SHA:0:7} is already on TestFlight (${done_at%%$'\n'*} is at or after it)."
@@ -144,6 +152,7 @@ jobs:
     permissions:
       contents: read
       actions: read
+      deployments: read
     outputs:
       build: ${{ steps.publish.outputs.build }}
     # One publish at a time and never cancelled mid-upload. A newer green commit waiting behind a running
@@ -167,9 +176,14 @@ jobs:
       - name: Still the newest green commit to publish
         env:
           EVENT: ${{ github.event_name }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           git fetch --quiet --tags origin
+          # The published builds, as tags in this clone. The helper comes from this workflow's commit (main's tip):
+          # the commit being published may predate it.
+          git show "$GITHUB_SHA:scripts/ci-testflight-builds.py" > "$RUNNER_TEMP/ci-testflight-builds.py"
+          python3 -I "$RUNNER_TEMP"/ci-testflight-builds.py tags
           done_at="$(git tag --list 'testflight/build-*' --contains "$GATEFOLD_SHA")"
           if [[ -n "$done_at" && "$EVENT" != workflow_dispatch ]]; then
             echo "::notice::${GATEFOLD_SHA:0:7} went out while this run waited (${done_at%%$'\n'*}). Nothing to publish."
@@ -288,7 +302,7 @@ jobs:
           if [[ -n "${WHATS_NEW//[[:space:]]/}" ]]; then
             printf '%s\n' "$WHATS_NEW" > "$notes"
           else
-            # The tales in changelog.d added since the last testflight/build-N tag, in merge order
+            # The tales in changelog.d added since the last testflight/build-N (tagged above), in merge order
             # (scripts/changelog.py; the same commits always give the same text, and no model writes it).
             python3 -I scripts/changelog.py assemble --head "$GATEFOLD_SHA" --out "$notes"
           fi
@@ -342,15 +356,21 @@ jobs:
 
   # Marks what went out, so the next publish knows where it starts and a commit at or before it is never sent
   # twice. Its own job, so the publish job's token stays read-only.
-  tag:
-    name: Tag the published commit testflight/build-N
+  # GitHub refuses GITHUB_TOKEN a new tag at a commit whose workflow files differ from what it compares them with
+  # ("Resource not accessible by integration"; builds 65 and 66), so the build is recorded as a deployment instead,
+  # which names the commit without creating a ref (scripts/ci-testflight-builds.py).
+  record:
+    name: Record the published build testflight/build-N
     needs: [gate, publish]
     if: needs.publish.result == 'success' && needs.publish.outputs.build != ''
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
-      contents: write
+      contents: read
+      deployments: write
     steps:
+      - uses: actions/checkout@v4
+        with: { persist-credentials: false }
       - env:
           GH_TOKEN: ${{ github.token }}
           BUILD: ${{ needs.publish.outputs.build }}
@@ -358,11 +378,6 @@ jobs:
         run: |
           set -euo pipefail
           [[ "$BUILD" =~ ^[0-9]+$ ]] || { echo "::error::The publish job gave build number '$BUILD'."; exit 1; }
-          for try in 1 2 3 4 5; do
-            if gh api "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/testflight/build-$BUILD" -f sha="$SHA" --silent; then
-              echo "Tagged ${SHA:0:7} testflight/build-$BUILD"; exit 0
-            fi
-            sleep $((try * 10))
-          done
-          echo "::error::Build $BUILD is on TestFlight but its tag failed; add it by hand (refs/tags/testflight/build-$BUILD at $SHA) before the next publish."
-          exit 1
+          python3 -I scripts/ci-testflight-builds.py record || {
+            echo "::error::Build $BUILD is on TestFlight but its record failed; add it by hand (BUILD=$BUILD SHA=$SHA python3 -I scripts/ci-testflight-builds.py record) before the next publish."
+            exit 1; }

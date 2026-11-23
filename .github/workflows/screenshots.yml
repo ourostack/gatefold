@@ -1,9 +1,10 @@
 name: Screenshots
 
-# The App Store screenshots, rendered on release only: after TestFlight publishes a build (a testflight/build-N tag at
-# that commit), and only when something a shot can show changed since the last render (`capture.py fingerprint`:
-# the app, its packages' code, the project, the scenes, the spec, the composer). A pull request that edits the
-# screenshot pipeline itself renders too, to prove it; no other pull request runs this. Not a required check.
+# The App Store screenshots, rendered on release only: after TestFlight publishes a build (recorded as
+# testflight/build-N at that commit, scripts/ci-testflight-builds.py), and only when something a shot can show
+# changed since the last render (`capture.py fingerprint`: the app, its packages' code, the project, the scenes, the
+# spec, the composer). A pull request that edits the screenshot pipeline itself renders too, to prove it; no other
+# pull request runs this. Not a required check.
 #
 # Each device job captures every scene twice (GatefoldListingShots drives the app; scripts/screenshots/capture.py
 # shoots once the screen holds still) and fails unless both passes give the same bytes, then composes the frames and
@@ -45,6 +46,11 @@ jobs:
       (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event != 'pull_request')
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    # deployments: read finds the published builds (scripts/ci-testflight-builds.py tags).
+    permissions:
+      contents: read
+      actions: read
+      deployments: read
     outputs:
       render: ${{ steps.decide.outputs.render }}
       sha: ${{ steps.decide.outputs.sha || steps.sha.outputs.sha }}
@@ -77,12 +83,13 @@ jobs:
           if [[ "$EVENT" == workflow_run ]]; then
             # Most TestFlight runs publish nothing (the commit isn't green yet). Render only after one that tagged a
             # build; otherwise a failed render of the last build retries on every App or Real unfold run on main.
-            tagged="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$TF_RUN/jobs" --jq '[.jobs[] | select(.name | startswith("Tag the published commit")) | select(.conclusion == "success")] | length')"
+            tagged="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$TF_RUN/jobs" --jq '[.jobs[] | select(.name | startswith("Record the published build testflight/build-N")) | select(.conclusion == "success")] | length')"
             if [[ "$tagged" == 0 ]]; then
               say "TestFlight run $TF_RUN published no build: no screenshots."; echo "render=false" >> "$GITHUB_OUTPUT"; exit 0
             fi
             # A TestFlight run's own head is main's tip when it started, not the commit it published. Render the
-            # newest published build's commit (its testflight/build-N tag); a run that published nothing changes nothing.
+            # newest published build's commit (its testflight/build-N record); a run that published nothing changes nothing.
+            python3 -I scripts/ci-testflight-builds.py tags
             tag="$(git tag --list 'testflight/build-*' | sort -t- -k2 -n | tail -1)"
             if [[ -z "$tag" ]]; then
               say "No build has been released to TestFlight yet: no screenshots."; echo "render=false" >> "$GITHUB_OUTPUT"; exit 0

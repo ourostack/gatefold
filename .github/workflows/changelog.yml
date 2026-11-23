@@ -19,6 +19,10 @@ jobs:
     name: Changelog fragment
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    # deployments: read finds the published builds for the What to Test preview (scripts/ci-testflight-builds.py).
+    permissions:
+      contents: read
+      deployments: read
     steps:
       - uses: actions/checkout@v4
         with:
@@ -37,7 +41,9 @@ jobs:
       - name: What to Test, if this merged now (since the last TestFlight build)
         env:
           HEAD: ${{ github.sha }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          python3 -I scripts/ci-testflight-builds.py tags
           python3 -I scripts/changelog.py assemble --head "$HEAD" --out "$RUNNER_TEMP/what-to-test.txt"
           { echo '### What to Test, if this merged now'; echo '```'; cat "$RUNNER_TEMP/what-to-test.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
