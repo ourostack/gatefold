@@ -321,7 +321,7 @@ jobs:
             python3 -I scripts/ci-within.py --until "$STEP_UNTIL" -- xcodebuild test-without-building -xctestrun "$XCTESTRUN" \
               -destination "$DESTINATION" "${only[@]}" \
               -resultBundlePath "$RUNNER_TEMP/ui.xcresult" 2>&1 | tee "$RUNNER_TEMP/ui.log" \
-              | grep --line-buffered -E "Test Case .*(started|passed|failed|skipped)|FEEL:|TEST (SUCCEEDED|FAILED)|REPRO (setup|jump|round|SUMMARY|visibleSettleMove)|MIDTURN|TAPRATE|PLACEHOLDER|REVIEWER|OLDPAGEHELD|TURNWAIT|WINDOWFIT|REOPEN round [0-9]+:|probe says|probe timing|\.swift:[0-9]+: error|::error::" \
+              | grep --line-buffered -E "Test Case .*(started|passed|failed|skipped)|FEEL:|TEST (SUCCEEDED|FAILED)|REPRO (setup|jump|round|SUMMARY|visibleSettleMove)|MIDTURN|BRUSH|TAPRATE|PLACEHOLDER|REVIEWER|OLDPAGEHELD|TURNWAIT|WINDOWFIT|REOPEN round [0-9]+:|probe says|probe timing|\.swift:[0-9]+: error|::error::" \
               | awk '{ if (match($0, /XCTAssert[A-Za-z]* failed/)) $0 = substr($0, 1, RSTART + RLENGTH - 1) " (text withheld)"; print; fflush() }'
             return "${PIPESTATUS[0]}"
           }
