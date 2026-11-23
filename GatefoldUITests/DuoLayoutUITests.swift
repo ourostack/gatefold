@@ -258,5 +258,13 @@ final class DuoLayoutUITests: XCTestCase {
         }
         shot("search-landed")
         XCTAssertTrue(marked.ok, "the match is marked on the page it jumped to (\(el("reader.underline").value as? String ?? "no probe"))")
+        guard marked.ok else { return }
+        // The mark stays while he is on its page, as Apple Books' search mark does. It went on a timer about 9 s
+        // after the jump (review panel 2026-11-22: ipad-light-13 had none), so whether he saw it depended on how
+        // fast the jump landed. Its lifetime is the thing checked, so this reads on for 10 s of wall time.
+        let markedAt = Date()
+        while Date().timeIntervalSince(markedAt) < 10 { _ = el("reader.underline").value; RunLoop.current.run(until: Date().addingTimeInterval(0.3)) }
+        let later = el("reader.underline").value as? String ?? ""
+        XCTAssertGreaterThan(Int(later.split(separator: " ").last ?? "") ?? 0, 0, "the match's mark went while he was still on its page (\(later))")
     }
 }
