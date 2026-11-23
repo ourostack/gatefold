@@ -4125,7 +4125,8 @@ final class ReaderModel {
             // and on the way back the chapter's first page before his (gatefold#302). Never, so the page lays
             // itself out again in place.
             spread: fixedLayout ? nil : .never,
-            textAlign: prefs.justify ? .justify : nil,
+            // Off is ragged, never the book's own: a Gutenberg book justifies itself, so Off showed a justified page.
+            textAlign: prefs.justify ? .justify : .start,
             textColor: ReadiumNavigator.Color(hex: ThemePalette.hexString(theme.palette.text)),
             theme: theme.palette.isDark ? .dark : .light
         )
