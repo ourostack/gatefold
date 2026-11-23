@@ -888,13 +888,14 @@ jobs:
             lane: 2
           - shard: ipad-reviewer-contents
             # Main only: Contents closes on a swipe down from its header or its list's top, and on a pull past the list's
-            # top, and never on flicks through the list (estimates until CI has run them)
+            # top, and never on flicks through the list, and opens on a tap as the controls come up (estimates until CI
+            # has run them)
             tests: >-
-              ContentsCloseUITests
+              ContentsCloseUITests ControlsTapUITests
             skip: ""
             pr_tests: none
             cold: false
-            timeout: 78 # 30 + 2 x 15.5 + 5 + 12
+            timeout: 88 # 30 + 2 x 20.5 + 5 + 12
             lane: 4
           - shard: ipad-reviewer-reopen
             # Main only: 994, out of ipad-reviewer-rest, as duo-reviewer-reopen is on the Duo
@@ -995,13 +996,13 @@ jobs:
             lane: 9
           - shard: duo-contents
             # Contents closes on a swipe down from its header or its list's top, and on a pull past the list's top, and
-            # never on flicks through the list (estimates until CI has run them)
+            # never on flicks through the list, and opens on a tap as the controls come up (estimates until CI has run them)
             tests: >-
-              ContentsCloseUITests
+              ContentsCloseUITests ControlsTapUITests
             skip: ""
             pr_tests: none
             cold: false
-            timeout: 87 # 30 + 2 x 20.0 + 5 + 12
+            timeout: 97 # 30 + 2 x 25.0 + 5 + 12
             lane: 5
           - shard: duo-scroll
             # Scroll mode keeps the place: a sideways swipe, a status-bar tap, a chapter's end and back (estimates until CI has run them)
