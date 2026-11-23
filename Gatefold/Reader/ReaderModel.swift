@@ -3715,7 +3715,7 @@ final class ReaderModel {
         if endedQuietly(jump, back: back) { return }
         if markingTheMatch {
             guard moves == move, !isClosed else { return }
-            host?.underline(locator, color: theme.palette.accent)
+            host?.underline(locator, color: theme.palette.accent, fades: false)
             watchUnderline()
         }
         await captureAnchor()
