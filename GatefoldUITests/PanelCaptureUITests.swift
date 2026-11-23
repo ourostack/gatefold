@@ -22,6 +22,21 @@ final class PanelCaptureUITests: XCTestCase {
         el("reader.page").coordinate(withNormalizedOffset: CGVector(dx: x, dy: y))
     }
     private func settle() { _ = ReaderReads.settle(app, "panel") { print("PANEL \($0)") }; sleep(1) }
+    /// A jump has landed: the page shows other words than `before`, and no veil covers them (`reader.veil`, up
+    /// from the tap until the new page has painted), then they hold still. Read in reads, never seconds. Words
+    /// that merely held still let the shot fire under the veil, on the old page dimmed (review panel 2026-11-22,
+    /// duo-*-09 and ipad-dark-09).
+    private func landed(from before: String, _ what: String) {
+        var reads = 0
+        while reads < ReaderReads.coverReads, el("reader.veil").exists || app.readerVisibleText == before {
+            reads += 1
+            RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+        }
+        print("PANEL \(what) landed after \(reads) reads")
+        XCTAssertFalse(el("reader.veil").exists, "\(what): the jump's veil was still up after \(reads) reads")
+        XCTAssertNotEqual(app.readerVisibleText, before, "\(what): the page never moved in \(reads) reads")
+        settle()
+    }
     private func controlsUp() {
         for _ in 0..<4 where !app.buttons["reader.contents"].exists {
             at(0.5, 0.5).tap(); sleep(2)
@@ -75,9 +90,10 @@ final class PanelCaptureUITests: XCTestCase {
         controlsUp()
         let scrubber = el("reader.scrubber")
         if scrubber.waitForExistence(timeout: 5) {
+            let before = app.readerVisibleText
             scrubber.coordinate(withNormalizedOffset: CGVector(dx: 0.3, dy: 0.5))
                 .press(forDuration: 0.1, thenDragTo: scrubber.coordinate(withNormalizedOffset: CGVector(dx: 0.62, dy: 0.5)))
-            settle(); shot("09-after-scrubber-jump")
+            landed(from: before, "scrubber jump"); shot("09-after-scrubber-jump")
             controlsUp(); shot("10-scrubber-controls-after-jump")
         }
 
@@ -89,7 +105,10 @@ final class PanelCaptureUITests: XCTestCase {
                 field.tap(); field.typeText("Darcy"); sleep(6)
                 shot("11-search-results")
                 let result = app.buttons["search.result"].firstMatch
-                if result.exists { result.tap(); settle(); shot("12-after-search-jump") }
+                if result.exists {
+                    let before = app.readerVisibleText
+                    result.tap(); landed(from: before, "search jump"); shot("12-after-search-jump")
+                }
             }
         }
         controlsDown(); shot("13-page-controls-down")
