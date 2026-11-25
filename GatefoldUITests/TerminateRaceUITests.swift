@@ -39,6 +39,12 @@ final class TerminateRaceUITests: XCTestCase {
     func test5Launching() { round("launching", wait: 6, 1); round("launching", wait: 6, 2) }
     func test6Churn() { round("churn", wait: 6, 1); round("churn", wait: 6, 2) }
 
+    /// What XCTest believes about the app: its state and the first line of its debug description (which carries the pid).
+    private func xctestView() -> String {
+        let first = app.debugDescription.split(separator: "\n").first.map(String.init) ?? "none"
+        return "XCTest state \(app.state.rawValue); \(first)"
+    }
+
     /// Opens Pride and Prejudice as the failing shards do, waits for its first page, and then terminates
     /// right after `then`, while the reader's own web work (page counting, a reflow) runs.
     private func readerRound(_ name: String, _ n: Int, then: () -> Void) {
@@ -54,10 +60,12 @@ final class TerminateRaceUITests: XCTestCase {
         var reads = 0
         while reads < 600, (ready.value as? String) != "1" { reads += 1; RunLoop.current.run(until: Date().addingTimeInterval(0.2)) }
         then()
+        print("TERMRACE \(name) round \(n): just before terminate, XCTest state \(app.state.rawValue)")
         let t0 = Date()
         print("TERMRACE \(name) round \(n): terminate at \(t0) (page ready \((ready.value as? String) == "1"))")
         app.terminate()
         print("TERMRACE \(name) round \(n): terminate took \(String(format: "%.1f", Date().timeIntervalSince(t0))) s, state after \(app.state.rawValue)")
+        if name == "rotate-terminate" { print("TERMRACE \(name) round \(n): after terminate, \(xctestView())") }
     }
 
     func test7ReaderCounting() { for n in 1...3 { readerRound("reader-counting", n) {} } }
@@ -87,4 +95,29 @@ final class TerminateRaceUITests: XCTestCase {
             }
         }
     }
+
+    /// Probe 4 (gatefold#363): rotate the open reader, then terminate, ten times in one shard. Each round is its own
+    /// test because a failed terminate ends the test whatever continueAfterFailure says (probe 3's test8 stopped at
+    /// round 1). Rounds 1 to 5 read XCTest's view of the app (state and pid) between the rotation and the terminate;
+    /// rounds 6 to 10 read it before the rotation and after the terminate only, since the debug description takes a
+    /// snapshot and could close the window being probed.
+    private func rotateTerminate(_ n: Int) {
+        readerRound("rotate-terminate", n) {
+            if n > 5 { print("TERMRACE rotate-terminate round \(n): before rotation, \(xctestView())") }
+            XCUIDevice.shared.orientation = n % 2 == 1 ? .landscapeLeft : .landscapeRight
+            print("TERMRACE rotate-terminate round \(n): rotated at \(Date())")
+            if n <= 5 { print("TERMRACE rotate-terminate round \(n): after rotation, \(xctestView())") }
+        }
+        XCUIDevice.shared.orientation = .portrait
+    }
+    func test10Rotate01() { rotateTerminate(1) }
+    func test10Rotate02() { rotateTerminate(2) }
+    func test10Rotate03() { rotateTerminate(3) }
+    func test10Rotate04() { rotateTerminate(4) }
+    func test10Rotate05() { rotateTerminate(5) }
+    func test10Rotate06() { rotateTerminate(6) }
+    func test10Rotate07() { rotateTerminate(7) }
+    func test10Rotate08() { rotateTerminate(8) }
+    func test10Rotate09() { rotateTerminate(9) }
+    func test10Rotate10() { rotateTerminate(10) }
 }

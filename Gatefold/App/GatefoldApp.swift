@@ -465,7 +465,25 @@ enum TerminateRaceProbe {
         view.removeFromSuperview()
         readerLog.notice("probe web: released one, \(views.count, privacy: .public) left at \(LaunchClock.sinceLaunch, privacy: .public) s")
     }
+    static var observers: [NSObjectProtocol] = []
+    /// Probe 4 (gatefold#363): the app's own pid and every scene activation change, to set a terminate against.
+    static func logScenes() {
+        guard observers.isEmpty else { return }
+        readerLog.notice("probe scene: pid \(ProcessInfo.processInfo.processIdentifier, privacy: .public)")
+        let names: [(Notification.Name, String)] = [
+            (UIScene.willConnectNotification, "will connect"), (UIScene.didActivateNotification, "did activate"),
+            (UIScene.willDeactivateNotification, "will deactivate"), (UIScene.didEnterBackgroundNotification, "did enter background"),
+            (UIScene.willEnterForegroundNotification, "will enter foreground"), (UIScene.didDisconnectNotification, "did disconnect"),
+            (UIApplication.willTerminateNotification, "app will terminate"),
+        ]
+        for (name, what) in names {
+            observers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { _ in
+                readerLog.notice("probe scene: \(what, privacy: .public), pid \(ProcessInfo.processInfo.processIdentifier, privacy: .public) at \(LaunchClock.sinceLaunch, privacy: .public) s")
+            })
+        }
+    }
     static func runIfAsked() async {
+        logScenes()
         guard let mode = UserDefaults.standard.string(forKey: "GatefoldProbeWebProcesses") else { return }
         readerLog.notice("probe web: mode \(mode, privacy: .public)")
         try? await Task.sleep(for: .seconds(2))

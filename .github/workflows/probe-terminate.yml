@@ -104,10 +104,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - shard: ipad-probe-control
+          - shard: ipad-probe-rotate
             starve: false
-          - shard: ipad-probe-starved
-            starve: true
     permissions:
       contents: read
       actions: write
@@ -117,7 +115,7 @@ jobs:
       sim: gatefold-ipad
       shard: ${{ matrix.shard }}
       tests: >-
-        TerminateRaceUITests/test7ReaderCounting TerminateRaceUITests/test8ReaderRotating TerminateRaceUITests/test1Quiet
+        TerminateRaceUITests/test10Rotate01 TerminateRaceUITests/test10Rotate02 TerminateRaceUITests/test10Rotate03 TerminateRaceUITests/test10Rotate04 TerminateRaceUITests/test10Rotate05 TerminateRaceUITests/test10Rotate06 TerminateRaceUITests/test10Rotate07 TerminateRaceUITests/test10Rotate08 TerminateRaceUITests/test10Rotate09 TerminateRaceUITests/test10Rotate10
       skip: ""
       pr_tests: none
       full: "true"

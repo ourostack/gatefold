@@ -290,6 +290,8 @@ jobs:
         run: |
           nohup sh -c 'while :; do echo "== $(date -u +%T)"; xcrun simctl spawn "$0" launchctl print system/com.apple.email.maild 2>&1 | grep -E "state|runs|last exit|pid|spawn type|event triggers|reason|immediate" ; sleep 60; done' "$UDID" > "$RUNNER_TEMP/maild.log" 2>&1 &
           xcrun simctl spawn "$UDID" launchctl print system/com.apple.email.maild > "$RUNNER_TEMP/maild-plist.txt" 2>&1 || true
+          # Probe 4 (gatefold#363): the host's side of XCTest's terminate, which xcodebuild carries out through CoreSimulator.
+          nohup /usr/bin/log stream --style compact --predicate 'subsystem BEGINSWITH "com.apple.CoreSimulator" OR process == "CoreSimulatorService" OR process == "simctl" OR ((process == "xcodebuild" OR subsystem BEGINSWITH "com.apple.dt") AND eventMessage CONTAINS[c] "terminat")' > "$RUNNER_TEMP/host.log" 2>&1 &
           if [ "$STARVE" = true ]; then
             xcrun simctl spawn "$UDID" launchctl kickstart system/com.apple.email.maild || echo "kickstart failed"
             for i in 1 2 3; do nohup xcrun simctl spawn "$UDID" /bin/sh -c 'while :; do :; done' > /dev/null 2>&1 & done
@@ -404,6 +406,7 @@ jobs:
             ${{ runner.temp }}/warm.log
             ${{ runner.temp }}/maild.log
             ${{ runner.temp }}/maild-plist.txt
+            ${{ runner.temp }}/host.log
             ${{ runner.temp }}/load.log
             ${{ runner.temp }}/load.log.threads
             ${{ runner.temp }}/crashes

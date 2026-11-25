@@ -22,6 +22,7 @@ split() {
       next
     }
     $4 ~ /^(testmanagerd|SpringBoard)\[/ { print >> rb; fflush(rb); next }
+    $4 ~ /^launchd/ { if ($0 ~ /gatefold/) { print >> rb; fflush(rb) }; next }
     $5 !~ /^\[bot\.ouro\.gatefold(:|\])/ || /text:/ { next }
     $5 == "[bot.ouro.gatefold:reader]" { print >> reader; fflush(reader) }
     /place (read|write)|place:|location |reflow|landing|landed|reopen|tapped|warm:|open:|first page|pages:|turn:|spread:|veil:|settle [0-9]|REPRO|snapshot:|back:/ \
@@ -60,7 +61,7 @@ case "${1:-}" in
   --split) split "$2" ;;
   *)
     xcrun simctl spawn "$1" log stream --style compact --predicate \
-      'subsystem == "bot.ouro.gatefold" OR process == "runningboardd" OR process == "testmanagerd" OR (process == "SpringBoard" AND (eventMessage CONTAINS[c] "terminat" OR eventMessage CONTAINS "bot.ouro.gatefold"))' \
+      'subsystem == "bot.ouro.gatefold" OR process == "runningboardd" OR process == "testmanagerd" OR (process BEGINSWITH "launchd" AND eventMessage CONTAINS "gatefold") OR (process == "SpringBoard" AND (eventMessage CONTAINS[c] "terminat" OR eventMessage CONTAINS "bot.ouro.gatefold"))' \
       2> /dev/null | split "$2"
     ;;
 esac
