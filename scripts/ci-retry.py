@@ -2,6 +2,7 @@
 """CI only: retry a shard (or Real unfold place) that GitHub cancelled, in the same run (gatefold#404).
 
     python3 -I scripts/ci-retry.py plan      # GH_TOKEN, GH_REPO, RUN_ID set; writes matrix= and count= to $GITHUB_OUTPUT
+                                             # GROUP=<job id> plans only that group's cancelled shards
     python3 -I scripts/ci-retry.py verdict   # writes <job id>=ok|bad for each UI shard job to $GITHUB_OUTPUT
     python3 -I scripts/ci-retry.py proof     # RESULTS = toJSON(needs) of App's proof job; fails unless each passed
 
@@ -12,7 +13,8 @@ which real-unfold-place.yml runs; the one job `unfold` is judged as a group).
 A hosted macOS runner whose simulator is booting is cancelled from outside about 1 shard in 12 ("The operation was
 canceled", no test ran). A run with a cancelled job ends "cancelled" however the rest goes, and rerun-runner.yml can
 only rerun it after the whole run has ended, so each cancel cost an hour. This runs only the cancelled shards again as
-soon as every shard has ended, still in the same run, on fresh runners (app.yml's `retry` job); `verdict` then
+soon as its own group of shards has ended (`retry-plan-<group>`, `retry-<group>`; a group is one `uses:` job of
+app.yml), still in the same run, on fresh runners (app.yml's `retry` job); `verdict` then
 reports each shard job's group as ok when every shard passed, or was cancelled and passed on its retry. Only a cancelled
 shard is retried: a failed one, a test failure above all, stays failed and keeps its gate red. Nothing is retried in a
 run someone cancelled (the jobs say `!cancelled()`), and a retry that is cancelled too is left to rerun-runner.yml.
@@ -51,7 +53,7 @@ def app_shards(text):
     entries, prefixes = [], {}
     for job, lines in ci.jobs(text).items():
         body = "\n".join(lines)
-        if "uses: ./.github/workflows/ui-tests.yml" not in body or job == "retry":
+        if "uses: ./.github/workflows/ui-tests.yml" not in body or job.startswith("retry"):
             continue
         name = re.search(r"^\s+name:\s*(.+?) shard \(\$\{\{ matrix\.shard \}\}\)\s*$", body, re.M)
         sim = re.search(r"^\s+sim:\s*(.+)$", body, re.M)
@@ -77,8 +79,9 @@ def real_places(text):
     return entries, {"unfold": "Unfold"}
 
 
-def classify(jobs, prefixes):
-    """`jobs`: [{name, conclusion}] of one run. Returns ({job id: "ok" | "bad"}, [shards to retry])."""
+def classify(jobs, prefixes, group=None):
+    """`jobs`: [{name, conclusion}] of one run. Returns ({job id: "ok" | "bad"}, [shards to retry]); with `group` (a
+    job id of `prefixes`), only that group's cancelled shards are listed to retry."""
     first, retried = {}, {}
     for j in jobs:
         m = FIRST.match(j["name"]) or FIRST_PLACE.match(j["name"])
@@ -95,7 +98,7 @@ def classify(jobs, prefixes):
             continue
         if prefix in byprefix:
             out[byprefix[prefix]] = "bad"
-    return out, sorted(s for s, (_, c) in first.items() if c == "cancelled")
+    return out, sorted(s for s, (p, c) in first.items() if c == "cancelled" and (group is None or p == prefixes.get(group)))
 
 
 # App's proof job ("Full suite passed on tree <tree>") needs exactly the required checks, which judge the shards after
@@ -147,10 +150,11 @@ def main(mode):
     entries, prefixes = (real_places if real else app_shards)(open(REAL if real else APP).read())
     key = "place" if real else "shard"
     jobs = gh_jobs(os.environ["RUN_ID"])
-    verdict, cancelled = classify(jobs, prefixes)
+    group = os.environ.get("GROUP") or None
+    verdict, cancelled = classify(jobs, prefixes, group)
     if mode == "plan":
         todo = [e for e in entries if e[key] in cancelled]
-        print(f"Cancelled shards to retry: {', '.join(cancelled) or 'none'}")
+        print(f"Cancelled shards to retry{f' in {group}' if group else ''}: {', '.join(cancelled) or 'none'}")
         emit(matrix=json.dumps({"include": todo}, separators=(",", ":")), count=len(todo))
     else:
         print("\n".join(f"{job}: {v}" for job, v in verdict.items()))
@@ -186,6 +190,10 @@ def selftest():
     check(r[0]["ipad-place"] == "bad", "a retry that failed is bad")
     r = classify([t("iPad place", "a", "cancelled"), j("Retry (a) / Tests", "cancelled")], prefixes)
     check(r[0]["ipad-place"] == "bad", "a retry that was cancelled too is bad")
+    r = classify([t("iPad place", "a", "cancelled"), t("iPad taps", "b", "cancelled")], prefixes, "ipad-taps")
+    check(r[1] == ["b"], f"a group's plan lists only its own cancelled shards: {r}")
+    r = classify([t("iPad place", "a", "cancelled"), t("iPad taps", "b", "failure")], prefixes, "ipad-taps")
+    check(r[1] == [] and r[0]["ipad-taps"] == "bad", "a failed shard is not planned for retry in its group")
     r = classify([t("iPad taps", "a", "failure"), j("Retry (a) / Tests", "success")], prefixes)
     check(r[0]["ipad-taps"] == "bad" and r[1] == [], "a failed shard is never retried or excused")
     r = classify([t("Duo", "d", "success"), t("iPad taps", "a", "cancelled"), j("Retry (a) / Tests", "success")], prefixes)
