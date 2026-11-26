@@ -176,6 +176,12 @@ jobs:
             if [ "$EVENT" = merge_group ]; then range="$GROUP_BASE $GROUP_HEAD"; else range="$BASE...$HEAD"; fi
             # shellcheck disable=SC2086 # the range is one or two revisions
             git diff --name-only $range > compile.txt || : > compile.txt
+            # A pull request that edits what orchestrates the macOS jobs (this workflow, the shards' workflow, the CI
+            # scripts and actions) runs them: they would otherwise first run on main (scripts/ci-orchestration.py).
+            if [ "$EVENT" = pull_request ] && [ "$(python3 -I scripts/ci-orchestration.py compile.txt)" = yes ]; then
+              echo "::notice::This change edits what orchestrates the macOS jobs: they run on this pull request."
+              echo "native=true" >> "$GITHUB_OUTPUT"
+            fi
             nobuild='^([^/]+\.md|(docs|changelog\.d|distribution|screenshots|tools|GatefoldListingShots|scripts|\.github/scripts)/.+|\.github/workflows/[^/]+|\.github/[^/]+)$'
             if [ -s compile.txt ] && ! grep -qvE "$nobuild" compile.txt && ! grep -qxF .github/workflows/app.yml compile.txt; then
               echo "::notice::Nothing here reaches the app's build: Build for testing doesn't run."
@@ -369,6 +375,7 @@ jobs:
           python3 -I scripts/ci-bootstrap.py --selftest
           python3 -I scripts/ci-rerun-runner.py --selftest
           python3 -I scripts/ci-retry.py --selftest
+          python3 -I scripts/ci-orchestration.py --selftest
           python3 -I scripts/ci-runner-faults.py --selftest
           python3 -I scripts/ci-requeue.py --selftest
       - name: The review panel names its exported screenshots, and fails on an empty set
