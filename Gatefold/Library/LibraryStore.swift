@@ -149,6 +149,8 @@ final class LibraryStore {
                 books[i].cloud = cloudBook
                 books[i].remote = cloudBook.position ?? books[i].remote
                 books[i].noteOtherDevice(cloudBook.position)
+            } else if let localID = await copyFromBeforeSignIn(of: cloudBook) {
+                fold(localID, into: cloudBook)
             } else {
                 var book = LibraryBook(
                     id: cloudBook.id,
@@ -166,6 +168,58 @@ final class LibraryStore {
         if !cloudBooks.isEmpty { cloudIsEmpty = false }
         save()
         await loadCovers(for: cloudBooks)
+    }
+
+    /// A book on this device and not linked to the Cloud (imported, or a sample, from before he signed in) that
+    /// is this Cloud book's file: the same MD5 and size, or, when the Cloud's checksum isn't a real MD5 (it is
+    /// often the fast_hash), the same size to the byte and the same title.
+    private func copyFromBeforeSignIn(of cloudBook: CloudBook) async -> String? {
+        guard cloudBook.bytes > 0 else { return nil }
+        let sameSize = books.filter { $0.cloud == nil }.compactMap { book -> (String, String, URL)? in
+            guard let url = fileURL(of: book),
+                  (try? FileManager.default.attributesOfItem(atPath: url.path))?[.size] as? Int64 == cloudBook.bytes else { return nil }
+            return (book.id, book.title, url)
+        }
+        for (id, title, url) in sameSize {
+            if let md5 = cloudBook.verifiableMD5 {
+                if (try? await Self.fingerprint(of: url))?.md5Base64 == md5 { return id }
+            } else if Self.folded(title) == Self.folded(cloudBook.title) {
+                return id
+            }
+        }
+        return nil
+    }
+
+    nonisolated static func folded(_ title: String) -> String {
+        title.folding(options: [.caseInsensitive, .diacriticInsensitive, .widthInsensitive], locale: nil)
+            .split(whereSeparator: \.isWhitespace).joined(separator: " ")
+    }
+
+    /// One shelf entry: the local copy becomes the Cloud book in its place on the shelf, so its place goes to
+    /// and from the e-reader. Its file, reading, bookmarks, cover and highlights come with it.
+    private func fold(_ localID: String, into cloudBook: CloudBook) {
+        guard let i = books.firstIndex(where: { $0.id == localID }), let oldName = books[i].fileName else { return }
+        let name = "\(cloudBook.id).epub"
+        if oldName != name {
+            // The Cloud book takes the file under its own name, so the Cloud's download path finds it.
+            let target = booksDir.appending(path: name)
+            try? FileManager.default.removeItem(at: target)
+            guard (try? FileManager.default.moveItem(at: booksDir.appending(path: oldName), to: target)) != nil else { return }
+        }
+        var book = books[i]
+        book.id = cloudBook.id
+        book.origin = .cloud
+        book.cloud = cloudBook
+        book.fileName = name
+        book.remote = cloudBook.position ?? book.remote
+        book.noteOtherDevice(cloudBook.position)
+        books[i] = book
+        downloads[localID] = nil
+        if let cover = covers.removeValue(forKey: localID) {
+            covers[cloudBook.id] = cover
+            try? FileManager.default.moveItem(at: coversDir.appending(path: "\(localID).jpg"), to: coversDir.appending(path: "\(cloudBook.id).jpg"))
+        }
+        HighlightStore.carryCache(from: localID, to: cloudBook.id)
     }
 
     /// Fetches the missing covers side by side; a big shelf shouldn't fill in one cover at a time.

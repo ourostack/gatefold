@@ -112,6 +112,64 @@ import Testing
         #expect(linked.origin == .cloud)
     }
 
+    /// The other way round (the coordinator's App Review path): a book on the shelf from before he signed in, the
+    /// Cloud listing the same file once he does. One shelf entry: the Cloud's, so its place goes to and from the
+    /// e-reader, with the file and his reading carried over, never the same book twice.
+    @Test func aBookFromBeforeSignInIsOneBookWithItsCloudCopy() async throws {
+        let sync = FakeSyncService(signedIn: false, latency: .zero)
+        let store = LibraryStore(sync: sync, root: URL.temporaryDirectory.appending(path: "import-tests-\(UUID().uuidString)"))
+        let local = try #require(await store.importBooks(from: [try copy("frankenstein", into: scratch())], source: .files).added.first)
+        let read = Date(timeIntervalSinceNow: -60)
+        store.update(local.id) {
+            $0.totalProgression = 0.03
+            $0.lastOpened = read
+            $0.started = read
+            $0.sessions = 1
+        }
+        _ = try await sync.signIn(email: "a@b.c", password: "hunter2", store: FakeSyncService.stores[0])
+        await store.refresh()
+        let copies = store.books.filter { $0.title.contains("Frankenstein") }
+        #expect(copies.count == 1)
+        let book = try #require(copies.first)
+        #expect(book.cloud != nil) // its place still goes to the e-reader
+        #expect(book.origin == .cloud)
+        #expect(book.id != local.id)
+        #expect(book.isOnDevice)
+        #expect(store.fileURL(of: book).map { FileManager.default.fileExists(atPath: $0.path) } == true)
+        #expect(book.digest == local.digest)
+        #expect(book.totalProgression == 0.03)
+        #expect(book.lastOpened == read)
+        #expect(book.sessions == 1)
+        #expect(book.remote != nil)
+        #expect(store.book(local.id) == nil)
+        // Its old file didn't stay behind under the old name.
+        let kept = try FileManager.default.contentsOfDirectory(atPath: store.root.appending(path: "Books").path)
+        #expect(kept == ["\(book.id).epub"])
+        // A second refresh changes nothing.
+        await store.refresh()
+        #expect(store.books.filter { $0.title.contains("Frankenstein") }.count == 1)
+    }
+
+    /// The real Cloud's `md5_hash` is often the fast_hash, which no file matches. Then the same size to the byte
+    /// and the same title are the same book; a different size is a different edition and stays its own entry.
+    @Test func aBookFromBeforeSignInMeetsItsCloudCopyWithoutAChecksum() async throws {
+        let store = makeStore()
+        let local = try #require(await store.importBooks(from: [try copy("dracula", into: scratch())], source: .files).added.first)
+        let url = try #require(store.fileURL(of: local))
+        let bytes = try #require(try FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int64)
+        let fastHashShaped = Data(repeating: 7, count: 32).base64EncodedString()
+        let other = CloudBook(fastHash: "other-edition", title: local.title, authors: local.author, bytes: bytes + 1, md5Base64: fastHashShaped)
+        await store.merge([other])
+        #expect(store.book(local.id) != nil)
+        let same = CloudBook(fastHash: "same-file", title: " \(local.title.uppercased()) ", authors: local.author, bytes: bytes, md5Base64: fastHashShaped)
+        await store.merge([same])
+        #expect(store.book(local.id) == nil)
+        let book = try #require(store.book("same-file"))
+        #expect(book.isOnDevice && book.cloud != nil && book.origin == .cloud)
+        #expect(book.digest == local.digest)
+        #expect(store.books.count == 2) // the other edition, and this one
+    }
+
     @Test func aDownloadedPocketBookBookIsSpottedToo() async throws {
         let store = makeStore(signedIn: true)
         await store.refresh()
