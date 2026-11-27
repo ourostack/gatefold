@@ -61,12 +61,58 @@ final class AppModel {
     }
     private(set) var lastArrival: Arrival?
 
+    /// One book handed over (chosen in Files, opened in Gatefold, dropped), waiting for the shelf to open it.
+    struct HandOff: Equatable {
+        let bookID: String
+        let arrival: Arrival
+    }
+    private(set) var handedOver: HandOff?
+
+    /// The shelf has opened the handed-over book, or couldn't: then it gets the note that offers Read.
+    func handOffDone(opened: Bool, telemetry: GatefoldTelemetry? = .shared) {
+        guard let handedOver else { return }
+        self.handedOver = nil
+        if !opened { lastArrival = handedOver.arrival }
+        // Counts only: whether a book handed over ended open or as a note.
+        telemetry?.capture("gatefold_hand_off", properties: ["outcome": .string(opened ? "opened" : "note")])
+    }
+
+    /// The book the shelf takes up when asked to open `request`, and whether it was handed over.
+    struct Asked: Equatable { let id: String; let handOff: Bool }
+    /// A book handed over and not yet taken up is the one asked for, even when a Cloud book landed in the same moment.
+    func asked(_ request: String) -> Asked {
+        if let handedOver { return Asked(id: handedOver.bookID, handOff: true) }
+        return Asked(id: request, handOff: false)
+    }
+
+    /// What the shelf does when asked to open a book (`LibraryStore.openRequest`): open it, close the open book and
+    /// open this one, keep the book already open, wait for the open underway, give the note, or nothing.
+    enum OpenStep: Equatable { case open, replace, keep, wait, note, skip }
+
+    /// A Cloud book that lands opens only onto a bare shelf, as #639 has it. A book handed over always ends open or
+    /// with its note: in place of the open book, after the open underway, and with the note when a sheet is up.
+    nonisolated static func openStep(id: String, handOff: Bool, known: Bool, opening: Bool, reading: String?, sheetUp: Bool) -> OpenStep {
+        guard handOff else { return reading == nil && !opening && known ? .open : .skip }
+        if opening { return .wait }
+        guard known else { return .note }
+        if let reading { return reading == id ? .keep : .replace }
+        return sheetUp ? .note : .open
+    }
+
     /// Books handed to Gatefold: chosen in Files, opened in it from another app, or dropped on the shelf.
     /// Opening a book in Gatefold before the welcome means reading without an account: the welcome steps aside.
     @discardableResult
     func receive(_ urls: [URL], source: LibraryBook.Source) async -> LibraryStore.ImportResult {
         guard !urls.isEmpty else { return .init() }
         if !hasOnboarded { hasOnboarded = true }
+        // One book asked for, not a folder (a folder is books for the shelf, even when it holds one). A folder chosen in
+        // Files is outside the app's sandbox until its access is started.
+        var oneBookAsked = false
+        if let url = urls.first, urls.count == 1 {
+            let scoped = url.startAccessingSecurityScopedResource()
+            oneBookAsked = await LibraryStore.expand(url) == urls
+            if scoped { url.stopAccessingSecurityScopedResource() }
+        }
         let result = await library.importBooks(from: urls, source: source)
         // A shared file arrives in Documents/Inbox, and a drop in tmp: once taken, those copies go.
         for url in urls where Self.isHandOffCopy(url) {
@@ -77,6 +123,27 @@ final class AppModel {
         if result == LibraryStore.ImportResult(), library.lastError == nil {
             // A folder with no books in it: say so, rather than nothing happening.
             library.lastError = "No books came aboard. Gatefold found no EPUB books there."
+        }
+        // What a person handed over finishes as asked: one book opens (the shelf takes it up through `openRequest`, as it
+        // does a Cloud book that lands, and in place of a book already open); several land on the shelf with the note.
+        // A catalog's Get offers its own Read on the catalog's page, so its book stays on the shelf.
+        if source != .catalog {
+            // Another app sharing several files may hand them over one by one: one still waiting for the shelf makes
+            // them several, and they land together.
+            // The same book again, or nothing that's a book, leaves the waiting one to open.
+            if let waiting = handedOver {
+                let joined = waiting.arrival.result.joined(with: result)
+                guard joined.added.count + joined.alreadyHere.count > 1 else { return result }
+                handedOver = nil
+                if library.openRequest == waiting.bookID { library.openRequest = nil }
+                lastArrival = Arrival(result: joined)
+                return result
+            }
+            if oneBookAsked, let book = result.single {
+                handedOver = HandOff(bookID: book.id, arrival: Arrival(result: result))
+                library.openRequest = book.id
+                return result
+            }
         }
         lastArrival = Arrival(result: result)
         return result
@@ -97,6 +164,22 @@ final class AppModel {
     func lookInFolder() async {
         let result = await folder.look()
         if !result.added.isEmpty { lastArrival = Arrival(result: result) }
+    }
+
+    /// Files opened in Gatefold from another app, gathered while `onOpenURL` hands them over one by one.
+    private var sharedBatch: [URL] = []
+
+    /// A file opened in Gatefold from another app (`onOpenURL`). Several shared at once come one call each in the same
+    /// turn, so they're gathered and received together: several land on the shelf, one alone opens.
+    func handOver(_ url: URL) {
+        sharedBatch.append(url)
+        guard sharedBatch.count == 1 else { return }
+        Task {
+            await Task.yield()
+            let urls = sharedBatch
+            sharedBatch = []
+            await receive(urls, source: .shared)
+        }
     }
 
     /// The copy iOS made for Gatefold (Documents/Inbox) or a drop kept under tmp, never the person's own file.
@@ -377,5 +460,14 @@ final class AppModel {
             .accessibilityMedium, .accessibilityLarge, .accessibilityExtraLarge, .accessibilityExtraExtraLarge, .accessibilityExtraExtraExtraLarge,
         ]
         return order.firstIndex(of: UIApplication.shared.preferredContentSizeCategory) ?? 3
+    }
+}
+
+extension LibraryStore.ImportResult {
+    /// Two arrivals told as one.
+    func joined(with other: Self) -> Self {
+        Self(added: added + other.added.filter { book in !added.contains { $0.id == book.id } },
+             alreadyHere: alreadyHere + other.alreadyHere.filter { book in !alreadyHere.contains { $0.id == book.id } && !added.contains { $0.id == book.id } },
+             linkedToCloud: linkedToCloud + other.linkedToCloud, refused: refused + other.refused)
     }
 }

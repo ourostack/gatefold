@@ -34,7 +34,7 @@ struct GatefoldApp: App {
                 // A book opened in Gatefold from Files, Mail, Safari or any share sheet ("Open in", "Copy to").
                 .onOpenURL { url in
                     guard url.isFileURL else { return }
-                    Task { await app.receive([url], source: .shared) }
+                    app.handOver(url)
                 }
                 .task { await app.start() }
                 .task { LaunchClock.firstFrame(); await WebWarmup.startUnlessABookOpens() }
@@ -270,12 +270,26 @@ struct RootView: View {
             }
         }
         // A book he tapped in the Cloud landed while he waited on the shelf: it opens, with no second tap.
-        .onChange(of: app.library.openRequest) { _, id in
-            guard let id else { return }
+        .onChange(of: app.library.openRequest) { _, request in
+            guard let request else { return }
             app.library.openRequest = nil
-            guard reader == nil, !opening, let book = app.library.book(id) else { return }
-            readerLog.notice("open: \(id, privacy: .public) landed while he waited; opening it")
-            open(book)
+            let (id, handOff) = { let asked = app.asked(request); return (asked.id, asked.handOff) }()
+            let book = app.library.book(id)
+            let step = AppModel.openStep(id: id, handOff: handOff, known: book != nil, opening: opening, reading: reader?.bookID, sheetUp: ShelfFront.hasSheet)
+            readerLog.notice("open: \(id, privacy: .public) asked for (\(handOff ? "handed over" : "landed while he waited", privacy: .public)): \(String(describing: step), privacy: .public)")
+            switch step {
+            case .open, .replace:
+                if let reader { closeReader(reader) }
+                let opened = book.map { open($0) } ?? false
+                if handOff { app.handOffDone(opened: opened) }
+            case .keep: app.handOffDone(opened: true)
+            case .note: app.handOffDone(opened: false)
+            case .wait, .skip: break
+            }
+        }
+        // A book handed over while another was opening: its turn comes once that one is up.
+        .onChange(of: opening) { _, now in
+            if !now, let waiting = app.handedOver { app.library.openRequest = waiting.bookID }
         }
         .alert("Couldn't Open Book", isPresented: .constant(openError != nil)) {
             Button("OK") { openError = nil }
@@ -378,10 +392,12 @@ struct RootView: View {
         }
     }
 
-    private func open(_ book: LibraryBook) {
+    /// False when the book can't be opened now (another is opening, or its file is gone).
+    @discardableResult
+    private func open(_ book: LibraryBook) -> Bool {
         guard !opening, let url = app.library.fileURL(of: book) else {
             readerLog.notice("open: \(book.id, privacy: .public) refused (opening \(opening, privacy: .public))")
-            return
+            return false
         }
         app.library.noteOpened(book)
         let asked = Date()
@@ -398,7 +414,7 @@ struct RootView: View {
             app.activeReader = ready
             app.openBookID = book.id
             ready.activate()
-            return
+            return true
         }
         opening = true
         WebWarmup.bookIsOpening = true
@@ -439,6 +455,7 @@ struct RootView: View {
                 openError = FriendlyError.message(for: error)
             }
         }
+        return true
     }
 }
 

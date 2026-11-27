@@ -790,4 +790,12 @@ enum ShelfFront {
         guard let root = (windows.first(where: \.isKeyWindow) ?? windows.first)?.rootViewController else { return false }
         return root.presentedViewController == nil
     }
+
+    /// A sheet or picker is up over the shelf (not one on its way out), so the reader can't be shown over it.
+    @MainActor static var hasSheet: Bool {
+        let windows = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.flatMap(\.windows)
+        guard let presented = (windows.first(where: \.isKeyWindow) ?? windows.first)?.rootViewController?.presentedViewController
+        else { return false }
+        return !presented.isBeingDismissed
+    }
 }
