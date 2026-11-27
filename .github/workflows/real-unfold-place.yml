@@ -281,11 +281,11 @@ jobs:
               xcrun simctl io "$udid" screenshot --display=3 "$out/shots/$place-$round-open.png" >/dev/null 2>&1 || true
               move "Closed" single 12 || return 1
             done
-            # Half open: tabletop on the inner screen, then flat again and folded.
+            # Half open, the spine upright as a book is held: the spread stays (gatefold#646), then flat again and folded.
             in_time || return 1
             echo "HALF OPEN place $place" | tee -a "$out/marks.log"
             move "Open" spread 12 || return 1
-            move "Partially Open" tabletop 14 || return 1
+            move "Partially Open" spread 14 || return 1
             xcrun simctl io "$udid" screenshot --display=3 "$out/shots/$place-half.png" >/dev/null 2>&1 || true
             move "Open" spread 12 || return 1
             move "Closed" single 12 || return 1

@@ -206,16 +206,25 @@ struct TextSizeControl: View {
 /// glass at the panel's top trailing corner. The review panel of 2026-11-22 found five: a filled accent X on Contents,
 /// a grey X on Your Page's leading side, Done on the iPad's Search and an outlined X on the Duo's. A level pushed
 /// inside a panel (Fine-Tune) goes back with a chevron instead.
+///
+/// A square squircle at the side the system's large glass close button had (50.5 pt), drawn here: the system button
+/// with a rounded-rectangle border shape takes a capsule's padding, and grew to 83 x 50.5 pt (gatefold#662).
 struct PanelCloseButton: View {
     let id: String
     let action: () -> Void
+    static let side: CGFloat = 50.5
 
     var body: some View {
-        Button(role: .close, action: action)
-            .buttonStyle(.glass)
-            .buttonBorderShape(.roundedRectangle(radius: Squircle.radius(side: 44)))
-            .controlSize(.large)
-            .accessibilityLabel("Close")
-            .accessibilityIdentifier(id)
+        Button(role: .close, action: action) {
+            Image(systemName: "xmark")
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundStyle(Color.primary)
+                .frame(width: Self.side, height: Self.side)
+                .contentShape(Squircle())
+        }
+        .buttonStyle(.plain)
+        .glassEffect(.regular.interactive(), in: Squircle())
+        .accessibilityLabel("Close")
+        .accessibilityIdentifier(id)
     }
 }

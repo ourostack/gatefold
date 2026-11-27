@@ -20,8 +20,8 @@ public struct FoldRegion: Equatable, Sendable {
 }
 
 /// The hinge, as `onHingeChange` reports it. It drives the spine shadow, and one layout decision: a bent
-/// device with a fold on this screen stands as a tabletop (the division region alone can't say so; the
-/// Duo reports its fold inactive whether flat or half open).
+/// device whose fold runs across this screen stands as a tabletop (the division region alone can't say so; the
+/// Duo reports its fold inactive whether flat or half open). Bent with the fold upright, it is a book's spread.
 public enum HingeState: Equatable, Sendable {
     case none
     case closed
@@ -143,8 +143,10 @@ public enum ReaderLayoutResolver {
             // and its restore ran into the cover's (Real unfold at bc72d70: his words lost on the cover).
             // Never one page: arriving from the cover, a frame with the hinge still closed gets the spread it always had.
             if hinge == .closed, wide, let shown, shown != .single { return shown }
-            // Partially open: stood on a table, the page on the top half, the controls on the bottom.
-            if case .partiallyOpen = hinge { return .tabletop }
+            // Bent with the fold across the screen: stood on a table, the page on the top half, the controls on the
+            // bottom. Bent with the spine upright it is held like a book, a page each side of the fold, and opening it
+            // flat moves nothing (gatefold#646, #647).
+            if case .partiallyOpen = hinge, !fold.isVertical { return .tabletop }
             if fold.isVertical {
                 return wide ? .spread : .single
             }

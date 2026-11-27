@@ -43,24 +43,36 @@ struct ReaderLayoutTests {
         #expect(layout.spineShadow > 0.5)
     }
 
-    /// Measured on the Duo with DeviceHub's "Partially Open": the fold stays vertical and reads inactive,
-    /// and only the hinge says the device is bent. Bent is tabletop: the page above, the controls below.
-    @Test func partiallyOpenIsTabletopWithThePageOnTopAndTheDeckBelow() {
+    /// gatefold#646. Measured on the Duo with DeviceHub's "Partially Open" and no turn: the fold stays vertical and
+    /// reads inactive, and only the hinge says the device is bent. Bent with the spine upright is the book posture:
+    /// a page each side of the fold, as a paper book sits, never one column running across the hinge with the
+    /// controls across the other half (the hunt at 617eeb37: about 6 lines readable).
+    @Test func halfOpenWithTheSpineUprightIsASpreadWithTheGutterOnTheFold() {
         let size = CGSize(width: 951, height: 669)
         let fold = FoldRegion(frame: CGRect(x: 455.5, y: 0, width: 40, height: 669), isActive: false)
         let layout = ReaderLayoutResolver.resolve(.init(containerSize: size, division: fold, hinge: .partiallyOpen(angleDegrees: 127.8)))
-        #expect(layout.posture == .tabletop)
-        #expect(layout.columns == .one)
-        #expect(layout.gutter == nil)
-        #expect(layout.pageFrame.minY == 0)
-        #expect(layout.pageFrame.width == 951)
-        #expect(abs(layout.pageFrame.maxY - size.height / 2) <= ReaderLayoutResolver.tabletopPageInset)
-        let deck = try! #require(layout.deck)
-        #expect(deck.minY >= layout.pageFrame.maxY)
-        #expect(deck.maxY == size.height)
-        // Flat again, the same fold is a spread.
+        #expect(layout.posture == .spread)
+        #expect(layout.columns == .two)
+        #expect(layout.deck == nil)
+        #expect(layout.pageFrame == CGRect(origin: .zero, size: size))
+        let gutter = try! #require(layout.gutter)
+        #expect(gutter.midX == fold.frame.midX)
+        #expect(layout.spineShadow > 0.5)
+        // Nearly flat, and flat again, the same fold is the same spread: opening it moves nothing (gatefold#647).
+        #expect(ReaderLayoutResolver.resolve(.init(containerSize: size, division: fold, hinge: .partiallyOpen(angleDegrees: 172.7))).posture == .spread)
         #expect(ReaderLayoutResolver.resolve(.init(containerSize: size, division: fold, hinge: .fullyOpen)).posture == .spread)
         #expect(ReaderLayoutResolver.resolve(.init(containerSize: size, division: fold)).posture == .spread)
+    }
+
+    /// Turned on its side first, the Duo's fold runs across the screen, and bent it stands on a table: the page above
+    /// the fold, the controls below (the hunt at 617eeb37: window 669 x 951, page 669 x 439.7, posture tabletop).
+    @Test func halfOpenWithTheFoldAcrossIsTabletop() {
+        let size = CGSize(width: 669, height: 951)
+        let fold = FoldRegion(frame: CGRect(x: 0, y: 455.5, width: 669, height: 40), isActive: false)
+        let layout = ReaderLayoutResolver.resolve(.init(containerSize: size, division: fold, hinge: .partiallyOpen(angleDegrees: 110)))
+        #expect(layout.posture == .tabletop)
+        #expect(layout.pageFrame.maxY <= fold.frame.minY)
+        #expect(layout.deck.map { $0.minY >= fold.frame.maxY } == true)
     }
 
     /// Real unfold at bc72d70 (job 132947504798), 2f5fd1d and c60ef7e: folded shut from tabletop, the hinge read
@@ -73,7 +85,7 @@ struct ReaderLayoutTests {
         let fold = FoldRegion(frame: CGRect(x: 455.5, y: 0, width: 40, height: 669), isActive: false)
         let shut = ReaderLayoutResolver.resolve(.init(containerSize: inner, division: fold, hinge: .closed, shown: .tabletop))
         #expect(shut.posture == .tabletop, "a shut screen laid out \(shut.posture)")
-        #expect(shut == ReaderLayoutResolver.resolve(.init(containerSize: inner, division: fold, hinge: .partiallyOpen(angleDegrees: 133), shown: .tabletop)))
+        #expect(shut == ReaderLayoutResolver.resolve(.init(containerSize: inner, division: fold, forced: .tabletop)))
         // Folded straight from flat, with no tabletop on the way, the spread it had stays.
         #expect(ReaderLayoutResolver.resolve(.init(containerSize: inner, division: fold, hinge: .closed, shown: .spread)).posture == .spread)
         // Arriving from the cover, a frame on the inner screen whose hinge still reads closed is a spread, as before.
