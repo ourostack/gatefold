@@ -1012,13 +1012,14 @@ jobs:
             timeout: 97 # 30 + 2 x 25.0 + 5 + 12
             lane: 5
           - shard: duo-scroll
-            # Scroll mode keeps the place: a sideways swipe, a status-bar tap, a chapter's end and back (estimates until CI has run them)
+            # Scroll mode keeps the place: a sideways swipe, a status-bar tap, a chapter's end and back; and the Back
+            # pill floats over every line, paged and scrolling (2026-11-27) (estimates until CI has run them)
             tests: >-
-              ScrollModeUITests
+              ScrollModeUITests BackPillFloatsUITests
             skip: ""
             pr_tests: none
             cold: false
-            timeout: 64 # 30 + 2 x 8.5 + 5 + 12
+            timeout: 75 # 30 + 2 x 14.0 + 5 + 12
             lane: 2
           - shard: duo-pagenumber
             # A page a turn, and a reopen keeps the numbers: 295

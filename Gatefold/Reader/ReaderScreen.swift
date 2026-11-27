@@ -280,6 +280,7 @@ struct ReaderScreen: View {
                 // Folding shuts the right page over the left; a turned iPad has no leaf to shut (gatefold#537).
                 if old.posture == .spread, new.posture != .spread, model.hasFold { fold() }
             }
+            .onChange(of: pillRoom(proxy: proxy, layout: layout), initial: true) { _, room in model.setFootRoom(room) }
         }
         .ignoresSafeArea()
         // Behind the reader and not ignoring the safe area, so it reads the screen's own (the controls stand in it).
@@ -388,8 +389,8 @@ struct ReaderScreen: View {
     }
 
     /// The theme's own paper under a slip, so it never sits on text: at the top under an "ahead" offer shown with the
-    /// controls up, fading to clear over 24 pt, and at the foot under the Back pill alone or a "landed" slip. Never for
-    /// the controls themselves: they stand in the bands beside the page, and the page shows whole under them
+    /// controls up, fading to clear over 24 pt, and at the foot under a "landed" slip. Never for the Back pill or the
+    /// controls themselves: they stand in the bands beside the page, and the page shows whole under them
     /// (gatefold build 53, where this paper hid half the page).
     @ViewBuilder
     private func scrims(proxy: GeometryProxy, layout: ReaderLayout, safeTop: CGFloat, barTop: CGFloat) -> some View {
@@ -422,16 +423,20 @@ struct ReaderScreen: View {
         }
     }
 
-    /// How much of the screen's foot the bottom paper must cover (0: none).
+    /// How much of the screen's foot the bottom paper must cover (0: none): only under a "landed" slip, itself paper.
+    /// Never under the Back pill: it is Liquid Glass, floating over the page, and the words run on under it and show
+    /// around it. Paper laid under it took the page's last lines away (Ari, 2026-11-27).
     private func footerNeed(proxy: GeometryProxy, layout: ReaderLayout) -> CGFloat {
-        let landedSlip = model.slip != nil && model.slipKind == .landed
+        guard model.slip != nil, model.slipKind == .landed else { return 0 }
+        return slipBottomBand(proxy) + slipHeight + 16
+    }
+
+    /// The room a scrolling page keeps at its foot while the Back pill stands alone over it, so its last line can
+    /// scroll up clear of the pill: from the screen's foot to a gap above the pill (`ReaderChrome.backButton`).
+    private func pillRoom(proxy: GeometryProxy, layout: ReaderLayout) -> CGFloat {
         let backAlone = model.showJumpBack && !model.chromeVisible && layout.deck == nil && model.backLocator != nil
-        guard landedSlip || backAlone else { return 0 }
-        return max(
-            // After a Jump the Back pill gets its own paper footer: it never sits on a line.
-            backAlone ? max(proxy.safeAreaInsets.bottom, 12) + 52 : 0,
-            landedSlip ? slipBottomBand(proxy) + slipHeight + 16 : 0
-        )
+        guard backAlone, model.scrollsReflowable else { return 0 }
+        return max(proxy.safeAreaInsets.bottom, 12) + 8 + 44 + 8
     }
 
     /// Measures the line the bottom paper would reach, whenever the paper or the page changes.

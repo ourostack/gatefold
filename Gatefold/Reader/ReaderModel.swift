@@ -64,6 +64,14 @@ final class ReaderModel {
     /// After any jump that is not a turn, the way back stays on screen with the controls hidden, until
     /// he has read on `JumpBack.turnsToKeep` turns or taken it.
     private(set) var showJumpBack = false
+    /// Room a scrolling page keeps at its foot for the Back pill floating over it, so its last line can scroll clear
+    /// of the pill (`ReaderScreen.pillRoom`); 0 with no pill alone on the page.
+    @ObservationIgnored private(set) var footRoom: CGFloat = 0
+    func setFootRoom(_ room: CGFloat) {
+        guard room != footRoom else { return }
+        footRoom = room
+        host?.refreshScrollInset()
+    }
     /// Turns since the way back came up.
     @ObservationIgnored private var turnsSinceJump = 0
     @ObservationIgnored private var slipTask: Task<Void, Never>?

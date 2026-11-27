@@ -2208,10 +2208,18 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             guard publication.metadata.layout != .fixed else { return nil }
             var inset = readiumPhoneInset()
             inset.top += clearance
+            inset.bottom = max(inset.bottom, footRoom)
             return inset
         }
         if weakModel?.tabletBands != bands { weakModel?.tabletBands = bands }
-        return UIEdgeInsets(top: bands.top + clearance, left: 0, bottom: bands.bottom, right: 0)
+        return UIEdgeInsets(top: bands.top + clearance, left: 0, bottom: max(bands.bottom, footRoom), right: 0)
+    }
+
+    /// Room a scrolling page keeps at its foot for the Back pill floating over it (`ReaderModel.footRoom`). A page of
+    /// pages never takes it: the pill floats over the page, which keeps its size.
+    private var footRoom: CGFloat {
+        guard let model = weakModel, model.scrollsReflowable else { return 0 }
+        return model.footRoom
     }
 
     /// Readium's own inset for a reflowable phone page, as `EPUBNavigatorViewController.spreadViewContentInset` works it out.
@@ -2228,8 +2236,9 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         return inset
     }
 
-    /// A scrolling page's clearance changed with no new settings (the camera reported late): Readium sets a
-    /// scrolling page's inset only as settings apply, so the live pages take it now, the way Readium sets it.
+    /// A scrolling page's clearance changed with no new settings (the camera reported late, the Back pill came or
+    /// went): Readium sets a scrolling page's inset only as settings apply, so the live pages take it now, the way
+    /// Readium sets it.
     func refreshScrollInset() {
         guard let model = weakModel, model.scrollsReflowable else { return }
         let inset = navigatorContentInset(navigator) ?? readiumPhoneInset()
