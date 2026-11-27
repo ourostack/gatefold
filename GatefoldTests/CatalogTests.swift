@@ -54,6 +54,26 @@ import Testing
         #expect(try Data(contentsOf: file) == book)
         // In a hand-off folder, so the shelf deletes it once it has taken the book in.
         #expect(AppModel.isHandOffCopy(file))
+        try FileManager.default.removeItem(at: file.deletingLastPathComponent())
+    }
+
+    @Test func aPageThatMovedIsReadFromWhereItWentTo() async throws {
+        let host = host
+        StandInServer.answer(host) { request in
+            switch request.url?.path() {
+            case "/opds": (301, Data("https://\(host)/library/opds".utf8))
+            case "/library/opds": (200, Data(Self.feed.replacingOccurrences(of: "href=\"/opds?page=2\"", with: "href=\"opds?page=2\"").utf8))
+            default: (404, Data())
+            }
+        }
+        let feed = try await client.feed(at: base.appending(path: "opds"))
+        #expect(feed.next == URL(string: "https://\(host)/library/opds?page=2"))
+    }
+
+    @Test func aWebPageWhereTheBookShouldBeIsNotTakenForOne() async throws {
+        StandInServer.answer(host) { _ in (200, Data("<!doctype html><html><body>Please sign in</body></html>".utf8)) }
+        let epub = CatalogAcquisition(url: base.appending(path: "get/1.epub"), mediaType: "application/epub+zip", rel: "http://opds-spec.org/acquisition", length: nil, title: nil)
+        await #expect(throws: CatalogClient.Failure.notABook) { try await client.download(epub, title: "Sign in") }
     }
 
     @Test func eachWayACatalogCanSayNoIsToldApart() async throws {
@@ -86,14 +106,36 @@ import Testing
     }
 
     @Test func aPasswordIsGivenOnceAndOnlyWhenAPasswordIsAskedFor() {
-        let credential = CatalogClient.Credential(user: "reader", password: "public-domain")
-        let first = CatalogClient.answer(NSURLAuthenticationMethodHTTPDigest, failures: 0, with: credential)
+        func space(_ scheme: String, _ host: String, _ port: Int, _ method: String) -> URLProtectionSpace {
+            URLProtectionSpace(host: host, port: port, protocol: scheme, realm: "calibre", authenticationMethod: method)
+        }
+        let credential = CatalogClient.Credential(user: "reader", password: "public-domain", catalog: URL(string: "http://calibre.local:8080/opds")!)
+        let first = CatalogClient.answer(space("http", "calibre.local", 8080, NSURLAuthenticationMethodHTTPDigest), failures: 0, with: credential)
         #expect(first.0 == .useCredential)
         #expect(first.1?.user == "reader")
         #expect(first.1?.persistence == URLCredential.Persistence.none)
-        #expect(CatalogClient.answer(NSURLAuthenticationMethodHTTPBasic, failures: 1, with: credential).0 == .rejectProtectionSpace)
-        #expect(CatalogClient.answer(NSURLAuthenticationMethodHTTPBasic, failures: 0, with: nil).0 == .rejectProtectionSpace)
-        #expect(CatalogClient.answer(NSURLAuthenticationMethodServerTrust, failures: 0, with: credential).0 == .performDefaultHandling)
+        let basic = space("http", "calibre.local", 8080, NSURLAuthenticationMethodHTTPBasic)
+        #expect(CatalogClient.answer(basic, failures: 1, with: credential).0 == .rejectProtectionSpace)
+        #expect(CatalogClient.answer(basic, failures: 0, with: nil).0 == .rejectProtectionSpace)
+        #expect(CatalogClient.answer(space("https", "calibre.local", 8080, NSURLAuthenticationMethodServerTrust), failures: 0, with: credential).0 == .performDefaultHandling)
+    }
+
+    @Test func aPasswordGoesOnlyToItsOwnCatalogsServer() {
+        func answer(_ scheme: String, _ host: String, _ port: Int, _ credential: CatalogClient.Credential) -> URLSession.AuthChallengeDisposition {
+            let space = URLProtectionSpace(host: host, port: port, protocol: scheme, realm: "books", authenticationMethod: NSURLAuthenticationMethodHTTPBasic)
+            return CatalogClient.answer(space, failures: 0, with: credential).0
+        }
+        let secure = CatalogClient.Credential(user: "reader", password: "public-domain", catalog: URL(string: "https://Books.example.org/opds")!)
+        #expect(answer("https", "books.example.org", 443, secure) == .useCredential)
+        // A cover or book the catalog links to on someone else's server asks too: it gets nothing.
+        #expect(answer("https", "covers.example.net", 443, secure) == .rejectProtectionSpace)
+        #expect(answer("https", "books.example.org", 8443, secure) == .rejectProtectionSpace)
+        // An https catalog's password never goes out over plain http, even to the same server.
+        #expect(answer("http", "books.example.org", 80, secure) == .rejectProtectionSpace)
+        // A catalog the reader added as plain http, on their own network, is answered there.
+        let home = CatalogClient.Credential(user: "reader", password: "public-domain", catalog: URL(string: "http://192.168.1.20:8083/opds")!)
+        #expect(answer("http", "192.168.1.20", 8083, home) == .useCredential)
+        #expect(answer("http", "192.168.1.21", 8083, home) == .rejectProtectionSpace)
     }
 
     @Test func anAddressIsReadTheWayItWasTyped() {
@@ -120,6 +162,7 @@ import Testing
         let shelf = CatalogShelf(root: root, keychain: keychain)
         let home = shelf.add(name: " ", url: URL(string: "http://calibre.local:8080/opds")!, user: "reader", password: "public-domain")
         let free = shelf.add(name: "Club", url: URL(string: "https://club.example.org/opds")!, user: "", password: "ignored")
+        let open = shelf.add(name: "Kavita", url: URL(string: "https://kavita.example.org/opds")!, user: "reader", password: "")
         #expect(home.name == "calibre.local")
         #expect(free.user == nil)
 
@@ -127,9 +170,11 @@ import Testing
         #expect(!saved.contains("public-domain"))
 
         let relaunched = CatalogShelf(root: root, keychain: keychain)
-        #expect(relaunched.own.map(\.id) == [home.id, free.id])
-        #expect(relaunched.credential(for: home) == .init(user: "reader", password: "public-domain"))
+        #expect(relaunched.own.map(\.id) == [home.id, free.id, open.id])
+        #expect(relaunched.credential(for: home) == .init(user: "reader", password: "public-domain", catalog: home.url))
         #expect(relaunched.credential(for: free) == nil)
+        // A user name with no password opened the catalog, so it is still sent.
+        #expect(relaunched.credential(for: open)?.password == "")
         #expect(relaunched.all.prefix(2).map(\.id) == ["gutenberg", "standard-ebooks"])
 
         relaunched.remove(home)
@@ -211,6 +256,12 @@ final class StandInServer: URLProtocol {
             return
         }
         let (status, body) = answer(request)
+        if (300..<400).contains(status), let location = URL(string: String(decoding: body, as: UTF8.self)) {
+            // A redirect: the body is where to.
+            let moved = HTTPURLResponse(url: url, statusCode: status, httpVersion: "HTTP/1.1", headerFields: ["Location": location.absoluteString])!
+            client?.urlProtocol(self, wasRedirectedTo: URLRequest(url: location), redirectResponse: moved)
+            return
+        }
         let response = HTTPURLResponse(url: url, statusCode: status, httpVersion: "HTTP/1.1", headerFields: ["Content-Length": "\(body.count)"])!
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
         client?.urlProtocol(self, didLoad: body)

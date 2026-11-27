@@ -46,7 +46,8 @@ final class CatalogShelf {
         let user = user?.trimmingCharacters(in: .whitespaces).nilIfEmpty
         let trimmedName = name.trimmingCharacters(in: .whitespaces)
         let catalog = Catalog(id: UUID().uuidString, name: trimmedName.isEmpty ? (url.host() ?? url.absoluteString) : trimmedName, url: url, user: user)
-        if user != nil, let password, !password.isEmpty { keychain.set(password, for: catalog.id) }
+        // An empty password is still the one the catalog opened with, so it is kept too.
+        if user != nil { keychain.set(password ?? "", for: catalog.id) }
         own.append(catalog)
         return catalog
     }
@@ -64,7 +65,7 @@ final class CatalogShelf {
 
     func credential(for catalog: Catalog) -> CatalogClient.Credential? {
         guard let user = catalog.user, let password = keychain.password(for: catalog.id) else { return nil }
-        return CatalogClient.Credential(user: user, password: password)
+        return CatalogClient.Credential(user: user, password: password, catalog: catalog.url)
     }
 
     private func save() {

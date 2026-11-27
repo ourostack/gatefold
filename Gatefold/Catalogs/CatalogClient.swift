@@ -2,13 +2,23 @@ import Foundation
 import GatefoldCore
 
 /// Reads OPDS catalogs and downloads their books: a page when the reader opens it, a search when they ask,
-/// a book when they tap Get. Never in the background, as Project Gutenberg asks of software that reads it.
+/// a book when they tap Get. Never in the background: Project Gutenberg's site is for people and blocks automated tools.
 /// A user name and password, when the catalog has one, answers the server's own challenge (Basic, or
 /// Digest as the calibre content server asks over plain http), and is never sent to anyone else.
 struct CatalogClient: Sendable {
     struct Credential: Sendable, Equatable {
         var user: String
         var password: String
+        /// The catalog they belong to. Only a challenge from its own scheme, host and port is answered, so a
+        /// cover or book the catalog links to on another server never sees them, and an https catalog's
+        /// password never goes out over plain http.
+        var catalog: URL
+
+        func belongs(to space: URLProtectionSpace) -> Bool {
+            guard let scheme = catalog.scheme?.lowercased(), let host = catalog.host()?.lowercased() else { return false }
+            let port = catalog.port ?? (scheme == "https" ? 443 : 80)
+            return space.protocol?.lowercased() == scheme && space.host.lowercased() == host && space.port == port
+        }
     }
 
     enum Failure: Error, Equatable {
@@ -17,6 +27,8 @@ struct CatalogClient: Sendable {
         /// Plain http to a server that isn't on this network, which iOS doesn't allow.
         case needsHTTPS
         case notACatalog
+        /// What a Get link sent back wasn't an EPUB: most often a web page asking to sign in there.
+        case notABook
         case offline
         case unreachable
         case refused(status: Int)
@@ -24,8 +36,9 @@ struct CatalogClient: Sendable {
         var words: String {
             switch self {
             case .needsSignIn: "This catalog asks for a user name and password."
-            case .needsHTTPS: "Gatefold reaches catalogs over https, or on your own network."
+            case .needsHTTPS: "Gatefold reaches catalogs over https. For a server at home, use its address on your network, such as 192.168.1.20:8083 or calibre.local."
             case .notACatalog: "That address doesn't lead to an OPDS catalog."
+            case .notABook: "The catalog sent a web page instead of the book. It may want you to sign in on its website."
             case .offline: "You're offline. Gatefold will reach the catalog once you're connected."
             case .unreachable: "Gatefold couldn't reach this catalog. Check the address, then try again."
             case let .refused(status): "The catalog couldn't send that (error \(status))."
@@ -37,8 +50,9 @@ struct CatalogClient: Sendable {
 
     /// One page of the catalog.
     func feed(at url: URL, credential: Credential? = nil) async throws -> CatalogFeed {
-        let data = try await get(url, credential: credential)
-        do { return try CatalogParser.parse(data: data, from: url) } catch { throw Failure.notACatalog }
+        let (data, response) = try await get(url, credential: credential)
+        // After a redirect, the page's own links are relative to where it was found.
+        do { return try CatalogParser.parse(data: data, from: response.url ?? url) } catch { throw Failure.notACatalog }
     }
 
     /// Where the catalog's results for `query` are, reading its OpenSearch description first when that's
@@ -46,8 +60,8 @@ struct CatalogClient: Sendable {
     func searchURL(_ search: CatalogSearch, for query: String, credential: Credential? = nil) async throws -> URL? {
         var search = search
         if case let .description(url) = search {
-            let data = try await get(url, credential: credential)
-            guard let template = OpenSearchDescription.parse(data, from: url) else { throw Failure.notACatalog }
+            let (data, response) = try await get(url, credential: credential)
+            guard let template = OpenSearchDescription.parse(data, from: response.url ?? url) else { throw Failure.notACatalog }
             search = template
         }
         return search.url(for: query)
@@ -57,12 +71,21 @@ struct CatalogClient: Sendable {
     /// taken the book in.
     func download(_ acquisition: CatalogAcquisition, title: String, credential: Credential? = nil) async throws -> URL {
         let (temp, response) = try await run { try await session.download(for: request(acquisition.url), delegate: SignIn(credential)) }
+        defer { try? FileManager.default.removeItem(at: temp) }
         try check(response)
+        guard Self.isZip(temp) else { throw Failure.notABook }
         let folder = URL.temporaryDirectory.appending(path: "Incoming/\(UUID().uuidString)", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let target = folder.appending(path: Self.fileName(for: title))
         try FileManager.default.moveItem(at: temp, to: target)
         return target
+    }
+
+    /// An EPUB is a ZIP archive, which starts "PK\u{3}\u{4}"; a web page or an error message doesn't.
+    static func isZip(_ file: URL) -> Bool {
+        guard let handle = try? FileHandle(forReadingFrom: file) else { return false }
+        defer { try? handle.close() }
+        return (try? handle.read(upToCount: 4)) == Data([0x50, 0x4B, 0x03, 0x04])
     }
 
     /// The book's title as a file name: what the shelf would show if its own metadata said nothing.
@@ -85,10 +108,10 @@ struct CatalogClient: Sendable {
         return URL(string: (local ? "http://" : "https://") + text)
     }
 
-    private func get(_ url: URL, credential: Credential?) async throws -> Data {
+    private func get(_ url: URL, credential: Credential?) async throws -> (Data, URLResponse) {
         let (data, response) = try await run { try await session.data(for: request(url), delegate: SignIn(credential)) }
         try check(response)
-        return data
+        return (data, response)
     }
 
     private func request(_ url: URL) -> URLRequest {
@@ -130,18 +153,20 @@ struct CatalogClient: Sendable {
 
         func urlSession(_ session: URLSession, task: URLSessionTask, didReceive challenge: URLAuthenticationChallenge) async
             -> (URLSession.AuthChallengeDisposition, URLCredential?) {
-            CatalogClient.answer(challenge.protectionSpace.authenticationMethod, failures: challenge.previousFailureCount, with: credential)
+            CatalogClient.answer(challenge.protectionSpace, failures: challenge.previousFailureCount, with: credential)
         }
     }
 
-    /// How a sign-in challenge is answered: a password challenge once with the catalog's own credential,
-    /// and never again once that was turned away (the server's 401 then comes back as the response);
-    /// anything else, such as the server's certificate, the system's way.
-    static func answer(_ method: String, failures: Int, with credential: Credential?) -> (URLSession.AuthChallengeDisposition, URLCredential?) {
+    /// How a sign-in challenge is answered: a password challenge from the catalog's own server once, with
+    /// its credential, and never again once that was turned away (the server's 401 then comes back as the
+    /// response); a password challenge from anywhere else, never; anything else, such as the server's
+    /// certificate, the system's way.
+    static func answer(_ space: URLProtectionSpace, failures: Int, with credential: Credential?) -> (URLSession.AuthChallengeDisposition, URLCredential?) {
+        let method = space.authenticationMethod
         guard method == NSURLAuthenticationMethodHTTPBasic || method == NSURLAuthenticationMethodHTTPDigest else {
             return (.performDefaultHandling, nil)
         }
-        guard let credential, failures == 0 else { return (.rejectProtectionSpace, nil) }
+        guard let credential, failures == 0, credential.belongs(to: space) else { return (.rejectProtectionSpace, nil) }
         return (.useCredential, URLCredential(user: credential.user, password: credential.password, persistence: .none))
     }
 }

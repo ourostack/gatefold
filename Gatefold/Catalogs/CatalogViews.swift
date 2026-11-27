@@ -97,6 +97,7 @@ struct CatalogFeedView: View {
     @State private var loadingMore = false
     @State private var query = ""
     @State private var getting: Set<String> = []
+    @State private var searching = false
     /// Books that came aboard from this page, by entry, with the shelf's book to read.
     @State private var aboard: [String: String] = [:]
     @State private var getFailure: String?
@@ -181,16 +182,21 @@ struct CatalogFeedView: View {
         guard let next, !loadingMore else { return }
         loadingMore = true
         defer { loadingMore = false }
-        if let more = try? await client.feed(at: next, credential: credential) {
+        do {
+            let more = try await client.feed(at: next, credential: credential)
             let seen = Set(entries.map(\.id))
             entries += more.entries.filter { !seen.contains($0.id) }
             self.next = more.next
-        }
+        } catch let error as CatalogClient.Failure {
+            getFailure = error.words
+        } catch {}
     }
 
     private func search() {
-        guard let search = feed?.search, !query.trimmingCharacters(in: .whitespaces).isEmpty else { return }
+        guard let search = feed?.search, !searching, !query.trimmingCharacters(in: .whitespaces).isEmpty else { return }
+        searching = true
         Task {
+            defer { searching = false }
             do {
                 guard let url = try await client.searchURL(search, for: query, credential: credential) else { return }
                 onOpen(CatalogPage(catalog: page.catalog, url: url, title: page.title, query: query))
@@ -201,6 +207,7 @@ struct CatalogFeedView: View {
     }
 
     private func get(_ entry: CatalogEntry, _ epub: CatalogAcquisition) async {
+        guard !getting.contains(entry.id) else { return }
         getting.insert(entry.id)
         getFailure = nil
         defer { getting.remove(entry.id) }
@@ -249,13 +256,15 @@ final class CatalogDraft {
 
     /// Opens the catalog with what was typed; saves it to the shelf only once it opened.
     func add(to shelf: CatalogShelf, client: CatalogClient = CatalogClient()) async -> CatalogShelf.Catalog? {
+        guard !checking else { return nil }
         guard let url = CatalogClient.address(address) else {
             problem = "That isn't a web address."
             return nil
         }
         checking = true
         defer { checking = false }
-        let credential = user.isEmpty ? nil : CatalogClient.Credential(user: user, password: password)
+        let user = user.trimmingCharacters(in: .whitespaces)
+        let credential = user.isEmpty ? nil : CatalogClient.Credential(user: user, password: password, catalog: url)
         do {
             _ = try await client.feed(at: url, credential: credential)
             problem = nil
