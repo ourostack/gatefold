@@ -1,0 +1,87 @@
+name: Sources proof (scratch)
+
+# Proof branches only (proof/sources-*), never merged: the more-sources PRs' unit tests, spike 01's open-in probe
+# and their screenshots, on one iPhone simulator. Public-domain books only.
+on:
+  push:
+    branches: ["proof/sources-*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sources-proof-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  proof:
+    runs-on: xcode-27
+    timeout-minutes: 80
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/select-xcode
+        with:
+          xcode: "27.2"
+      - name: Keep the runner's agent ahead of the simulator's boot
+        run: nohup python3 -I scripts/ci-runner-priority.py 1500 > /dev/null 2>&1 &
+      - name: Start an iPhone booting
+        run: python3 -I scripts/ci-simulator.py start gatefold-duo "iPhone Duo"
+      - name: Install the Metal toolchain
+        run: xcodebuild -downloadComponent MetalToolchain
+      - name: Generate the project
+        run: |
+          brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
+          xcodegen generate
+      - name: Build for testing
+        timeout-minutes: 30
+        run: |
+          set -o pipefail
+          xcodebuild build-for-testing -project Gatefold.xcodeproj -scheme Gatefold \
+            -destination 'generic/platform=iOS Simulator' ARCHS="$(uname -m)" \
+            -derivedDataPath "$RUNNER_TEMP/dd" 2>&1 | tee "$RUNNER_TEMP/build.log" | grep -E "error:|BUILD" | tail -40
+          echo "XCTESTRUN=$(ls "$RUNNER_TEMP"/dd/Build/Products/*.xctestrun | head -1)" >> "$GITHUB_ENV"
+      - name: The simulator finished booting
+        timeout-minutes: 30
+        env:
+          CI_SIMULATOR_BUDGET: "1740"
+        run: python3 -I scripts/ci-simulator.py wait gatefold-duo "iPhone Duo" 1200
+      - name: Unit tests
+        timeout-minutes: 20
+        run: |
+          set -o pipefail
+          xcodebuild test-without-building -xctestrun "$XCTESTRUN" -destination "$DESTINATION" \
+            -only-testing:GatefoldTests -resultBundlePath "$RUNNER_TEMP/unit.xcresult" 2>&1 \
+            | tee "$RUNNER_TEMP/unit.log" | grep -E "error|failed|passed|Executed|✘|✔ Test run|Test run with" | tail -120
+      - name: Why each failed test failed
+        if: failure()
+        run: python3 -I scripts/ci-failures.py "$RUNNER_TEMP"/unit.xcresult
+      - name: Spike 01, open in Gatefold through the system
+        if: ${{ !cancelled() }}
+        timeout-minutes: 8
+        run: bash proof/open-in-probe.sh "$UDID" "$RUNNER_TEMP/dd/Build/Products/Debug-iphonesimulator/Gatefold.app" "$RUNNER_TEMP/shots" 2>&1 | tee "$RUNNER_TEMP/probe.log"
+      - name: Screens
+        if: ${{ !cancelled() }}
+        timeout-minutes: 15
+        run: |
+          set -o pipefail
+          xcodebuild test-without-building -xctestrun "$XCTESTRUN" -destination "$DESTINATION" \
+            -only-testing:GatefoldUITests/SourcesProofUITests -resultBundlePath "$RUNNER_TEMP/shots.xcresult" 2>&1 | tail -30
+          mkdir -p "$RUNNER_TEMP/raw" "$RUNNER_TEMP/shots"
+          xcrun xcresulttool export attachments --path "$RUNNER_TEMP/shots.xcresult" --output-path "$RUNNER_TEMP/raw"
+          python3 -I -c 'import json,shutil,sys,os
+          raw,out=sys.argv[1],sys.argv[2]
+          for t in json.load(open(os.path.join(raw,"manifest.json"))):
+              for a in t.get("attachments",[]):
+                  name=a.get("suggestedHumanReadableName") or a["exportedFileName"]
+                  shutil.copy(os.path.join(raw,a["exportedFileName"]), os.path.join(out,name.split("_")[0]+".png"))' "$RUNNER_TEMP/raw" "$RUNNER_TEMP/shots"
+          ls -l "$RUNNER_TEMP/shots"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sources-proof
+          retention-days: 7
+          path: |
+            ${{ runner.temp }}/shots
+            ${{ runner.temp }}/unit.log
+            ${{ runner.temp }}/probe.log
+            ${{ runner.temp }}/build.log
