@@ -82,6 +82,7 @@ TELEMETRY_EVENTS = {
     "gatefold_place_push": {"NSPrivacyCollectedDataTypeOtherDiagnosticData"},
     "gatefold_place_pull": {"NSPrivacyCollectedDataTypeOtherDiagnosticData"},
     "gatefold_download_tap": {"NSPrivacyCollectedDataTypeProductInteraction"},
+    "gatefold_books_added": {"NSPrivacyCollectedDataTypeProductInteraction"},
     "gatefold_open": {"NSPrivacyCollectedDataTypePerformanceData"},
     "gatefold_jump": {"NSPrivacyCollectedDataTypePerformanceData"},
 }
