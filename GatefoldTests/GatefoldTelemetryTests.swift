@@ -43,16 +43,31 @@ struct GatefoldTelemetryTests {
         #expect(sent.count == 0)
     }
 
-    @Test func aConfiguredSenderPostsTheEventWithARandomInstallID() throws {
-        let sent = Box()
+    /// Every copy sends the same client ID, so no report can be told apart by phone, and App Privacy has no Device ID.
+    @Test func everyCopySendsTheSameClientIDAndKeepsNoneOfItsOwn() throws {
+        var ids: [String] = []
+        for _ in 0..<2 {
+            let sent = Box()
+            let suite = "telemetry-test-\(UUID().uuidString)"
+            let defaults = try #require(UserDefaults(suiteName: suite))
+            let telemetry = GatefoldTelemetry(configuration: .init(apiKey: "phc_test", captureURL: URL(string: "https://example.invalid/e/")!),
+                                              defaults: defaults, send: { sent.requests.append($0) })
+            telemetry.capture(DownloadReport(stage: .transfer))
+            let body = try #require(sent.requests.first?.httpBody)
+            let json = try #require(try JSONSerialization.jsonObject(with: body) as? [String: Any])
+            #expect(json["event"] as? String == "gatefold_download")
+            ids.append(json["distinct_id"] as? String ?? "")
+            #expect(defaults.persistentDomain(forName: suite)?.isEmpty ?? true)
+        }
+        #expect(ids == [GatefoldTelemetry.sharedClientID, GatefoldTelemetry.sharedClientID])
+    }
+
+    /// TestFlight builds kept a random install ID; the first launch after this forgets it.
+    @Test func theRandomInstallIDOlderBuildsKeptIsForgotten() throws {
         let defaults = try #require(UserDefaults(suiteName: "telemetry-test-\(UUID().uuidString)"))
-        let telemetry = GatefoldTelemetry(configuration: .init(apiKey: "phc_test", captureURL: URL(string: "https://example.invalid/e/")!),
-                                          defaults: defaults, send: { sent.requests.append($0) })
-        telemetry.capture(DownloadReport(stage: .transfer))
-        let body = try #require(sent.requests.first?.httpBody)
-        let json = try #require(try JSONSerialization.jsonObject(with: body) as? [String: Any])
-        #expect(json["event"] as? String == "gatefold_download")
-        #expect(UUID(uuidString: json["distinct_id"] as? String ?? "") != nil)
+        defaults.set(UUID().uuidString, forKey: "GatefoldTelemetryInstallID")
+        _ = GatefoldTelemetry(configuration: nil, defaults: defaults, send: { _ in })
+        #expect(defaults.string(forKey: "GatefoldTelemetryInstallID") == nil)
     }
 }
 

@@ -30,11 +30,10 @@
 <p>Each report also says which version of Gatefold and of iOS sent it, and the time. Times are rounded into wide steps, such as "under 5 seconds" or "under 2 minutes".</p>
 <ul>
 <li>Never a title, author, file name, link, highlight, note, email, password or error message.</li>
-<li>Each report carries a random ID made when you install Gatefold, so a run of failures on one phone counts once. It is not your device's advertising or vendor ID, and it is not tied to your PocketBook account.</li>
+<li>Every copy of Gatefold sends the same fixed name in place of an ID, so no report can be told apart from another phone's. Nothing in a report identifies your device or your PocketBook account.</li>
 <li>PostHog is told not to look up where you are from your IP address and not to build a profile.</li>
-<li>Deleting the app deletes the random ID. A new install gets a new one.</li>
 </ul>
-<p>This is what App Store Connect lists under App Privacy as diagnostics, product interaction, performance data and a device ID, all "not linked to you" and none used for tracking. The full list is in <a href="https://github.com/ourostack/gatefold/blob/main/Gatefold/Sync/GatefoldTelemetry.swift">GatefoldTelemetry.swift</a>.</p>
+<p>This is what App Store Connect lists under App Privacy as diagnostics, product interaction and performance data, all "not linked to you" and none used for tracking. The full list is in <a href="https://github.com/ourostack/gatefold/blob/main/Gatefold/Sync/GatefoldTelemetry.swift">GatefoldTelemetry.swift</a>.</p>
 
 <h2>Your sign-in</h2>
 <p>When you sign in, your email and password go straight to PocketBook Cloud, which hands back a session token. Gatefold keeps that token, and your password so it can sign you back in when the token runs out, in your device's Keychain, on this device only (neither is synced to iCloud). Neither ever leaves the device except to PocketBook Cloud. Signing out removes them and the cached shelf.</p>

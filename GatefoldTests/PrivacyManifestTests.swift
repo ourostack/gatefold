@@ -31,7 +31,6 @@ struct PrivacyManifestTests {
             "NSPrivacyCollectedDataTypeOtherDiagnosticData",
             "NSPrivacyCollectedDataTypeProductInteraction",
             "NSPrivacyCollectedDataTypePerformanceData",
-            "NSPrivacyCollectedDataTypeDeviceID",
         ])
         for kind in kinds {
             #expect(kind["NSPrivacyCollectedDataTypeLinked"] as? Bool == false)

@@ -73,9 +73,10 @@ UNMANIFESTED_PACKAGES = {
 TELEMETRY_MARKERS = [r"posthog\.com"]
 
 # Every event the app sends (`capture("gatefold_…"` in its code, plus the place events GatefoldTelemetry names) and
-# the App Privacy data types it is. Every event also carries a random install ID (Apple's nearest kind is Device ID)
-# and the app and iOS versions. None is linked to a person or used for tracking. A new event fails the check until it
-# is listed here, in the manifest and on the privacy page.
+# the App Privacy data types it is. Every event also carries the app and iOS versions, and one client ID that every
+# copy of Gatefold shares, so no report can be told apart by phone and there is no Device ID to declare (Drift Remote
+# does the same). None is linked to a person or used for tracking. A new event fails the check until it is listed
+# here, in the manifest and on the privacy page.
 TELEMETRY_EVENTS = {
     "gatefold_download": {"NSPrivacyCollectedDataTypeOtherDiagnosticData"},
     "gatefold_place_push": {"NSPrivacyCollectedDataTypeOtherDiagnosticData"},
@@ -84,8 +85,12 @@ TELEMETRY_EVENTS = {
     "gatefold_open": {"NSPrivacyCollectedDataTypePerformanceData"},
     "gatefold_jump": {"NSPrivacyCollectedDataTypePerformanceData"},
 }
-EVERY_EVENT = {"NSPrivacyCollectedDataTypeDeviceID"}
-TELEMETRY_DATA = set().union(EVERY_EVENT, *TELEMETRY_EVENTS.values())
+TELEMETRY_DATA = set().union(*TELEMETRY_EVENTS.values())
+DEVICE_ID = "NSPrivacyCollectedDataTypeDeviceID"
+# Code that keeps an ID of its own per install or device. Any of these makes the telemetry a Device ID.
+PER_INSTALL_ID = r"set\(UUID\(\)\.uuidString|identifierForVendor|advertisingIdentifier"
+# Page wording that promises each report an ID of its own.
+PAGE_OWN_ID = r"random ID|install ID|device ID"
 EVENT_NAME = r'"(gatefold_[a-z_]+)"'
 
 # Sentences the privacy page may not carry while telemetry ships.
@@ -165,12 +170,18 @@ def check(root: Path) -> list[str]:
     page = (root / PRIVACY_PAGE).read_text(errors="replace") if (root / PRIVACY_PAGE).is_file() else ""
     dist = json.loads((root / DISTRIBUTION).read_text()) if (root / DISTRIBUTION).is_file() else {}
     privacy = [c.get("store", {}).get("privacy", {}) for c in dist.get("channels", [])]
+    own_id = bool(re.search(PER_INSTALL_ID, code))
+    expected = (TELEMETRY_DATA | ({DEVICE_ID} if own_id else set())) if sends else set()
+    if DEVICE_ID in collected.keys() - expected:
+        problems.append(f"{MANIFEST} declares {DEVICE_ID}, but every copy sends the same client ID: drop it.")
     if sends:
-        for kind in sorted(TELEMETRY_DATA - collected.keys()):
+        for kind in sorted(expected - collected.keys()):
             problems.append(f"The app sends telemetry, so {MANIFEST} must declare {kind}.")
-        for kind in sorted(TELEMETRY_DATA & collected.keys()):
+        for kind in sorted(expected & collected.keys()):
             if collected[kind].get("NSPrivacyCollectedDataTypeLinked") is not False:
-                problems.append(f"{kind} is sent with a random install ID only, so it must say Linked false.")
+                problems.append(f"{kind} is sent with no account and no ID of its own, so it must say Linked false.")
+        if not own_id and re.search(PAGE_OWN_ID, page, re.I):
+            problems.append(f"{PRIVACY_PAGE} says reports carry an ID of their own, but every copy sends the same one.")
         for phrase in NOTHING_COLLECTED:
             if re.search(phrase, page):
                 problems.append(f"{PRIVACY_PAGE} says \"{phrase}\", but release builds send telemetry.")
@@ -189,7 +200,7 @@ def check(root: Path) -> list[str]:
 
 # --- selftest -------------------------------------------------------------------------------------------------------
 
-def _manifest(api_types=None, collected=None, tracking=False) -> bytes:
+def _manifest(api_types=None, collected=None, tracking=False, extra=()) -> bytes:
     return plistlib.dumps({
         "NSPrivacyTracking": tracking,
         "NSPrivacyTrackingDomains": [],
@@ -203,7 +214,7 @@ def _manifest(api_types=None, collected=None, tracking=False) -> bytes:
             {"NSPrivacyCollectedDataType": k, "NSPrivacyCollectedDataTypeLinked": False,
              "NSPrivacyCollectedDataTypeTracking": False,
              "NSPrivacyCollectedDataTypePurposes": ["NSPrivacyCollectedDataTypePurposeAppFunctionality"]}
-            for k in sorted(TELEMETRY_DATA)
+            for k in sorted(TELEMETRY_DATA | set(extra))
         ],
     })
 
@@ -265,7 +276,17 @@ def selftest() -> int:
          ["NSPrivacyAccessedAPICategorySystemBootTime is used by the app's code (systemUptime)"]),
         ("telemetry without its data types fails",
          dict(manifest=_manifest(collected=[]), code=telemetry),
-         ["must declare NSPrivacyCollectedDataTypeDeviceID", "must declare NSPrivacyCollectedDataTypePerformanceData"]),
+         ["must declare NSPrivacyCollectedDataTypeOtherDiagnosticData",
+          "must declare NSPrivacyCollectedDataTypePerformanceData"]),
+        ("a device ID the app doesn't send fails",
+         dict(manifest=_manifest(extra=[DEVICE_ID]), code=telemetry),
+         [f"declares {DEVICE_ID}, but every copy sends the same client ID"]),
+        ("a random install ID must be declared as a device ID",
+         dict(manifest=_manifest(), code=telemetry + "defaults.set(UUID().uuidString, forKey: k)\n"),
+         [f"must declare {DEVICE_ID}"]),
+        ("a page that promises a random install ID fails",
+         dict(manifest=_manifest(), code=telemetry, page="<p>Diagnostic counts, with a random ID made at install.</p>"),
+         ["says reports carry an ID of their own"]),
         ("telemetry with a page that says nothing is collected fails",
          dict(manifest=_manifest(), code=telemetry, page="<p>Gatefold collects nothing. No analytics.</p>"),
          ['says "collects nothing"', 'says "No analytics"', "must say what the diagnostic telemetry sends"]),
