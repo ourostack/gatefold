@@ -972,13 +972,14 @@ jobs:
             timeout: 72 # 30 + 2 x 12.1 + 5 + 12
             lane: 7
           - shard: duo-position
-            # 151 + 137
+            # 151 + 137, and the tabletop deck floating over the page and going at a tap in every reading mode (estimates
+            # of 150 each until CI has run them: about 50, 40 and 40 s locally)
             tests: >-
-              PositionUITests/testTabletopDeckTurnsAndResizes PositionUITests/testFontChangeKeepsThePlace
+              PositionUITests/testTabletopDeckTurnsAndResizes PositionUITests/testFontChangeKeepsThePlace TabletopDeckUITests
             skip: ""
             pr_tests: none
             cold: false
-            timeout: 62 # 30 + 2 x 7.5 + 5 + 12
+            timeout: 77 # 30 + 2 x 15.0 + 5 + 12
             lane: 13
           - shard: duo-position-rest
             # The catch-all for new position tests: 66, rotation and posture, the quick leave (gatefold#301), and the

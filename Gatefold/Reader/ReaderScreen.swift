@@ -73,7 +73,7 @@ struct ReaderScreen: View {
             let barTop = max(safeTop, clearance.top)
             // An open "ahead" offer gets its own band: the page slides down below it, its foot fading
             // at the screen's edge, and slides back when the offer folds. No line sits under the slip.
-            let aheadOpen = model.slip != nil && model.slipKind == .ahead && !model.slipFolded && !model.chromeVisible && layout.deck == nil
+            let aheadOpen = model.slip != nil && model.slipKind == .ahead && !model.slipFolded && !model.chromeVisible
             // A slip hangs below the camera as well as the status bar's room: with the status bar hidden,
             // a Dynamic Island leaves the safe area but stays among the occlusions (the 6.9" iPhone's
             // island sat on the catch-up offer). On an iPhone the island isn't an occlusion, so the slip
@@ -126,16 +126,10 @@ struct ReaderScreen: View {
                         }
                     }
 
-                runningHead(layout: layout, proxy: proxy, clearance: clearance, hidden: aheadOpen || (model.chromeVisible && layout.deck == nil))
-                    .task(id: headState(layout: layout, proxy: proxy, clearance: clearance, hidden: aheadOpen || (model.chromeVisible && layout.deck == nil))) {
-                        readerLog.notice("running head: \(headState(layout: layout, proxy: proxy, clearance: clearance, hidden: aheadOpen || (model.chromeVisible && layout.deck == nil)), privacy: .public)")
+                runningHead(layout: layout, proxy: proxy, clearance: clearance, hidden: aheadOpen || model.chromeVisible)
+                    .task(id: headState(layout: layout, proxy: proxy, clearance: clearance, hidden: aheadOpen || model.chromeVisible)) {
+                        readerLog.notice("running head: \(headState(layout: layout, proxy: proxy, clearance: clearance, hidden: aheadOpen || model.chromeVisible), privacy: .public)")
                     }
-
-                if let deck = layout.deck {
-                    TabletopDeck(model: model, showAppearance: $showAppearance, showContents: $showContents)
-                        .frame(width: deck.width, height: deck.height)
-                        .offset(x: deck.minX, y: deck.minY)
-                }
 
                 ReaderChrome(
                     model: model,
@@ -148,7 +142,7 @@ struct ReaderScreen: View {
                     showContents: $showContents,
                     showSearch: $showSearch
                 )
-                .frame(width: proxy.size.width, height: layout.deck == nil ? proxy.size.height : layout.pageFrame.height)
+                .frame(width: proxy.size.width, height: proxy.size.height)
                 // Above the opening cover while the first page loads: a tap on the cover brings them up,
                 // and Close works however long the load takes (#104; a stuck load took every tap for a minute).
                 // They stay above it through its fade, so controls already up don't blink under it.
@@ -425,7 +419,7 @@ struct ReaderScreen: View {
     /// How much of the screen's foot the bottom paper must cover (0: none).
     private func footerNeed(proxy: GeometryProxy, layout: ReaderLayout) -> CGFloat {
         let landedSlip = model.slip != nil && model.slipKind == .landed
-        let backAlone = model.showJumpBack && !model.chromeVisible && layout.deck == nil && model.backLocator != nil
+        let backAlone = model.showJumpBack && !model.chromeVisible && model.backLocator != nil
         guard landedSlip || backAlone else { return 0 }
         return max(
             // After a Jump the Back pill gets its own paper footer: it never sits on a line.
@@ -673,7 +667,7 @@ struct ReaderScreen: View {
         let camera = occlusions(in: proxy).filter { $0.height <= 120 && $0.minY < 80 }.min { $0.minY < $1.minY }
         let textTop = layout.pageFrame.minY + pageTopClearance(layout, clearance: clearance)
         if model.pageTurn == .scroll { return "none (scrolling)" }
-        guard layout.deck == nil, let camera else { return "none (no camera band)" }
+        guard let camera else { return "none (no camera band)" }
         if textTop - camera.maxY < -camera.height / 2 || textTop < 40 { return "none (text top \(Int(textTop)), camera \(Int(camera.minY))-\(Int(camera.maxY)))" }
         if hidden { return "hidden (chrome or slip)" }
         if !model.pageReady { return "hidden (page not ready)" }
@@ -688,7 +682,7 @@ struct ReaderScreen: View {
         // Scrolling text runs up through the top band, so nothing is drawn over it there.
         if model.pageTurn == .scroll {
             EmptyView()
-        } else if layout.deck == nil, let camera, textTop - camera.maxY >= -camera.height / 2, textTop >= 40,
+        } else if let camera, textTop - camera.maxY >= -camera.height / 2, textTop >= 40,
            let words = model.runningHead ?? Optional(model.title) {
             // Clear of the folded "read on" tab, which hangs at the page's leading edge in this band.
             let tab: CGFloat = model.aheadTab != nil && model.slipFolded && model.slip != nil ? 16 + 112 : 0
@@ -711,7 +705,7 @@ struct ReaderScreen: View {
                 .accessibilityIdentifier("reader.runningHead")
                 .accessibilityLabel(words)
             pageNumbers(pages: [layout.pageFrame], hidden: hidden, shown: !hidden && model.pageReady)
-        } else if layout.deck == nil {
+        } else {
             pageFurniture(layout: layout, hidden: hidden)
         }
     }
@@ -822,7 +816,6 @@ struct ReaderScreen: View {
     /// so the text runs up to the top as it scrolls (`PageSafeArea.placing`).
     static func placed(_ input: LayoutInput, fontScale: Double, proxy: GeometryProxy, occlusions: [CGRect], bare: Bool, scrolling: Bool) -> ReaderLayout {
         let layout = measured(ReaderLayoutResolver.resolve(input), fontScale: fontScale)
-        guard layout.deck == nil else { return layout }
         // The status column's taller report belongs to the status bar, which a bare page hides.
         let occlusions = occlusions.filter { $0.height <= 120 }
         let fresh = PageSafeArea.clearingTop(layout, safeTop: proxy.safeAreaInsets.top, occlusions: occlusions).pageFrame.minY - layout.pageFrame.minY
