@@ -12,7 +12,10 @@ final class ScrollModeUITests: XCTestCase {
     override func setUp() {
         continueAfterFailure = false
         app = XCUIApplication()
+        XCUIDevice.shared.orientation = .portrait
     }
+
+    override func tearDown() { XCUIDevice.shared.orientation = .portrait }
 
     /// Opens Pride and Prejudice in scroll at `goTo` of the book: 0.31 is a seventh of the way into its sixth file,
     /// 0.338 most of the way through it.
@@ -156,5 +159,32 @@ final class ScrollModeUITests: XCTestCase {
         let back = settledPlace("back in the chapter")
         XCTAssertEqual(back.file, end.file)
         XCTAssertEqual(back.progression, end.progression, accuracy: 0.02, "back at the chapter's end, where he left it")
+    }
+
+    /// gatefold#650 (the hunt at 617eeb37, iPad and iPhone): turned on its side and back, scrolled on a screen and a
+    /// half, then turned again, scroll mode put him back where the first turn had left him and lost the scroll. A turn
+    /// keeps the words he scrolled to.
+    func testATurnAfterAScrollKeepsTheScrolledPlace() {
+        let opened = openedPartWayIn()
+        XCUIDevice.shared.orientation = .landscapeLeft
+        _ = settledPlace("on its side")
+        XCUIDevice.shared.orientation = .portrait
+        let upright = settledPlace("upright again")
+        XCTAssertEqual(upright.file, opened.file, "two turns keep the chapter")
+        // The hunt's drag: most of a screen up at 3000 pt/s, held a moment at the end, and the turn at once after it,
+        // before the page has been still for long.
+        let page = el("reader.page")
+        page.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.85))
+            .press(forDuration: 0.05, thenDragTo: page.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.15)),
+                   withVelocity: 3000, thenHoldForDuration: 0.05)
+        XCUIDevice.shared.orientation = .landscapeLeft
+        let turned = settledPlace("turned after the scroll")
+        XCTAssertEqual(turned.file, upright.file, "the turn kept the chapter he scrolled in")
+        // Most of a screen down: the bug put him back at the first turn's place, with all of the scroll lost.
+        XCTAssertGreaterThan(turned.progression - upright.progression, 0.004,
+                             "turned after a scroll, he is past where the first turn left him (\(upright.progression)), at \(turned.progression)")
+        XCUIDevice.shared.orientation = .portrait
+        let back = settledPlace("upright after the scroll")
+        XCTAssertGreaterThan(back.progression - upright.progression, 0.004, "turned back, the scroll is still kept")
     }
 }

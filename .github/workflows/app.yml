@@ -1012,13 +1012,17 @@ jobs:
             timeout: 97 # 30 + 2 x 25.0 + 5 + 12
             lane: 5
           - shard: duo-scroll
-            # Scroll mode keeps the place: a sideways swipe, a status-bar tap, a chapter's end and back (estimates until CI has run them)
+            # Scroll mode keeps the place: a sideways swipe, a status-bar tap, a chapter's end and back, and a turn after
+            # a scroll (gatefold#650) (estimates until CI has run them)
             tests: >-
               ScrollModeUITests
             skip: ""
-            pr_tests: none
+            # On a pull request: the turn after a scroll, on place changes.
+            pr_tests: >-
+              ScrollModeUITests/testATurnAfterAScrollKeepsTheScrolledPlace
+            pr_when: place-jumps
             cold: false
-            timeout: 64 # 30 + 2 x 8.5 + 5 + 12
+            timeout: 68 # 30 + 2 x 10.2 + 5 + 12
             lane: 2
           - shard: duo-pagenumber
             # A page a turn, and a reopen keeps the numbers: 295

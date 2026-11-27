@@ -791,8 +791,65 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         guard !closed else { return }
         if LaunchOptions.isUITest { watchTurnFrames() }
         holdTurnPicture()
+        readScrollUnderTurn()
         // A turn that reflowed nothing (the same layout either way) leaves no picture behind.
         coordinator.animate(alongsideTransition: nil) { [weak self] _ in self?.turnPicture = nil }
+    }
+
+    /// The read of his scroll's words as the device turned (`readScrollUnderTurn`): the turn's restore waits for it.
+    private var scrollUnderTurn: Task<Void, Never>?
+
+    /// gatefold#650: in scroll mode Readium reports where he is only 0.3 s after the page stops, and a flick coasts
+    /// for seconds. A turn of the device before that report kept the anchor at the place before his scroll, and the
+    /// turn's restore put him back there, the scroll lost (the hunt at 617eeb37: iPad and iPhone, a 3000 pt/s flick
+    /// and a turn as it coasted). So with a touch of his not yet reported, the coast stops where it is and the words
+    /// at the top of his screen are read now, before the window's new size reaches the page: the script goes to the
+    /// page ahead of the resize, so it answers in the layout he scrolled in. The restore puts those words back.
+    private func readScrollUnderTurn() {
+        scrollUnderTurn = nil
+        guard let model = weakModel, model.scrollUnreported, pageShown, !curl.isActive,
+              let here = navigator.currentLocation, let web = Self.webViewOnScreen(in: navigator.view) else { return }
+        web.scrollView.setContentOffset(web.scrollView.contentOffset, animated: false)
+        let href = here.href.string
+        let anchors = model.contents.fragments(in: href)
+        let answer = ScriptAnswer()
+        web.evaluateJavaScript(ReaderJS.install) { _, _ in }
+        web.evaluateJavaScript("JSON.stringify([\(ReaderJS.anchor(column: 0, contentsAnchors: anchors)), \(ReaderJS.pageRange)])") { value, _ in
+            answer.give(value as? String)
+        }
+        scrollUnderTurn = Task { @MainActor [weak self] in
+            let json = await answer.wait()
+            struct Words: Decodable { var highlight: String; var before: String? }
+            struct Range: Decodable { var s: Double; var doc: String }
+            guard let self, let model = self.weakModel,
+                  let pair = json.flatMap({ $0.data(using: .utf8) }).flatMap({ try? JSONSerialization.jsonObject(with: $0) as? [Any] }),
+                  pair.count == 2, let wordsJSON = pair[0] as? String, let rangeJSON = pair[1] as? String,
+                  let words = try? JSONDecoder().decode(Words.self, from: Data(wordsJSON.utf8)),
+                  let range = try? JSONDecoder().decode(Range.self, from: Data(rangeJSON.utf8)),
+                  ScreenPageGeometry.document(range.doc, isChapter: href) else {
+                readerLog.notice("reflow: his scroll as the device turned could not be read; the restore keeps the anchor it had")
+                return
+            }
+            model.takeScrollUnderTurn(here.copy(
+                locations: { $0.progression = range.s },
+                text: { $0 = Locator.Text(after: nil, before: words.before, highlight: words.highlight) }))
+        }
+    }
+
+    /// The web view on screen: the one most of the page's bounds show (Readium keeps its neighbours loaded beside it).
+    private static func webViewOnScreen(in page: UIView) -> WKWebView? {
+        var best: (web: WKWebView, area: CGFloat)?
+        func walk(_ view: UIView) {
+            if let web = view as? WKWebView, web.window != nil, !web.isHidden {
+                let shown = web.convert(web.bounds, to: page).intersection(page.bounds)
+                let area = shown.isNull ? 0 : shown.width * shown.height
+                if area > (best?.area ?? 0) { best = (web, area) }
+                return
+            }
+            view.subviews.forEach(walk)
+        }
+        walk(page)
+        return best?.web
     }
 
     /// The page as it was before the device turned, whole, for the turn's reflow to cover the page with until the
@@ -1352,6 +1409,9 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             return model.keeper.restoreMayMove(move: model.hisMoves)
         }
         defer { giveWayIfHeMoved(generation: generation) }
+        // His scroll not yet reported as the device turned: its words, read before the layout changed, are what the
+        // restore puts back (gatefold#650).
+        await scrollUnderTurn?.value
         // A turn of his under way as the reflow began: its page's words, read before the layout changed, are
         // what the restore puts back (gatefold#534).
         model.takeTurnUnderReflow()
@@ -3925,5 +3985,19 @@ private final class ReadCountingMarker: UIView {
     override var accessibilityValue: String? {
         get { reads += 1; return value }
         set { value = newValue }
+    }
+}
+
+/// One script's answer, given by its completion handler and waited for by a task (`readScrollUnderTurn`).
+@MainActor
+private final class ScriptAnswer {
+    private var given: String??
+    private var waiting: CheckedContinuation<String?, Never>?
+    func give(_ value: String?) {
+        if let waiting { self.waiting = nil; waiting.resume(returning: value) } else { given = .some(value) }
+    }
+    func wait() async -> String? {
+        if let given { return given }
+        return await withCheckedContinuation { waiting = $0 }
     }
 }
