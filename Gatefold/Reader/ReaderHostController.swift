@@ -34,6 +34,14 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     private var lastSize: CGSize = .zero
     private var reflowTask: Task<Void, Never>?
     private var reflowGeneration = 0
+    /// When the reflow on screen began, for its timing line (numbers only): where the hold over the page goes.
+    private var reflowBeganAt = ContinuousClock.now
+    private func reflowStage(_ stage: StaticString, generation: Int) {
+        guard generation == reflowGeneration else { return }
+        let ms = (ContinuousClock.now - reflowBeganAt).components
+        let total = ms.seconds * 1000 + ms.attoseconds / 1_000_000_000_000_000
+        readerLog.notice("reflow timing \(generation, privacy: .public): \(stage, privacy: .public) at \(total, privacy: .public) ms")
+    }
     /// Tests only (`-GatefoldSlowRestorePage`): when the slow reflow's page starts answering.
     private var slowRestoreDeadline: ContinuousClock.Instant?
     /// The old page, held over the web view while it repaginates, so a reflow never shows bare paper.
@@ -880,6 +888,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
 
     private func beginReflow(_ reason: ReflowReason) {
         readerLog.notice("reflow begins: \(String(describing: reason), privacy: .public)")
+        reflowBeganAt = .now
         if reason == .typography { newLookUnsettled = true }
         if LaunchOptions.stallReflow == false, LaunchOptions.slowRestorePage, slowRestoreDeadline == nil, model.hisMoves > 0 {
             slowRestoreDeadline = .now + .seconds(120)
@@ -992,10 +1001,13 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         }
         if let leaf, visible(leaf.view) { why.append("leaf") }
         if weakModel?.foldLeafUp == true { why.append("fold leaf") }
-        var covered = false
+        var covered = false, hidden = false
         for cover in [reflowCover, settlePicture].compactMap({ $0 }) where visible(cover) {
             let (frame, page) = onScreen(cover)
-            if frame.contains(page.insetBy(dx: 1, dy: 1)) { covered = true } else { why.append("cover short of the page") }
+            if frame.contains(page.insetBy(dx: 1, dy: 1)) {
+                covered = true
+                if (cover.layer.presentation()?.opacity ?? cover.layer.opacity) >= 0.99 { hidden = true }
+            } else { why.append("cover short of the page") }
             guard let (picture, shows) = pictures[ObjectIdentifier(cover)], shows.width > 0, shows.height > 0 else { continue }
             let (shown, under) = onScreen(picture)
             if abs(shown.width / shows.width - shown.height / shows.height) > 0.01 { why.append("picture squeezed") }
@@ -1004,6 +1016,11 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
                 readerLog.notice("turn frames: cover \(String(describing: frame), privacy: .public) on \(String(describing: page), privacy: .public), picture \(String(describing: shown), privacy: .public) on \(String(describing: under), privacy: .public) of \(String(describing: shows), privacy: .public)")
             }
         }
+        // The page part way through a fade with no whole, opaque picture over it: the new layout ghosted through the
+        // old page's picture fading over it, two layouts at once (the hunt at 617eeb37, gatefold#648 and #649), or a
+        // ghost of the page on bare paper. Faded out under an opaque picture, it can't be seen.
+        let pageOpacity = navigator.view.layer.presentation()?.opacity ?? navigator.view.layer.opacity
+        if pageOpacity > 0.01, pageOpacity < 0.99, !hidden, !watchdogShown { why.append("page fading") }
         // The page itself, mid-layout, with nothing whole over it.
         if !covered, !watchdogShown, visible(navigator.view), settledGeneration != reflowGeneration, !curl.isActive {
             why.append("page mid-layout")
@@ -1127,7 +1144,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         reflowGeneration += 1
         let generation = reflowGeneration
         reflowTask = Task { [weak self] in
-            try? await Task.sleep(for: .milliseconds(550))
+            await self?.untilThePageTakesItsSize(generation: generation)
             guard !Task.isCancelled, let self, self.weakModel != nil else { return }
             await self.restoreAnchor(generation: generation)
             if generation == self.reflowGeneration {
@@ -1195,6 +1212,37 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             self.settleReflowSoon()
         }
     }
+    /// Waits until the page's web view has taken the new layout's size, and its script sees that size, twice running
+    /// a beat apart: from then on a read of the page is of the new layout. A fixed 550 ms stood here, and the page was
+    /// laid out by its end every time it was measured (a turn of the iPad: its words read 5 ms after it), so the old
+    /// page's picture stood over a finished page for most of it. A page that never agrees is read after those 550 ms,
+    /// as before.
+    private func untilThePageTakesItsSize(generation: Int) async {
+        let cap = ContinuousClock.now + .milliseconds(550)
+        var agreed = 0
+        while ContinuousClock.now < cap, !Task.isCancelled, generation == reflowGeneration {
+            try? await Task.sleep(for: .milliseconds(40))
+            agreed = await pageHasItsSize() ? agreed + 1 : 0
+            if agreed == 2 {
+                reflowStage("the page took its size", generation: generation)
+                return
+            }
+        }
+        reflowStage("waited 550 ms for the page to take its size", generation: generation)
+    }
+
+    /// The page's web view is the page's width, not loading, and its script's viewport is that width, in the
+    /// reader's columns.
+    private func pageHasItsSize() async -> Bool {
+        guard let web = Self.firstWebView(in: navigator.view), web.window != nil, !web.isLoading else { return false }
+        let width = web.bounds.width
+        guard width > 0, abs(width - navigator.view.bounds.width) < 1,
+              let inner = (try? await web.evaluateJavaScript("window.innerWidth")) as? NSNumber,
+              abs(CGFloat(inner.doubleValue) - width) < 1 else { return false }
+        guard let css = (try? await navigator.answer(ReaderJS.cssColumns)) as? NSNumber else { return false }
+        return css.intValue == 0 || css.intValue == columns
+    }
+
     func endReflowForSwap() {
         settledGeneration = reflowGeneration
         reflowRetries = 0
@@ -1326,6 +1374,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             _ = try await navigator.answer(ReaderJS.setColumns(self.columns))
             return ()
         }
+        reflowStage("script back", generation: generation)
         guard current() else { return }
         if LaunchOptions.stallReflow, reflowCover != nil || leaf != nil {
             readerLog.notice("reflow: held for the test (GatefoldStallReflow)")
@@ -1345,6 +1394,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             return range
         }
         let visible = await laidOutRange(within: .seconds(3))
+        reflowStage(visible?.text == nil ? "laid out (no text)" : "laid out", generation: generation)
         guard current() else { return }
         var after = visible
         var action = visible.map { model.keeper.reflowDidSettle(visible: $0) } ?? RestoreAction.none
@@ -1377,6 +1427,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
                 // The open's place is put back only while he hasn't touched the page or turned (gatefold#250).
                 more: { ContinuousClock.now < jumpBudget && !(reapplied != nil && (model.touchedSinceLocation || self.isTurning)) })
             guard current(), !Task.isCancelled else { return }
+            reflowStage("jumped back", generation: generation)
             if landing.reads > 0 { after = landing.range }
             // Numbers only (no book text), so a real unfold's restore can be followed from the log.
             readerLog.notice("restore: jumped \(landing.jumps, privacy: .public) times, page read \(landing.reads, privacy: .public) times, at \(after?.start ?? -1, privacy: .public)..\(after?.end ?? -1, privacy: .public), his words \(after?.contains(anchor) == true, privacy: .public)")
@@ -1397,6 +1448,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             if placingGeneration == generation { placingGeneration = -1 }
             if let moved { after = moved }
         }
+        reflowStage("placed", generation: generation)
         guard current() else { return }
         if let picture = restorePicture {
             if settlePicture === picture { await releaseSettlePicture() }
@@ -1415,6 +1467,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             await model.lookAgainInNewColumns()
             guard generation == reflowGeneration, !Task.isCancelled else { return }
         }
+        reflowStage("columns", generation: generation)
         let shownNumber = model.reflowNumber
         // Settled now, not when the swing below has played: the 12 s watchdog took a slow, finished
         // restore whose swing was still running for a stalled one and started it again.
@@ -1450,15 +1503,15 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             weakModel?.reflowShown(shownNumber)
             return
         }
+        reflowStage("cover lifts", generation: generation)
         unfolding = false
         dropLeaf()
-        UIView.animate(withDuration: 0.25) {
-            self.navigator.view.alpha = 1
-            cover?.alpha = 0
-        } completion: { [weak self] _ in
-            cover?.removeFromSuperview()
-            self?.weakModel?.reflowShown(shownNumber)
-        }
+        // The new layout takes the old page's place in one frame. A fade showed both at once for a quarter second,
+        // the new page ghosted through the old (the hunt at 617eeb37, gatefold#648 and #649).
+        navigator.view.layer.removeAnimation(forKey: "opacity")
+        UIView.performWithoutAnimation { navigator.view.alpha = 1 }
+        cover?.removeFromSuperview()
+        weakModel?.reflowShown(shownNumber)
     }
 
     /// Whether the page was still laid out in other columns than the reader's when the restore judged it. If so,
