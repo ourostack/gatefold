@@ -3719,15 +3719,19 @@ final class ReaderModel {
         defer { publishBack(back) }
         jumpOnItsWay = (locator, moves, lastReported ?? page?.currentLocation)
         let move = moves
-        let jump = await veiled(toward: locator.href) { _ = await self.page?.go(to: locator) }
+        let jump = await veiled(toward: locator.href) {
+            _ = await self.page?.go(to: locator)
+            // Into another chapter, Readium places the page by progression before the chapter has laid out, so the
+            // match can be pages on; once it has, its words are found and gone to, as a landing's are (CI App run
+            // 45096599422: a search jump into the preface showed the page before the match, its mark off screen).
+            // Under the veil, so it lifts onto the match's page: found after the lift, the page Readium guessed showed
+            // first, faded in over the old one, and then the page jumped again (gatefold#653).
+            if markingTheMatch { await self.settle(on: Self.matchInContext(locator), move: move) }
+        }
         if endedQuietly(jump, back: back) { return }
         // UI tests: the words in view as the veil lifted, to tell a landing that moved after it (`jumpLandingProbe`).
         let lifted = markingTheMatch && LaunchOptions.isUITest ? await page?.visibleRange()?.text : nil
         if markingTheMatch {
-            // Into another chapter, Readium places the page by progression before the chapter has laid out, so the
-            // match can be pages on; once it has, its words are found and gone to, as a landing's are (CI App run
-            // 45096599422: a search jump into the preface showed the page before the match, its mark off screen).
-            await settle(on: Self.matchInContext(locator), move: move)
             guard moves == move, !isClosed else { return }
             host?.underline(locator, color: theme.palette.accent, fades: false)
             watchUnderline()
