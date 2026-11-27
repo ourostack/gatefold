@@ -19,6 +19,7 @@ jobs:
       matrix:
         include:
           - { name: ipad, type: com.apple.CoreSimulator.SimDeviceType.iPad-Pro-11-inch-M5-12GB, files: ".github/jank/after.txt", display: default, hinge: false }
+          - { name: ipad-bad, type: com.apple.CoreSimulator.SimDeviceType.iPad-Pro-11-inch-M5-12GB, files: ".github/jank/bad.txt", display: default, hinge: false }
     env:
       DD: ${{ github.workspace }}/../dd
       OUT: ${{ github.workspace }}/../jank-out
