@@ -93,13 +93,17 @@ final class PostureLeafUITests: XCTestCase {
             app.buttons["debug.posture.\(posture)"].tap()
             let shown = readsUntil(reads: 80) { el("reader.posture").label == posture }
             XCTAssertTrue(shown.ok, "\(from) to \(posture): the reader shows \(posture) (\(el("reader.posture").label))")
+            let moving = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
+            moving.name = "\(name)-\(from)-to-\(posture)-moving"
+            moving.lifetime = .keepAlways
+            add(moving)
             settled(after: reflow, "\(from) to \(posture), \(pageTurn)")
+            let shot = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
+            shot.name = "\(name)-\(from)-to-\(posture)"
+            shot.lifetime = .keepAlways
+            add(shot)
             from = posture
         }
-        let shot = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
-        shot.name = "\(name)-\(from)"
-        shot.lifetime = .keepAlways
-        add(shot)
         print("POSTURELEAVES \(pageTurn) \(start) -> \(postures.joined(separator: " -> ")): \(leaves) leaves")
         XCTAssertEqual(leaves - before, expected,
                        "\(start) -> \(postures.joined(separator: " -> ")) in \(pageTurn) played \(leaves - before) leaves, wanted \(expected)")
