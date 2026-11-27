@@ -181,8 +181,10 @@ def check(root: Path) -> list[str]:
     dist = json.loads((root / DISTRIBUTION).read_text()) if (root / DISTRIBUTION).is_file() else {}
     listing = json.loads((root / LISTING).read_text()) if (root / LISTING).is_file() else {}
     # What App Review and the store page read: the review notes and every localization's copy.
-    listing_text = "\n".join([str(listing.get("review", {}).get("notes") or "")] + [
-        str(v) for loc in listing.get("localizations", {}).values() if isinstance(loc, dict) for v in loc.values()])
+    review = listing.get("review") if isinstance(listing.get("review"), dict) else {}
+    locs = listing.get("localizations") if isinstance(listing.get("localizations"), dict) else {}
+    listing_text = "\n".join([str(review.get("notes") or "")] + [
+        str(v) for loc in locs.values() if isinstance(loc, dict) for v in loc.values() if v is not None])
     privacy = [c.get("store", {}).get("privacy", {}) for c in dist.get("channels", [])]
     telemetry_code = "\n".join(p.read_text(errors="replace") for p in sources(root)
                                if "distinct_id" in p.read_text(errors="replace"))
@@ -243,7 +245,7 @@ def _manifest(api_types=None, collected=None, tracking=False, extra=()) -> bytes
 
 def _tree(tmp: Path, *, manifest: bytes | None = None, code: str = "let d = UserDefaults.standard\n",
           page: str = "<p>Diagnostic counts only.</p>", collects=True, url=PRIVACY_URL, in_resources=True,
-          excludes: str = '"**/.DS_Store"', notes: str | None = None) -> Path:
+          excludes: str = '"**/.DS_Store"', notes: str | None = None, description: str | None = None) -> Path:
     (tmp / "Gatefold/Support").mkdir(parents=True)
     (tmp / "Gatefold/App").mkdir(parents=True)
     (tmp / "Gatefold.xcodeproj").mkdir()
@@ -256,9 +258,10 @@ def _tree(tmp: Path, *, manifest: bytes | None = None, code: str = "let d = User
     (tmp / PROJECT_YML).write_text("targets:\n  Gatefold:\n    type: application\n    sources:\n      - path: Gatefold\n"
                                    f"        excludes:\n          - {excludes}\n  GatefoldTests:\n    type: bundle\n")
     (tmp / PRIVACY_PAGE).write_text(page)
-    if notes is not None:
+    if notes is not None or description is not None:
         (tmp / LISTING).parent.mkdir(parents=True, exist_ok=True)
-        (tmp / LISTING).write_text(json.dumps({"review": {"notes": notes}}))
+        (tmp / LISTING).write_text(json.dumps({"review": {"notes": notes},
+                                               "localizations": {"en-US": {"description": description, "whatsNew": None}}}))
     (tmp / DISTRIBUTION).write_text(json.dumps(
         {"channels": [{"store": {"privacy": {"policyUrl": url, "collectsData": collects}}}]}))
     return tmp
@@ -324,6 +327,9 @@ def selftest() -> int:
          dict(manifest=_manifest(), code=telemetry, page=own_id_page), ["says reports carry an ID of their own"]),
         ("review notes that promise a random install ID fail",
          dict(manifest=_manifest(), code=telemetry, notes="Counts go to PostHog, with a random install ID."),
+         [f"{LISTING} says reports carry an ID of their own"]),
+        ("store copy that promises a unique ID fails",
+         dict(manifest=_manifest(), code=telemetry, description="Anonymous counts, each with a unique ID."),
          [f"{LISTING} says reports carry an ID of their own"]),
         ("review notes that say every copy sends the same name pass",
          dict(manifest=_manifest(), code=telemetry, notes="Counts go to PostHog under one name every copy shares."),
