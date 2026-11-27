@@ -15,7 +15,7 @@ final class ListingShotsUITests: XCTestCase {
     func testListingScenes() throws {
         continueAfterFailure = true
         let dir = try XCTUnwrap(env["GATEFOLD_SHOTS_DIR"], "GATEFOLD_SHOTS_DIR names the host folder the shots go to")
-        let device = try XCTUnwrap(env["GATEFOLD_SHOTS_DEVICE"], "GATEFOLD_SHOTS_DEVICE is ipad, iphone or duo")
+        let device = try XCTUnwrap(env["GATEFOLD_SHOTS_DEVICE"], "GATEFOLD_SHOTS_DEVICE is a device key in screenshots/spec.json (ipad, iphone, iphone-max, duo)")
         let specPath = try XCTUnwrap(env["GATEFOLD_SHOTS_SPEC"], "GATEFOLD_SHOTS_SPEC is screenshots/spec.json's path")
         let spec = try XCTUnwrap(
             JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: specPath))) as? [String: Any])

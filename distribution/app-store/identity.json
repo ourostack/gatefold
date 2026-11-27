@@ -1,0 +1,5 @@
+{
+  "_about": "The app's new name and icon, chosen in the identity lane (desk card e-reader-apps/reader-ships-to-app-store, step identity). Null until chosen. The stager fills {{name}} in listing.json from here, and a real staging refuses while name is null or icon is false. When the name lands, also change CFBundleDisplayName (Gatefold/Support/Info.plist), the app record's name in App Store Connect (through this listing), docs/ and the screenshot captions if they name the app.",
+  "name": null,
+  "icon": false
+}

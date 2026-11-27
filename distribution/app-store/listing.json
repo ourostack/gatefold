@@ -1,0 +1,128 @@
+{
+  "schemaVersion": 1,
+  "_about": "Gatefold's App Store listing, staged into App Store Connect by .github/workflows/app-store-listing.yml (dry run by default; it never submits). {{name}} is filled from identity.json. Copy rules: scripts/app-store/lib/gatefold_listing.rb.",
+  "bundleId": "bot.ouro.gatefold",
+  "platform": "IOS",
+  "version": {
+    "versionString": "1.0",
+    "copyright": "2026 Ari Mendelow",
+    "releaseType": "MANUAL",
+    "phasedRelease": false
+  },
+  "categories": {
+    "primary": "BOOKS",
+    "secondary": null
+  },
+  "contentRightsDeclaration": "USES_THIRD_PARTY_CONTENT",
+  "price": {
+    "baseTerritory": "USA",
+    "customerPrice": "0.0"
+  },
+  "availability": {
+    "availableInNewTerritories": true,
+    "excludedTerritories": [
+      "CHN"
+    ],
+    "_about": "Every territory but mainland China, which needs an ICP filing (set 2026-11-03). The stager sets availability only when none exists yet."
+  },
+  "ageRating": {
+    "alcoholTobaccoOrDrugUseOrReferences": "NONE",
+    "contests": "NONE",
+    "gamblingSimulated": "NONE",
+    "horrorOrFearThemes": "NONE",
+    "matureOrSuggestiveThemes": "NONE",
+    "medicalOrTreatmentInformation": "NONE",
+    "profanityOrCrudeHumor": "NONE",
+    "sexualContentGraphicAndNudity": "NONE",
+    "sexualContentOrNudity": "NONE",
+    "violenceCartoonOrFantasy": "NONE",
+    "violenceRealistic": "NONE",
+    "violenceRealisticProlongedGraphicOrSadistic": "NONE",
+    "gambling": false,
+    "lootBox": false,
+    "unrestrictedWebAccess": false,
+    "messagingAndChat": false,
+    "parentalControls": false,
+    "ageAssurance": false,
+    "userGeneratedContent": false,
+    "advertising": false,
+    "healthOrWellnessTopics": false,
+    "gunsOrOtherWeapons": "NONE",
+    "socialMedia": false,
+    "socialMediaAgeRestricted": false
+  },
+  "review": {
+    "contactFirstName": "Ari",
+    "contactLastName": "Mendelow",
+    "contactEmail": null,
+    "demoAccountRequired": true,
+    "notes": "{{name}} is a free EPUB reader. Its main job is reading the user's own library from PocketBook Cloud, the cloud service that PocketBook e-readers sync with, and keeping the reading place in step with the e-reader, to the line. It also reads EPUB files from Files and seven public-domain classics that ship in the app. There are no in-app purchases, ads or subscriptions, and no {{name}} account.\n\nWITHOUT AN ACCOUNT (every reading feature)\n1. On the welcome screen, tap \"Read Without an Account\".\n2. On the empty shelf, tap \"Try a Few Classics\". Seven Project Gutenberg books appear.\n3. Tap Frankenstein to read. Tap the middle of the page for the controls: Contents, Search, highlights and notes (press and hold a word), the ribbon bookmark, and Your Page (paper color, type, spacing, margins).\n4. On iPad in landscape, and on iPhone Duo opened flat, the book shows as a two-page spread.\n\nWITH THE DEMO ACCOUNT (sync with PocketBook Cloud)\n1. On the welcome screen, tap \"Sign In with PocketBook Cloud\". If you skipped it, tap the account button at the top of the shelf.\n2. Enter the demo email, choose the store if asked, then enter the demo password.\n3. The shelf shows the account's public-domain books with their covers. Tap one: it downloads and opens on the page saved in PocketBook Cloud, with the line underlined for a moment.\n4. Turn a few pages and go back to the shelf. The place is sent to PocketBook Cloud, where PocketBook's own reader and e-readers pick it up.\n5. Sign out from the account button on the shelf.\n\nSIGN-IN (Guideline 4.8)\n{{name}} has no account system of its own. The only sign-in is to the user's existing PocketBook Cloud account, to reach the books stored there, so Sign in with Apple does not apply.\n\nTHIRD-PARTY SERVICE (Guideline 5.2)\n{{name}} is an independent app, not affiliated with PocketBook International SA. It signs in with the user's own PocketBook Cloud credentials, as PocketBook's web reader does, and reads and writes only that user's own library, reading positions, highlights and bookmarks. PocketBook's name appears only to say what the app works with, never in the app's name, subtitle, keywords or icon.\n\nPRIVACY\nNo tracking and no ads. Release builds send anonymous counts about downloads, syncs and page load times to PostHog, with a random install ID, so we can fix failures. No title, note, email or other content is ever sent. This matches the privacy manifest, the App Privacy answers and the privacy policy.\n\nEncryption: HTTPS only (ITSAppUsesNonExemptEncryption is false)."
+  },
+  "localizations": {
+    "en-US": {
+      "name": "{{name}}",
+      "subtitle": "Pick up on the very same line",
+      "privacyPolicyUrl": "https://ourostack.github.io/gatefold/privacy/",
+      "promotionalText": "Put down your e-reader and pick up your phone: you're on the same line, underlined so your eye finds it. Back on the e-reader, it has caught up too.",
+      "keywords": "ereader,paper,epub,sync,ebook,reading,highlights,notes,bookmarks,foldable,dual screen,library,novel",
+      "supportUrl": "https://ourostack.github.io/gatefold/support/",
+      "marketingUrl": "https://ourostack.github.io/gatefold/",
+      "description": "{{name}} reads your PocketBook Cloud library on iPhone and iPad. Sign in with your PocketBook Cloud account and your shelf shows up with its covers. Open a book and you land on the line your e-reader stopped at, underlined for a moment so you can find it.\n\nRead a chapter on the train, and when you pick up your e-reader at home, your place is already there.\n\nYOUR PLACE, TO THE LINE\n• Your position syncs both ways through PocketBook Cloud, to the line rather than the chapter.\n• If you read on the e-reader while the book is open here, {{name}} offers to catch up.\n• A stale sync never pulls your progress backwards.\n\nHIGHLIGHTS AND NOTES\n• Highlights and notes you add here appear on your e-reader, and the ones you make there appear here.\n• Ribbon bookmarks travel the same way.\n\niPHONE DUO AND iPAD\n• On iPhone Duo, {{name}} reads in every posture: folded as one page, open flat as a two-page spread, or half-open on a table.\n• Unfold in the middle of a chapter and the page opens into a two-page spread without losing your place.\n• Turn an iPad sideways and you get two pages side by side.\n\nON THE PAGE\n• Pages turn like paper, and jumping ahead riffles through the ones in between.\n• Six page colors, from Daylight and Linen to Dusk and Midnight. Let it follow your light and dark mode, and the page changes with it.\n• Downloaded books, and your place in each, stay on the device, so you can read on a plane.\n\nNO ACCOUNT? START READING ANYWAY\n• Seven classics, from Frankenstein to Emma, are one tap from your shelf.\n• Open your own EPUB files from the Files app.\n\nPRIVATE AND FREE\n• {{name}} is free. There are no ads, subscriptions or in-app purchases.\n• No tracking. Your books, notes and place go only to your own PocketBook Cloud account.\n• To fix what breaks, the app sends anonymous counts about downloads, syncs and how fast pages load. Never a title, a note or your email.\n• Your sign-in stays in this device's Keychain, only to sign you back in.\n\n{{name}} is an independent app. It is not made by, affiliated with, or endorsed by PocketBook International SA. PocketBook is a trademark of its owner.",
+      "whatsNew": null
+    }
+  },
+  "screenshots": {
+    "iphone-6.9": {
+      "displayType": "APP_IPHONE_67",
+      "sizes": [
+        [
+          1320,
+          2868
+        ],
+        [
+          1290,
+          2796
+        ]
+      ]
+    },
+    "iphone-6.3": {
+      "displayType": "APP_IPHONE_61",
+      "sizes": [
+        [
+          1206,
+          2622
+        ],
+        [
+          1179,
+          2556
+        ]
+      ]
+    },
+    "ipad-13": {
+      "displayType": "APP_IPAD_PRO_3GEN_129",
+      "sizes": [
+        [
+          2064,
+          2752
+        ],
+        [
+          2752,
+          2064
+        ]
+      ]
+    },
+    "duo-outer": {
+      "displayType": "APP_IPHONE_DUO",
+      "sizes": [
+        [
+          1398,
+          2034
+        ],
+        [
+          2007,
+          2853
+        ]
+      ]
+    }
+  }
+}
