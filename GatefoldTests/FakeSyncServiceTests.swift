@@ -221,7 +221,7 @@ import Testing
         let source = try #require(Bundle.main.url(forResource: "frankenstein", withExtension: "epub"))
         let copy = URL.temporaryDirectory.appending(path: "import-\(UUID().uuidString).epub")
         try FileManager.default.copyItem(at: source, to: copy)
-        let added = await store.importBooks(from: [copy])
+        let added = await store.importBooks(from: [copy]).added
         #expect(added.count == 1)
         #expect(added.first?.title.contains("Frankenstein") == true)
         #expect(added.first?.origin == .imported)
