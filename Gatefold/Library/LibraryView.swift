@@ -729,7 +729,8 @@ private struct PendingCover: View {
     }
 }
 
-private struct GeneratedCover: View {
+/// A cover made from a book's title and author, for a book without one: on the shelf, and in a catalog's rows.
+struct GeneratedCover: View {
     /// Muted cloth: slate, moss, umber, indigo and stone, a well-kept linen library.
     static let cloth: [UInt32] = [0x3E4A5C, 0x4E5D52, 0x5C5048, 0x46506A, 0x6A6460]
     let title: String
@@ -747,10 +748,12 @@ private struct GeneratedCover: View {
                     .font(.system(.headline, design: .serif))  // the one serif moment, like a colophon
                     .multilineTextAlignment(.center)
                     .minimumScaleFactor(0.6)
-                Text(author.uppercased())
-                    .font(.system(size: 9, weight: .medium))
-                    .tracking(1.2)
-                    .opacity(0.8)
+                if !author.isEmpty {
+                    Text(author.uppercased())
+                        .font(.system(size: 9, weight: .medium))
+                        .tracking(1.2)
+                        .opacity(0.8)
+                }
                 Rectangle().fill(.white.opacity(0.5)).frame(width: 30, height: 1)
             }
             .foregroundStyle(.white)

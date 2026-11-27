@@ -1,5 +1,6 @@
 import Foundation
 import GatefoldCloud
+import GatefoldCore
 import os
 import UIKit
 
@@ -175,6 +176,14 @@ final class GatefoldTelemetry: @unchecked Sendable {
         var p: [String: Value] = ["state": .string(name(of: state)), "has_cloud_copy": .bool(hasCloudCopy)]
         if let s = secondsDownloading { p["seconds_downloading"] = .int(bucket(s)) }
         return p
+    }
+
+    /// A catalog page's covers: how many of its books there are and how many the catalog gave a picture, or nil for
+    /// a page with no books. Counts only: never a title, address or picture.
+    static func coverProperties(_ page: [CatalogEntry]) -> [String: Value]? {
+        let books = page.filter { $0.epub != nil }
+        guard !books.isEmpty else { return nil }
+        return ["books": .int(books.count), "with_picture": .int(books.filter { ($0.thumbnail ?? $0.cover) != nil }.count)]
     }
 
     /// Books coming in from outside the Cloud: which source, and how many were new, already on the shelf, taken by a
