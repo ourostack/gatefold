@@ -178,9 +178,16 @@ jobs:
             git diff --name-only $range > compile.txt || : > compile.txt
             # A pull request that edits what orchestrates the macOS jobs (this workflow, the shards' workflow, the CI
             # scripts and actions) runs them: they would otherwise first run on main (scripts/ci-orchestration.py).
-            if [ "$EVENT" = pull_request ] && [ "$(python3 -I scripts/ci-orchestration.py compile.txt)" = yes ]; then
-              echo "::notice::This change edits what orchestrates the macOS jobs: they run on this pull request."
-              echo "native=true" >> "$GITHUB_OUTPUT"
+            # A change to the UI shard lists alone (a test class added to a shard, its timeout, the expect and times
+            # files) is a test change: `CI scripts, offline` checks the lists here and the class runs in its shard on
+            # main (gatefold#639: such pull requests ran every shard, 9,928 macOS min in one day).
+            if [ "$EVENT" = pull_request ]; then
+              if [ "$(python3 -I scripts/ci-orchestration.py compile.txt --base "$BASE" --head "$HEAD")" = yes ]; then
+                echo "::notice::This change edits what orchestrates the macOS jobs: they run on this pull request."
+                echo "native=true" >> "$GITHUB_OUTPUT"
+              elif [ "$(python3 -I scripts/ci-orchestration.py compile.txt)" = yes ]; then
+                echo "::notice::Only the UI shard lists changed: CI scripts, offline checks them, and their tests run in their shards on main."
+              fi
             fi
             nobuild='^([^/]+\.md|(docs|changelog\.d|distribution|screenshots|tools|GatefoldListingShots|scripts|\.github/scripts)/.+|\.github/workflows/[^/]+|\.github/[^/]+)$'
             if [ -s compile.txt ] && ! grep -qvE "$nobuild" compile.txt && ! grep -qxF .github/workflows/app.yml compile.txt; then
