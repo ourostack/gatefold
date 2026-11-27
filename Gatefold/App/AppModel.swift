@@ -8,6 +8,8 @@ import SwiftUI
 final class AppModel {
     let sync: any SyncService
     let library: LibraryStore
+    /// The OPDS catalogs to browse for books.
+    let catalogs: CatalogShelf
     private(set) var account: CloudAccount? {
         didSet {
             guard hasStarted || account != nil else { return }
@@ -57,8 +59,9 @@ final class AppModel {
 
     /// Books handed to Gatefold: chosen in Files, opened in it from another app, or dropped on the shelf.
     /// Opening a book in Gatefold before the welcome means reading without an account: the welcome steps aside.
-    func receive(_ urls: [URL], source: LibraryBook.Source) async {
-        guard !urls.isEmpty else { return }
+    @discardableResult
+    func receive(_ urls: [URL], source: LibraryBook.Source) async -> LibraryStore.ImportResult {
+        guard !urls.isEmpty else { return .init() }
         if !hasOnboarded { hasOnboarded = true }
         let result = await library.importBooks(from: urls, source: source)
         // A shared file arrives in Documents/Inbox, and a drop in tmp: once taken, those copies go.
@@ -72,6 +75,7 @@ final class AppModel {
             library.lastError = "No books came aboard. Gatefold found no EPUB books there."
         }
         lastArrival = Arrival(result: result)
+        return result
     }
 
     /// The copy iOS made for Gatefold (Documents/Inbox) or a drop kept under tmp, never the person's own file.
@@ -117,7 +121,8 @@ final class AppModel {
         let service = sync ?? Self.makeSyncService()
         self.sync = service
         self.library = LibraryStore(sync: service, root: libraryRoot)
-        if LaunchOptions.resetState { library.wipe() }
+        self.catalogs = CatalogShelf(root: libraryRoot)
+        if LaunchOptions.resetState { library.wipe(); catalogs.forgetAll() }
         LibraryView.startedEmpty = library.books.isEmpty
 
         var prefs = UserDefaults.standard.data(forKey: Keys.preferences)

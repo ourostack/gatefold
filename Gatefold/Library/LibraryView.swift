@@ -13,6 +13,9 @@ struct LibraryView: View {
     @State private var importing = false
     @State private var importedCount = 0
     @State private var appleBooksGuide = false
+    @State private var browsingCatalogs = false
+    /// A book got from a catalog, to open once the catalogs have closed.
+    @State private var readAfterCatalogs: LibraryBook?
     /// The last arrival the shelf has spoken of, so one is never announced twice.
     @State private var announced: UUID?
     /// A drop of books hovering over the shelf.
@@ -188,6 +191,15 @@ struct LibraryView: View {
             // A book opened in Gatefold at launch can arrive before the shelf is up to hear of it.
             .onAppear { announce(app.lastArrival) }
             .sensoryFeedback(.success, trigger: importedCount)
+            .sheet(isPresented: $browsingCatalogs, onDismiss: {
+                if let book = readAfterCatalogs { readAfterCatalogs = nil; onOpen(book) }
+            }) {
+                CatalogsView(shelf: app.catalogs, onRead: { book in
+                    readAfterCatalogs = book
+                    browsingCatalogs = false
+                }, onDone: { browsingCatalogs = false })
+                .ouroTheme(.gatefold)
+            }
             .ouroSheet(isPresented: $appleBooksGuide, title: "Books from Apple Books", detents: [.large]) {
                 AppleBooksGuide()
             } footer: {
@@ -244,6 +256,8 @@ struct LibraryView: View {
             Menu {
                 Button("Choose from Files", systemImage: "folder") { importing = true }
                     .accessibilityIdentifier("library.import.files")
+                Button("Browse Catalogs", systemImage: "globe") { browsingCatalogs = true }
+                    .accessibilityIdentifier("library.import.catalogs")
                 Button("From Apple Books", systemImage: "book") { appleBooksGuide = true }
                     .accessibilityIdentifier("library.import.appleBooks")
             } label: {
