@@ -145,7 +145,7 @@ struct CatalogFeedView: View {
     private func row(_ entry: CatalogEntry) -> some View {
         if let epub = entry.epub {
             OuroItem(entry.title, description: entry.author ?? entry.summary, variant: .outline, mediaSize: .sm) {
-                CatalogCover(url: entry.thumbnail ?? entry.cover)
+                CatalogCover(entry: entry, credential: credential, client: client)
             } actions: {
                 if let bookID = aboard[entry.id] {
                     OuroButton("Read", variant: .outline, size: .sm) { if let book = app.library.book(bookID) { onRead(book) } }
@@ -227,8 +227,11 @@ struct CatalogFeedView: View {
 }
 
 /// A book's cover from the catalog, small, while it loads a quiet tile.
-private struct CatalogCover: View {
-    let url: URL?
+struct CatalogCover: View {
+    let entry: CatalogEntry
+    var credential: CatalogClient.Credential?
+    var client = CatalogClient()
+    private var url: URL? { entry.thumbnail ?? entry.cover }
 
     var body: some View {
         AsyncImage(url: url) { image in
