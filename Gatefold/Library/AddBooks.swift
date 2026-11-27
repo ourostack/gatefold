@@ -55,6 +55,21 @@ struct ArrivalWords: Equatable {
         if added > 0, here > 0 { description = here == 1 ? "1 was already here." : "\(here) were already here." }
     }
 
+    /// A folder has just been watched: say so even when it held no books yet.
+    static func watching(_ folder: String, result: LibraryStore.ImportResult) -> ArrivalWords {
+        let added = result.added.count
+        var words = ArrivalWords(message: "Watching “\(folder)”", description: nil, bookID: nil)
+        let later = "Books you put in it later join your shelf."
+        words.description = added == 0 ? "No books in it yet. \(later)" : (added == 1 ? "1 book came aboard. \(later)" : "\(added) books came aboard. \(later)")
+        return words
+    }
+
+    init(message: String, description: String?, bookID: String?) {
+        self.message = message
+        self.description = description
+        self.bookID = bookID
+    }
+
     static var device: String { UIDevice.current.userInterfaceIdiom == .pad ? "iPad" : "iPhone" }
 }
 

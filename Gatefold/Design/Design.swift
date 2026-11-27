@@ -60,6 +60,19 @@ extension View {
     }
 }
 
+/// A square button's or badge's squircle, never a circle (Ari, 2026-11-20: "squircle ONLY"). A continuous corner
+/// reaches 1.528 times its radius along each edge, so one of half the side closes the square into a circle; this one
+/// reaches half the side, as web's `corner-shape: squircle` box does (Ouro UI for Apple's `OuroChoiceMetrics.boxRadius`).
+struct Squircle: Shape {
+    static let continuousCornerReach: CGFloat = 1.528
+    /// The corner radius of a squircle `side` points square.
+    static func radius(side: CGFloat) -> CGFloat { side / 2 / continuousCornerReach }
+
+    func path(in rect: CGRect) -> Path {
+        RoundedRectangle(cornerRadius: Self.radius(side: min(rect.width, rect.height)), style: .continuous).path(in: rect)
+    }
+}
+
 extension Font {
     /// Chrome titles: SF, like the rest of the room. Serif lives in the book.
     static func display(_ style: Font.TextStyle, weight: Font.Weight = .bold) -> Font {

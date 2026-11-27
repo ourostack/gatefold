@@ -273,7 +273,7 @@ struct Scrubber: View {
                     Capsule(style: .continuous).fill(.secondary.opacity(0.5)).frame(width: 1.5, height: 7)
                         .offset(x: width * tick - 0.75)
                 }
-                Circle()
+                Circle() // round: a slider's thumb, one of Ouro's round things
                     .fill(model.theme.accent)
                     .frame(width: dragging == nil ? 12 : 18, height: dragging == nil ? 12 : 18)
                     .shadow(color: .black.opacity(0.2), radius: 2, y: 1)

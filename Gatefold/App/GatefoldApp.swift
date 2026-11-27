@@ -93,7 +93,11 @@ struct GatefoldApp: App {
                 }
                 finish.task = task
                 Task {
+                    // The watched folder's places file too: a write still waiting for the page to rest
+                    // would otherwise land only if iOS let Gatefold run that long.
+                    async let folder: Void = app.folder.writeNow()
                     await app.sendPlaceNow(trigger: .background)
+                    await folder
                     finish.end()
                 }
             default:
