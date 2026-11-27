@@ -188,7 +188,7 @@ struct LibraryView: View {
             // A book opened in Gatefold at launch can arrive before the shelf is up to hear of it.
             .onAppear { announce(app.lastArrival) }
             .sensoryFeedback(.success, trigger: importedCount)
-            .ouroSheet(isPresented: $appleBooksGuide, title: "Books from Apple Books") {
+            .ouroSheet(isPresented: $appleBooksGuide, title: "Books from Apple Books", detents: [.large]) {
                 AppleBooksGuide()
             } footer: {
                 OuroButton("Choose from Files", systemImage: "folder", size: .lg, fullWidth: true) { appleBooksGuide = false; importing = true }
