@@ -1,0 +1,28 @@
+<?xml version='1.0' encoding='utf-8'?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/terms/" xmlns:opds="http://opds-spec.org/2010/catalog">
+  <title>calibre Library</title>
+  <author>
+    <name>calibre</name>
+    <uri>https://calibre-ebook.com</uri>
+  </author>
+  <id>calibre-library:Calibre_Library</id>
+  <icon>/favicon.png</icon>
+  <updated>2026-11-27T12:00:00+00:00</updated>
+  <link rel="search" title="Search" href="/opds/search/{searchTerms}?library_id=Calibre_Library" type="application/atom+xml"/>
+  <link rel="start" title="Start" href="/opds?library_id=Calibre_Library" type="application/atom+xml;type=feed;profile=opds-catalog;kind=navigation"/>
+  <subtitle>Books in your library</subtitle>
+  <entry>
+    <title>By Newest</title>
+    <id>calibre-navcatalog:1b1e3f9b5d3c7f1a2a8e8c3f0b8e8c3f0b8e8c3f</id>
+    <updated>2026-11-27T12:00:00+00:00</updated>
+    <content type="text">Books sorted by Newest</content>
+    <link href="/opds/navcatalog/4f6e6577657374?library_id=Calibre_Library" type="application/atom+xml;type=feed;profile=opds-catalog;kind=navigation"/>
+  </entry>
+  <entry>
+    <title>By Authors</title>
+    <id>calibre-navcatalog:9c5f5a8d1e2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d</id>
+    <updated>2026-11-27T12:00:00+00:00</updated>
+    <content type="text">Books sorted by Authors</content>
+    <link href="/opds/navcatalog/4f617574686f7273?library_id=Calibre_Library" type="application/atom+xml;type=feed;profile=opds-catalog;kind=navigation"/>
+  </entry>
+</feed>

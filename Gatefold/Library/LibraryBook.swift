@@ -16,6 +16,8 @@ struct LibraryBook: Identifiable, Codable, Equatable {
         case shared
         /// Dropped on the shelf (iPad, or a Mac).
         case dropped
+        /// Got from an OPDS catalog (`CatalogsView`).
+        case catalog
     }
 
     var id: String
@@ -57,6 +59,7 @@ struct LibraryBook: Identifiable, Codable, Equatable {
         guard origin == .imported else { return "New" }
         switch source {
         case .files: return "From Files"
+        case .catalog: return "From a catalog"
         case .shared, .dropped, nil: return "Added"
         }
     }

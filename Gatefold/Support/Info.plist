@@ -78,6 +78,13 @@
 	<false/>
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.books</string>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Gatefold reaches the book catalogs you add on your own network, such as a calibre library at home.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

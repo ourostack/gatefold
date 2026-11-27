@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:opds="http://opds-spec.org/2010/catalog" xmlns:pse="http://vaemendis.net/opds-pse/ns" xmlns:opensearch="http://a9.com/-/spec/opensearch/1.1/">
+  <id>latestBooks</id>
+  <title>Latest books</title>
+  <updated>2026-11-27T12:00:00Z</updated>
+  <author>
+    <name>Komga</name>
+    <uri>https://github.com/gotson/komga</uri>
+  </author>
+  <link type="application/atom+xml;profile=opds-catalog;kind=navigation" rel="self" href="https://komga.example/opds/v1.2/books/latest"/>
+  <link type="application/atom+xml;profile=opds-catalog;kind=navigation" rel="start" href="https://komga.example/opds/v1.2/catalog"/>
+  <link type="application/opensearchdescription+xml" rel="search" href="https://komga.example/opds/v1.2/search"/>
+  <link type="application/atom+xml;profile=opds-catalog;kind=navigation" rel="previous" href="https://komga.example/opds/v1.2/books/latest?page=0"/>
+  <link type="application/atom+xml;profile=opds-catalog;kind=navigation" rel="next" href="https://komga.example/opds/v1.2/books/latest?page=2"/>
+  <entry>
+    <title>Moby-Dick - Moby-Dick; or, The Whale</title>
+    <updated>2026-11-26T08:00:00Z</updated>
+    <id>0A1B2C3D4E5F6</id>
+    <content>epub - 1.2 MiB</content>
+    <author>
+      <name>Herman Melville</name>
+    </author>
+    <link type="image/jpeg" rel="http://opds-spec.org/image/thumbnail" href="https://komga.example/opds/v1.2/books/0A1B2C3D4E5F6/thumbnail/small"/>
+    <link type="image/jpeg" rel="http://opds-spec.org/image" href="https://komga.example/opds/v1.2/books/0A1B2C3D4E5F6/thumbnail"/>
+    <link type="application/epub+zip" rel="http://opds-spec.org/acquisition" href="https://komga.example/opds/v1.2/books/0A1B2C3D4E5F6/file/Moby-Dick.epub"/>
+  </entry>
+  <entry>
+    <title>Krazy Kat - 1916</title>
+    <updated>2026-11-25T08:00:00Z</updated>
+    <id>0F9E8D7C6B5A4</id>
+    <content>cbz - 88.3 MiB</content>
+    <author>
+      <name>George Herriman</name>
+    </author>
+    <link type="image/jpeg" rel="http://opds-spec.org/image/thumbnail" href="https://komga.example/opds/v1.2/books/0F9E8D7C6B5A4/thumbnail/small"/>
+    <link type="image/jpeg" rel="http://opds-spec.org/image" href="https://komga.example/opds/v1.2/books/0F9E8D7C6B5A4/thumbnail"/>
+    <link type="application/zip" rel="http://opds-spec.org/acquisition" href="https://komga.example/opds/v1.2/books/0F9E8D7C6B5A4/file/Krazy%20Kat%201916.cbz"/>
+    <link type="image/jpeg" rel="http://vaemendis.net/opds-pse/stream" href="https://komga.example/opds/v1.2/books/0F9E8D7C6B5A4/pages/{pageNumber}" pse:count="120"/>
+  </entry>
+</feed>
