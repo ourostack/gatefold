@@ -298,6 +298,8 @@ enum LaunchOptions {
     /// UI tests: the shelf's on-device count never opens the book asked for, as it failed to on CI (gatefold#432), so
     /// only the library's word that the book landed can open it (`AskedBookOpensUITests`).
     static var missCountOpen: Bool { defaults.bool(forKey: "GatefoldMissCountOpen") }
+    /// Fake Cloud only: each download takes this many seconds (a download under way, for tests and screenshots).
+    static var downloadSeconds: Double? { defaults.object(forKey: "GatefoldDownloadSeconds") == nil ? nil : defaults.double(forKey: "GatefoldDownloadSeconds") }
     static var sheet: String? { defaults.string(forKey: "GatefoldSheet") }
     /// Screenshots and UI tests: switch the forced posture to `GatefoldFlipTo` (default spread) after
     /// this many seconds, and back after `GatefoldFlipBackAfter` more, to film the unfold.

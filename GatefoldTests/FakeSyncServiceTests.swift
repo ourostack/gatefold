@@ -119,6 +119,72 @@ import Testing
         #expect(heard.last == "gutenberg-emma")
     }
 
+    // Each of these downloads a book of its own: tests run side by side, and the fake Cloud copies a book to one place.
+
+    /// One tap on a book in the Cloud reads it (Ari, 2026-11-27): it downloads, telling the shelf how far it has
+    /// got, and asks to open as it lands while the shelf is in front.
+    @Test func oneTapDownloadsWithProgressAndAsksToOpen() async throws {
+        let root = URL.temporaryDirectory.appending(path: "library-tests-\(UUID().uuidString)")
+        let store = LibraryStore(sync: FakeSyncService(signedIn: true, latency: .zero, downloadTime: .milliseconds(500)), root: root)
+        store.shelfInFront = { true }
+        await store.refresh()
+        let book = try #require(store.book("gutenberg-alice-in-wonderland"))
+        store.tapToRead(book)
+        #expect(store.state(of: book) == .downloading)
+        var fractions: [Double] = []
+        for _ in 0..<200 {
+            if store.openRequest != nil { break }
+            if let f = store.downloadProgress[book.id], fractions.last != f { fractions.append(f) }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(store.openRequest == book.id)
+        #expect(fractions.contains { $0 > 0 && $0 < 1 }, "a fraction on the way: \(fractions)")
+        #expect(store.downloadProgress[book.id] == nil, "nothing left over once it landed")
+        #expect(!store.isReady(book))
+    }
+
+    /// Something over the shelf as it lands (the reader, a sheet): it doesn't open over it, it waits Ready.
+    @Test func aBookThatLandsWhileHeIsElsewhereWaitsReady() async throws {
+        let (store, _) = makeStore()
+        store.shelfInFront = { true }
+        await store.refresh()
+        let book = try #require(store.book("gutenberg-sherlock-holmes"))
+        store.tapToRead(book)
+        store.leftShelf()
+        // The shelf's own copy: the one in hand was taken before the download.
+        func now() -> DownloadState { store.state(of: store.book(book.id) ?? book) }
+        for _ in 0..<200 {
+            if now() == .onDevice { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(now() == .onDevice, "landed: \(now())")
+        #expect(store.openRequest == nil)
+        #expect(store.isReady(book))
+        store.noteOpened(try #require(store.book(book.id)))
+        #expect(!store.isReady(book))
+    }
+
+    /// Stopping a download puts the book back in the Cloud at once, with no error, and nothing opens.
+    @Test func stoppingADownloadPutsItBackInTheCloud() async throws {
+        let root = URL.temporaryDirectory.appending(path: "library-tests-\(UUID().uuidString)")
+        let store = LibraryStore(sync: FakeSyncService(signedIn: true, latency: .zero, downloadTime: .seconds(30)), root: root)
+        store.shelfInFront = { true }
+        await store.refresh()
+        let book = try #require(store.book("gutenberg-the-great-gatsby"))
+        store.tapToRead(book)
+        try await Task.sleep(for: .milliseconds(50))
+        store.stopDownload(book)
+        #expect(store.state(of: book) == .cloudOnly)
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(store.state(of: book) == .cloudOnly, "no failure arrives after the stop")
+        #expect(store.openRequest == nil)
+        #expect(store.book(book.id)?.isOnDevice == false)
+        // A tap after the stop downloads it again.
+        store.tapToRead(book)
+        #expect(store.state(of: book) == .downloading)
+        store.stopDownload(book)
+    }
+
     @Test func recordingAPlaceMovesTheBookToReadingNow() async throws {
         let (store, _) = makeStore()
         await store.refresh()

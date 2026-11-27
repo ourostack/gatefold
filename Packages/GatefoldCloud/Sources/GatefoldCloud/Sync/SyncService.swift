@@ -19,6 +19,8 @@ public protocol SyncService: Sendable {
     func library() async throws -> [CloudBook]
     /// A verified local copy in the app container.
     func download(_ book: CloudBook) async throws -> URL
+    /// As `download(_:)`, telling `progress` how far it has got where the transfer can say.
+    func download(_ book: CloudBook, progress: DownloadProgress?) async throws -> URL
     func upload(fileAt url: URL) async throws -> CloudBook
     func delete(_ book: CloudBook) async throws
 
@@ -69,5 +71,12 @@ final class ChangeBroadcaster: @unchecked Sendable {
 
     func emit(_ change: CloudChange) {
         for continuation in lock.withLock({ Array(continuations.values) }) { continuation.yield(change) }
+    }
+}
+
+extension SyncService {
+    /// A service that can't tell how far a download has got says nothing until it is done.
+    public func download(_ book: CloudBook, progress: DownloadProgress?) async throws -> URL {
+        try await download(book)
     }
 }
