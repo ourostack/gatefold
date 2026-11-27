@@ -1462,8 +1462,9 @@ final class ReaderModel {
     private(set) var underlineProbe = ""
     @ObservationIgnored private var underlineWatch: Task<Void, Never>?
 
-    /// UI tests (`reader.jumpLanding`): whether the newest search jump's veil lifted onto the page it shows half a second
-    /// after it landed, or the page moved again after the veil had lifted (gatefold#653).
+    /// UI tests (`reader.jumpLanding`): whether the newest search jump's veil lifted onto its match's page and that page
+    /// still shows half a second after it landed; or the page moved again after the veil had lifted, or the veil lifted
+    /// onto a page without the match (gatefold#653).
     private(set) var jumpLandingProbe = ""
 
     private func watchUnderline() {
@@ -1968,9 +1969,14 @@ final class ReaderModel {
     /// page (forced ready, no picture over it), moving it now would jump a page he can see, so his place
     /// is offered as a Jump instead (build 21 on a starved iPad: forced at 25.3 s, moved 0.5 s later).
     /// `his`: his steps when the landing began; a swipe of his since (no move counted) ends it too.
+    /// The words `settle` looks for on screen: the start of the locator's quote, nil when it is too short to tell.
+    static func settleProbe(_ locator: Locator) -> String? {
+        guard let words = locator.text.highlight.map(ReaderJS.normalize), words.count >= 8 else { return nil }
+        return String(words.prefix(24))
+    }
+
     private func settle(on locator: Locator, move: Int, his: Int? = nil, loaded: Bool = false, offerOnceInView: Bool = false) async {
-        guard let words = locator.text.highlight.map(ReaderJS.normalize), words.count >= 8 else { return }
-        let probe = String(words.prefix(24))
+        guard let words = locator.text.highlight.map(ReaderJS.normalize), let probe = Self.settleProbe(locator) else { return }
         func current() -> Bool { moves == move && his.map { hisSteps == $0 } != false && !isClosed }
         let t0 = ContinuousClock.now
         for round in 0..<4 {
@@ -3746,7 +3752,9 @@ final class ReaderModel {
                 try? await Task.sleep(for: .milliseconds(500))
                 guard let self, self.moves == move, !self.isClosed else { return }
                 let now = await self.page?.visibleRange()?.text
-                self.jumpLandingProbe = "search: " + (lifted == now ? "lifted on its page" : "moved after the veil lifted")
+                let onMatch = Self.settleProbe(Self.matchInContext(locator)).map { ReaderJS.normalize(lifted).contains($0) } ?? true
+                self.jumpLandingProbe = "search: " + (!onMatch ? "lifted off its match"
+                    : lifted == now ? "lifted on its page" : "moved after the veil lifted")
             }
         }
     }
