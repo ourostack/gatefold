@@ -267,4 +267,25 @@ final class DuoLayoutUITests: XCTestCase {
         let later = el("reader.underline").value as? String ?? ""
         XCTAssertGreaterThan(Int(later.split(separator: " ").last ?? "") ?? 0, 0, "the match's mark went while he was still on its page (\(later))")
     }
+
+    /// A search lands on its match's page in one move: the veil lifts onto that page and nothing moves after it
+    /// (gatefold#653). Into another chapter, the veil lifted onto the page Readium guessed by progression, the old page
+    /// and that one drawn at once as it faded, and the page then jumped on to the match: three pages for one tap. The
+    /// app says which happened (`reader.jumpLanding`, the words in view as the veil lifted against those in view once
+    /// the match is marked; the probe never shows the words).
+    func testASearchLandsOnItsMatchInOneMove() {
+        open(["-GatefoldSheet", "search"])
+        let field = app.searchFields.firstMatch
+        XCTAssertTrue(readsUntil(reads: 300) { field.exists }.ok, "Search opened")
+        field.tap()
+        field.typeText("Darcy")
+        let result = app.buttons["search.result"].firstMatch
+        XCTAssertTrue(readsUntil(reads: 300) { result.exists }.ok, "a result")
+        result.tap()
+        let landing = el("reader.jumpLanding")
+        let landed = readsUntil(reads: 600) { (landing.value as? String ?? "").hasPrefix("search: ") }
+        shot("search-landed-once")
+        XCTAssertTrue(landed.ok, "the search jump landed and marked its match (\(landed.reads) reads)")
+        XCTAssertEqual(landing.value as? String, "search: lifted on its page", "the veil lifted onto the match's own page")
+    }
 }
