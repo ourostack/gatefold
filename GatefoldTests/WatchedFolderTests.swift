@@ -13,16 +13,22 @@ import Testing
         let store: LibraryStore
         let folder: WatchedFolder
         let root: URL
-        let defaults: UserDefaults
     }
 
-    private func device(_ name: String = "iPhone", root: URL? = nil, defaults: UserDefaults? = nil) -> Device {
+    private func device(_ name: String = "iPhone", root: URL? = nil) -> Device {
         let root = root ?? URL.temporaryDirectory.appending(path: "folder-tests-\(UUID().uuidString)")
-        let defaults = defaults ?? UserDefaults(suiteName: "folder-tests-\(UUID().uuidString)")!
         let store = LibraryStore(sync: FakeSyncService(signedIn: false, latency: .zero), root: root)
-        let folder = WatchedFolder(library: store, root: root, defaults: defaults, deviceName: name)
+        let folder = WatchedFolder(library: store, root: root, deviceName: name)
         folder.writeDelay = .zero
-        return Device(store: store, folder: folder, root: root, defaults: defaults)
+        return Device(store: store, folder: folder, root: root)
+    }
+
+    /// Makes `url` unreadable for the rest of `body`, the way a folder iCloud Drive can't reach answers.
+    private func unreadable<T>(_ url: URL, _ body: () async throws -> T) async rethrows -> T {
+        let before = try? FileManager.default.attributesOfItem(atPath: url.path)[.posixPermissions]
+        try? FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: url.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: before ?? 0o755], ofItemAtPath: url.path) }
+        return try await body()
     }
 
     private func shared() throws -> URL {
@@ -71,13 +77,65 @@ import Testing
         try put("emma", in: dir)
         try await first.folder.watch(dir)
 
-        let relaunched = device(root: first.root, defaults: first.defaults)
+        let relaunched = device(root: first.root)
         #expect(relaunched.folder.name == dir.lastPathComponent)
         #expect(relaunched.folder.deviceID == first.folder.deviceID)
         try put("moby-dick", in: dir)
         let look = await relaunched.folder.look()
         #expect(!relaunched.folder.isUnreachable)
         #expect(look.added.count == 1) // only the new one: Emma was already looked at
+        #expect(look.alreadyHere.isEmpty)
+    }
+
+    @Test func theDeviceIDNeverTravelsInABackup() throws {
+        let phone = device()
+        let file = phone.root.appending(path: WatchedFolder.deviceIDFile)
+        #expect(try String(contentsOf: file, encoding: .utf8) == phone.folder.deviceID)
+        // A backup restored to a new iPhone would otherwise make two devices write one places file.
+        #expect(try file.resourceValues(forKeys: [.isExcludedFromBackupKey]).isExcludedFromBackup == true)
+        #expect(device(root: phone.root).folder.deviceID == phone.folder.deviceID)
+        #expect(device().folder.deviceID != phone.folder.deviceID)
+    }
+
+    @Test func aFolderThatCantBeReadKeepsWhatItKnew() async throws {
+        let phone = device()
+        let dir = try shared()
+        try put("emma", in: dir)
+        try await phone.folder.watch(dir)
+        let look = await unreadable(dir) { await phone.folder.look() }
+        #expect(look == LibraryStore.ImportResult())
+        #expect(phone.folder.isUnreachable)
+        // Reachable again: nothing is read twice, since nothing was forgotten.
+        let again = await phone.folder.look()
+        #expect(!phone.folder.isUnreachable)
+        #expect(again == LibraryStore.ImportResult())
+        #expect(phone.folder.folderDigests.count == 1)
+    }
+
+    @Test func aBookThatCouldntBeReadIsTriedAgainAtTheNextLook() async throws {
+        let phone = device()
+        let dir = try shared()
+        try put("emma", in: dir)
+        let emma = dir.appending(path: "emma.epub")
+        let first = try await unreadable(emma) { try await phone.folder.watch(dir) }
+        #expect(first.added.isEmpty)
+        // Same size and date as before (iCloud Drive finished downloading it, say): read now all the same.
+        let later = await phone.folder.look()
+        #expect(later.added.count == 1)
+    }
+
+    @Test func stoppingWhileAFolderIsBeingLookedInStaysStopped() async throws {
+        let phone = device()
+        let dir = try shared()
+        try put("emma", in: dir)
+        try await phone.folder.watch(dir)
+        try put("dracula", in: dir)
+        let look = Task { await phone.folder.look() }
+        while !phone.folder.isLooking { await Task.yield() }
+        phone.folder.stopWatching()
+        _ = await look.value
+        #expect(phone.folder.name == nil)
+        #expect(device(root: phone.root).folder.name == nil)
     }
 
     @Test func twoDevicesTradePlacesThroughTheFolderAndEachWritesOnlyItsOwnFile() async throws {
@@ -135,6 +193,86 @@ import Testing
         #expect(phone.store.book(onPhone.id)?.locatorJSON == locator(0.1))
     }
 
+    @Test func aStaleOpenBookElsewhereNeverSendsTheReaderBack() async throws {
+        let phone = device("iPhone"), pad = device("iPad")
+        let dir = try shared()
+        try put("emma", in: dir)
+        try await phone.folder.watch(dir)
+        try await pad.folder.watch(dir)
+        let onPhone = try #require(phone.store.books.first), onPad = try #require(pad.store.books.first)
+        // Both on the same page to begin with.
+        pad.store.recordPlace(bookID: onPad.id, locatorJSON: locator(0.1), totalProgression: 0.1, progression: 0, at: t0)
+        await pad.folder.look()
+        await phone.folder.look()
+        #expect(phone.store.book(onPhone.id)?.locatorJSON == locator(0.1))
+
+        // The iPad has Emma open on that page. On the iPhone, he reads on to half way.
+        pad.folder.openBookID = { onPad.id }
+        phone.store.recordPlace(bookID: onPhone.id, locatorJSON: locator(0.5), totalProgression: 0.5, progression: 0, at: t0.addingTimeInterval(600))
+        await phone.folder.look()
+        await pad.folder.look()
+        #expect(pad.store.book(onPad.id)?.locatorJSON == locator(0.1)) // never moved under the reader
+
+        // Picking up the iPad, he turns one page there before closing it: newer, but further back.
+        pad.store.recordPlace(bookID: onPad.id, locatorJSON: locator(0.11), totalProgression: 0.11, progression: 0, at: t0.addingTimeInterval(1200))
+        await pad.folder.writeNow()
+        await phone.folder.look()
+        #expect(phone.store.book(onPhone.id)?.locatorJSON == locator(0.5))
+
+        // Closed, the iPad's next look catches it up to the iPhone.
+        pad.folder.openBookID = { nil }
+        await pad.folder.look()
+        #expect(pad.store.book(onPad.id)?.locatorJSON == locator(0.5))
+    }
+
+    @Test func goingBackToRereadOnOneDeviceReachesTheOther() async throws {
+        let phone = device("iPhone"), pad = device("iPad")
+        let dir = try shared()
+        try put("emma", in: dir)
+        try await phone.folder.watch(dir)
+        try await pad.folder.watch(dir)
+        let onPhone = try #require(phone.store.books.first), onPad = try #require(pad.store.books.first)
+        phone.store.recordPlace(bookID: onPhone.id, locatorJSON: locator(0.6), totalProgression: 0.6, progression: 0, at: t0)
+        await phone.folder.look()
+        await pad.folder.look()
+        #expect(pad.store.book(onPad.id)?.locatorJSON == locator(0.6))
+        pad.store.recordPlace(bookID: onPad.id, locatorJSON: locator(0.2), totalProgression: 0.2, progression: 0, at: t0.addingTimeInterval(600))
+        await pad.folder.look()
+        await phone.folder.look()
+        #expect(phone.store.book(onPhone.id)?.locatorJSON == locator(0.2))
+    }
+
+    @Test func thePlacesFileIsWrittenOnlyWhenAPlaceChanged() async throws {
+        let phone = device()
+        let dir = try shared()
+        try put("emma", in: dir)
+        try await phone.folder.watch(dir)
+        let book = try #require(phone.store.books.first)
+        phone.store.recordPlace(bookID: book.id, locatorJSON: locator(0.4), totalProgression: 0.4, progression: 0, at: t0)
+        await phone.folder.look()
+        let file = dir.appending(path: FolderPlaces.directory).appending(path: FolderPlaces.fileName(deviceID: phone.folder.deviceID))
+        let written = try #require(try file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate)
+        try await Task.sleep(for: .milliseconds(1100))
+        await phone.folder.look()
+        var fresh = file
+        fresh.removeAllCachedResourceValues()
+        #expect(try fresh.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate == written)
+    }
+
+    @Test func aPlaceStillWaitingIsWrittenWhenGatefoldLeaves() async throws {
+        let phone = device()
+        phone.folder.writeDelay = .seconds(600)
+        let dir = try shared()
+        try put("emma", in: dir)
+        try await phone.folder.watch(dir)
+        let book = try #require(phone.store.books.first)
+        phone.store.onPlaceRecorded = { [weak folder = phone.folder] id in folder?.placeChanged(id) }
+        phone.store.recordPlace(bookID: book.id, locatorJSON: locator(0.7), totalProgression: 0.7, progression: 0, at: t0)
+        await phone.folder.writeNow()
+        let file = dir.appending(path: FolderPlaces.directory).appending(path: FolderPlaces.fileName(deviceID: phone.folder.deviceID))
+        #expect(try FolderPlaces.decode(Data(contentsOf: file)).places.values.map(\.locator) == [locator(0.7)])
+    }
+
     @Test func aTurnedPageReachesTheFolderOnceThePageRests() async throws {
         let phone = device()
         let dir = try shared()
@@ -160,7 +298,7 @@ import Testing
         #expect(phone.store.books.count == 1)
         #expect(FileManager.default.fileExists(atPath: dir.appending(path: "emma.epub").path))
         #expect(await phone.folder.look() == LibraryStore.ImportResult())
-        #expect(device(root: phone.root, defaults: phone.defaults).folder.name == nil)
+        #expect(device(root: phone.root).folder.name == nil)
     }
 
     @Test func whatTheShelfSaysWhenAFolderIsWatched() {

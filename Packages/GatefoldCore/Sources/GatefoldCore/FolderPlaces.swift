@@ -75,13 +75,57 @@ public enum FolderPlaces {
         return out
     }
 
-    /// The folder's place, when it is newer than the place here; nil to leave this device's own alone.
-    public static func take(_ remote: FolderPlace?, overLocalUpdated local: Date?, localProgression: Double) -> FolderPlace? {
-        guard let remote else { return nil }
-        guard let local else { return remote }
-        // ISO 8601 keeps whole seconds: a place this device wrote comes back a fraction older, never newer.
-        return remote.updated.timeIntervalSince(local) >= 1 ? remote : nil
+    /// What to do with the newest place another device left for a book. Each device keeps a mark of what
+    /// it last settled: the other devices' newest place then, and its own place's time just after.
+    ///
+    /// - Only the other device moved since: its place is taken, even going back (rereading is a place too).
+    /// - Only this device moved: its own place stays.
+    /// - Both moved: the place further on wins. One of them read on while the other had the book open on
+    ///   an old page; going by time alone, one page turned there would send the reader back here.
+    /// - Nothing settled yet: the newer place wins.
+    public static func settle(_ remote: FolderPlace?, localUpdated local: Date?, localProgression: Double, mark: FolderSyncMark?) -> FolderSettlement {
+        guard let remote else { return .keepLocal }
+        guard let mark else {
+            guard let local else { return .takeRemote(remote) }
+            // ISO 8601 keeps whole seconds: a place this device wrote comes back a fraction older, never newer.
+            return remote.updated.timeIntervalSince(local) >= 1 ? .takeRemote(remote) : .keepLocal
+        }
+        let remoteMoved = mark.remote.map { remote.updated > $0 } ?? true
+        let localMoved = local.map { now in mark.local.map { now > $0 } ?? true } ?? false
+        switch (remoteMoved, localMoved) {
+        case (false, _): return .keepLocal
+        case (true, false): return .takeRemote(remote)
+        case (true, true): return remote.progression > localProgression ? .takeRemote(remote) : .keepLocal
+        }
     }
+
+    /// The places file a folder listing names: the file itself, or the placeholder iCloud Drive lists
+    /// in its place (".places-X.json.icloud") while the file isn't downloaded yet; nil for anything else.
+    public static func placesFile(listedAs name: String) -> String? {
+        var real = name
+        if name.hasPrefix("."), name.hasSuffix(".icloud") {
+            real = String(name.dropFirst().dropLast(".icloud".count))
+        }
+        return deviceID(fromFileName: real) == nil ? nil : real
+    }
+}
+
+/// What a device last settled with the folder for one book (`FolderPlaces.settle`).
+public struct FolderSyncMark: Codable, Equatable, Sendable {
+    /// The newest place another device had left then; nil when there was none.
+    public var remote: Date?
+    /// This device's own place's time just after; nil when it had none.
+    public var local: Date?
+
+    public init(remote: Date?, local: Date?) {
+        self.remote = remote
+        self.local = local
+    }
+}
+
+public enum FolderSettlement: Equatable, Sendable {
+    case takeRemote(FolderPlace)
+    case keepLocal
 }
 
 /// What the watched folder held at the last look, so only new or changed books are read again.

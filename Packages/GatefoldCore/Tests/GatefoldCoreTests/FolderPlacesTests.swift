@@ -35,18 +35,54 @@ import Testing
         #expect(newest["d2"]?.progression == 0.9)
     }
 
-    @Test func aNewerPlaceFromAnotherDeviceIsTaken() {
+    private func at(_ seconds: TimeInterval) -> Date { t0.addingTimeInterval(seconds) }
+
+    @Test func withNothingSettledYetTheNewerPlaceIsTaken() {
         let remote = place(0.5, at: 20, on: "iPad")
-        #expect(FolderPlaces.take(remote, overLocalUpdated: t0.addingTimeInterval(10), localProgression: 0.2) == remote)
-        #expect(FolderPlaces.take(remote, overLocalUpdated: nil, localProgression: 0) == remote)
+        #expect(FolderPlaces.settle(remote, localUpdated: at(10), localProgression: 0.2, mark: nil) == .takeRemote(remote))
+        #expect(FolderPlaces.settle(remote, localUpdated: nil, localProgression: 0, mark: nil) == .takeRemote(remote))
+        #expect(FolderPlaces.settle(remote, localUpdated: at(30), localProgression: 0.2, mark: nil) == .keepLocal)
+        // The place this device wrote itself, coming back through the folder a fraction older (whole seconds).
+        #expect(FolderPlaces.settle(remote, localUpdated: at(20.4), localProgression: 0.5, mark: nil) == .keepLocal)
+        #expect(FolderPlaces.settle(nil, localUpdated: nil, localProgression: 0, mark: nil) == .keepLocal)
     }
 
-    @Test func anOlderOrSamePlaceIsLeftAlone() {
-        let remote = place(0.5, at: 20, on: "iPad")
-        #expect(FolderPlaces.take(remote, overLocalUpdated: t0.addingTimeInterval(30), localProgression: 0.2) == nil)
-        // The place this device wrote itself, coming back through the folder.
-        #expect(FolderPlaces.take(remote, overLocalUpdated: t0.addingTimeInterval(20), localProgression: 0.5) == nil)
-        #expect(FolderPlaces.take(nil, overLocalUpdated: nil, localProgression: 0) == nil)
+    @Test func onlyTheOtherDeviceMovedSoItsPlaceIsTakenEvenGoingBack() {
+        let mark = FolderSyncMark(remote: at(10), local: at(10))
+        // Gone back to reread a chapter on the iPad: a place too.
+        let back = place(0.1, at: 60, on: "iPad")
+        #expect(FolderPlaces.settle(back, localUpdated: at(10), localProgression: 0.5, mark: mark) == .takeRemote(back))
+    }
+
+    @Test func onlyThisDeviceMovedSoItsPlaceStays() {
+        let mark = FolderSyncMark(remote: at(10), local: at(10))
+        let unchanged = place(0.5, at: 10, on: "iPad")
+        #expect(FolderPlaces.settle(unchanged, localUpdated: at(90), localProgression: 0.2, mark: mark) == .keepLocal)
+        #expect(FolderPlaces.settle(unchanged, localUpdated: at(10), localProgression: 0.5, mark: mark) == .keepLocal)
+    }
+
+    @Test func whenBothMovedTheFurtherPlaceWins() {
+        let mark = FolderSyncMark(remote: at(10), local: at(10))
+        // The iPhone read on to half way. The iPad, still open at 10 %, turned one page later on: newer,
+        // but taking it would send the iPhone back, so the iPhone's place wins on both devices.
+        let phone = place(0.5, at: 60, on: "iPhone")
+        #expect(FolderPlaces.settle(phone, localUpdated: at(120), localProgression: 0.11, mark: mark) == .takeRemote(phone))
+        let stale = place(0.11, at: 120, on: "iPad")
+        #expect(FolderPlaces.settle(stale, localUpdated: at(60), localProgression: 0.5, mark: mark) == .keepLocal)
+    }
+
+    @Test func aMarkWithNoRemoteYetCountsAnyRemoteAsMoved() {
+        let mark = FolderSyncMark(remote: nil, local: at(10))
+        let remote = place(0.3, at: 5, on: "iPad")
+        #expect(FolderPlaces.settle(remote, localUpdated: at(10), localProgression: 0.2, mark: mark) == .takeRemote(remote))
+    }
+
+    @Test func aPlacesFileICloudHasNotDownloadedIsStillFound() {
+        #expect(FolderPlaces.placesFile(listedAs: "places-A1B2.json") == "places-A1B2.json")
+        #expect(FolderPlaces.placesFile(listedAs: ".places-A1B2.json.icloud") == "places-A1B2.json")
+        #expect(FolderPlaces.placesFile(listedAs: ".places-A1B2 2.json.icloud") == nil)
+        #expect(FolderPlaces.placesFile(listedAs: ".notes.json.icloud") == nil)
+        #expect(FolderPlaces.placesFile(listedAs: "places-A1B2.json.icloud") == nil)
     }
 
     @Test func aDamagedFileIsSkippedNotFatal() {
