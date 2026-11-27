@@ -10,6 +10,8 @@ final class AppModel {
     let library: LibraryStore
     /// The OPDS catalogs to browse for books.
     let catalogs: CatalogShelf
+    /// The folder the reader asked Gatefold to watch, if any: its books join the shelf at every look.
+    let folder: WatchedFolder
     private(set) var account: CloudAccount? {
         didSet {
             guard hasStarted || account != nil else { return }
@@ -54,6 +56,8 @@ final class AppModel {
     struct Arrival: Equatable {
         let id = UUID()
         let result: LibraryStore.ImportResult
+        /// The folder just watched, when this is the first look in it.
+        var watching: String?
     }
     private(set) var lastArrival: Arrival?
 
@@ -76,6 +80,22 @@ final class AppModel {
         }
         lastArrival = Arrival(result: result)
         return result
+    }
+
+    /// Starts watching the folder the reader picked in Files, and brings its books aboard.
+    func watchFolder(_ url: URL) async {
+        if !hasOnboarded { hasOnboarded = true }
+        do {
+            lastArrival = Arrival(result: try await folder.watch(url), watching: url.lastPathComponent)
+        } catch {
+            library.lastError = "Gatefold couldn't keep hold of “\(url.lastPathComponent)”. Try choosing it again."
+        }
+    }
+
+    /// Looks in the watched folder for books new since the last look, and says so when any came.
+    func lookInFolder() async {
+        let result = await folder.look()
+        if !result.added.isEmpty { lastArrival = Arrival(result: result) }
     }
 
     /// The copy iOS made for Gatefold (Documents/Inbox) or a drop kept under tmp, never the person's own file.
@@ -122,7 +142,8 @@ final class AppModel {
         self.sync = service
         self.library = LibraryStore(sync: service, root: libraryRoot)
         self.catalogs = CatalogShelf(root: libraryRoot)
-        if LaunchOptions.resetState { library.wipe(); catalogs.forgetAll() }
+        self.folder = WatchedFolder(library: library, root: libraryRoot)
+        if LaunchOptions.resetState { library.wipe(); catalogs.forgetAll(); folder.stopWatching() }
         LibraryView.startedEmpty = library.books.isEmpty
 
         var prefs = UserDefaults.standard.data(forKey: Keys.preferences)
@@ -183,6 +204,8 @@ final class AppModel {
             if let book = library.book(id), let url = library.fileURL(of: book) { BookOpener.shared.openEarly(url) }
         }
         self.openBookID = LaunchOptions.openBook ?? reopenBookID
+        folder.openBookID = { [weak self] in self?.openBookID }
+        library.onPlaceRecorded = { [weak folder] id in folder?.placeChanged(id) }
     }
 
     /// PocketBook Cloud, unless a launch argument asks for the fake (previews, UI tests, screenshots).
@@ -318,6 +341,8 @@ final class AppModel {
     /// Back in the foreground: refresh the shelf (at most every half minute) and ask where the other
     /// device is for the open book.
     func didBecomeActive() async {
+        // The watched folder needs no account: books put in it elsewhere join the shelf on coming back.
+        Task { await lookInFolder() }
         guard account != nil else { return }
         if Date().timeIntervalSince(lastForegroundRefresh) > 30 {
             lastForegroundRefresh = Date()

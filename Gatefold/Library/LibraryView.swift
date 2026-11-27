@@ -18,6 +18,8 @@ struct LibraryView: View {
     @State private var readAfterCatalogs: LibraryBook?
     /// The last arrival the shelf has spoken of, so one is never announced twice.
     @State private var announced: UUID?
+    /// The picker is choosing a folder to watch, not books.
+    @State private var pickingFolder = false
     /// A drop of books hovering over the shelf.
     @State private var dropTargeted = false
     @Environment(\.ouroToast) private var toast
@@ -169,9 +171,16 @@ struct LibraryView: View {
             } message: {
                 Text("Books you've downloaded, and your place in each, stay right here.")
             }
-            .fileImporter(isPresented: $importing, allowedContentTypes: UTType.bookTypes, allowsMultipleSelection: true) { result in
+            .fileImporter(isPresented: $importing, allowedContentTypes: pickingFolder ? [.folder] : UTType.bookTypes,
+                          allowsMultipleSelection: !pickingFolder) { result in
+                let watch = pickingFolder
+                pickingFolder = false
                 guard case let .success(urls) = result else { return }
-                Task { await app.receive(urls, source: .files) }
+                if watch, let folder = urls.first {
+                    Task { await app.watchFolder(folder) }
+                } else {
+                    Task { await app.receive(urls, source: .files) }
+                }
             }
             // Books dragged in from Files or another app (iPad, and a Mac).
             .dropDestination(for: IncomingBook.self) { items, _ in
@@ -254,12 +263,36 @@ struct LibraryView: View {
                 .accessibilityAddTraits(.isHeader)
             Spacer(minLength: 8)
             Menu {
-                Button("Choose from Files", systemImage: "folder") { importing = true }
+                Button("Choose from Files", systemImage: "folder") { pickingFolder = false; importing = true }
                     .accessibilityIdentifier("library.import.files")
                 Button("Browse Catalogs", systemImage: "globe") { browsingCatalogs = true }
                     .accessibilityIdentifier("library.import.catalogs")
                 Button("From Apple Books", systemImage: "book") { appleBooksGuide = true }
                     .accessibilityIdentifier("library.import.appleBooks")
+                Section {
+                    if let name = app.folder.name {
+                        Button {
+                            Task { await app.lookInFolder() }
+                        } label: {
+                            Text("Look in “\(name)”")
+                            Text(app.folder.isUnreachable ? "Gatefold can't reach it right now" : "Books you put in it join your shelf")
+                            Image(systemName: "arrow.clockwise")
+                        }
+                        .accessibilityIdentifier("library.folder.look")
+                        Button("Stop Watching", systemImage: "folder.badge.minus") { app.folder.stopWatching() }
+                            .accessibilityIdentifier("library.folder.stop")
+                    } else {
+                        Button {
+                            pickingFolder = true
+                            importing = true
+                        } label: {
+                            Text("Watch a Folder…")
+                            Text("In iCloud Drive, it keeps your iPhone and iPad on the same page")
+                            Image(systemName: "folder.badge.plus")
+                        }
+                        .accessibilityIdentifier("library.folder.watch")
+                    }
+                }
             } label: {
                 Image(systemName: "plus")
                     .font(.system(size: trailingReserved ? 15 : 17, weight: .semibold))
@@ -283,7 +316,9 @@ struct LibraryView: View {
 
     /// Says what just came aboard, with Read when it was one book.
     private func announce(_ arrival: AppModel.Arrival?) {
-        guard let arrival, arrival.id != announced, let words = ArrivalWords(arrival.result) else { return }
+        guard let arrival, arrival.id != announced,
+              let words = arrival.watching.map({ ArrivalWords.watching($0, result: arrival.result) }) ?? ArrivalWords(arrival.result)
+        else { return }
         announced = arrival.id
         if !arrival.result.added.isEmpty || arrival.result.linkedToCloud > 0 { importedCount += 1 }
         // The shelf's own open path, as a tap on the cover takes.

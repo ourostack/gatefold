@@ -503,6 +503,7 @@ final class LibraryStore {
             $0.totalProgression = readium
             $0.lastOpened = now
         }
+        onPlaceRecorded?(bookID)
         guard let cloud = book(bookID)?.cloud else { return }
         var position = exact ?? ReadingPosition(cfi: nil, progression: progression, totalProgression: totalProgression, updated: now)
         position.totalProgression = totalProgression
@@ -511,6 +512,19 @@ final class LibraryStore {
         // One push per book at a time, latest wins: rapid turns settle on the last page, in order.
         pending[bookID] = (position, cloud)
         schedulePush(bookID, after: .milliseconds(400))
+    }
+
+    /// Hears of each place kept here, after it is saved: the watched folder passes it to the other devices.
+    @ObservationIgnored var onPlaceRecorded: ((String) -> Void)?
+
+    /// Another device's newer place for a book from the watched folder. It becomes this device's place,
+    /// as if read here at `updated`, so the shelf and the reader open on it; it isn't sent anywhere.
+    func takeFolderPlace(bookID: String, locatorJSON: String, totalProgression: Double, updated: Date) {
+        update(bookID) {
+            $0.locatorJSON = locatorJSON
+            $0.totalProgression = totalProgression
+            $0.lastOpened = updated
+        }
     }
 
     /// The reader landed on another device's Cloud place: `cloud` is the Cloud's progress there and

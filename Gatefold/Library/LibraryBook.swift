@@ -18,6 +18,8 @@ struct LibraryBook: Identifiable, Codable, Equatable {
         case dropped
         /// Got from an OPDS catalog (`CatalogsView`).
         case catalog
+        /// Found in the folder the reader asked Gatefold to watch (`WatchedFolder`).
+        case folder
     }
 
     var id: String
@@ -60,6 +62,7 @@ struct LibraryBook: Identifiable, Codable, Equatable {
         switch source {
         case .files: return "From Files"
         case .catalog: return "From a catalog"
+        case .folder: return "From your folder"
         case .shared, .dropped, nil: return "Added"
         }
     }
