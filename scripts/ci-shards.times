@@ -171,3 +171,6 @@ iPad Pro 13-inch|FineTuneTapUITests/testFineTuneShowsEveryWordWhole	150	# an est
 iPhone Duo|FineTuneTapUITests/testFineTuneShowsEveryWordWhole	180	# an estimate until CI has timed it
 iPad Pro 13-inch|ControlsTapUITests/testContentsOpensWhenTappedAsTheControlsComeUp	300	# estimate until CI has run it: 40 tries took 840 s on probe run 45125426107, this is 6
 iPhone Duo|ControlsTapUITests/testContentsOpensWhenTappedAsTheControlsComeUp	300	# estimate until CI has run it: 40 tries took 869 s on probe run 45125426107, this is 6
+iPad Pro 13-inch|PostureLeafUITests/testHalfOpenToFlatPlaysNoLeaf	150	# estimate until CI has run it (2026-11-27)
+iPad Pro 13-inch|PostureLeafUITests/testScrollModeChangesPostureWithNoLeaf	150	# estimate until CI has run it (2026-11-27)
+iPad Pro 13-inch|PostureLeafUITests/testOpeningAndShuttingTheBookPlaysItsLeaves	90	# estimate until CI has run it (2026-11-27)

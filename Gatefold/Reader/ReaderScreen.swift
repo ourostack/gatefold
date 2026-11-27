@@ -277,8 +277,9 @@ struct ReaderScreen: View {
                 let reason: ReflowReason = old.posture != new.posture ? .posture : .rotation
                 withAnimation(Motion.reflow) { model.updateLayout(new, reason: reason) }
                 if old.posture != .spread, new.posture == .spread { unfold() }
-                // Folding shuts the right page over the left; a turned iPad has no leaf to shut (gatefold#537).
-                if old.posture == .spread, new.posture != .spread, model.hasFold { fold() }
+                // Folding shuts the right page over the left; a turned iPad has no leaf to shut (gatefold#537), and
+                // neither has a spread bending half open, nor a scrolling page (`PostureLeaf`).
+                if model.postureLeaf == .fold, old.posture == .spread, new.posture != .spread { fold() }
             }
         }
         .ignoresSafeArea()
@@ -520,6 +521,12 @@ struct ReaderScreen: View {
                 .opacity(0.01)
                 .accessibilityIdentifier("reader.leafStoodFrames")
                 .accessibilityValue(String(model.leafStoodFramesProbe))
+                .allowsHitTesting(false)
+            Text("posture leaves")
+                .font(.system(size: 1))
+                .opacity(0.01)
+                .accessibilityIdentifier("reader.postureLeaves")
+                .accessibilityValue(String(model.postureLeavesProbe))
                 .allowsHitTesting(false)
             Text("turn frames")
                 .font(.system(size: 1))
@@ -847,6 +854,7 @@ struct ReaderScreen: View {
     }
 
     private func fold() {
+        model.postureLeavesProbe += 1
         leafFolding = true
         leafAngle = 0
         leafOpacity = 1

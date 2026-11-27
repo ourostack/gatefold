@@ -838,7 +838,9 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         guard !closed else { return }
         // One page becoming two is the unfold: the right page swings open once it has laid out.
         // A turned iPad fades to its spread (gatefold#537): the leaf is the unfold's, on a device that opens.
-        unfolding = reflow && self.columns == 1 && columns == 2 && weakModel?.hasFold == true
+        // Only the book opening from its cover lifts it, on a page of pages (`PostureLeaf`): half open to flat, or
+        // any change in scroll mode, re-lays out in place. A leaf there stood frozen over the page (Ari, 2026-11-27).
+        unfolding = reflow && self.columns == 1 && columns == 2 && weakModel?.postureLeaf == .unfold
         let newColumns = self.columns != columns
         self.columns = columns
         self.preferences = preferences
@@ -1069,6 +1071,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         }
         lift.startAnimation()
         leaf = (view, shade, lift, through)
+        weakModel?.postureLeavesProbe += 1
         readerLog.notice("unfold: the leaf starts to lift at the bell (old words through it \(through != nil, privacy: .public))")
     }
 
