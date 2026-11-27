@@ -2,7 +2,7 @@
 import PackageDescription
 
 // Pure reading logic for Gatefold: layout per posture, the reading anchor that holds the place
-// through every fold, preferences, themes, scrubber math and the "further ahead" suggestion.
+// through every fold, preferences, themes, scrubber math, the "further ahead" suggestion and OPDS catalogs.
 // No UIKit and no Readium, so it tests on Linux or the Mac in seconds.
 let package = Package(
     name: "GatefoldCore",
@@ -10,6 +10,6 @@ let package = Package(
     products: [.library(name: "GatefoldCore", targets: ["GatefoldCore"])],
     targets: [
         .target(name: "GatefoldCore"),
-        .testTarget(name: "GatefoldCoreTests", dependencies: ["GatefoldCore"]),
+        .testTarget(name: "GatefoldCoreTests", dependencies: ["GatefoldCore"], resources: [.copy("Fixtures")]),
     ]
 )

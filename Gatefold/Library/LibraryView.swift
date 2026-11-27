@@ -12,6 +12,15 @@ struct LibraryView: View {
 
     @State private var importing = false
     @State private var importedCount = 0
+    @State private var appleBooksGuide = false
+    @State private var browsingCatalogs = false
+    /// A book got from a catalog, to open once the catalogs have closed.
+    @State private var readAfterCatalogs: LibraryBook?
+    /// The last arrival the shelf has spoken of, so one is never announced twice.
+    @State private var announced: UUID?
+    /// A drop of books hovering over the shelf.
+    @State private var dropTargeted = false
+    @Environment(\.ouroToast) private var toast
     @State private var confirmSignOut = false
     @State private var reconnecting = false
     /// How far the header moves down so the cover screen's camera and status column never sit on it.
@@ -73,7 +82,7 @@ struct LibraryView: View {
                         DustingShelf(metrics: metrics)
                             .transition(.opacity)
                     case let .empty(signedIn):
-                        EmptyShelf(signedIn: signedIn, onImport: { importing = true }, onConnect: { app.hasOnboarded = false })
+                        EmptyShelf(signedIn: signedIn, onImport: { importing = true }, onAppleBooks: { appleBooksGuide = true }, onConnect: { app.hasOnboarded = false })
                             .padding(.top, 48)
                             .transition(.opacity)
                     case let .unreachable(problem):
@@ -160,14 +169,43 @@ struct LibraryView: View {
             } message: {
                 Text("Books you've downloaded, and your place in each, stay right here.")
             }
-            .fileImporter(isPresented: $importing, allowedContentTypes: [UTType(filenameExtension: "epub") ?? .data], allowsMultipleSelection: true) { result in
+            .fileImporter(isPresented: $importing, allowedContentTypes: UTType.bookTypes, allowsMultipleSelection: true) { result in
                 guard case let .success(urls) = result else { return }
-                Task {
-                    let added = await library.importBooks(from: urls)
-                    importedCount += added.count
+                Task { await app.receive(urls, source: .files) }
+            }
+            // Books dragged in from Files or another app (iPad, and a Mac).
+            .dropDestination(for: IncomingBook.self) { items, _ in
+                Task { await app.receive(items.map(\.url), source: .dropped) }
+                return !items.isEmpty
+            } isTargeted: { dropTargeted = $0 }
+            .overlay {
+                if dropTargeted {
+                    RoundedRectangle(cornerRadius: 28, style: .continuous)
+                        .strokeBorder(Color.ribbon, style: StrokeStyle(lineWidth: 3, dash: [10, 8]))
+                        .padding(8)
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
                 }
             }
+            .onChange(of: app.lastArrival) { _, arrival in announce(arrival) }
+            // A book opened in Gatefold at launch can arrive before the shelf is up to hear of it.
+            .onAppear { announce(app.lastArrival) }
             .sensoryFeedback(.success, trigger: importedCount)
+            .sheet(isPresented: $browsingCatalogs, onDismiss: {
+                if let book = readAfterCatalogs { readAfterCatalogs = nil; onOpen(book) }
+            }) {
+                CatalogsView(shelf: app.catalogs, onRead: { book in
+                    readAfterCatalogs = book
+                    browsingCatalogs = false
+                }, onDone: { browsingCatalogs = false })
+                .ouroTheme(.gatefold)
+            }
+            .ouroSheet(isPresented: $appleBooksGuide, title: "Books from Apple Books", detents: [.large]) {
+                AppleBooksGuide()
+            } footer: {
+                OuroButton("Choose from Files", systemImage: "folder", size: .lg, fullWidth: true) { appleBooksGuide = false; importing = true }
+                    .accessibilityIdentifier("appleBooks.chooseFiles")
+            }
             .alert("Couldn't Add That", isPresented: .constant(library.lastError != nil)) {
                 Button("OK") { library.lastError = nil }
             } message: {
@@ -215,8 +253,13 @@ struct LibraryView: View {
                 .foregroundStyle(Color.ink)
                 .accessibilityAddTraits(.isHeader)
             Spacer(minLength: 8)
-            Button {
-                importing = true
+            Menu {
+                Button("Choose from Files", systemImage: "folder") { importing = true }
+                    .accessibilityIdentifier("library.import.files")
+                Button("Browse Catalogs", systemImage: "globe") { browsingCatalogs = true }
+                    .accessibilityIdentifier("library.import.catalogs")
+                Button("From Apple Books", systemImage: "book") { appleBooksGuide = true }
+                    .accessibilityIdentifier("library.import.appleBooks")
             } label: {
                 Image(systemName: "plus")
                     .font(.system(size: trailingReserved ? 15 : 17, weight: .semibold))
@@ -224,7 +267,7 @@ struct LibraryView: View {
                     .frame(width: trailingReserved ? 36 : 44, height: trailingReserved ? 36 : 44)
             }
             .modifier(AddButtonStyle(compact: trailingReserved))
-            .accessibilityLabel("Add Books from Files")
+            .accessibilityLabel("Add Books")
             .accessibilityIdentifier("library.import")
             // A menu is hosted by UIKit and ignores the shelf's fade-in; it waits until the shelf has settled.
             if width > 0, shelfState != .waiting { accountMenu } else { Color.clear.frame(width: 44, height: 44) }
@@ -236,6 +279,20 @@ struct LibraryView: View {
         .padding(.trailing, trailingReserved ? 6 : metrics.gutter)
         .padding(.top, max(8, headerDrop))
         .padding(.bottom, 2)
+    }
+
+    /// Says what just came aboard, with Read when it was one book.
+    private func announce(_ arrival: AppModel.Arrival?) {
+        guard let arrival, arrival.id != announced, let words = ArrivalWords(arrival.result) else { return }
+        announced = arrival.id
+        if !arrival.result.added.isEmpty || arrival.result.linkedToCloud > 0 { importedCount += 1 }
+        // The shelf's own open path, as a tap on the cover takes.
+        nonisolated(unsafe) let open = onOpen
+        let library = app.library
+        let read = words.bookID.map { id in
+            OuroToastAction("Read") { if let book = library.book(id) { open(book) } }
+        }
+        toast(words.message, description: words.description, tone: .success, systemImage: "books.vertical", action: read)
     }
 
     /// The order covers drop in: Reading Now left to right, then the rest of the shelf.
@@ -503,7 +560,7 @@ struct BookTile: View {
                     .accessibilityHidden(true)
                 Text("Try again").foregroundStyle(Color.ribbon)
             case .onDevice:
-                if p <= 0.001, !book.isFinished { Text(book.origin == .imported ? "Imported" : "New") }
+                if p <= 0.001, !book.isFinished { Text(book.arrivalLabel) }
             }
         }
         .font(.caption)
@@ -718,6 +775,7 @@ private struct DustingShelf: View {
 private struct EmptyShelf: View {
     let signedIn: Bool
     var onImport: () -> Void
+    var onAppleBooks: () -> Void
     var onConnect: () -> Void
 
     var body: some View {
@@ -726,10 +784,12 @@ private struct EmptyShelf: View {
             systemImage: "books.vertical",
             description: signedIn
                 ? "Books you add to PocketBook Cloud will land here. EPUBs from Files are welcome too."
-                : "Slip in an EPUB from Files, or connect PocketBook Cloud to bring your e-reader's books along."
+                : "Slip in an EPUB from Files or iCloud Drive, open one in Gatefold from any app, or connect PocketBook Cloud to bring your e-reader's books along."
         ) {
             VStack(spacing: 8) {
                 OuroButton("Add Books from Files", systemImage: "folder", size: .lg, action: onImport)
+                OuroButton("From Apple Books", variant: .plain, action: onAppleBooks)
+                    .accessibilityIdentifier("library.empty.appleBooks")
                 if !signedIn {
                     OuroButton("Connect PocketBook Cloud", variant: .plain, action: onConnect)
                 }

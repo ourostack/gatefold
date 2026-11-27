@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="utf-8"?>
+<?xml-stylesheet href="https://standardebooks.org/feeds/atom/style" type="text/xsl"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:media="http://search.yahoo.com/mrss/">
+	<script xmlns="http://www.w3.org/1999/xhtml" src="https://standardebooks.org/scripts/xslt-polyfill.min.js"/>
+	<id>https://standardebooks.org/feeds/atom/new-releases</id>
+	<link href="https://standardebooks.org/feeds/atom/new-releases" rel="self" type="application/atom+xml"/>
+	<title>Standard Ebooks - Newest Ebooks</title>
+	<subtitle>The 15 latest Standard Ebooks, most-recently-released first.</subtitle>
+	<icon>https://standardebooks.org/images/logo.png</icon>
+	<updated>2026-11-24T11:56:09Z</updated>
+	<author>
+		<name>Standard Ebooks</name>
+		<uri>https://standardebooks.org</uri>
+	</author>
+	<link href="https://standardebooks.org/opensearch" rel="search" title="Standard Ebooks" type="application/opensearchdescription+xml"/>
+	<entry>
+		<id>https://standardebooks.org/ebooks/italo-svevo/confessions-of-zeno/beryl-de-zoete</id>
+		<title>Confessions of Zeno</title>
+		<author>
+			<name>Italo Svevo</name>
+			<uri>https://standardebooks.org/ebooks/italo-svevo</uri>
+		</author>
+		<published>2026-11-20T17:17:24Z</published>
+		<updated>2026-11-24T04:31:26Z</updated>
+		<rights>Public domain in the United States. Users located outside of the United States must check their local laws before using this ebook. Original content released to the public domain via the Creative Commons CC0 1.0 Universal Public Domain Dedication.</rights>
+		<summary type="text">To quit smoking, a man writes his memoirs.</summary>
+		<category scheme="http://purl.org/dc/terms/LCSH" term="Adultery--Fiction"/>
+		<media:thumbnail height="525" url="https://standardebooks.org/ebooks/italo-svevo/confessions-of-zeno/beryl-de-zoete/downloads/cover-thumbnail.jpg" width="350"/>
+		<link href="https://standardebooks.org/ebooks/italo-svevo/confessions-of-zeno/beryl-de-zoete" rel="alternate" title="This ebook’s page at Standard Ebooks" type="application/xhtml+xml"/>
+		<link href="https://standardebooks.org/ebooks/italo-svevo/confessions-of-zeno/beryl-de-zoete/downloads/italo-svevo_confessions-of-zeno_beryl-de-zoete.epub?source=feed" length="875588" rel="enclosure" title="Recommended compatible epub" type="application/epub+zip"/>
+		<link href="https://standardebooks.org/ebooks/italo-svevo/confessions-of-zeno/beryl-de-zoete/downloads/italo-svevo_confessions-of-zeno_beryl-de-zoete_advanced.epub?source=feed" length="861369" rel="enclosure" title="Advanced epub" type="application/epub+zip"/>
+		<link href="https://standardebooks.org/ebooks/italo-svevo/confessions-of-zeno/beryl-de-zoete/downloads/italo-svevo_confessions-of-zeno_beryl-de-zoete.kepub.epub?source=feed" length="802783" rel="enclosure" title="Kobo Kepub epub" type="application/kepub+zip"/>
+		<link href="https://standardebooks.org/ebooks/italo-svevo/confessions-of-zeno/beryl-de-zoete/downloads/italo-svevo_confessions-of-zeno_beryl-de-zoete.azw3?source=feed" length="1062723" rel="enclosure" title="Amazon Kindle azw3" type="application/x-mobipocket-ebook"/>
+		<link href="https://standardebooks.org/ebooks/italo-svevo/confessions-of-zeno/beryl-de-zoete/text/single-page" length="1007716" rel="enclosure" title="XHTML" type="application/xhtml+xml"/>
+	</entry>
+<entry>
+		<id>https://standardebooks.org/ebooks/henry-wade/the-duke-of-yorks-steps</id>
+		<title>The Duke of York’s Steps</title>
+		<author>
+			<name>Henry Wade</name>
+			<uri>https://standardebooks.org/ebooks/henry-wade</uri>
+		</author>
+		<published>2026-11-18T16:55:53Z</published>
+		<updated>2026-11-19T21:05:24Z</updated>
+		<rights>Public domain in the United States. Users located outside of the United States must check their local laws before using this ebook. Original content released to the public domain via the Creative Commons CC0 1.0 Universal Public Domain Dedication.</rights>
+		<summary type="text">After a wealthy banker’s sudden death is ruled to have been from natural causes, his daughter’s suspicions prompt a detective to take a second look at the case.</summary>
+		<category scheme="http://purl.org/dc/terms/LCSH" term="Detective and mystery stories"/>
+		<media:thumbnail height="525" url="https://standardebooks.org/ebooks/henry-wade/the-duke-of-yorks-steps/downloads/cover-thumbnail.jpg" width="350"/>
+		<link href="https://standardebooks.org/ebooks/henry-wade/the-duke-of-yorks-steps" rel="alternate" title="This ebook’s page at Standard Ebooks" type="application/xhtml+xml"/>
+		<link href="https://standardebooks.org/ebooks/henry-wade/the-duke-of-yorks-steps/downloads/henry-wade_the-duke-of-yorks-steps.epub?source=feed" length="851837" rel="enclosure" title="Recommended compatible epub" type="application/epub+zip"/>
+		<link href="https://standardebooks.org/ebooks/henry-wade/the-duke-of-yorks-steps/downloads/henry-wade_the-duke-of-yorks-steps_advanced.epub?source=feed" length="1720959" rel="enclosure" title="Advanced epub" type="application/epub+zip"/>
+		<link href="https://standardebooks.org/ebooks/henry-wade/the-duke-of-yorks-steps/downloads/henry-wade_the-duke-of-yorks-steps.kepub.epub?source=feed" length="789056" rel="enclosure" title="Kobo Kepub epub" type="application/kepub+zip"/>
+		<link href="https://standardebooks.org/ebooks/henry-wade/the-duke-of-yorks-steps/downloads/henry-wade_the-duke-of-yorks-steps.azw3?source=feed" length="922440" rel="enclosure" title="Amazon Kindle azw3" type="application/x-mobipocket-ebook"/>
+		<link href="https://standardebooks.org/ebooks/henry-wade/the-duke-of-yorks-steps/text/single-page" length="591889" rel="enclosure" title="XHTML" type="application/xhtml+xml"/>
+	</entry>
+</feed>

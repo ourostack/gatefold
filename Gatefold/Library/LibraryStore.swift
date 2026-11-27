@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import GatefoldCloud
 import GatefoldCore
@@ -234,7 +235,8 @@ final class LibraryStore {
             }
             // The Cloud keeps its verified copy; a hard link shares it instead of doubling the space.
             do { try FileManager.default.linkItem(at: temp, to: target) } catch { try FileManager.default.copyItem(at: temp, to: target) }
-            update(book.id) { $0.fileName = name }
+            // The Cloud's copy may differ from a file this book held before: its digest is worked out again.
+            update(book.id) { $0.fileName = name; $0.digest = nil }
             downloads[book.id] = nil
             if covers[book.id] == nil, let meta = try? await BookOpener.shared.metadata(of: target), let cover = meta.cover {
                 storeCover(cover, id: book.id)
@@ -264,34 +266,208 @@ final class LibraryStore {
                           properties: GatefoldTelemetry.tapProperties(state: state, hasCloudCopy: book.cloud != nil, secondsDownloading: waited))
     }
 
-    // MARK: Files import
+    // MARK: Adding books
 
-    /// Copies EPUBs from Files into the library. Returns the books added.
-    @discardableResult
-    func importBooks(from urls: [URL]) async -> [LibraryBook] {
+    /// What one round of adding books did, for the shelf's word afterwards and the counts-only telemetry.
+    struct ImportResult: Equatable {
+        /// New books on the shelf.
         var added: [LibraryBook] = []
+        /// Books that were on the shelf already (the same bytes), or Cloud books that took the file.
+        var alreadyHere: [LibraryBook] = []
+        /// PocketBook Cloud books, not yet on this device, that took the file as their own.
+        var linkedToCloud = 0
+        /// Files that weren't books Gatefold reads.
+        var refused = 0
+
+        /// The book to show or open when one book came in.
+        var single: LibraryBook? { added.count + alreadyHere.count == 1 ? (added.first ?? alreadyHere.first) : nil }
+    }
+
+    /// Takes books into the library: zipped EPUBs, EPUB folders (zipped on the way in) and folders of
+    /// either. The same bytes already on the shelf, or a PocketBook Cloud book whose checksum is this
+    /// file's, never become a second book. Returns what happened, and reports it as counts.
+    @discardableResult
+    func importBooks(from urls: [URL], source: LibraryBook.Source = .files, telemetry: GatefoldTelemetry? = .shared) async -> ImportResult {
+        // One import at a time: two arriving together (several files opened in Gatefold at once, a share
+        // during a Files import) would otherwise both find a book new before either had shelved it.
+        let previous = importTail
+        let run = Task { () -> ImportResult in
+            await previous?.value
+            return await self.importNow(from: urls, source: source, telemetry: telemetry)
+        }
+        importTail = Task { _ = await run.value }
+        return await run.value
+    }
+
+    @ObservationIgnored private var importTail: Task<Void, Never>?
+
+    private func importNow(from urls: [URL], source: LibraryBook.Source, telemetry: GatefoldTelemetry?) async -> ImportResult {
+        var result = ImportResult()
+        var refusedNames: [String] = []
+        var sawPDF = false
+        await backfillDigests()
         for url in urls {
             let scoped = url.startAccessingSecurityScopedResource()
             defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-            let id = "local-" + UUID().uuidString.lowercased()
-            let name = "\(id).epub"
-            let target = booksDir.appending(path: name)
-            do {
-                try FileManager.default.copyItem(at: url, to: target)
-                let meta = try await BookOpener.shared.metadata(of: target)
-                let book = LibraryBook(id: id, title: meta.title, author: meta.author, origin: .imported, fileName: name, added: Date())
-                books.append(book)
-                if let cover = meta.cover { storeCover(cover, id: id) }
-                added.append(book)
-            } catch {
-                try? FileManager.default.removeItem(at: target)
-                if !FriendlyError.isCancellation(error) {
-                    lastError = "“\(url.deletingPathExtension().lastPathComponent)” didn't want to come aboard. Gatefold reads EPUB books; is this one?"
+            for item in await Self.expand(url) {
+                switch await importOne(item, source: source) {
+                case let .added(book): result.added.append(book)
+                case let .alreadyHere(book): result.alreadyHere.append(book)
+                case let .linked(book): result.alreadyHere.append(book); result.linkedToCloud += 1
+                case let .refused(kind):
+                    result.refused += 1
+                    if kind == .pdf { sawPDF = true }
+                    refusedNames.append(item.deletingPathExtension().lastPathComponent)
+                case .cancelled: break
                 }
             }
         }
         save()
-        return added
+        if !refusedNames.isEmpty { lastError = Self.refusal(names: refusedNames, sawPDF: sawPDF) }
+        if let telemetry, result != ImportResult() {
+            telemetry.capture("gatefold_books_added", properties: GatefoldTelemetry.addedProperties(source: source, result: result))
+        }
+        return result
+    }
+
+    private enum ImportOutcome {
+        case added(LibraryBook)
+        case alreadyHere(LibraryBook)
+        case linked(LibraryBook)
+        case refused(BookFile.Kind)
+        case cancelled
+    }
+
+    /// A folder that isn't itself a book stands for the books inside it, listed by name through a file
+    /// coordinator, so a folder in iCloud Drive is listed without downloading every book in it first.
+    nonisolated static func expand(_ url: URL) async -> [URL] {
+        await Task.detached(priority: .userInitiated) {
+            var isDirectory: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory), isDirectory.boolValue,
+                  !FileManager.default.fileExists(atPath: url.appending(path: "META-INF/container.xml").path)
+            else { return [url] }
+            var found: [URL] = []
+            var error: NSError?
+            NSFileCoordinator().coordinate(readingItemAt: url, options: .immediatelyAvailableMetadataOnly, error: &error) { readable in
+                found = BookFile.books(in: readable)
+            }
+            return found
+        }.value
+    }
+
+    private func importOne(_ url: URL, source: LibraryBook.Source) async -> ImportOutcome {
+        let id = "local-" + UUID().uuidString.lowercased()
+        let name = "\(id).epub"
+        let target = booksDir.appending(path: name)
+        do {
+            let kind = try await Self.take(url, to: target)
+            guard kind == .epub || kind == .epubFolder else { return .refused(kind) }
+            let found = try await Self.fingerprint(of: target)
+            switch ShelfMatch.match(found, on: shelfCandidates) {
+            case let .alreadyHere(existing):
+                try? FileManager.default.removeItem(at: target)
+                return book(existing).map { .alreadyHere($0) } ?? .cancelled
+            case let .takeCloudBook(cloudID):
+                // The PocketBook book takes the file under its own name, so the Cloud's download path finds it.
+                let cloudName = "\(cloudID).epub"
+                let cloudTarget = booksDir.appending(path: cloudName)
+                try? FileManager.default.removeItem(at: cloudTarget)
+                try FileManager.default.moveItem(at: target, to: cloudTarget)
+                update(cloudID) {
+                    $0.fileName = cloudName
+                    $0.digest = found.sha256
+                }
+                // A download that failed earlier no longer stands: the book is here.
+                downloads[cloudID] = nil
+                return book(cloudID).map { .linked($0) } ?? .cancelled
+            case .new:
+                let meta = try await BookOpener.shared.metadata(of: target)
+                let book = LibraryBook(id: id, title: meta.title, author: meta.author, origin: .imported, source: source,
+                                       digest: found.sha256, fileName: name, added: Date())
+                books.append(book)
+                if let cover = meta.cover { storeCover(cover, id: id) }
+                return .added(book)
+            }
+        } catch {
+            try? FileManager.default.removeItem(at: target)
+            if FriendlyError.isCancellation(error) { return .cancelled }
+            return .refused(.other)
+        }
+    }
+
+    /// Copies a zipped EPUB, or zips an EPUB folder, to `target`, reading through a file coordinator so
+    /// a book still in iCloud Drive downloads first. Returns what it found; anything else isn't copied.
+    nonisolated private static func take(_ url: URL, to target: URL) async throws -> BookFile.Kind {
+        try await Task.detached(priority: .userInitiated) {
+            var coordinated: NSError?
+            var kind = BookFile.Kind.other
+            var failure: Error?
+            NSFileCoordinator().coordinate(readingItemAt: url, options: [], error: &coordinated) { readable in
+                do {
+                    kind = BookFile.kind(at: readable)
+                    switch kind {
+                    case .epub: try FileManager.default.copyItem(at: readable, to: target)
+                    case .epubFolder: try BookFile.pack(folder: readable, to: target)
+                    case .pdf, .folder, .other: break
+                    }
+                } catch { failure = error }
+            }
+            if let error = coordinated ?? failure { throw error }
+            return kind
+        }.value
+    }
+
+    /// SHA-256 and MD5 of a file, read in pieces so a big book never sits in memory whole.
+    nonisolated static func fingerprint(of url: URL) async throws -> ShelfMatch.Fingerprint {
+        try await Task.detached(priority: .userInitiated) {
+            let handle = try FileHandle(forReadingFrom: url)
+            defer { try? handle.close() }
+            var sha = SHA256(), md5 = Insecure.MD5()
+            var bytes: Int64 = 0
+            while let chunk = try handle.read(upToCount: 1 << 20), !chunk.isEmpty {
+                sha.update(data: chunk)
+                md5.update(data: chunk)
+                bytes += Int64(chunk.count)
+            }
+            return ShelfMatch.Fingerprint(sha256: sha.finalize().map { String(format: "%02x", $0) }.joined(),
+                                          md5Base64: Data(md5.finalize()).base64EncodedString(), bytes: bytes)
+        }.value
+    }
+
+    /// The shelf as `ShelfMatch` sees it.
+    private var shelfCandidates: [ShelfMatch.Candidate] {
+        books.map { book in
+            ShelfMatch.Candidate(id: book.id, sha256: book.isOnDevice ? book.digest : nil, cloudMD5: book.cloud?.verifiableMD5,
+                                 cloudBytes: book.cloud.map(\.bytes), isOnDevice: book.isOnDevice)
+        }
+    }
+
+    /// Books on this device from before Gatefold kept digests get theirs, so a file coming in can be
+    /// matched against them. Each file is read once, ever.
+    private func backfillDigests() async {
+        let missing = books.filter { $0.isOnDevice && $0.digest == nil }.compactMap { book in fileURL(of: book).map { (book.id, $0) } }
+        guard !missing.isEmpty else { return }
+        // Off the main actor: a big shelf's first import after updating would otherwise freeze the screen.
+        let found = await Task.detached(priority: .userInitiated) {
+            missing.compactMap { id, url in LibraryStore.sha256(of: url).map { (id, $0) } }
+        }.value
+        for (id, digest) in found {
+            if let i = books.firstIndex(where: { $0.id == id }) { books[i].digest = digest }
+        }
+    }
+
+    nonisolated private static func sha256(of url: URL) -> String? {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer { try? handle.close() }
+        var sha = SHA256()
+        while let chunk = try? handle.read(upToCount: 1 << 20), !chunk.isEmpty { sha.update(data: chunk) }
+        return sha.finalize().map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// What the alert says when files didn't come aboard.
+    nonisolated static func refusal(names: [String], sawPDF: Bool) -> String {
+        let what = names.count == 1 ? "“\(names[0])” didn't come aboard." : "\(names.count) files didn't come aboard."
+        return sawPDF ? "\(what) Gatefold reads EPUB books, and doesn't open PDFs yet." : "\(what) Gatefold reads EPUB books; is this one?"
     }
 
     func remove(_ book: LibraryBook) {

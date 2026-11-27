@@ -8,6 +8,8 @@ import SwiftUI
 final class AppModel {
     let sync: any SyncService
     let library: LibraryStore
+    /// The OPDS catalogs to browse for books.
+    let catalogs: CatalogShelf
     private(set) var account: CloudAccount? {
         didSet {
             guard hasStarted || account != nil else { return }
@@ -46,6 +48,43 @@ final class AppModel {
     }
     /// The book being reopened at launch, until its reader is up.
     var reopenBookID: String?
+
+    /// Books just taken in from outside the Cloud, for the shelf to say so. A new value each time, so the
+    /// same book handed over twice is still answered.
+    struct Arrival: Equatable {
+        let id = UUID()
+        let result: LibraryStore.ImportResult
+    }
+    private(set) var lastArrival: Arrival?
+
+    /// Books handed to Gatefold: chosen in Files, opened in it from another app, or dropped on the shelf.
+    /// Opening a book in Gatefold before the welcome means reading without an account: the welcome steps aside.
+    @discardableResult
+    func receive(_ urls: [URL], source: LibraryBook.Source) async -> LibraryStore.ImportResult {
+        guard !urls.isEmpty else { return .init() }
+        if !hasOnboarded { hasOnboarded = true }
+        let result = await library.importBooks(from: urls, source: source)
+        // A shared file arrives in Documents/Inbox, and a drop in tmp: once taken, those copies go.
+        for url in urls where Self.isHandOffCopy(url) {
+            let dropFolder = url.deletingLastPathComponent()
+            try? FileManager.default.removeItem(at: url)
+            if dropFolder.deletingLastPathComponent().lastPathComponent == "Incoming" { try? FileManager.default.removeItem(at: dropFolder) }
+        }
+        if result == LibraryStore.ImportResult(), library.lastError == nil {
+            // A folder with no books in it: say so, rather than nothing happening.
+            library.lastError = "No books came aboard. Gatefold found no EPUB books there."
+        }
+        lastArrival = Arrival(result: result)
+        return result
+    }
+
+    /// The copy iOS made for Gatefold (Documents/Inbox) or a drop kept under tmp, never the person's own file.
+    nonisolated static func isHandOffCopy(_ url: URL) -> Bool {
+        let path = url.resolvingSymlinksInPath().path
+        let inbox = URL.documentsDirectory.appending(path: "Inbox").resolvingSymlinksInPath().path
+        let incoming = URL.temporaryDirectory.appending(path: "Incoming").resolvingSymlinksInPath().path
+        return path.hasPrefix(inbox + "/") || path.hasPrefix(incoming + "/")
+    }
     /// The first turn asked for on the reopen picture (true is forward), played when the live page lands.
     var reopenQueuedTurn: Bool?
 
@@ -82,7 +121,8 @@ final class AppModel {
         let service = sync ?? Self.makeSyncService()
         self.sync = service
         self.library = LibraryStore(sync: service, root: libraryRoot)
-        if LaunchOptions.resetState { library.wipe() }
+        self.catalogs = CatalogShelf(root: libraryRoot)
+        if LaunchOptions.resetState { library.wipe(); catalogs.forgetAll() }
         LibraryView.startedEmpty = library.books.isEmpty
 
         var prefs = UserDefaults.standard.data(forKey: Keys.preferences)

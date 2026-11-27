@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:opds="http://opds-spec.org/2010/catalog" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:opensearch="http://a9.com/-/spec/opensearch/1.1/" xmlns:relevance="http://a9.com/-/opensearch/extensions/relevance/1.0/">
+<id>http://www.gutenberg.org/ebooks/search.opds/?query=%22city+hall%22&amp;start_index=26</id>
+<updated>2026-09-05T03:23:24Z</updated>
+<title>Books: city hall</title>
+<subtitle>Free eBooks since 1971.</subtitle>
+<author>
+<name>Project Gutenberg</name>
+<uri>https://www.gutenberg.org</uri>
+<email>webmaster@gutenberg.org</email>
+</author>
+<icon>https://www.gutenberg.org/gutenberg/favicon.ico</icon>
+<link rel="search" type="application/opensearchdescription+xml" title="Project Gutenberg Catalog Search" href="https://www.gutenberg.org/catalog/osd-books.xml"/>
+<link rel="self" title="This Page" type="application/atom+xml;profile=opds-catalog" href="/ebooks/search.opds/?query=%22city+hall%22&amp;start_index=26"/>
+<link rel="alternate" type="text/html" title="HTML Page" href="/ebooks/search/?query=%22city+hall%22&amp;start_index=26"/>
+<link rel="start" title="Start Page" type="application/atom+xml;profile=opds-catalog" href="/ebooks.opds/"/>
+<link rel="first" title="First Page" type="application/atom+xml;profile=opds-catalog" href="/ebooks/search.opds/?query=%22city+hall%22"/>
+<link rel="previous" title="Previous Page" type="application/atom+xml;profile=opds-catalog" href="/ebooks/search.opds/?query=%22city+hall%22"/>
+<opensearch:itemsPerPage>25</opensearch:itemsPerPage>
+<opensearch:startIndex>26</opensearch:startIndex>
+<entry>
+<updated>2026-09-05T03:23:24Z</updated>
+<id>https://www.gutenberg.org/ebooks/39434.opds</id>
+<title>Vistas of New York</title>
+<content type="text">Brander Matthews</content>
+<link type="application/atom+xml;profile=opds-catalog" rel="subsection" href="/ebooks/39434.opds"/>
+<link type="image/png" rel="http://opds-spec.org/image/thumbnail" href="data:image/png;base64,iVBORw0KGgo="/>
+</entry>
+<entry>
+<updated>2026-09-05T03:23:24Z</updated>
+<id>https://www.gutenberg.org/ebooks/51001.opds</id>
+<title>The Mentor: Beautiful Buildings of the World, Serial no. 33</title>
+<content type="text">Clarence Ward</content>
+<link type="application/atom+xml;profile=opds-catalog" rel="subsection" href="/ebooks/51001.opds"/>
+<link type="image/png" rel="http://opds-spec.org/image/thumbnail" href="data:image/png;base64,iVBORw0KGgo="/>
+</entry>
+<entry>
+<updated>2026-09-05T03:23:24Z</updated>
+<id>https://www.gutenberg.org/ebooks/73276.opds</id>
+<title>Ikuinen kaupunki :  Romaani (Finnish)</title>
+<content type="text">Sir Hall Caine</content>
+<link type="application/atom+xml;profile=opds-catalog" rel="subsection" href="/ebooks/73276.opds"/>
+<link type="image/png" rel="http://opds-spec.org/image/thumbnail" href="data:image/png;base64,iVBORw0KGgo="/>
+</entry>
+</feed>

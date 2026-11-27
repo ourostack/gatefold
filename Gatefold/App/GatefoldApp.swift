@@ -29,7 +29,13 @@ struct GatefoldApp: App {
         WindowGroup {
             RootView()
                 .ouroTheme(.gatefold)
+                .ouroToaster()
                 .environment(app)
+                // A book opened in Gatefold from Files, Mail, Safari or any share sheet ("Open in", "Copy to").
+                .onOpenURL { url in
+                    guard url.isFileURL else { return }
+                    Task { await app.receive([url], source: .shared) }
+                }
                 .task { await app.start() }
                 .task { LaunchClock.firstFrame(); await WebWarmup.startUnlessABookOpens() }
                 #if DEBUG

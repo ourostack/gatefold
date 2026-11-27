@@ -8,10 +8,26 @@ struct LibraryBook: Identifiable, Codable, Equatable {
         case imported
     }
 
+    /// Where a book that isn't from the Cloud came in, for the shelf's "From Files" and the counts-only telemetry.
+    enum Source: String, Codable, CaseIterable {
+        /// Chosen in Files from the shelf's Add menu.
+        case files
+        /// Handed over by another app: Open in, the share sheet, a tapped attachment.
+        case shared
+        /// Dropped on the shelf (iPad, or a Mac).
+        case dropped
+        /// Got from an OPDS catalog (`CatalogsView`).
+        case catalog
+    }
+
     var id: String
     var title: String
     var author: String
     var origin: Origin
+    /// How an imported book came in. Nil for Cloud books and for books imported before Gatefold kept it.
+    var source: Source?
+    /// Hex SHA-256 of the file kept here, so the same book coming in again is spotted (`ShelfMatch`).
+    var digest: String?
     /// The Cloud's record, for Cloud books.
     var cloud: CloudBook?
     /// File name under the app's Books folder, once the book is on this device.
@@ -37,6 +53,16 @@ struct LibraryBook: Identifiable, Codable, Equatable {
     var cloudScale: CloudScale?
 
     var isOnDevice: Bool { fileName != nil }
+
+    /// The shelf's word for a book not yet opened: where it came from.
+    var arrivalLabel: String {
+        guard origin == .imported else { return "New" }
+        switch source {
+        case .files: return "From Files"
+        case .catalog: return "From a catalog"
+        case .shared, .dropped, nil: return "Added"
+        }
+    }
     /// A book from the fake Cloud's bundled demo shelf.
     var isDemo: Bool { id.hasPrefix("gutenberg-") }
     var isFinished: Bool { finished != nil || cloud?.readStatus == "read" }

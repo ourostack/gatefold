@@ -76,6 +76,23 @@
       ],
       "kind": "iphone"
     },
+    "iphone-max": {
+      "name": "iPhone 17 Pro Max",
+      "fallbacks": [
+        "iPhone 18 Pro Max",
+        "iPhone 16 Pro Max"
+      ],
+      "folder": "iphone-6.9",
+      "screen": [
+        1320,
+        2868
+      ],
+      "canvas": [
+        1320,
+        2868
+      ],
+      "kind": "iphone"
+    },
     "duo": {
       "name": "iPhone Duo",
       "folder": "duo-outer",
@@ -123,6 +140,7 @@
       "devices": [
         "ipad",
         "iphone",
+        "iphone-max",
         "duo"
       ],
       "args": [
@@ -155,7 +173,8 @@
       "id": "shelf",
       "devices": [
         "ipad",
-        "iphone"
+        "iphone",
+        "iphone-max"
       ],
       "args": [
         "-GatefoldTheme",
@@ -179,6 +198,7 @@
       "id": "page",
       "devices": [
         "iphone",
+        "iphone-max",
         "duo"
       ],
       "args": [
@@ -206,6 +226,7 @@
       "devices": [
         "ipad",
         "iphone",
+        "iphone-max",
         "duo"
       ],
       "args": [
@@ -232,7 +253,8 @@
       "id": "papers",
       "devices": [
         "ipad",
-        "iphone"
+        "iphone",
+        "iphone-max"
       ],
       "args": [
         "-GatefoldOpenBook",

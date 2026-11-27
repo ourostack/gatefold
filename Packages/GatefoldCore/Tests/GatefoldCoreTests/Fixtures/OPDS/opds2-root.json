@@ -1,0 +1,59 @@
+{
+  "metadata": {
+    "title": "Public Domain Shelf",
+    "numberOfItems": 120,
+    "itemsPerPage": 2,
+    "currentPage": 1
+  },
+  "links": [
+    {"rel": "self", "href": "https://shelf.example/opds/v2/catalog", "type": "application/opds+json"},
+    {"rel": "start", "href": "/opds/v2/catalog", "type": "application/opds+json"},
+    {"rel": "search", "href": "/opds/v2/search{?query}", "type": "application/opds+json", "templated": true},
+    {"rel": ["next"], "href": "catalog?page=2", "type": "application/opds+json"}
+  ],
+  "navigation": [
+    {"href": "fiction", "title": "Fiction", "type": "application/opds+json", "rel": "subsection"},
+    {"href": "/opds/v2/poetry", "title": "Poetry", "type": "application/opds+json"}
+  ],
+  "publications": [
+    {
+      "metadata": {
+        "@type": "http://schema.org/Book",
+        "title": "Moby-Dick; or, The Whale",
+        "author": [{"name": "Herman Melville"}],
+        "identifier": "urn:uuid:6f1b2a3c-0d4e-4f5a-8b6c-7d8e9f0a1b2c",
+        "description": "The voyage of the Pequod."
+      },
+      "links": [
+        {"rel": "http://opds-spec.org/acquisition", "href": "/books/moby-dick/file.epub", "type": "application/epub+zip"},
+        {"rel": "http://opds-spec.org/acquisition", "href": "/books/moby-dick/file.pdf", "type": "application/pdf"}
+      ],
+      "images": [
+        {"href": "/books/moby-dick/cover.jpg", "type": "image/jpeg", "width": 1400, "height": 2100},
+        {"href": "/books/moby-dick/thumb.jpg", "type": "image/jpeg", "width": 200, "height": 300}
+      ]
+    },
+    {
+      "metadata": {
+        "title": {"en": "Leaves of Grass", "fr": "Feuilles d'herbe"},
+        "author": "Walt Whitman"
+      },
+      "links": [
+        {"rel": "http://opds-spec.org/acquisition/open-access", "href": "/books/leaves/file.cbz", "type": "application/vnd.comicbook+zip"}
+      ]
+    }
+  ],
+  "groups": [
+    {
+      "metadata": {"title": "Featured"},
+      "publications": [
+        {
+          "metadata": {"title": "Walden", "author": {"name": "Henry David Thoreau"}, "identifier": "urn:isbn:9780000000001"},
+          "links": [
+            {"rel": "http://opds-spec.org/acquisition", "href": "/books/walden/file.epub", "type": "application/epub+zip; charset=binary"}
+          ]
+        }
+      ]
+    }
+  ]
+}

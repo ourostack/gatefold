@@ -192,7 +192,7 @@ jobs:
       # One device at a time per run: macOS runners are the scarce thing, and a release can wait.
       max-parallel: 1
       matrix:
-        device: [ipad, iphone, duo]
+        device: [ipad, iphone, iphone-max, duo]
     env:
       DEVICE: ${{ matrix.device }}
       TZ: America/Los_Angeles # the staged 17:41Z reads 9:41

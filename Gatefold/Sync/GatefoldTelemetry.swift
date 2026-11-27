@@ -179,6 +179,16 @@ final class GatefoldTelemetry: @unchecked Sendable {
         return p
     }
 
+    /// Books coming in from outside the Cloud: which source, and how many were new, already on the shelf, taken by a
+    /// PocketBook Cloud book, or refused. Counts and the source's fixed name only: never a title, file name or digest.
+    static func addedProperties(source: LibraryBook.Source, result: LibraryStore.ImportResult) -> [String: Value] {
+        ["source": .string(source.rawValue),
+         "added": .int(result.added.count),
+         "already_here": .int(result.alreadyHere.count - result.linkedToCloud),
+         "linked_to_cloud": .int(result.linkedToCloud),
+         "refused": .int(result.refused)]
+    }
+
     static let buckets = [5, 15, 30, 60, 120, 300, 600, 1800, 3600]
     /// The smallest bucket above `seconds`; 3600 for an hour or more.
     static func bucket(_ seconds: TimeInterval) -> Int { buckets.first { seconds < Double($0) } ?? 3600 }

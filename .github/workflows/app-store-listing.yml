@@ -1,0 +1,121 @@
+name: App Store listing
+
+# The App Store listing (distribution/app-store/listing.json) and its stager (scripts/app-store/). It never submits
+# for review: a person submits in App Store Connect.
+#
+# - On a pull request, the merge queue and main: the stager's tests, and the listing validated against App Store
+#   Connect's field limits and Gatefold's copy rules (no other company's trademark in the name, subtitle or keywords;
+#   no claim that the app collects nothing). Linux only, seconds long, no secrets.
+# - By hand (workflow_dispatch): stage the listing into App Store Connect. A dry run (the default) reads App Store
+#   Connect and prints every change it would make. Apply writes them, and refuses until identity.json names the app
+#   and says its icon is in, and until every device has screenshots from a Screenshots run.
+on:
+  pull_request:
+    paths:
+      - "distribution/app-store/**"
+      - "scripts/app-store/**"
+      - "screenshots/spec.json"
+      - ".github/workflows/app-store-listing.yml"
+  merge_group:
+  push:
+    branches: [main]
+    paths:
+      - "distribution/app-store/**"
+      - "scripts/app-store/**"
+      - "screenshots/spec.json"
+      - ".github/workflows/app-store-listing.yml"
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "dry-run reads App Store Connect and prints the plan; apply writes it (never submits)"
+        type: choice
+        options: [dry-run, apply]
+        default: dry-run
+      build_number:
+        description: "The TestFlight build to attach to the version (required for apply)"
+        required: false
+        default: ""
+      screenshots_run_id:
+        description: "A Screenshots run whose listing-screenshots-* artifact to stage (required for apply)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: app-store-listing-${{ github.event_name == 'workflow_dispatch' && 'stage' || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  check:
+    name: App Store listing is valid
+    if: github.event_name != 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: ruby/setup-ruby@8e41b362d2589a22a44c1cfa214b3c83052c195b # v1
+        with:
+          ruby-version: "3.3"
+      - name: The stager's tests (a fake App Store Connect)
+        run: |
+          ruby scripts/app-store/test/app_store_listing_test.rb
+          ruby scripts/app-store/test/gatefold_listing_test.rb
+      - name: The listing fits App Store Connect and Gatefold's copy rules
+        run: ruby scripts/app-store/stage-app-store-listing.rb --validate-only
+
+  stage:
+    name: Stage the listing (${{ inputs.mode }})
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: internal-testflight
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: ruby/setup-ruby@8e41b362d2589a22a44c1cfa214b3c83052c195b # v1
+        with:
+          ruby-version: "3.3"
+      - name: Download the screenshot set
+        if: inputs.screenshots_run_id != ''
+        uses: actions/download-artifact@v4
+        with:
+          pattern: listing-screenshots-*
+          run-id: ${{ inputs.screenshots_run_id }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/shots
+      - name: Stage
+        env:
+          MODE: ${{ inputs.mode }}
+          BUILD: ${{ inputs.build_number }}
+          RUN_ID: ${{ inputs.screenshots_run_id }}
+          ASC_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_API_ISSUER_ID }}
+          ASC_KEY_BASE64: ${{ secrets.APP_STORE_CONNECT_API_KEY_BASE64 }}
+          GATEFOLD_REVIEW_DEMO_EMAIL: ${{ secrets.GATEFOLD_REVIEW_DEMO_EMAIL }}
+          GATEFOLD_REVIEW_DEMO_PASSWORD: ${{ secrets.GATEFOLD_REVIEW_DEMO_PASSWORD }}
+          APP_REVIEW_CONTACT_EMAIL: ${{ secrets.APP_REVIEW_CONTACT_EMAIL }}
+          APP_REVIEW_CONTACT_PHONE: ${{ secrets.APP_REVIEW_CONTACT_PHONE }}
+        run: |
+          set -euo pipefail
+          args=()
+          if [ "$MODE" = apply ]; then args+=(--apply); else args+=(--dry-run); fi
+          [ -z "$BUILD" ] || args+=(--build-number "$BUILD")
+          if [ -n "$RUN_ID" ]; then
+            # One artifact per Screenshots run (listing-screenshots-<fingerprint>), whose root holds SOURCE.
+            mapfile -t roots < <(find "$RUNNER_TEMP/shots" -maxdepth 2 -name SOURCE -exec dirname {} \;)
+            [ "${#roots[@]}" -eq 1 ] || { echo "::error::Run $RUN_ID has ${#roots[@]} listing-screenshots sets, not one"; exit 1; }
+            case "${roots[0]}" in
+              */listing-screenshots-pr-*) echo "::error::Run $RUN_ID rendered a pull request's screenshots; stage a release render (TestFlight's Screenshots run)"; exit 1 ;;
+            esac
+            echo "Screenshots from $(cat "${roots[0]}/SOURCE")"
+            args+=(--screenshot-set "${roots[0]}")
+          fi
+          ruby scripts/app-store/stage-app-store-listing.rb "${args[@]}" | tee -a "$GITHUB_STEP_SUMMARY"
