@@ -43,7 +43,7 @@ struct SettingsPanel: View {
         }
         .padding(16)
         .frame(maxWidth: .infinity)
-        .glassEffect(.regular, in: .rect(cornerRadius: 34))
+        .glassEffect(.regular, in: .rect(cornerRadius: 34, style: .continuous))
         .foregroundStyle(Color.primary)
         .tint(Color.primary)
         .animation(Motion.open, value: customizing)
@@ -114,7 +114,7 @@ struct SettingsPanel: View {
                             .font(.system(size: 17, weight: .medium))
                             .symbolRenderingMode(.hierarchical)
                             .frame(width: 48, height: 44)
-                            .background(prefs.matchSystemAppearance ? Color.primary.opacity(0.12) : .clear, in: .capsule)
+                            .background(prefs.matchSystemAppearance ? Color.primary.opacity(0.12) : .clear, in: Capsule(style: .continuous))
                             .contentShape(.rect)
                     }
                     .buttonStyle(.plain)
@@ -124,7 +124,7 @@ struct SettingsPanel: View {
                     .accessibilityIdentifier("appearance.matchSystem")
                 }
                 .padding(.horizontal, 4)
-                .background(Color.primary.opacity(0.06), in: .capsule)
+                .background(Color.primary.opacity(0.06), in: Capsule(style: .continuous))
             }
 
             HStack(spacing: 10) {
@@ -163,8 +163,8 @@ struct SettingsPanel: View {
                 Label("Fine-Tune", systemImage: "slider.horizontal.3")
                     .font(.subheadline.weight(.semibold))
                     .frame(maxWidth: 360, minHeight: 44)
-                    .background(Color.primary.opacity(0.06), in: .capsule)
-                    .contentShape(.capsule)
+                    .background(Color.primary.opacity(0.06), in: Capsule(style: .continuous))
+                    .contentShape(Capsule(style: .continuous))
             }
             .buttonStyle(.plain)
             .frame(maxWidth: .infinity)
@@ -239,8 +239,8 @@ struct SettingsPanel: View {
                       systemImage: model.followsDefault ? "checkmark" : "books.vertical")
                     .font(.subheadline.weight(.semibold))
                     .frame(maxWidth: .infinity, minHeight: 44)
-                    .background(Color.primary.opacity(0.06), in: .capsule)
-                    .contentShape(.capsule)
+                    .background(Color.primary.opacity(0.06), in: Capsule(style: .continuous))
+                    .contentShape(Capsule(style: .continuous))
             }
             .buttonStyle(.plain)
             .disabled(model.followsDefault)
@@ -344,7 +344,7 @@ private struct SizeStepper: View {
             Rectangle().fill(Color.primary.opacity(0.15)).frame(width: 1, height: 22)
             step(up: true)
         }
-        .background(Color.primary.opacity(0.06), in: .capsule)
+        .background(Color.primary.opacity(0.06), in: Capsule(style: .continuous))
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Text Size")
         .accessibilityValue("\(Int((model.preferences.fontScale * 100).rounded())) percent")
@@ -382,12 +382,12 @@ private struct ThemeTile: View {
             .foregroundStyle(theme.text)
             .padding(.vertical, 8)
             .frame(maxWidth: .infinity, minHeight: 66)
-            .background(theme.background, in: .rect(cornerRadius: 14))
+            .background(theme.background, in: .rect(cornerRadius: 14, style: .continuous))
             .overlay {
-                RoundedRectangle(cornerRadius: 14)
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
                     .strokeBorder(isSelected ? Color.primary : Color.primary.opacity(0.12), lineWidth: isSelected ? 3 : 1)
             }
-            .contentShape(.rect(cornerRadius: 14))
+            .contentShape(.rect(cornerRadius: 14, style: .continuous))
         }
         .buttonStyle(.plain)
         .accessibilityLabel(theme.displayName)
@@ -396,7 +396,7 @@ private struct ThemeTile: View {
     }
 }
 
-/// A round glass button inside the panel (the panel is glass; this is a quiet disc on it).
+/// A small glass button inside the panel (the panel is glass; this is a quiet squircle on it).
 private struct RoundIcon: View {
     let systemName: String
     let label: String
@@ -408,8 +408,8 @@ private struct RoundIcon: View {
             Image(systemName: systemName)
                 .font(.system(size: 16, weight: .semibold))
                 .frame(width: 44, height: 44)
-                .background(Color.primary.opacity(0.08), in: .circle)
-                .contentShape(.circle)
+                .background(Color.primary.opacity(0.08), in: Squircle())
+                .contentShape(Squircle())
         }
         .buttonStyle(.plain)
         .accessibilityLabel(label)

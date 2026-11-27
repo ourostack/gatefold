@@ -13,8 +13,8 @@ struct FontChip: View {
                 .padding(.horizontal, 14)
                 .frame(minHeight: 44)
                 .foregroundStyle(Color.primary)
-                .background(isSelected ? Color.primary.opacity(0.12) : Color.primary.opacity(0.05), in: .capsule)
-                .overlay { if isSelected { Capsule().strokeBorder(Color.primary, lineWidth: 2) } }
+                .background(isSelected ? Color.primary.opacity(0.12) : Color.primary.opacity(0.05), in: Capsule(style: .continuous))
+                .overlay { if isSelected { Capsule(style: .continuous).strokeBorder(Color.primary, lineWidth: 2) } }
         }
         .buttonStyle(.plain)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
@@ -181,7 +181,7 @@ struct TextSizeControl: View {
                 .accessibilityHidden(true)
             step(up: true)
         }
-        .glassEffect(.regular.interactive(), in: .capsule)
+        .glassEffect(.regular.interactive(), in: Capsule(style: .continuous))
         .animation(.snappy, value: scale)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Text Size")
@@ -213,7 +213,7 @@ struct PanelCloseButton: View {
     var body: some View {
         Button(role: .close, action: action)
             .buttonStyle(.glass)
-            .buttonBorderShape(.circle)
+            .buttonBorderShape(.roundedRectangle(radius: Squircle.radius(side: 44)))
             .controlSize(.large)
             .accessibilityLabel("Close")
             .accessibilityIdentifier(id)

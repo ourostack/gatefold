@@ -621,19 +621,19 @@ struct CoverView: View {
     }
 
     @Environment(\.colorScheme) private var scheme
-    private static let shape = UnevenRoundedRectangle(topLeadingRadius: 3, bottomLeadingRadius: 3, bottomTrailingRadius: 6, topTrailingRadius: 6)
+    private static let shape = UnevenRoundedRectangle(topLeadingRadius: 3, bottomLeadingRadius: 3, bottomTrailingRadius: 6, topTrailingRadius: 6, style: .continuous)
 }
 
-/// Add's glass button; beside the cover screen's reserved column, a glass circle the account badge's
-/// size, so the two read as a pair.
+/// Add's glass button, a squircle; beside the cover screen's reserved column, the account badge's size, so the two
+/// read as a pair.
 private struct AddButtonStyle: ViewModifier {
     let compact: Bool
 
     func body(content: Content) -> some View {
         if compact {
-            content.buttonStyle(.plain).glassEffect(.regular.interactive(), in: .circle)
+            content.buttonStyle(.plain).glassEffect(.regular.interactive(), in: Squircle())
         } else {
-            content.buttonStyle(.glass).buttonBorderShape(.circle)
+            content.buttonStyle(.plain).glassEffect(.regular.interactive(), in: Squircle())
         }
     }
 }
@@ -751,7 +751,7 @@ private struct DustingShelf: View {
     }
 
     private func ghost(_ i: Int) -> some View {
-        RoundedRectangle(cornerRadius: 5)
+        RoundedRectangle(cornerRadius: 5, style: .continuous)
             .fill(Color.ink.opacity(breathe ? 0.09 : 0.05))
             .animation(reduceMotion ? nil : .easeInOut(duration: 1.1).repeatForever(autoreverses: true).delay(Double(i) * 0.12), value: breathe)
     }
@@ -827,20 +827,20 @@ private struct AccountBadge: View {
                     .font(.headline.bold())
                     .foregroundStyle(Color.onRibbon)
                     .frame(width: 36, height: 36)
-                    .background(Color.ribbon, in: .circle)
+                    .background(Color.ribbon, in: .circle) // round: a person's avatar, as Ouro's OuroAvatar draws one
             } else {
                 Image(systemName: "person.crop.circle")
                     .font(.system(size: 30, weight: .regular))
                     .foregroundStyle(Color.ink)
             }
             if needsAttention {
-                Circle().fill(.orange).frame(width: 11, height: 11)
-                    .overlay(Circle().stroke(Color.paper, lineWidth: 2))
+                Circle().fill(.orange).frame(width: 11, height: 11) // round: a presence dot, one of Ouro's round things
+                    .overlay(Circle().stroke(Color.paper, lineWidth: 2)) // round: the dot's ring
                     .offset(x: 2, y: -2)
             }
         }
         .frame(width: 44, height: 44)
-        .contentShape(.circle)
+        .contentShape(.circle) // round: the avatar's own shape, where a tap lands
     }
 }
 
