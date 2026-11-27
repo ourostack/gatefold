@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import os
 
@@ -167,6 +168,8 @@ public actor FakeSyncService: SyncService {
                 format: "epub",
                 mimeType: "application/epub+zip",
                 bytes: Int64((try? bundleURL(seed.resource).resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0) ?? 0),
+                // Like the Cloud's own `md5_hash`, so a copy imported from Files is spotted as this book.
+                md5Base64: (try? Data(contentsOf: bundleURL(seed.resource))).map { Data(Insecure.MD5.hash(data: $0)).base64EncodedString() },
                 modifiedAt: position?.updated,
                 readPercent: position.map(\.wholePercent),
                 coverURL: bundle.url(forResource: seed.resource, withExtension: "jpg"),
