@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:pse="http://vaemendis.net/opds-pse/ns" xmlns="http://www.w3.org/2005/Atom">
+  <updated>2026-11-27T12:00:00</updated>
+  <id>3e1a1d1c-9a5b-4b9e-8f2c-6d7e8f9a0b1c</id>
+  <title>Little Nemo in Slumberland - Storyline</title>
+  <icon>/api/opds/2f7c3a9e-key/favicon</icon>
+  <author>
+    <name>Kavita</name>
+    <uri>https://kavitareader.com</uri>
+  </author>
+  <link rel="self" type="application/atom+xml;profile=opds-catalog;kind=acquisition" href="/api/opds/2f7c3a9e-key/series/12?pageNumber=2" />
+  <link rel="start" type="application/atom+xml;profile=opds-catalog;kind=navigation" href="/api/opds/2f7c3a9e-key" />
+  <link rel="search" type="application/opensearchdescription+xml" href="/api/opds/2f7c3a9e-key/search" />
+  <link rel="http://opds-spec.org/image" type="image/jpeg" href="http://kavita.local:5000/api/image/series-cover?seriesId=12&amp;apiKey=2f7c3a9e-key" />
+  <link rel="prev" type="application/atom+xml;profile=opds-catalog;kind=navigation" href="/api/opds/2f7c3a9e-key/series/12?pageNumber=1" />
+  <link rel="next" type="application/atom+xml;profile=opds-catalog;kind=navigation" href="/api/opds/2f7c3a9e-key/series/12?pageNumber=3" />
+  <entry>
+    <updated>2026-11-27T12:00:00</updated>
+    <id>101</id>
+    <title>Little Nemo in Slumberland Vol. 1</title>
+    <summary>application/x-cbz - 48 MB</summary>
+    <dcterms:format xmlns:dcterms="http://purl.org/dc/terms/">Archive</dcterms:format>
+    <dcterms:extent xmlns:dcterms="http://purl.org/dc/terms/">48 MB</dcterms:extent>
+    <author>
+      <name>Winsor McCay</name>
+    </author>
+    <content type="text">application/x-cbz</content>
+    <link rel="http://opds-spec.org/image" type="image/jpeg" href="http://kavita.local:5000/api/image/chapter-cover?chapterId=101&amp;apiKey=2f7c3a9e-key" />
+    <link rel="http://opds-spec.org/image/thumbnail" type="image/jpeg" href="http://kavita.local:5000/api/image/chapter-cover?chapterId=101&amp;apiKey=2f7c3a9e-key" />
+    <link rel="http://opds-spec.org/acquisition/open-access" type="application/x-cbz" href="/api/opds/2f7c3a9e-key/series/12/volume/31/chapter/101/download/Little%20Nemo%20v01.cbz" title="Little%20Nemo%20v01.cbz" pse:count="64" />
+    <link rel="http://vaemendis.net/opds-pse/stream" type="image/jpeg" href="/api/opds/2f7c3a9e-key/image?libraryId=2&amp;seriesId=12&amp;volumeId=31&amp;chapterId=101&amp;pageNumber=0" pse:count="64" />
+  </entry>
+  <entry>
+    <updated>2026-11-27T12:00:00</updated>
+    <id>102</id>
+    <title>Little Nemo in Slumberland Vol. 2</title>
+    <summary>application/x-cbz - 51 MB</summary>
+    <author>
+      <name>Winsor McCay</name>
+    </author>
+    <content type="text">application/x-cbz</content>
+    <link rel="http://opds-spec.org/image" type="image/jpeg" href="http://kavita.local:5000/api/image/chapter-cover?chapterId=102&amp;apiKey=2f7c3a9e-key" />
+    <link rel="http://opds-spec.org/image/thumbnail" type="image/jpeg" href="http://kavita.local:5000/api/image/chapter-cover?chapterId=102&amp;apiKey=2f7c3a9e-key" />
+    <link rel="http://opds-spec.org/acquisition/open-access" type="application/x-cbz" href="/api/opds/2f7c3a9e-key/series/12/volume/32/chapter/102/download/Little%20Nemo%20v02.cbz" title="Little%20Nemo%20v02.cbz" pse:count="70" />
+    <link rel="http://vaemendis.net/opds-pse/stream" type="image/jpeg" href="/api/opds/2f7c3a9e-key/image?libraryId=2&amp;seriesId=12&amp;volumeId=32&amp;chapterId=102&amp;pageNumber=0" pse:count="70" />
+  </entry>
+  <entry>
+    <updated>2026-11-27T12:00:00</updated>
+    <id>140</id>
+    <title>Dreams of the Rarebit Fiend</title>
+    <summary>application/epub+zip - 2 MB</summary>
+    <author>
+      <name>Winsor McCay</name>
+    </author>
+    <content type="text">application/epub+zip</content>
+    <link rel="http://opds-spec.org/image" type="image/jpeg" href="http://kavita.local:5000/api/image/chapter-cover?chapterId=140&amp;apiKey=2f7c3a9e-key" />
+    <link rel="http://opds-spec.org/image/thumbnail" type="image/jpeg" href="http://kavita.local:5000/api/image/chapter-cover?chapterId=140&amp;apiKey=2f7c3a9e-key" />
+    <link rel="http://opds-spec.org/acquisition/open-access" type="application/epub+zip" href="/api/opds/2f7c3a9e-key/series/12/volume/40/chapter/140/download/Dreams%20of%20the%20Rarebit%20Fiend.epub" title="Dreams%20of%20the%20Rarebit%20Fiend.epub" pse:count="1" />
+  </entry>
+</feed>
