@@ -69,6 +69,7 @@ main|iPad Pro 13-inch|PositionUITests/testEveryPostureKeepsThePlace
 main|iPad Pro 13-inch|PostureLeafUITests/testHalfOpenToFlatPlaysNoLeaf
 main|iPad Pro 13-inch|PostureLeafUITests/testOpeningAndShuttingTheBookPlaysItsLeaves
 main|iPad Pro 13-inch|PostureLeafUITests/testScrollModeChangesPostureWithNoLeaf
+main|iPad Pro 13-inch|PostureLeafUITests/testTurningTheDevicePlaysNoLeaf
 main|iPad Pro 13-inch|QuickLeaveUITests/testALeaveUnderTheReopensCoverAfterTheWatchdogKeepsHisPlace
 main|iPad Pro 13-inch|QuickLeaveUITests/testTurnsThenAQuickLeaveReopenOnTheLastTurnsPage
 main|iPad Pro 13-inch|ReaderVisibleTextUITests/testTheShelfReadsNoWords

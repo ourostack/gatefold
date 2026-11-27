@@ -38,6 +38,14 @@ final class PostureLeafUITests: XCTestCase {
         try walk(pageTurn: "curl", from: "single", through: ["spread", "single"], leaves: 2)
     }
 
+    /// Turning a device with a fold on its side and back: the spread becomes one page and comes back, laid out again
+    /// where it is, with no leaf, because nothing opened or shut (Ari, 2026-11-27: nothing moves that he didn't move).
+    /// On the Duo's inner screen a turn took the spread to one page and back, and played the fold's leaf and then the
+    /// unfold's. The forced spread stands for the open Duo; upright, it can't fit, so it lays out one page.
+    func testTurningTheDevicePlaysNoLeaf() throws {
+        try walk(pageTurn: "curl", from: "spread", through: ["turn:portrait", "turn:landscapeLeft"], leaves: 0)
+    }
+
     private func el(_ id: String) -> XCUIElement { app.descendants(matching: .any)[id].firstMatch }
 
     private var hung = false
@@ -88,9 +96,20 @@ final class PostureLeafUITests: XCTestCase {
         let before = leaves
         XCTAssertEqual(before, 0, "the book opened with no leaf played (\(pageTurn))")
         var from = start
-        for posture in postures {
+        for step in postures {
             let reflow = reflowNumber()
-            app.buttons["debug.posture.\(posture)"].tap()
+            let posture: String
+            switch step {
+            case "turn:portrait":
+                XCUIDevice.shared.orientation = .portrait
+                posture = "single"
+            case "turn:landscapeLeft":
+                XCUIDevice.shared.orientation = .landscapeLeft
+                posture = start
+            default:
+                app.buttons["debug.posture.\(step)"].tap()
+                posture = step
+            }
             let shown = readsUntil(reads: 80) { el("reader.posture").label == posture }
             XCTAssertTrue(shown.ok, "\(from) to \(posture): the reader shows \(posture) (\(el("reader.posture").label))")
             let moving = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
@@ -98,6 +117,16 @@ final class PostureLeafUITests: XCTestCase {
             moving.lifetime = .keepAlways
             add(moving)
             settled(after: reflow, "\(from) to \(posture), \(pageTurn)")
+            if step.hasPrefix("turn:") {
+                // Every frame from the turn until its new layout is shown is a whole page (gatefold#537, #648): the
+                // app judges each one (`reader.turnFrames`), as `RotationFrameUITests` does on the iPad.
+                func turnFrames() -> String { (el("reader.turnFrames").value as? String) ?? "" }
+                let judged = readsUntil(reads: 200) { turnFrames().contains("broken") }
+                let verdict = turnFrames()
+                print("TURNFRAMES \(from) to \(posture): \(verdict)")
+                XCTAssertTrue(judged.ok && verdict.hasPrefix("0 broken of ") && !verdict.contains("("),
+                              "\(step) from \(from): frames that weren't a whole page: \(verdict)")
+            }
             let shot = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
             shot.name = "\(name)-\(from)-to-\(posture)"
             shot.lifetime = .keepAlways

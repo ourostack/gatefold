@@ -802,9 +802,11 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
 
     private func holdTurnPicture() {
         turnPicture = nil
-        // A device that folds opens with the unfold, which brings its own pictures; a turn mid-curl keeps the
-        // curl's own handling (gatefold#534); a page not shown has nothing to picture.
-        guard weakModel?.hasFold == false, pageShown, !curl.isActive, reflowCover == nil, settlePicture == nil,
+        // A device opening or shutting (its hinge just moved) brings the unfold's or the fold's own pictures; a turn
+        // mid-curl keeps the curl's own handling (gatefold#534); a page not shown has nothing to picture. A Duo turned
+        // on its side moves no hinge: its page is pictured whole, as an iPad's is, never cut off at the new size
+        // (gatefold#648: a clipped column, a grey band and text cut off on the right in each turn).
+        guard weakModel?.hingeMovedLately == false, pageShown, !curl.isActive, reflowCover == nil, settlePicture == nil,
               let page = navigator.viewIfLoaded, page.window != nil, page.alpha > 0.5,
               let picture = page.snapshotView(afterScreenUpdates: false) else { return }
         turnPicture = (picture, page.bounds.size)

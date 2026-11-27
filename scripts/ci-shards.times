@@ -174,3 +174,4 @@ iPhone Duo|ControlsTapUITests/testContentsOpensWhenTappedAsTheControlsComeUp	300
 iPad Pro 13-inch|PostureLeafUITests/testHalfOpenToFlatPlaysNoLeaf	150	# estimate until CI has run it (2026-11-27)
 iPad Pro 13-inch|PostureLeafUITests/testScrollModeChangesPostureWithNoLeaf	150	# estimate until CI has run it (2026-11-27)
 iPad Pro 13-inch|PostureLeafUITests/testOpeningAndShuttingTheBookPlaysItsLeaves	90	# estimate until CI has run it (2026-11-27)
+iPad Pro 13-inch|PostureLeafUITests/testTurningTheDevicePlaysNoLeaf	130	# estimate until CI has run it (2026-11-27)

@@ -9,9 +9,12 @@ public enum PostureLeaf: Equatable, Sendable {
     case fold
 
     /// The leaf a change from `old` to `new` plays: nil on a device with no fold (an iPad fades, gatefold#537), on a
-    /// scrolling page, and between half open and flat.
-    public static func plays(from old: Posture, to new: Posture, scrolls: Bool, hasFold: Bool) -> PostureLeaf? {
-        guard hasFold, !scrolls else { return nil }
+    /// scrolling page, between half open and flat, and when the hinge hasn't moved in the moments before:
+    /// turning the open Duo on its side takes its spread to one page and back, and nothing opened or shut, so only
+    /// the words move, laid out again (Ari, 2026-11-27: nothing moves that he didn't move). `hingeMoved` counts a
+    /// forced posture's switch (tests and films), which stands in for the hinge.
+    public static func plays(from old: Posture, to new: Posture, scrolls: Bool, hasFold: Bool, hingeMoved: Bool) -> PostureLeaf? {
+        guard hasFold, !scrolls, hingeMoved else { return nil }
         switch (old, new) {
         case (.single, .spread): return .unfold
         case (.spread, .single): return .fold

@@ -291,6 +291,9 @@ struct ReaderScreen: View {
         }
         .observingHinge($hinge)
         .onChange(of: hinge) { old, new in
+            // The hinge moving opens or shuts the book, and only that plays a leaf (`PostureLeaf`). Its first report
+            // (from none, as the screen appears) is no movement.
+            if old != .none, old != new { model.noteHingeMoved() }
             // The hinge has started to move: hold a picture of the page before a Duo moves the app
             // to its other screen, so the unfold swings from the page he was reading.
             if model.layout.posture != .spread, old != new { model.host?.holdPageForUnfold() }
@@ -635,6 +638,7 @@ struct ReaderScreen: View {
                     ForEach(Posture.allCases, id: \.self) { posture in
                         Button {
                             readerLog.notice("debug posture \(posture.rawValue, privacy: .public)")
+                            model.noteHingeMoved()
                             forced = posture
                         } label: {
                             Color.clear.frame(width: TestPostureSwitches.button, height: TestPostureSwitches.button).contentShape(Rectangle())
@@ -880,6 +884,7 @@ struct ReaderScreen: View {
         Task {
             if next == .spread { await model.host?.holdPage() }
             hinge = next == .tabletop ? .partiallyOpen(angleDegrees: 110) : .none
+            model.noteHingeMoved()
             forced = next
         }
     }
@@ -904,9 +909,11 @@ struct ReaderScreen: View {
         guard let after = LaunchOptions.flipAfter else { return }
         let before = forced
         try? await Task.sleep(for: .seconds(after))
+        model.noteHingeMoved()
         forced = LaunchOptions.flipTo
         guard let back = LaunchOptions.flipBackAfter else { return }
         try? await Task.sleep(for: .seconds(back))
+        model.noteHingeMoved()
         forced = before ?? .single
     }
 }

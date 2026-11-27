@@ -544,7 +544,7 @@ jobs:
               CountingPlaceholderUITests/testAFreshOpenOnItsSideNeverLeavesTheNumbersSlotBlank
             pr_tests: none
             cold: false
-            timeout: 68 # 30 + 2 x 10.1 + 5 + 12
+            timeout: 72 # 30 + 2 x 12.3 + 5 + 12
             lane: 16
           - shard: ipad-place-rest
             # The catch-all for new place tests: 200 + 200 + 244 + 224. The quick leave (gatefold#301) runs in ipad-place-late.
