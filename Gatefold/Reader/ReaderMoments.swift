@@ -26,7 +26,7 @@ struct SyncSlipView: View {
                         .fixedSize(horizontal: false, vertical: true)
                         // The ribbon underline draws itself in, then fades: the same stroke as on the page.
                         .overlay(alignment: .bottomLeading) {
-                            Capsule()
+                            Capsule(style: .continuous)
                                 .fill(theme.accent)
                                 .frame(height: 2)
                                 .scaleEffect(x: drawn ? 1 : 0, anchor: .leading)
@@ -69,8 +69,8 @@ struct SyncSlipView: View {
                             .foregroundStyle(theme.onAccent)
                             .padding(.horizontal, 18)
                             .frame(minWidth: 72, minHeight: 44)
-                            .background(theme.accent, in: .capsule)
-                            .contentShape(.capsule)
+                            .background(theme.accent, in: Capsule(style: .continuous))
+                            .contentShape(Capsule(style: .continuous))
                     }
                     .buttonStyle(PressScale())
                     .accessibilityIdentifier("banner.jump")
@@ -84,7 +84,7 @@ struct SyncSlipView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         // Opaque paper, a shade off the page, with the soft shadow of a slip tucked into a book.
         .background {
-            UnevenRoundedRectangle(topLeadingRadius: 4, bottomLeadingRadius: 14, bottomTrailingRadius: 14, topTrailingRadius: 4)
+            UnevenRoundedRectangle(topLeadingRadius: 4, bottomLeadingRadius: 14, bottomTrailingRadius: 14, topTrailingRadius: 4, style: .continuous)
                 .fill(theme.background.mix(with: theme.text, by: theme.palette.isDark ? 0.10 : 0.045))
                 .shadow(color: .black.opacity(theme.palette.isDark ? 0.5 : 0.14), radius: 10, y: 4)
         }
@@ -238,8 +238,8 @@ struct EndLeafView: View {
                         .font(.headline)
                         .foregroundStyle(theme.onAccent)
                         .frame(maxWidth: .infinity, minHeight: 50)
-                        .background(theme.accent, in: .capsule)
-                        .contentShape(.capsule)
+                        .background(theme.accent, in: Capsule(style: .continuous))
+                        .contentShape(Capsule(style: .continuous))
                 }
                 .buttonStyle(PressScale())
                 .accessibilityIdentifier("endLeaf.library")
@@ -285,7 +285,7 @@ struct EndLeafView: View {
     @ViewBuilder private var cover: some View {
         if let image = model.cover {
             Image(uiImage: image).resizable().scaledToFill()
-                .clipShape(.rect(topLeadingRadius: 2, bottomLeadingRadius: 2, bottomTrailingRadius: 5, topTrailingRadius: 5))
+                .clipShape(.rect(topLeadingRadius: 2, bottomLeadingRadius: 2, bottomTrailingRadius: 5, topTrailingRadius: 5, style: .continuous))
                 .shadow(color: .black.opacity(0.25), radius: 10, y: 6)
         } else {
             VStack(spacing: 8) {
@@ -295,7 +295,7 @@ struct EndLeafView: View {
             }
             .padding(10)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(model.theme.background.mix(with: model.theme.text, by: 0.08), in: .rect(cornerRadius: 4))
+            .background(model.theme.background.mix(with: model.theme.text, by: 0.08), in: .rect(cornerRadius: 4, style: .continuous))
         }
     }
 }
@@ -358,7 +358,7 @@ struct OpeningPlaceholder: View {
                 Image(uiImage: cover)
                     .resizable()
                     .scaledToFit()
-                    .clipShape(.rect(topLeadingRadius: 3, bottomLeadingRadius: 3, bottomTrailingRadius: 6, topTrailingRadius: 6))
+                    .clipShape(.rect(topLeadingRadius: 3, bottomLeadingRadius: 3, bottomTrailingRadius: 6, topTrailingRadius: 6, style: .continuous))
                     .shadow(color: .black.opacity(0.22), radius: 14, y: 8)
                     // Every open is the same move: the cover grows to fill the page, as a book's
                     // cover fills your hands, and the first page takes its place.
@@ -368,7 +368,7 @@ struct OpeningPlaceholder: View {
             }
             if slow {
                 GeometryReader { geo in
-                    Capsule()
+                    Capsule(style: .continuous)
                         .fill(model.theme.accent)
                         .frame(width: reduceMotion ? geo.size.width : max(8, geo.size.width * progress), height: 2)
                         .opacity(reduceMotion ? 0.6 : 1)
@@ -434,7 +434,7 @@ struct AheadTab: View {
             .foregroundStyle(theme.onAccent)
             .padding(.horizontal, 9)
             .frame(height: 22)
-            .background(theme.accent, in: UnevenRoundedRectangle(cornerRadii: .init(topLeading: 0, bottomLeading: 8, bottomTrailing: 8, topTrailing: 0)))
+            .background(theme.accent, in: UnevenRoundedRectangle(cornerRadii: .init(topLeading: 0, bottomLeading: 8, bottomTrailing: 8, topTrailing: 0), style: .continuous))
             .shadow(color: .black.opacity(0.12), radius: 2, y: 1)
             .frame(minWidth: 44, minHeight: 44, alignment: .top)
             .contentShape(.rect)

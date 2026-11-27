@@ -565,7 +565,7 @@ struct HighlightCard: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.leading, 14)
                 .overlay(alignment: .leading) {
-                    Capsule().fill(Color.ribbon.opacity(0.75)).frame(width: 3)
+                    Capsule(style: .continuous).fill(Color.ribbon.opacity(0.75)).frame(width: 3)
                 }
                 .fixedSize(horizontal: false, vertical: true)
 
@@ -632,7 +632,7 @@ struct NoteEditor: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(3)
                     .padding(.leading, 12)
-                    .overlay(alignment: .leading) { Capsule().fill(Color.ribbon.opacity(0.75)).frame(width: 3) }
+                    .overlay(alignment: .leading) { Capsule(style: .continuous).fill(Color.ribbon.opacity(0.75)).frame(width: 3) }
                 TextEditor(text: $draft.text)
                     .focused($focused)
                     .scrollContentBackground(.hidden)

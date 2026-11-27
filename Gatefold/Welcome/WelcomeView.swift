@@ -106,7 +106,7 @@ struct GatefoldMark: View {
             let h = geo.size.height
             ZStack {
                 // Centre panel with a ribbon.
-                RoundedRectangle(cornerRadius: 4)
+                RoundedRectangle(cornerRadius: 4, style: .continuous)
                     .fill(Color.surface)
                     .frame(width: w, height: h)
                     .overlay(alignment: .top) {
@@ -116,7 +116,7 @@ struct GatefoldMark: View {
                     .overlay {
                         VStack(alignment: .leading, spacing: h * 0.06) {
                             ForEach(0..<5, id: \.self) { i in
-                                Capsule().fill(Color.ink.opacity(0.18)).frame(width: w * (i == 4 ? 0.4 : 0.66), height: 2.5)
+                                Capsule(style: .continuous).fill(Color.ink.opacity(0.18)).frame(width: w * (i == 4 ? 0.4 : 0.66), height: 2.5)
                             }
                         }
                         .offset(y: h * 0.12)
@@ -130,7 +130,7 @@ struct GatefoldMark: View {
     }
 
     private func panel(w: CGFloat, h: CGFloat, leading: Bool) -> some View {
-        RoundedRectangle(cornerRadius: 4)
+        RoundedRectangle(cornerRadius: 4, style: .continuous)
             .fill(LinearGradient(
                 colors: [Color(light: 0xF2F2F7, dark: 0x1C1C1E), Color(light: 0xE5E5EA, dark: 0x2C2C2E)],
                 startPoint: leading ? .trailing : .leading,
