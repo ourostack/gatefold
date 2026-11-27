@@ -11,6 +11,8 @@ class JankHuntBase: XCTestCase {
     private var out: URL { URL(fileURLWithPath: env["JANK_OUT"] ?? (try? String(contentsOfFile: "/Users/Shared/jank/out.txt", encoding: .utf8))?.trimmingCharacters(in: .whitespacesAndNewlines) ?? NSTemporaryDirectory()) }
     private var hinge: OuroDuoHinge?
 
+    nonisolated(unsafe) static var lastDrag: (String, String)?
+
     private func log(_ s: String) {
         let line = String(format: "JANK %.3f %@\n", Date().timeIntervalSince1970, s)
         print(line, terminator: "")
@@ -101,6 +103,29 @@ class JankHuntBase: XCTestCase {
                 let a = app.coordinate(withNormalizedOffset: CGVector(dx: Double(rest[0])!, dy: Double(rest[1])!))
                 let b = app.coordinate(withNormalizedOffset: CGVector(dx: Double(rest[2])!, dy: Double(rest[3])!))
                 a.press(forDuration: 0.05, thenDragTo: b, withVelocity: XCUIGestureVelocity(Double(rest.count > 4 ? rest[4] : "800")!), thenHoldForDuration: 0.05)
+            case "dragel":
+                // dragel <id> <from> <to> [velocity]: drags along the element's own frame, at its middle, from and to
+                // fractions of its width; fails the journey when its value didn't change (a drag that missed it).
+                let e = el(rest[0])
+                guard e.waitForExistence(timeout: 10) else { XCTFail("dragel: no \(rest[0])"); break }
+                let before = (e.value as? String) ?? ""
+                let f = e.frame
+                let origin = app.coordinate(withNormalizedOffset: .zero)
+                let a = origin.withOffset(CGVector(dx: f.minX + f.width * Double(rest[1])!, dy: f.midY))
+                let b = origin.withOffset(CGVector(dx: f.minX + f.width * Double(rest[2])!, dy: f.midY))
+                log("dragel \(rest[0]) at \(f) from \(before)")
+                Self.lastDrag = (rest[0], before)
+                a.press(forDuration: 0.05, thenDragTo: b, withVelocity: XCUIGestureVelocity(Double(rest.count > 3 ? rest[3] : "800")!), thenHoldForDuration: 0.05)
+            case "dragcheck":
+                // dragcheck: once the jump has landed and the controls are up, the last dragel's element must exist and
+                // read a new value; a drag that missed it fails the journey instead of passing as a landing.
+                guard let last = Self.lastDrag else { XCTFail("dragcheck before any dragel"); break }
+                let (id, before) = last
+                let e = el(id)
+                let now = e.waitForExistence(timeout: 10) ? ((e.value as? String) ?? "") : "absent"
+                log("dragcheck \(id) from \(before) to \(now)")
+                XCTAssertTrue(e.exists, "dragcheck: \(id) is not on screen to read")
+                XCTAssertNotEqual(now, before, "\(id) still reads \(before): the drag missed it")
             case "swipe":
                 let w = app.windows.firstMatch
                 switch rest[0] { case "up": w.swipeUp(); case "down": w.swipeDown(); case "left": w.swipeLeft(); default: w.swipeRight() }
