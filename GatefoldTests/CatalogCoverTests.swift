@@ -17,7 +17,7 @@ import UIKit
                      acquisitions: [], cover: cover, thumbnail: thumbnail)
     }
 
-    /// A small picture with something on it: a dark band across a light card.
+    /// A small picture with something on it: a thin dark band across the top of a light card, clear of the middle that look() reads.
     nonisolated private static func picture(width: CGFloat = 30, height: CGFloat = 45) -> Data {
         let format = UIGraphicsImageRendererFormat()
         format.scale = 1
@@ -25,7 +25,7 @@ import UIKit
             UIColor(white: 0.95, alpha: 1).setFill()
             context.fill(CGRect(x: 0, y: 0, width: width, height: height))
             UIColor(red: 0.6, green: 0.1, blue: 0.1, alpha: 1).setFill()
-            context.fill(CGRect(x: 0, y: height / 3, width: width, height: height / 3))
+            context.fill(CGRect(x: 0, y: 0, width: width, height: height / 6))
         }
     }
 

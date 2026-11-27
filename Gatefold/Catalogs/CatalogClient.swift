@@ -98,7 +98,6 @@ struct CatalogClient: Sendable {
     static let coverLimit = 4 << 20
 
     /// An EPUB is a ZIP archive, which starts "PK\u{3}\u{4}"; a web page or an error message doesn't.
-
     static func isZip(_ file: URL) -> Bool {
         guard let handle = try? FileHandle(forReadingFrom: file) else { return false }
         defer { try? handle.close() }
