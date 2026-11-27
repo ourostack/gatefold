@@ -22,7 +22,12 @@ struct LibraryView: View {
     @State private var pickingFolder = false
     /// A drop of books hovering over the shelf.
     @State private var dropTargeted = false
-    @Environment(\.ouroToast) private var toast
+    /// What just came aboard, said under the title; `noteShown` folds it in and away.
+    @State private var note: ArrivalWords?
+    @State private var noteShown = false
+    @State private var noteClosing: Task<Void, Never>?
+    /// Where the shelf is scrolled, so a note scrolls it back to the top to be seen.
+    @State private var scroll = ScrollPosition(edge: .top)
     @State private var confirmSignOut = false
     @State private var reconnecting = false
     /// How far the header moves down so the cover screen's camera and status column never sit on it.
@@ -61,6 +66,7 @@ struct LibraryView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
                     header
+                    arrivalNote
                     if let greeting {
                         Text(greeting)
                             .font(.subheadline)
@@ -105,6 +111,7 @@ struct LibraryView: View {
                 .opacity(width > 0 ? 1 : 0)
                 .animation(.easeOut(duration: 0.3), value: shelfState)
             }
+            .scrollPosition($scroll)
             // The scroll view spans the whole width and adds no horizontal margins of its own; the shelf
             // places itself inside the safe area, and the scroll bar keeps clear of a side column.
             .contentMargins(.horizontal, 0, for: .scrollContent)
@@ -314,20 +321,55 @@ struct LibraryView: View {
         .padding(.bottom, 2)
     }
 
-    /// Says what just came aboard, with Read when it was one book.
+    /// Says what just came aboard, with Read when it was one book. In the page, under the title, so it covers
+    /// nothing: as a toast over the top it hid the title and Add while it showed. The shelf scrolls back up to it.
     private func announce(_ arrival: AppModel.Arrival?) {
         guard let arrival, arrival.id != announced,
               let words = arrival.watching.map({ ArrivalWords.watching($0, result: arrival.result) }) ?? ArrivalWords(arrival.result)
         else { return }
         announced = arrival.id
         if !arrival.result.added.isEmpty || arrival.result.linkedToCloud > 0 { importedCount += 1 }
-        // The shelf's own open path, as a tap on the cover takes.
-        nonisolated(unsafe) let open = onOpen
-        let library = app.library
-        let read = words.bookID.map { id in
-            OuroToastAction("Read") { if let book = library.book(id) { open(book) } }
+        noteClosing?.cancel()
+        note = words
+        withOuroAnimation(.layout, reduceMotion: reduceMotion) {
+            noteShown = true
+            scroll.scrollTo(edge: .top)
         }
-        toast(words.message, description: words.description, tone: .success, systemImage: "books.vertical", action: read)
+        // Like a toast: a note with nothing to do goes after a few seconds; one with Read stays until it's used or closed.
+        guard words.bookID == nil else { return }
+        noteClosing = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(OuroToastMetrics.defaultSeconds))
+            guard !Task.isCancelled else { return }
+            closeNote(.timed)
+        }
+    }
+
+    /// How a note ended, reported as a count only: never the words or the books.
+    enum NoteEnd: String { case timed, closed, read }
+
+    private func closeNote(_ end: NoteEnd) {
+        noteClosing?.cancel()
+        guard noteShown else { return }
+        withOuroAnimation(.layout, reduceMotion: reduceMotion) { noteShown = false }
+        GatefoldTelemetry.shared.capture("gatefold_arrival_note", properties: ["ended": .string(end.rawValue), "had_read": .bool(note?.bookID != nil)])
+    }
+
+    /// The arrival note, folded away to nothing until books come aboard.
+    private var arrivalNote: some View {
+        OuroBanner(note?.message ?? "", description: note?.description, tone: .success, icon: .system("books.vertical"),
+                   dismissLabel: "Close", onDismiss: { closeNote(.closed) }, isPresented: noteShown) {
+            if let id = note?.bookID {
+                OuroButton("Read", tone: .success, variant: .soft, size: .sm) {
+                    closeNote(.read)
+                    if let book = app.library.book(id) { onOpen(book) }
+                }
+                .accessibilityIdentifier("library.arrival.read")
+            }
+        }
+        .accessibilityIdentifier("library.arrival")
+        .padding(.horizontal, metrics.gutter)
+        .padding(.top, noteShown ? 4 : 0)
+        .padding(.bottom, noteShown ? 8 : 0)
     }
 
     /// The order covers drop in: Reading Now left to right, then the rest of the shelf.

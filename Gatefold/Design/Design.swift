@@ -281,6 +281,14 @@ enum LaunchOptions {
     static var showChrome: Bool { defaults.bool(forKey: "GatefoldShowChrome") }
     static var noLatency: Bool { defaults.bool(forKey: "GatefoldNoLatency") }
     static var downloadAll: Bool { defaults.bool(forKey: "GatefoldDownloadAll") }
+    /// UI tests: sample books (resource names, comma-separated) arrive once the app has started, as if chosen in
+    /// Files, so the shelf's arrival note shows without the picker.
+    static var arrive: [String]? {
+        guard isUITest, let names = defaults.string(forKey: "GatefoldArrive") else { return nil }
+        return names.split(separator: ",").map(String.init)
+    }
+    /// How long after the start they arrive (`GatefoldArriveAfter`, seconds), so a test can be watching first.
+    static var arriveAfter: Double { defaults.double(forKey: "GatefoldArriveAfter") }
     static var sheet: String? { defaults.string(forKey: "GatefoldSheet") }
     /// Screenshots and UI tests: switch the forced posture to `GatefoldFlipTo` (default spread) after
     /// this many seconds, and back after `GatefoldFlipBackAfter` more, to film the unfold.

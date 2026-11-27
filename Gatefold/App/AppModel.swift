@@ -262,6 +262,20 @@ final class AppModel {
             }
         }
         #if DEBUG
+        // UI tests: sample books arrive as if chosen in Files (copies, since an import may take its files away).
+        if let names = LaunchOptions.arrive {
+            try? await Task.sleep(for: .seconds(LaunchOptions.arriveAfter))
+            let fm = FileManager.default
+            let dir = URL.temporaryDirectory.appending(path: "GatefoldArrive", directoryHint: .isDirectory)
+            try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
+            let urls = names.compactMap { name -> URL? in
+                guard let from = Bundle.main.url(forResource: name, withExtension: "epub") else { return nil }
+                let to = dir.appending(path: "\(name).epub")
+                try? fm.removeItem(at: to)
+                return (try? fm.copyItem(at: from, to: to)) == nil ? nil : to
+            }
+            await receive(urls, source: .files)
+        }
         // Screenshots and UI tests: the InkPad reads on while the book is open here.
         let defaults = UserDefaults.standard
         if let fake = sync as? FakeSyncService, let id = LaunchOptions.openBook, defaults.object(forKey: "GatefoldRemoteAheadAfter") != nil {

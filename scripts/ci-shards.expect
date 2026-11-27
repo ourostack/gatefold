@@ -1,6 +1,7 @@
 # Every UI test CI runs, as tier|device|test (gatefold#39). scripts/ci-shards.py check --expect fails unless the
 # shards in .github/workflows/app.yml run exactly this set; after adding or removing a test, rewrite it with
 # python3 -I scripts/ci-shards.py write (it keeps these comment lines).
+main|iPad Pro 13-inch|ArrivalNoteUITests/testTheArrivalNoteCoversNeitherTheTitleNorTheButtons
 main|iPad Pro 13-inch|ContentsCloseUITests/testAFastSwipeDownFromTheHeaderClosesContents
 main|iPad Pro 13-inch|ContentsCloseUITests/testAFastSwipeDownInTheListAtItsTopClosesContents
 main|iPad Pro 13-inch|ContentsCloseUITests/testAPullPastTheTopOfTheListClosesContents
@@ -103,6 +104,7 @@ main|iPad Pro 13-inch|SpreadTurnSettleUITests/testSpreadTurnsLandWithoutSliding
 main|iPad Pro 13-inch|SwallowedTapUITests/testTapsAfterSwipesAndAJumpAreAnswered
 main|iPad Pro 13-inch|WindowFitUITests/testOnItsSide
 main|iPad Pro 13-inch|WindowFitUITests/testUpright
+main|iPhone Duo|ArrivalNoteUITests/testTheArrivalNoteCoversNeitherTheTitleNorTheButtons
 main|iPhone Duo|ContentsCloseUITests/testAFastSwipeDownFromTheHeaderClosesContents
 main|iPhone Duo|ContentsCloseUITests/testAFastSwipeDownInTheListAtItsTopClosesContents
 main|iPhone Duo|ContentsCloseUITests/testAPullPastTheTopOfTheListClosesContents
