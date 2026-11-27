@@ -20,6 +20,8 @@ struct LibraryBook: Identifiable, Codable, Equatable {
         case catalog
         /// Found in the folder the reader asked Gatefold to watch (`WatchedFolder`).
         case folder
+        /// One of the classics that ship in the app, from the empty shelf's Try a Few Classics.
+        case sample
     }
 
     var id: String
@@ -63,7 +65,7 @@ struct LibraryBook: Identifiable, Codable, Equatable {
         case .files: return "From Files"
         case .catalog: return "From a catalog"
         case .folder: return "From your folder"
-        case .shared, .dropped, nil: return "Added"
+        case .shared, .dropped, .sample, nil: return "Added"
         }
     }
     /// A book from the fake Cloud's bundled demo shelf.
