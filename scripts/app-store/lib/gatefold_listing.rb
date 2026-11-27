@@ -49,6 +49,26 @@ module GatefoldListing
     trademark_problems(listing) + claim_problems(listing)
   end
 
+  # What has to be true of the repository before a real staging, beyond the listing itself: the privacy policy the
+  # listing links says what the app does (Guideline 5.1.1), and every button the review notes tell App Review to tap
+  # is in the app (2.1). A validation reports these as warnings; --apply refuses on any.
+  PRIVACY_PAGE = "docs/privacy/index.html"
+  PAGE_CONTRADICTED = CONTRADICTED + [/password is never (stored|kept|saved)/i]
+
+  def self.release_problems(listing, root)
+    problems = []
+    page = File.file?(File.join(root, PRIVACY_PAGE)) ? File.read(File.join(root, PRIVACY_PAGE)) : ""
+    problems << "#{PRIVACY_PAGE} is missing" if page.empty?
+    PAGE_CONTRADICTED.each do |claim|
+      problems << "#{PRIVACY_PAGE} says /#{claim.source}/, which the app contradicts" if page.match?(claim)
+    end
+    code = Dir.glob(File.join(root, "Gatefold/**/*.swift")).map { |file| File.read(file) }.join("\n")
+    listing.dig("review", "notes").to_s.scan(/"([^"]+)"/).flatten.uniq.each do |label|
+      problems << "the review notes say to tap \"#{label}\", which is not in the app's code" unless code.include?("\"#{label}\"")
+    end
+    problems
+  end
+
   # The Screenshots workflow's artifact (listing-screenshots-<fingerprint>) holds <folder>/<scene>.png, the raw
   # captures under <folder>/raw/ and a SHA256SUMS per folder. App Store Connect shows a set in file-name order, so this
   # copies each folder's composed shots into `out` as NN-<scene>.png, in screenshots/spec.json's scene order, after

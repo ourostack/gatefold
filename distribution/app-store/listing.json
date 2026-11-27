@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "_about": "Gatefold's App Store listing, staged into App Store Connect by .github/workflows/stage-app-store-listing.yml (dry run by default; it never submits). {{name}} is filled from identity.json. Copy rules: scripts/app-store/lib/gatefold_listing.rb.",
+  "_about": "Gatefold's App Store listing, staged into App Store Connect by .github/workflows/app-store-listing.yml (dry run by default; it never submits). {{name}} is filled from identity.json. Copy rules: scripts/app-store/lib/gatefold_listing.rb.",
   "bundleId": "bot.ouro.gatefold",
   "platform": "IOS",
   "version": {
@@ -19,9 +19,11 @@
     "customerPrice": "0.0"
   },
   "availability": {
-    "allTerritories": false,
     "availableInNewTerritories": true,
-    "_about": "Every territory but mainland China, which needs an ICP filing (set 2026-11-03; the stager leaves existing availability alone)."
+    "excludedTerritories": [
+      "CHN"
+    ],
+    "_about": "Every territory but mainland China, which needs an ICP filing (set 2026-11-03). The stager sets availability only when none exists yet."
   },
   "ageRating": {
     "alcoholTobaccoOrDrugUseOrReferences": "NONE",
@@ -62,10 +64,10 @@
       "subtitle": "Pick up on the very same line",
       "privacyPolicyUrl": "https://ourostack.github.io/gatefold/privacy/",
       "promotionalText": "Put down your e-reader and pick up your phone: you're on the same line, underlined so your eye finds it. Back on the e-reader, it has caught up too.",
-      "keywords": "ereader,e-ink,epub,sync,ebook,reading,highlights,notes,bookmarks,foldable,dual screen,library,novel",
+      "keywords": "ereader,paper,epub,sync,ebook,reading,highlights,notes,bookmarks,foldable,dual screen,library,novel",
       "supportUrl": "https://ourostack.github.io/gatefold/support/",
       "marketingUrl": "https://ourostack.github.io/gatefold/",
-      "description": "{{name}} reads your PocketBook Cloud library on iPhone and iPad. Sign in with your PocketBook Cloud account and your shelf shows up with its covers. Open a book and you land on the line your e-reader stopped at, underlined for a moment so you can find it.\n\nRead a chapter on the train, and when you pick up your e-reader at home, your place is already there.\n\nYOUR PLACE, TO THE LINE\n• Your position syncs both ways through PocketBook Cloud, to the line rather than the chapter.\n• If you read on the e-reader while the book is open here, {{name}} offers to catch up.\n• A stale sync never pulls your progress backwards.\n\nHIGHLIGHTS AND NOTES\n• Highlights and notes you add here appear on your e-reader, and the ones you make there appear here.\n• Ribbon bookmarks travel the same way.\n\niPHONE DUO AND iPAD\n• On iPhone Duo, {{name}} reads in every posture: folded as one page, open flat as a two-page spread, or half-open on a table.\n• Unfold in the middle of a chapter and the page opens into a two-page spread without losing your place.\n• Turn an iPad sideways and you get two pages side by side.\n\nON THE PAGE\n• Pages turn like paper, and jumping ahead riffles through the ones in between.\n• Six page colors, from Daylight and Linen to Dusk and Midnight. Let it follow your light and dark mode, and the page changes with it.\n• Downloaded books, and your place in each, stay on the device, so you can read on a plane.\n\nNO ACCOUNT? START READING ANYWAY\n• Seven classics come with the app, from Frankenstein to Emma. One tap puts them on your shelf.\n• Open your own EPUB files from the Files app.\n\nPRIVATE AND FREE\n• {{name}} is free. There are no ads, subscriptions or in-app purchases.\n• No tracking. Your books, notes and place go only to your own PocketBook Cloud account.\n• To fix what breaks, the app sends a few anonymous counts when a download or sync goes wrong. Never a title, a note or your email.\n• Your sign-in token sits in the device Keychain. Your password is never stored.\n\n{{name}} is an independent app. It is not made by, affiliated with, or endorsed by PocketBook International SA. PocketBook is a trademark of its owner.",
+      "description": "{{name}} reads your PocketBook Cloud library on iPhone and iPad. Sign in with your PocketBook Cloud account and your shelf shows up with its covers. Open a book and you land on the line your e-reader stopped at, underlined for a moment so you can find it.\n\nRead a chapter on the train, and when you pick up your e-reader at home, your place is already there.\n\nYOUR PLACE, TO THE LINE\n• Your position syncs both ways through PocketBook Cloud, to the line rather than the chapter.\n• If you read on the e-reader while the book is open here, {{name}} offers to catch up.\n• A stale sync never pulls your progress backwards.\n\nHIGHLIGHTS AND NOTES\n• Highlights and notes you add here appear on your e-reader, and the ones you make there appear here.\n• Ribbon bookmarks travel the same way.\n\niPHONE DUO AND iPAD\n• On iPhone Duo, {{name}} reads in every posture: folded as one page, open flat as a two-page spread, or half-open on a table.\n• Unfold in the middle of a chapter and the page opens into a two-page spread without losing your place.\n• Turn an iPad sideways and you get two pages side by side.\n\nON THE PAGE\n• Pages turn like paper, and jumping ahead riffles through the ones in between.\n• Six page colors, from Daylight and Linen to Dusk and Midnight. Let it follow your light and dark mode, and the page changes with it.\n• Downloaded books, and your place in each, stay on the device, so you can read on a plane.\n\nNO ACCOUNT? START READING ANYWAY\n• Seven classics, from Frankenstein to Emma, are one tap from your shelf.\n• Open your own EPUB files from the Files app.\n\nPRIVATE AND FREE\n• {{name}} is free. There are no ads, subscriptions or in-app purchases.\n• No tracking. Your books, notes and place go only to your own PocketBook Cloud account.\n• To fix what breaks, the app sends anonymous counts about downloads, syncs and how fast pages load. Never a title, a note or your email.\n• Your sign-in stays in this device's Keychain, only to sign you back in.\n\n{{name}} is an independent app. It is not made by, affiliated with, or endorsed by PocketBook International SA. PocketBook is a trademark of its owner.",
       "whatsNew": null
     }
   },

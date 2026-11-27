@@ -65,6 +65,12 @@ end
 listing.fetch("screenshots").each_key { |folder| FileUtils.mkdir_p(File.join(shots_root, folder)) }
 
 errors = AppStoreListing.validate(listing, shots_root) + GatefoldListing.problems(listing)
+release = GatefoldListing.release_problems(listing, root)
+unless release.empty?
+  abort "Not ready to stage:\n#{release.map { |problem| "- #{problem}" }.join("\n")}" if options[:mode] == :apply
+
+  release.each { |problem| warn "::warning::Before staging: #{problem}" }
+end
 unless errors.empty?
   warn "The listing is not valid:"
   errors.each { |error| warn "- #{error}" }
@@ -102,6 +108,9 @@ secrets = {
 warn "::warning::No demo account secrets: review details will not include the demo account." unless secrets["demoAccountName"]
 if options[:mode] == :apply && listing.dig("review", "demoAccountRequired") && !secrets["demoAccountPassword"]
   abort "The listing says App Review needs the demo account, and GATEFOLD_REVIEW_DEMO_PASSWORD is not set."
+end
+if options[:mode] == :apply && (missing = %w[contactEmail contactPhone].reject { |key| secrets[key] }).any?
+  abort "App Review needs a contact: set #{missing.map { |key| key == 'contactEmail' ? 'APP_REVIEW_CONTACT_EMAIL' : 'APP_REVIEW_CONTACT_PHONE' }.join(' and ')}."
 end
 
 begin

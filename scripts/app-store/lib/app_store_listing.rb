@@ -337,8 +337,11 @@ module AppStoreListing
 
     availability = snapshot.fetch("availability")
     unless availability["exists"]
-      steps << { "action" => "set_availability", "summary" => "Make the app available in all #{availability['territoryIds'].length} territories",
-                 "territoryIds" => availability["territoryIds"],
+      excluded = listing.dig("availability", "excludedTerritories") || []
+      territories = availability["territoryIds"] - excluded
+      where = excluded.empty? ? "all #{territories.length} territories" : "#{territories.length} territories (not #{excluded.join(', ')})"
+      steps << { "action" => "set_availability", "summary" => "Make the app available in #{where}",
+                 "territoryIds" => territories,
                  "availableInNewTerritories" => listing.dig("availability", "availableInNewTerritories") }
     end
     steps
@@ -716,7 +719,8 @@ module AppStoreListing
         type: "appInfos", id: step["appInfoId"],
         relationships: {
           primaryCategory: { data: { type: "appCategories", id: step["primary"] } },
-          secondaryCategory: { data: { type: "appCategories", id: step["secondary"] } }
+          # No secondary category is a null relationship, never a category whose id is null.
+          secondaryCategory: { data: step["secondary"] && { type: "appCategories", id: step["secondary"] } }
         }
       })
     end

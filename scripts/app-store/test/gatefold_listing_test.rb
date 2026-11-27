@@ -6,6 +6,7 @@
 require "minitest/autorun"
 require "json"
 require "tmpdir"
+require "fileutils"
 require_relative "../lib/app_store_listing"
 require_relative "../lib/gatefold_listing"
 
@@ -151,5 +152,30 @@ class GatefoldListingTest < Minitest::Test
       assert_includes GatefoldListing.arrange(set, spec, listing, File.join(dir, "out3")),
                       "iphone-6.3: the screenshot set has no catch-up.png"
     end
+  end
+
+  # Before a real staging: the linked privacy page tells the truth, and the buttons the notes name are in the app.
+  def test_release_problems_hold_staging_until_the_page_and_the_buttons_are_in
+    Dir.mktmpdir do |dir|
+      FileUtils.mkdir_p(File.join(dir, "docs/privacy"))
+      FileUtils.mkdir_p(File.join(dir, "Gatefold/Welcome"))
+      notes = { "review" => { "notes" => 'Tap "Read Without an Account", then "Try a Few Classics".' } }
+      File.write(File.join(dir, "docs/privacy/index.html"), "<p>Gatefold collects nothing. Your password is never stored.</p>")
+      File.write(File.join(dir, "Gatefold/Welcome/W.swift"), 'Button("Read Without an Account") {}')
+      problems = GatefoldListing.release_problems(notes, dir).join("\n")
+      assert_includes problems, "collects nothing"
+      assert_includes problems, "password is never"
+      assert_includes problems, "Try a Few Classics"
+      refute_includes problems, "Read Without an Account"
+      File.write(File.join(dir, "docs/privacy/index.html"), "<p>Anonymous diagnostic counts. No tracking.</p>")
+      File.write(File.join(dir, "Gatefold/Welcome/S.swift"), 'OuroButton("Try a Few Classics", systemImage: "book")')
+      assert_equal [], GatefoldListing.release_problems(notes, dir)
+    end
+  end
+
+  def test_availability_leaves_out_mainland_china
+    steps = AppStoreListing.pricing_steps(raw_listing, { "price" => { "scheduled" => true },
+                                                         "availability" => { "exists" => false, "territoryIds" => %w[USA CHN GBR] } })
+    assert_equal %w[USA GBR], steps.find { |s| s["action"] == "set_availability" }["territoryIds"]
   end
 end

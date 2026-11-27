@@ -112,7 +112,10 @@ jobs:
             # One artifact per Screenshots run (listing-screenshots-<fingerprint>), whose root holds SOURCE.
             mapfile -t roots < <(find "$RUNNER_TEMP/shots" -maxdepth 2 -name SOURCE -exec dirname {} \;)
             [ "${#roots[@]}" -eq 1 ] || { echo "::error::Run $RUN_ID has ${#roots[@]} listing-screenshots sets, not one"; exit 1; }
-            cat "${roots[0]}/SOURCE"
+            case "${roots[0]}" in
+              */listing-screenshots-pr-*) echo "::error::Run $RUN_ID rendered a pull request's screenshots; stage a release render (TestFlight's Screenshots run)"; exit 1 ;;
+            esac
+            echo "Screenshots from $(cat "${roots[0]}/SOURCE")"
             args+=(--screenshot-set "${roots[0]}")
           fi
           ruby scripts/app-store/stage-app-store-listing.rb "${args[@]}" | tee -a "$GITHUB_STEP_SUMMARY"
