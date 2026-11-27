@@ -30,8 +30,8 @@
 <p>Each report also says which version of Gatefold and of iOS sent it, and the time. Times are rounded into wide steps, such as "under 5 seconds" or "under 2 minutes".</p>
 <ul>
 <li>Never a title, author, file name, link, highlight, note, email, password or error message.</li>
-<li>Every copy of Gatefold sends the same fixed name in place of an ID, so no report can be told apart from another phone's. Nothing in a report identifies your device or your PocketBook account.</li>
-<li>PostHog is told not to look up where you are from your IP address and not to build a profile.</li>
+<li>Every copy of Gatefold sends the same fixed name in place of an ID. Nothing in a report names your device or your PocketBook account.</li>
+<li>Like any website, PostHog sees the internet address a report comes from. Gatefold tells it not to work out where you are from that address and not to build a profile.</li>
 </ul>
 <p>This is what App Store Connect lists under App Privacy as diagnostics, product interaction and performance data, all "not linked to you" and none used for tracking. The full list is in <a href="https://github.com/ourostack/gatefold/blob/main/Gatefold/Sync/GatefoldTelemetry.swift">GatefoldTelemetry.swift</a>.</p>
 

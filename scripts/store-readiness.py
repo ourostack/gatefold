@@ -87,10 +87,16 @@ TELEMETRY_EVENTS = {
 }
 TELEMETRY_DATA = set().union(*TELEMETRY_EVENTS.values())
 DEVICE_ID = "NSPrivacyCollectedDataTypeDeviceID"
-# Code that keeps an ID of its own per install or device. Any of these makes the telemetry a Device ID.
-PER_INSTALL_ID = r"set\(UUID\(\)\.uuidString|identifierForVendor|advertisingIdentifier"
+# The telemetry sends no ID of its own only while its file names one fixed client ID, sends nothing else as
+# distinct_id and makes no unique value. Anywhere in the app, a vendor or advertising ID is a Device ID too.
+SHARED_CLIENT_ID = r'static let sharedClientID = "[^"\\]+"'
+SENDS_SHARED_ID = r"distinct_id: Self\.sharedClientID"
+SENDS_OTHER_ID = r"distinct_id: (?!Self\.sharedClientID\b|String\b)"  # String: the payload's own field
+MAKES_UNIQUE_VALUE = r"UUID\(\)|globallyUniqueString"
+DEVICE_IDENTIFIER = r"identifierForVendor|advertisingIdentifier"
 # Page wording that promises each report an ID of its own.
-PAGE_OWN_ID = r"random ID|install ID|device ID"
+PAGE_OWN_ID = (r"(?<!no )(?<!not a )(?<!not an )\b(random|install(ation)?|unique|anonymous|per[- ]install)\s+ID\b"
+               r"|\bID (made|created) (at|when you) install")
 EVENT_NAME = r'"(gatefold_[a-z_]+)"'
 
 # Sentences the privacy page may not carry while telemetry ships.
@@ -170,10 +176,15 @@ def check(root: Path) -> list[str]:
     page = (root / PRIVACY_PAGE).read_text(errors="replace") if (root / PRIVACY_PAGE).is_file() else ""
     dist = json.loads((root / DISTRIBUTION).read_text()) if (root / DISTRIBUTION).is_file() else {}
     privacy = [c.get("store", {}).get("privacy", {}) for c in dist.get("channels", [])]
-    own_id = bool(re.search(PER_INSTALL_ID, code))
+    telemetry_code = "\n".join(p.read_text(errors="replace") for p in sources(root)
+                               if "distinct_id" in p.read_text(errors="replace"))
+    own_id = bool(re.search(DEVICE_IDENTIFIER, code)) or (sends and not (
+        re.search(SHARED_CLIENT_ID, telemetry_code) and re.search(SENDS_SHARED_ID, telemetry_code)
+        and not re.search(SENDS_OTHER_ID, telemetry_code) and not re.search(MAKES_UNIQUE_VALUE, telemetry_code)))
     expected = (TELEMETRY_DATA | ({DEVICE_ID} if own_id else set())) if sends else set()
     if DEVICE_ID in collected.keys() - expected:
-        problems.append(f"{MANIFEST} declares {DEVICE_ID}, but every copy sends the same client ID: drop it.")
+        why = "every copy sends the same client ID" if sends else "the app sends no telemetry"
+        problems.append(f"{MANIFEST} declares {DEVICE_ID}, but {why}: drop it.")
     if sends:
         for kind in sorted(expected - collected.keys()):
             problems.append(f"The app sends telemetry, so {MANIFEST} must declare {kind}.")
@@ -201,6 +212,12 @@ def check(root: Path) -> list[str]:
 # --- selftest -------------------------------------------------------------------------------------------------------
 
 def _manifest(api_types=None, collected=None, tracking=False, extra=()) -> bytes:
+    kinds = sorted(TELEMETRY_DATA) if collected is None else []
+    entries = (collected or []) + [
+        {"NSPrivacyCollectedDataType": k, "NSPrivacyCollectedDataTypeLinked": False,
+         "NSPrivacyCollectedDataTypeTracking": False,
+         "NSPrivacyCollectedDataTypePurposes": ["NSPrivacyCollectedDataTypePurposeAppFunctionality"]}
+        for k in kinds + list(extra)]
     return plistlib.dumps({
         "NSPrivacyTracking": tracking,
         "NSPrivacyTrackingDomains": [],
@@ -210,12 +227,7 @@ def _manifest(api_types=None, collected=None, tracking=False, extra=()) -> bytes
             {"NSPrivacyAccessedAPIType": "NSPrivacyAccessedAPICategoryFileTimestamp",
              "NSPrivacyAccessedAPITypeReasons": ["C617.1"]},
         ],
-        "NSPrivacyCollectedDataTypes": collected if collected is not None else [
-            {"NSPrivacyCollectedDataType": k, "NSPrivacyCollectedDataTypeLinked": False,
-             "NSPrivacyCollectedDataTypeTracking": False,
-             "NSPrivacyCollectedDataTypePurposes": ["NSPrivacyCollectedDataTypePurposeAppFunctionality"]}
-            for k in sorted(TELEMETRY_DATA | set(extra))
-        ],
+        "NSPrivacyCollectedDataTypes": entries,
     })
 
 
@@ -240,7 +252,9 @@ def _tree(tmp: Path, *, manifest: bytes | None = None, code: str = "let d = User
 
 
 def selftest() -> int:
-    telemetry = 'let u = URL(string: "https://us.i.posthog.com/i/v0/e/")\nlet d = UserDefaults.standard\n'
+    telemetry = ('let u = URL(string: "https://us.i.posthog.com/i/v0/e/")\nlet d = UserDefaults.standard\n'
+                 'static let sharedClientID = "gatefold-app"\nlet p = Payload(distinct_id: Self.sharedClientID)\n')
+    own_id_page = "<p>Diagnostic counts, with a random ID made at install.</p>"
     cases = [
         ("a missing manifest fails", dict(manifest=None), ["is missing"]),
         ("a good manifest, no telemetry, passes", dict(manifest=_manifest(collected=[]), collects=False), []),
@@ -282,11 +296,24 @@ def selftest() -> int:
          dict(manifest=_manifest(extra=[DEVICE_ID]), code=telemetry),
          [f"declares {DEVICE_ID}, but every copy sends the same client ID"]),
         ("a random install ID must be declared as a device ID",
-         dict(manifest=_manifest(), code=telemetry + "defaults.set(UUID().uuidString, forKey: k)\n"),
+         dict(manifest=_manifest(), code=telemetry + "let id = UUID().uuidString\n"),
          [f"must declare {DEVICE_ID}"]),
+        ("a distinct_id other than the shared client ID must be declared as a device ID",
+         dict(manifest=_manifest(), code=telemetry.replace("distinct_id: Self.sharedClientID", "distinct_id: installID")),
+         [f"must declare {DEVICE_ID}"]),
+        ("a system-made unique string must be declared as a device ID",
+         dict(manifest=_manifest(), code=telemetry + "let s = ProcessInfo.processInfo.globallyUniqueString\n"),
+         [f"must declare {DEVICE_ID}"]),
+        ("a declared random install ID, told on the page, passes",
+         dict(manifest=_manifest(extra=[DEVICE_ID]), code=telemetry + "let id = UUID().uuidString\n", page=own_id_page),
+         []),
         ("a page that promises a random install ID fails",
-         dict(manifest=_manifest(), code=telemetry, page="<p>Diagnostic counts, with a random ID made at install.</p>"),
-         ["says reports carry an ID of their own"]),
+         dict(manifest=_manifest(), code=telemetry, page=own_id_page), ["says reports carry an ID of their own"]),
+        ("a page that says there is no device ID passes",
+         dict(manifest=_manifest(), code=telemetry, page="<p>Diagnostic counts. No device ID, no unique ID.</p>"), []),
+        ("a device ID declared with no telemetry fails",
+         dict(manifest=_manifest(collected=[], extra=[DEVICE_ID]), collects=False),
+         [f"declares {DEVICE_ID}, but the app sends no telemetry"]),
         ("telemetry with a page that says nothing is collected fails",
          dict(manifest=_manifest(), code=telemetry, page="<p>Gatefold collects nothing. No analytics.</p>"),
          ['says "collects nothing"', 'says "No analytics"', "must say what the diagnostic telemetry sends"]),
