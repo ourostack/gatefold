@@ -16,6 +16,8 @@ change to what the app touches fails here, on Linux, before it reaches a build:
   - When the app sends telemetry (TELEMETRY_MARKERS in its code), the manifest declares the data it sends, none of it
     linked to the person or used for tracking, the privacy page says so and no longer says it collects nothing, and
     distribution/apple-distribution.json says data is collected and points at that page.
+  - When every copy sends the same client ID, neither the privacy page nor distribution/app-store/listing.json (App
+    Review's notes and the store copy) says reports carry an ID of their own.
 """
 
 from __future__ import annotations
@@ -32,6 +34,7 @@ PBXPROJ = "Gatefold.xcodeproj/project.pbxproj"
 PROJECT_YML = "project.yml"
 PRIVACY_PAGE = "docs/privacy/index.html"
 DISTRIBUTION = "distribution/apple-distribution.json"
+LISTING = "distribution/app-store/listing.json"  # the App Store copy and App Review's notes
 PRIVACY_URL = "https://ourostack.github.io/gatefold/privacy/"
 SOURCE_GLOBS = ["Gatefold/**/*.swift", "Packages/*/Sources/**/*.swift"]
 
@@ -176,6 +179,10 @@ def check(root: Path) -> list[str]:
                         f"data types there, to {MANIFEST} and to {PRIVACY_PAGE}.")
     page = (root / PRIVACY_PAGE).read_text(errors="replace") if (root / PRIVACY_PAGE).is_file() else ""
     dist = json.loads((root / DISTRIBUTION).read_text()) if (root / DISTRIBUTION).is_file() else {}
+    listing = json.loads((root / LISTING).read_text()) if (root / LISTING).is_file() else {}
+    # What App Review and the store page read: the review notes and every localization's copy.
+    listing_text = "\n".join([str(listing.get("review", {}).get("notes") or "")] + [
+        str(v) for loc in listing.get("localizations", {}).values() if isinstance(loc, dict) for v in loc.values()])
     privacy = [c.get("store", {}).get("privacy", {}) for c in dist.get("channels", [])]
     telemetry_code = "\n".join(p.read_text(errors="replace") for p in sources(root)
                                if "distinct_id" in p.read_text(errors="replace"))
@@ -194,6 +201,8 @@ def check(root: Path) -> list[str]:
                 problems.append(f"{kind} is sent with no account and no ID of its own, so it must say Linked false.")
         if not own_id and re.search(PAGE_OWN_ID, page, re.I):
             problems.append(f"{PRIVACY_PAGE} says reports carry an ID of their own, but every copy sends the same one.")
+        if not own_id and re.search(PAGE_OWN_ID, listing_text, re.I):
+            problems.append(f"{LISTING} says reports carry an ID of their own, but every copy sends the same one.")
         for phrase in NOTHING_COLLECTED:
             if re.search(phrase, page):
                 problems.append(f"{PRIVACY_PAGE} says \"{phrase}\", but release builds send telemetry.")
@@ -234,7 +243,7 @@ def _manifest(api_types=None, collected=None, tracking=False, extra=()) -> bytes
 
 def _tree(tmp: Path, *, manifest: bytes | None = None, code: str = "let d = UserDefaults.standard\n",
           page: str = "<p>Diagnostic counts only.</p>", collects=True, url=PRIVACY_URL, in_resources=True,
-          excludes: str = '"**/.DS_Store"') -> Path:
+          excludes: str = '"**/.DS_Store"', notes: str | None = None) -> Path:
     (tmp / "Gatefold/Support").mkdir(parents=True)
     (tmp / "Gatefold/App").mkdir(parents=True)
     (tmp / "Gatefold.xcodeproj").mkdir()
@@ -247,6 +256,9 @@ def _tree(tmp: Path, *, manifest: bytes | None = None, code: str = "let d = User
     (tmp / PROJECT_YML).write_text("targets:\n  Gatefold:\n    type: application\n    sources:\n      - path: Gatefold\n"
                                    f"        excludes:\n          - {excludes}\n  GatefoldTests:\n    type: bundle\n")
     (tmp / PRIVACY_PAGE).write_text(page)
+    if notes is not None:
+        (tmp / LISTING).parent.mkdir(parents=True, exist_ok=True)
+        (tmp / LISTING).write_text(json.dumps({"review": {"notes": notes}}))
     (tmp / DISTRIBUTION).write_text(json.dumps(
         {"channels": [{"store": {"privacy": {"policyUrl": url, "collectsData": collects}}}]}))
     return tmp
@@ -310,6 +322,12 @@ def selftest() -> int:
          []),
         ("a page that promises a random install ID fails",
          dict(manifest=_manifest(), code=telemetry, page=own_id_page), ["says reports carry an ID of their own"]),
+        ("review notes that promise a random install ID fail",
+         dict(manifest=_manifest(), code=telemetry, notes="Counts go to PostHog, with a random install ID."),
+         [f"{LISTING} says reports carry an ID of their own"]),
+        ("review notes that say every copy sends the same name pass",
+         dict(manifest=_manifest(), code=telemetry, notes="Counts go to PostHog under one name every copy shares."),
+         []),
         ("a page that says there is no device ID passes",
          dict(manifest=_manifest(), code=telemetry, page="<p>Diagnostic counts. No device ID, no unique ID.</p>"), []),
         ("a device ID declared with no telemetry fails",
