@@ -91,6 +91,11 @@ EVENT_NAME = r'"(gatefold_[a-z_]+)"'
 # Sentences the privacy page may not carry while telemetry ships.
 NOTHING_COLLECTED = [r"collects nothing", r"No analytics", r"We never see .*anything you do"]
 
+# The signed-in session keeps the password in the Keychain to sign in again (GatefoldCloud's StoredSession), so the
+# page may not say it is never stored.
+KEPT_PASSWORD = r"\bvar password: String\?"
+PASSWORD_NEVER_KEPT = r"password is never (stored|kept|saved)|never (store|keep|save)s? your password"
+
 
 def sources(root: Path) -> list[Path]:
     out: list[Path] = []
@@ -174,6 +179,8 @@ def check(root: Path) -> list[str]:
         for p in privacy:
             if p.get("collectsData") is not True:
                 problems.append(f"{DISTRIBUTION}: privacy.collectsData must be true while telemetry ships.")
+    if re.search(KEPT_PASSWORD, code) and re.search(PASSWORD_NEVER_KEPT, page, re.I):
+        problems.append(f"{PRIVACY_PAGE} says the password is never stored, but the Keychain keeps it to sign in again.")
     for p in privacy:
         if p.get("policyUrl") != PRIVACY_URL:
             problems.append(f"{DISTRIBUTION}: privacy.policyUrl must be {PRIVACY_URL}, the page the listing names.")
@@ -262,6 +269,10 @@ def selftest() -> int:
         ("telemetry with a page that says nothing is collected fails",
          dict(manifest=_manifest(), code=telemetry, page="<p>Gatefold collects nothing. No analytics.</p>"),
          ['says "collects nothing"', 'says "No analytics"', "must say what the diagnostic telemetry sends"]),
+        ("a page that says the password is never stored fails while the session keeps it",
+         dict(manifest=_manifest(), code="struct StoredSession { public var password: String? }\n",
+              page="<p>No tracking. Diagnostic counts only. Your password is never stored.</p>"),
+         ["says the password is never stored"]),
         ("telemetry with collectsData false fails",
          dict(manifest=_manifest(), code=telemetry, collects=False), ["collectsData must be true"]),
         ("another privacy URL fails", dict(manifest=_manifest(), url="https://ouroboros.bot/privacy"),

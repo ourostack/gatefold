@@ -37,7 +37,7 @@
 <p>This is what App Store Connect lists under App Privacy as diagnostics, product interaction, performance data and a device ID, all "not linked to you" and none used for tracking. The full list is in <a href="https://github.com/ourostack/gatefold/blob/main/Gatefold/Sync/GatefoldTelemetry.swift">GatefoldTelemetry.swift</a>.</p>
 
 <h2>Your sign-in</h2>
-<p>When you sign in, your email and password go straight to PocketBook Cloud, which hands back a session token. Gatefold keeps that token in your device's Keychain, on this device only (it is not synced to iCloud). Your password is never stored. Signing out removes the token and the cached shelf.</p>
+<p>When you sign in, your email and password go straight to PocketBook Cloud, which hands back a session token. Gatefold keeps that token, and your password so it can sign you back in when the token runs out, in your device's Keychain, on this device only (neither is synced to iCloud). Neither ever leaves the device except to PocketBook Cloud. Signing out removes them and the cached shelf.</p>
 <p>One small Keychain note stays behind on purpose: for each book, the last reading position Gatefold sent to PocketBook Cloud, so Gatefold can recognise its own bookmark when the Cloud hands it back, even after a reinstall.</p>
 
 <h2>What stays on your device</h2>
