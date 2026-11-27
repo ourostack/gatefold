@@ -270,9 +270,10 @@ final class DuoLayoutUITests: XCTestCase {
 
     /// A search lands on its match's page in one move: the veil lifts onto that page and nothing moves after it
     /// (gatefold#653). Into another chapter, the veil lifted onto the page Readium guessed by progression, the old page
-    /// and that one drawn at once as it faded, and the page then jumped on to the match: three pages for one tap. The
-    /// app says which happened (`reader.jumpLanding`, the words in view as the veil lifted against those in view once
-    /// the match is marked; the probe never shows the words).
+    /// and that one drawn at once as it faded, and the page then jumped on to the match: three pages for one tap. With
+    /// the match found under the veil, the folded Duo still lifted onto the page after it, the match off screen and never
+    /// marked (jank run 46061730708). The app says which happened (`reader.jumpLanding`: the words in view as the veil
+    /// lifted, against the match and against those in view once it is marked; the probe never shows the words).
     func testASearchLandsOnItsMatchInOneMove() {
         open(["-GatefoldSheet", "search"])
         let field = app.searchFields.firstMatch
