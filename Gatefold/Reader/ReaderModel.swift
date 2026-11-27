@@ -3743,6 +3743,9 @@ final class ReaderModel {
             guard moves == move, !isClosed else { return }
             host?.underline(locator, color: theme.palette.accent, fades: false)
             watchUnderline()
+            if LaunchOptions.isUITest, let frame = await markedMatch() {
+                matchProbe = [frame.minX, frame.minY, frame.width, frame.height].map { String(Int($0.rounded())) }.joined(separator: ",")
+            }
         }
         await captureAnchor()
         // UI tests: the words in view half a second after the landing, against those as the veil lifted.
@@ -3767,6 +3770,18 @@ final class ReaderModel {
         readerLog.notice("settle: the match slipped off its page before the veil lifted; going back to it")
         await settle(on: match, move: move, his: his, loaded: true)
         return true
+    }
+
+    /// For UI tests: where the search match's mark stands, "x,y,w,h" in window points.
+    private(set) var matchProbe = ""
+
+    /// Where the match just marked stands on screen, once Readium has drawn its mark (a frame or two after `underline`).
+    private func markedMatch() async -> CGRect? {
+        for _ in 0..<30 {
+            if let frame = await host?.matchFrame() { return frame }
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+        return nil
     }
 
     /// A search match with the words either side of it: the match alone is often one word, too short for `settle`

@@ -289,4 +289,42 @@ final class DuoLayoutUITests: XCTestCase {
         XCTAssertTrue(landed.ok, "the search jump landed and marked its match (\(landed.reads) reads)")
         XCTAssertEqual(landing.value as? String, "search: lifted on its page", "the veil lifted onto the match's own page")
     }
+
+    /// A search hit lands clear of every button (gatefold#652). On the folded Duo, searched the way he does (controls
+    /// up, Search, the first "Darcy"), the match landed on the page's second-to-last line, and the way back, standing
+    /// on its own row above the bar, hid all of "Darcy's" but its last letters. Nothing more is touched after the tap:
+    /// whatever shows then, controls or the way back, must leave the match in view (`reader.matchFrame`, where the
+    /// app drew its mark, in window points).
+    func testASearchHitStandsClearOfEveryButton() {
+        open([])
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        let search = el("reader.search")
+        XCTAssertTrue(readsUntil(reads: 100) { search.exists && search.isHittable }.ok, "the controls came up")
+        search.tap()
+        let field = app.searchFields.firstMatch
+        XCTAssertTrue(readsUntil(reads: 300) { field.exists }.ok, "Search opened")
+        field.tap()
+        field.typeText("Darcy")
+        let result = app.buttons["search.result"].firstMatch
+        XCTAssertTrue(readsUntil(reads: 300) { result.exists }.ok, "a result")
+        result.tap()
+        let probe = el("reader.matchFrame")
+        let found = readsUntil(reads: 600) { !(probe.value as? String ?? "").isEmpty }
+        XCTAssertTrue(found.ok, "the search landed and its match was marked (\(found.reads) reads)")
+        let parts = (probe.value as? String ?? "").split(separator: ",").compactMap { Double($0) }
+        guard parts.count == 4 else { return XCTFail("no match frame: \(probe.value as? String ?? "nil")") }
+        let match = CGRect(x: parts[0], y: parts[1], width: parts[2], height: parts[3])
+        let back = el("reader.back")
+        XCTAssertTrue(readsUntil(reads: 100) { back.exists && back.isHittable }.ok, "the way back came up")
+        // The pill's own animation (Motion.chrome) ends before anything is judged.
+        _ = readsUntil(reads: 8) { false }
+        shot("search-hit-clear")
+        for id in ["reader.back", "reader.close", "reader.bookmark", "reader.scrubber", "reader.contents", "reader.share",
+                   "reader.appearance", "reader.search"] {
+            let control = el(id)
+            guard control.exists, control.isHittable else { continue }
+            XCTAssertFalse(control.frame.insetBy(dx: -4, dy: -4).intersects(match),
+                           "\(id) at \(control.frame) stands on the search match at \(match)")
+        }
+    }
 }
