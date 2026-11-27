@@ -5,7 +5,7 @@ import Testing
 
 /// App Review's demo account: test account 2 (the App Store listing's review details name it, from the
 /// `GATEFOLD_REVIEW_DEMO_EMAIL` and `GATEFOLD_REVIEW_DEMO_PASSWORD` secrets). This fills its shelf with the
-/// public-domain books that ship in the app and leaves Pride and Prejudice part-read, so a reviewer who signs in
+/// public-domain books that ship in the app and leaves Pride and Prejudice about a fifth read, so a reviewer who signs in
 /// sees covers, downloads a book and lands on a saved place. It adds only what is missing, and deletes nothing
 /// but the five probe copies named in `probes`. Alice is left out, because `uploadsAndDeletesAPublicDomainEPUB` adds and deletes
 /// its own copy on this account.
@@ -15,6 +15,8 @@ import Testing
 ///         --filter LiveReviewShelf
 @Suite(.enabled(if: Live.enabled && ProcessInfo.processInfo.environment["GATEFOLD_LIVE_REVIEW_SHELF"] == "1"))
 struct LiveReviewShelf {
+    /// The app's own sample shelf (LibraryStore.sampleShelf) less Alice, so a reviewer sees the same classics with or
+    /// without the account. The Great Gatsby ships too, but only for the fake Cloud's screenshot shelf.
     static let books = ["frankenstein", "pride-and-prejudice", "moby-dick", "dracula", "sherlock-holmes", "emma"]
     static let partRead = (book: "pride-and-prejudice", at: 0.22)
 
@@ -61,11 +63,21 @@ struct LiveReviewShelf {
 
         let hash = try #require(onShelf[Self.partRead.book])
         let book = try #require(shelf.first { $0.fastHash == hash })
-        let at = Self.partRead.at
-        await cloud.push(ReadingPosition(cfi: nil, progression: at, totalProgression: at, updated: Date()), for: book)
+        // The Cloud refuses a percent with no CFI on a book nobody has read yet (422, "no reading position"), so the
+        // place is a real CFI: the start of the spine item nearest the part-read share of the book.
+        let mapper = try Live.mapper(forEPUB: Self.sampleBooks.appending(path: "\(Self.partRead.book).epub"))
+        let items = mapper.spine.items
+        let index = min(items.count - 1, Int((Double(items.count) * Self.partRead.at).rounded()))
+        let at = Double(index) / Double(items.count)
+        let location = BookLocation(href: items[index].href, progression: 0, totalProgression: at)
+        let position = try #require(await mapper.position(for: location, at: Date()))
+        await cloud.push(position, for: book)
         await cloud.flushOutbox()
         #expect(await cloud.pendingChanges() == 0)
-        Live.log("review shelf after: \(shelf.count) books; \(Self.partRead.book) at \(Int(at * 100))%")
+        // The outbox drops a write the Cloud refuses, so an empty outbox proves nothing: read the place back.
+        let back = try #require(try await cloud.remotePosition(for: book), "the Cloud holds the part-read place")
+        #expect(back.cfi == position.cfi)
+        Live.log("review shelf after: \(shelf.count) books; \(Self.partRead.book) at \(Int((back.totalProgression * 100).rounded()))%")
     }
 }
 #endif
