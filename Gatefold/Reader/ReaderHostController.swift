@@ -2634,7 +2634,10 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     /// Runs a jump with the old page left on screen, dimmed to 60 %, until the new page has painted;
     /// then the old page cross-fades away over 0.2 s (no blank page, no spinner). With `riffle`, a few
     /// leaves flick past first, unless the old page pictured bare: then none curl (gatefold#228).
-    func veiledJump(riffle: Bool, forward: Bool, jump: Int, _ body: @escaping () async -> Void) async {
+    /// `recheck`, run once the page beneath is pictured and before the veil lifts, says whether it moved that page (a
+    /// search's match that slipped off it is gone back to): if it did, the page is pictured again.
+    func veiledJump(riffle: Bool, forward: Bool, jump: Int, recheck: (() async -> Bool)? = nil,
+                    _ body: @escaping () async -> Void) async {
         guard veil == nil, !jumpStarting, !isTurning, view.window != nil else { return await body() }
         jumpStarting = true
         veilJump = jump
@@ -2744,6 +2747,10 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         readerLog.notice("veil: jump \(jump, privacy: .public) arrived \(arrivedMs, privacy: .public) ms after it began")
         _ = await renderedSnapshot(afterChange: true)
         readerLog.notice("veil: jump \(jump, privacy: .public) pictured its page \(ReaderModel.ms(since: jumpTapped), privacy: .public) ms after it began, \(self.lastSnapshotLooks, privacy: .public) looks")
+        if let recheck, await recheck() {
+            _ = await renderedSnapshot(afterChange: true)
+            readerLog.notice("veil: jump \(jump, privacy: .public) pictured its page again \(ReaderModel.ms(since: jumpTapped), privacy: .public) ms after it began, \(self.lastSnapshotLooks, privacy: .public) looks")
+        }
         // The head changes chapter with the page, cross-fading as the veil lifts.
         if veil === cover { withAnimation(.easeInOut(duration: 0.2)) { weakModel?.heldRunningHead = nil } }
         await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
