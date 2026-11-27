@@ -84,6 +84,8 @@ final class ArrivalNoteUITests: XCTestCase {
             app.swipeUp(velocity: .fast)
         }
         let scrolled = !title.exists || title.frame.maxY <= window.minY
+        // The fake Cloud's seven books can fit one iPad screen: then there's no scroll to undo, and this proves nothing.
+        if !scrolled { throw XCTSkip("the shelf fits on one screen here, so it can't be scrolled past its title") }
         let inline = any["library.arrival"].firstMatch
         XCTAssertTrue(inline.waitForExistence(timeout: 60), "a note says the books came aboard")
         var looks = 0, last = CGRect.null, frame = CGRect.null
@@ -95,7 +97,7 @@ final class ArrivalNoteUITests: XCTestCase {
             last = now
             usleep(200_000)
         }
-        XCTAssertTrue(window.contains(frame), "the note \(frame) is on screen (shelf scrolled first: \(scrolled))")
+        XCTAssertTrue(window.contains(frame), "the note \(frame) is on screen after the shelf was scrolled past its title")
         XCTAssertTrue(title.exists && window.contains(title.frame), "the title is back in view above it")
         XCTAssertLessThan(title.frame.maxY, frame.minY + 1, "the title sits above the note")
         app.quit()
