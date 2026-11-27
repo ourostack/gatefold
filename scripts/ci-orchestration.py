@@ -74,13 +74,13 @@ def normalized(text):
             flush()
         chunk.append(line)
     flush()
-    return "\n".join(l.rstrip() for l in out)
+    return "\n".join(out)
 
 
 def entries(lines):
     """A shard job's lines with its matrix `include:` entries normalized (see normalized)."""
     out, region, key_indent, folding = [], None, None, None
-    for line in lines + [""]:
+    for line in lines:
         stripped, indent = line.strip(), len(line) - len(line.lstrip())
         if folding is not None:
             key, words, at = folding
@@ -123,7 +123,9 @@ def entries(lines):
                 raise NotLists(f"timeout {m.group(2).strip()}")
             continue
         out.append(line)
-    return out[:-1] if out and out[-1] == "" else out
+    if folding is not None:  # a folded list that ends the job
+        names(" ".join(folding[1]))
+    return out
 
 
 def names(value):
@@ -171,7 +173,7 @@ def git_reader(base, head):
     def read(path, side):
         try:
             return git("show", f"{revs[side]}:{path}")
-        except (OSError, subprocess.CalledProcessError):
+        except Exception:  # noqa: BLE001 - anything unreadable (not UTF-8 too) fails closed
             return None
     return read
 
@@ -286,6 +288,22 @@ jobs:
     check(touches(["scripts/ci-shards.times", "scripts/ci-shards.py"], sides(base)), "the shard script is orchestration")
     check(touches([app, ".github/workflows/ui-tests.yml"], sides(added)), "the shard workflow beside a list change")
     check(touches([], sides(base)), "an empty list still fails closed")
+    # Trailing spaces outside the lists are behaviour: after a `\` in a run block, the space ends the line continuation.
+    check(not lists_only(base, base.replace("echo plan", "echo plan \\ ")),
+          "a trailing space in a run block is orchestration")
+    check(not lists_only(base, base.replace("          # a shell comment", "          # a shell comment ")),
+          "any trailing space outside the matrix entries is orchestration")
+    # A folded list that ends its job is judged too.
+    tail = base.replace("    uses: ./.github/workflows/ui-tests.yml\n    with:\n      device: \"iPad Pro 13-inch\"\n"
+                        "      tests: ${{ matrix.tests }}\n      timeout: ${{ matrix.timeout }}\n", "")
+    last = tail.replace("    strategy:", "    uses: ./.github/workflows/ui-tests.yml\n    strategy:").replace(
+        "            pr_tests: >-\n              CUITests/testOne\n            timeout: 50 # 30 + 2 x 1.0 + 5 + 12\n            lane: 4\n",
+        "            timeout: 50 # 30 + 2 x 1.0 + 5 + 12\n            lane: 4\n            pr_tests: >-\n              CUITests/testOne\n")
+    check(last.rstrip().endswith("CUITests/testOne"), "the fixture ends its job with a folded list")
+    check(last != tail and lists_only(last, last.replace("CUITests/testOne", "CUITests/testTwo")),
+          "a folded list at the end of a job: lists only")
+    check(not lists_only(last, last.replace("              CUITests/testOne", "              ${{ github.event.pull_request.title }}")),
+          "an expression in a folded list at the end of a job is orchestration")
     print("checks passed" if not bad else f"{bad} failed")
     return 1 if bad else 0
 
