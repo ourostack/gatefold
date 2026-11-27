@@ -22,15 +22,20 @@ struct ReaderChrome: View {
     /// The foot's width, and the way back's own (its label on one line), to judge whether it fits beside the scrubber.
     @State private var barWidth: CGFloat = 0
     @State private var backSize: CGSize = .zero
+    /// The reader's frame in the window, where a search match's frame is measured.
+    @State private var area: CGRect = .zero
 
     var body: some View {
         let up = model.chromeVisible && layout.deck == nil
         ZStack(alignment: .bottom) {
             // No dim and no paper under the controls: the page shows as it is, every line where it was (build 53).
-            // After a Jump the way back stays up for a while without the controls, low on the page.
+            // After a Jump the way back stays up for a while without the controls, low on the page, or at its top
+            // when the search match he jumped to lies under it there (gatefold#652).
             if !model.chromeVisible, model.showJumpBack, model.backLocator != nil, layout.deck == nil {
+                let atTop = model.backEdge == .top
                 backButton
-                    .padding(.bottom, max(insets.bottom, 12) + 8)
+                    .padding(atTop ? .top : .bottom, atTop ? backTopPad : backFootPad)
+                    .frame(maxHeight: .infinity, alignment: atTop ? .top : .bottom)
                     .transition(.scale.combined(with: .opacity))
             }
             Color.clear
@@ -45,6 +50,9 @@ struct ReaderChrome: View {
                     if layout.deck == nil { bottomBar }
                 }
         }
+        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { area = $0 }
+        // The model places each pill once, as it comes up, against these, and it stands there for its life.
+        .onChange(of: backPlaces, initial: true) { _, places in model.backPlaces = places }
         .animation(Motion.chrome, value: up)
         .animation(Motion.chrome, value: showAppearance)
         .animation(Motion.chrome, value: model.showJumpBack)
@@ -53,6 +61,28 @@ struct ReaderChrome: View {
     }
 
     static func safeTop(_ insets: EdgeInsets) -> CGFloat { max(insets.top, 12) }
+
+    /// The way back alone, low on the page: above the home indicator.
+    private var backFootPad: CGFloat { max(insets.bottom, 12) + 8 }
+    /// The way back alone at the page's top: below the camera and the status bar's room, where a slip hangs.
+    private var backTopPad: CGFloat {
+        let span = backSpan
+        return PageSafeArea.slipTop(safeTop: StatusRoom.slipSafeTop(Self.safeTop(insets), size: area.size),
+                                    occlusions: occlusions, span: span.minX...span.maxX)
+    }
+    /// The pill's size, centred across the reader (measured with the controls; a typical pill until then).
+    private var backSpan: CGRect {
+        let size = backSize == .zero ? CGSize(width: 220, height: 44) : backSize
+        return CGRect(x: (area.width - size.width) / 2, y: 0, width: size.width, height: size.height)
+    }
+    /// The pill's places: at the foot, its band across the page (the pill and the paper laid under it,
+    /// `ReaderScreen.footerNeed`, cover the foot's lines from the line above the pill down), and at the top, itself.
+    private var backPlaces: JumpBack.Places {
+        let pill = backSpan.offsetBy(dx: area.minX, dy: area.minY)
+        let band = backFootPad + pill.height
+        return JumpBack.Places(foot: CGRect(x: area.minX, y: area.maxY - band, width: area.width, height: band),
+                               top: pill.offsetBy(dx: 0, dy: backTopPad))
+    }
 
     /// The status bar's room in portrait, remembered from any screen that shows it. With the status bar
     /// hidden an iPhone's Dynamic Island leaves the safe area, and it isn't among the occlusion regions

@@ -425,7 +425,8 @@ struct ReaderScreen: View {
     /// How much of the screen's foot the bottom paper must cover (0: none).
     private func footerNeed(proxy: GeometryProxy, layout: ReaderLayout) -> CGFloat {
         let landedSlip = model.slip != nil && model.slipKind == .landed
-        let backAlone = model.showJumpBack && !model.chromeVisible && layout.deck == nil && model.backLocator != nil
+        // Not under a pill moved to the top, clear of a search match low on the page (gatefold#652).
+        let backAlone = model.showJumpBack && !model.chromeVisible && layout.deck == nil && model.backLocator != nil && model.backEdge == .foot
         guard landedSlip || backAlone else { return 0 }
         return max(
             // After a Jump the Back pill gets its own paper footer: it never sits on a line.

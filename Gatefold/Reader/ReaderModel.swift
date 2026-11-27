@@ -3715,7 +3715,15 @@ final class ReaderModel {
         hasMoved = true
         moves += 1
         let back = rememberBack ? rememberPlace() : nil
-        defer { publishBack(back) }
+        // Where the match is marked, for the way back to stand clear of it (gatefold#652).
+        var marked: CGRect?
+        defer { publishBack(back, match: marked) }
+        // He picked the words he wants to read: the controls go with the sheet, so neither the bar nor the way
+        // back standing on it covers them (gatefold#652).
+        if markingTheMatch {
+            setChrome(false)
+            if LaunchOptions.isUITest { matchProbe = "" }
+        }
         jumpOnItsWay = (locator, moves, lastReported ?? page?.currentLocation)
         let move = moves
         // If he turns or swipes after the veil has let go (a starved load), the settle stops and his page stands.
@@ -3743,7 +3751,8 @@ final class ReaderModel {
             guard moves == move, !isClosed else { return }
             host?.underline(locator, color: theme.palette.accent, fades: false)
             watchUnderline()
-            if LaunchOptions.isUITest, let frame = await markedMatch() {
+            marked = await markedMatch()
+            if LaunchOptions.isUITest, let frame = marked {
                 matchProbe = [frame.minX, frame.minY, frame.width, frame.height].map { String(Int($0.rounded())) }.joined(separator: ",")
             }
         }
@@ -3777,7 +3786,7 @@ final class ReaderModel {
 
     /// Where the match just marked stands on screen, once Readium has drawn its mark (a frame or two after `underline`).
     private func markedMatch() async -> CGRect? {
-        for _ in 0..<30 {
+        for _ in 0..<16 {
             if let frame = await host?.matchFrame() { return frame }
             try? await Task.sleep(for: .milliseconds(50))
         }
@@ -3866,7 +3875,8 @@ final class ReaderModel {
         let undo = rememberPlace(at: page?.currentLocation, keepingTheWayBack: true)
         // Not when the trip gave up: the pill keeps pointing at his page (gatefold#170).
         var keepsUndo = true
-        defer { if keepsUndo { publishBack(undo) } }
+        // The trip's own way back is the same pill, and it stays where it stood (gatefold#652).
+        defer { if keepsUndo { publishBack(undo, keepsPlace: true) } }
         // Sent again until his page is on screen: a web view still loading takes the jump at its file's
         // first page and drops the place inside it (CI's iPad at 8c5f294: Back came back to the chapter's
         // start). Never once he has moved on or the trip was given up.
@@ -4047,15 +4057,28 @@ final class ReaderModel {
 
     /// Offers the way back once its jump has landed (a veiled jump returns once the new page has
     /// painted), and only for the newest jump: one overtaken by another offers nothing.
-    private func publishBack(_ jump: Int?) {
+    private func publishBack(_ jump: Int?, match: CGRect? = nil, keepsPlace: Bool = false) {
         guard let jump, let pending = pendingBack, pending.jump == jump else {
             if let jump { readerLog.notice("back: jump \(jump, privacy: .public) superseded by \(self.pendingBack?.jump ?? -1, privacy: .public)") }
             return
         }
         pendingBack = nil
         backLocator = pending.locator
+        if !keepsPlace {
+            backMatch = match
+            backEdge = match.flatMap { m in backPlaces.map { JumpBack.edge(match: m, foot: $0.foot, top: $0.top) } } ?? .foot
+        }
         holdJumpBack()
     }
+
+    /// The search match the way back came up with, in window points: the pill keeps clear of it (gatefold#652).
+    /// Nil for every other jump.
+    private(set) var backMatch: CGRect?
+    /// Where the pill stands with the controls down: decided as it comes up, against the places the chrome reports
+    /// (`backPlaces`), so it never moves while up.
+    private(set) var backEdge: JumpBack.Edge = .foot
+    /// The pill's two places with the controls down, in window points, as the chrome lays them out.
+    @ObservationIgnored var backPlaces: JumpBack.Places?
 
     // MARK: Bookmarks
 
