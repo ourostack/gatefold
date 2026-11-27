@@ -30,8 +30,11 @@ enum ReaderReads {
     /// The reader reports its page ready and no reopen picture covers it. A relaunch's picture can stay up after
     /// `pageReady` (`ReaderModel.showPage`), and the words probe and the count are both held while it is up, so the
     /// ready allowances start only once it is gone.
+    /// The probe is looked for before its value is read: on a cold, slow runner the reader can still be coming up
+    /// when a settle starts, and reading `value` on a probe that isn't there fails the test at once.
     private static func ready(_ app: XCUIApplication) -> Bool {
-        (el(app, "reader.pageReady").value as? String) == "1" && !el(app, "reader.reopenPicture").exists
+        let probe = el(app, "reader.pageReady")
+        return probe.exists && (probe.value as? String) == "1" && !el(app, "reader.reopenPicture").exists
     }
 
     /// The reader's page is up (`reader.page`, there once the reader has laid out its first frame), and the reads it
