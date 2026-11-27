@@ -363,9 +363,19 @@ final class HighlightStore {
 
     private static var directory: URL { URL.applicationSupportDirectory.appending(path: "Highlights", directoryHint: .isDirectory) }
 
-    private var cacheURL: URL {
+    private var cacheURL: URL { Self.cacheURL(bookID) }
+
+    private static func cacheURL(_ bookID: String) -> URL {
         let name = bookID.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? bookID
-        return Self.directory.appending(path: "\(name).json")
+        return directory.appending(path: "\(name).json")
+    }
+
+    /// A book that takes a new id (a copy from before sign-in becoming its Cloud entry) keeps its highlights,
+    /// unless the new id already has some.
+    static func carryCache(from oldID: String, to newID: String) {
+        let from = cacheURL(oldID), to = cacheURL(newID)
+        guard FileManager.default.fileExists(atPath: from.path), !FileManager.default.fileExists(atPath: to.path) else { return }
+        try? FileManager.default.moveItem(at: from, to: to)
     }
 
     private func saveCache() {

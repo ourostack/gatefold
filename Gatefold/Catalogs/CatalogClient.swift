@@ -1,4 +1,5 @@
 import Foundation
+import UIKit
 import GatefoldCore
 
 /// Reads OPDS catalogs and downloads their books: a page when the reader opens it, a search when they ask,
@@ -81,6 +82,21 @@ struct CatalogClient: Sendable {
         return target
     }
 
+    /// A book's cover picture from the catalog, asked for as every request is (its password answers only its own
+    /// server), decoded no bigger than `fitting` pixels (calibre-web's thumbnail link is the full-size cover), or nil
+    /// when there's none to show: a page, a refusal, or a file over 4 MB.
+    func cover(at url: URL, credential: Credential? = nil, fitting: CGSize = CGSize(width: 300, height: 450)) async -> UIImage? {
+        guard let got = try? await get(url, credential: credential, accept: "image/*"), got.0.count <= Self.coverLimit,
+              let image = UIImage(data: got.0) else { return nil }
+        let pixels = CGSize(width: image.size.width * image.scale, height: image.size.height * image.scale)
+        guard pixels.width > fitting.width || pixels.height > fitting.height else { return await image.byPreparingForDisplay() ?? image }
+        let shrink = min(fitting.width / pixels.width, fitting.height / pixels.height)
+        let size = CGSize(width: (pixels.width * shrink).rounded(), height: (pixels.height * shrink).rounded())
+        return await image.byPreparingThumbnail(ofSize: size) ?? image
+    }
+
+    static let coverLimit = 4 << 20
+
     /// An EPUB is a ZIP archive, which starts "PK\u{3}\u{4}"; a web page or an error message doesn't.
     static func isZip(_ file: URL) -> Bool {
         guard let handle = try? FileHandle(forReadingFrom: file) else { return false }
@@ -108,8 +124,10 @@ struct CatalogClient: Sendable {
         return URL(string: (local ? "http://" : "https://") + text)
     }
 
-    private func get(_ url: URL, credential: Credential?) async throws -> (Data, URLResponse) {
-        let (data, response) = try await run { try await session.data(for: request(url), delegate: SignIn(credential)) }
+    private func get(_ url: URL, credential: Credential?, accept: String? = nil) async throws -> (Data, URLResponse) {
+        var request = request(url)
+        if let accept { request.setValue(accept, forHTTPHeaderField: "Accept") }
+        let (data, response) = try await run { try await session.data(for: request, delegate: SignIn(credential)) }
         try check(response)
         return (data, response)
     }

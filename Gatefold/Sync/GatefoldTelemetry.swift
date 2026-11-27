@@ -1,5 +1,6 @@
 import Foundation
 import GatefoldCloud
+import GatefoldCore
 import os
 import UIKit
 
@@ -183,6 +184,14 @@ final class GatefoldTelemetry: @unchecked Sendable {
     /// The arrival note's end, as counts only: how it ended and whether it offered Read, never its words or books.
     static func noteProperties(end: NoteEnd, hadRead: Bool) -> [String: Value] {
         ["ended": .string(end.rawValue), "had_read": .bool(hadRead)]
+    }
+
+    /// A catalog page's covers: how many of its books there are and how many the catalog gave a picture, or nil for
+    /// a page with no books. Counts only: never a title, address or picture.
+    static func coverProperties(_ page: [CatalogEntry]) -> [String: Value]? {
+        let books = page.filter { $0.epub != nil }
+        guard !books.isEmpty else { return nil }
+        return ["books": .int(books.count), "with_picture": .int(books.filter { ($0.thumbnail ?? $0.cover) != nil }.count)]
     }
 
     /// Books coming in from outside the Cloud: which source, and how many were new, already on the shelf, taken by a
