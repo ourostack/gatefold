@@ -82,10 +82,10 @@ struct CoverLetteringTests {
     /// A title too long for the cover's height shrinks to the floor, then ends in an ellipsis on the last line that fits.
     @Test func aTitleTooLongForTheCoverStaysOnIt() throws {
         let set = layout("A Very Long Title That Goes On and On Across Many More Lines Than a Small Cover Can Hold", "Someone")
-        let font = CoverLettering.font(.title, .large, bold: false).withSize(CoverLettering.font(.title, .large, bold: false).pointSize * set.title.scale)
-        let byline = CoverLettering.font(.author, .large, bold: false).lineHeight * CGFloat(set.author?.lines.count ?? 0) + CoverLettering.spacing
+        let author = try #require(set.author)
+        let byline = CoverLettering.height(author, font: CoverLettering.font(.author, .large, bold: false)) + CoverLettering.spacing
         let room = Self.grid.height - 2 * CoverLettering.padding - 2 * CoverLettering.rule - 2 * CoverLettering.spacing - byline
-        #expect(CGFloat(set.title.lines.count) * font.lineHeight <= room)
+        #expect(CoverLettering.height(set.title, font: CoverLettering.font(.title, .large, bold: false)) <= room)
         #expect(set.title.lines.last?.hasSuffix("…") == true)
     }
 
@@ -94,6 +94,68 @@ struct CoverLetteringTests {
         let set = layout("Emma", "Jane Austen")
         #expect(set.title.scale == 1 && set.title.lines == ["Emma"])
         #expect(set.author?.scale == 1)
+    }
+
+    /// An author's name takes three lines at most, even shrunk to the floor; the last that fits ends in an ellipsis.
+    @Test func anAuthorTakesThreeLinesAtMost() throws {
+        let names = "Wollstonecraft Shelley Godwin Imlay Fuseli Johnson Barbauld Macaulay Inchbald Edgeworth Radcliffe"
+        let author = try #require(layout("Emma", names).author)
+        #expect(author.lines.count <= CoverLettering.authorLines)
+        #expect(author.lines.last?.hasSuffix("…") == true)
+    }
+
+    /// Spaces at either end of a title or a name don't push its lines off-centre.
+    @Test func spacesAtTheEndsAreDropped() {
+        let set = layout("  Emma ", " Jane Austen ")
+        #expect(set.title.lines == ["Emma"])
+        #expect(set.author?.lines.joined(separator: " ") == "JANE AUSTEN")
+    }
+
+    /// A cover with no room yet (a layout's first pass, or a transition) sets nothing rather than shrinking and cutting.
+    @Test func aCoverWithNoRoomSetsNothing() {
+        let set = CoverLettering.layout(title: "Frankenstein", author: "Mary Shelley", cover: .zero, typeSize: .large, bold: false)
+        #expect(set.title.lines.isEmpty)
+        #expect(set.author == nil)
+    }
+
+    /// The lines sit as close as they did in the one Text each part used to be, title and author: one Text per line
+    /// keeps the font's own line height.
+    @Test func linesSitAsCloseAsInOneText() throws {
+        func height(_ view: some View) throws -> CGFloat {
+            let renderer = ImageRenderer(content: view.foregroundStyle(.black).environment(\.dynamicTypeSize, .large))
+            renderer.scale = 2
+            return CGFloat(try #require(renderer.cgImage).height) / 2
+        }
+        let title = ["Pride and", "Prejudice"], author = ["JANE", "AUSTEN"]
+        let oldTitle = try height(Text(title.joined(separator: "\n")).font(.system(.headline, design: .serif)).multilineTextAlignment(.center))
+        let newTitle = try height(CoverLines(setting: .init(lines: title, scale: 1), font: CoverLettering.font(.title, .large, bold: false),
+                                             tracking: CoverLettering.tracking(.title)))
+        #expect(abs(oldTitle - newTitle) <= 1, "title: one Text \(oldTitle) pt, a Text per line \(newTitle) pt")
+        let oldAuthor = try height(Text(author.joined(separator: "\n")).font(.system(size: 9, weight: .medium)).tracking(1.2))
+        let newAuthor = try height(CoverLines(setting: .init(lines: author, scale: 1), font: CoverLettering.font(.author, .large, bold: false),
+                                              tracking: CoverLettering.tracking(.author)))
+        #expect(abs(oldAuthor - newAuthor) <= 1, "author: one Text \(oldAuthor) pt, a Text per line \(newAuthor) pt")
+    }
+
+    /// With Bold Text the lettering is as heavy as SwiftUI's own fonts made it: the title's serif keeps the bold weight,
+    /// and the author's name draws as wide as the old 9 pt medium did under Bold Text.
+    @Test func boldTextIsAsHeavyAsBefore() throws {
+        func width(_ view: some View) throws -> CGFloat {
+            let renderer = ImageRenderer(content: view.foregroundStyle(.black).environment(\.dynamicTypeSize, .large).environment(\.legibilityWeight, .bold))
+            renderer.scale = 2
+            return CGFloat(try #require(renderer.cgImage).width) / 2
+        }
+        let word = "Frankenstein", name = "WOLLSTONECRAFT"
+        let regular = CoverLettering.measure(word, font: CoverLettering.font(.title, .large, bold: false), tracking: 0)
+        let bold = CoverLettering.measure(word, font: CoverLettering.font(.title, .large, bold: true), tracking: 0)
+        #expect(bold > regular, "the bold serif \(bold) pt is no wider than the regular \(regular) pt")
+        #expect(CoverLettering.font(.title, .large, bold: true).fontDescriptor.symbolicTraits.contains(.traitBold))
+        let oldTitle = try width(Text(word).font(.system(.headline, design: .serif)))
+        let newTitle = try drawnWidth(word, .title, scale: 1, bold: true)
+        #expect(abs(oldTitle - newTitle) <= 1, "title under Bold Text: before \(oldTitle) pt, now \(newTitle) pt")
+        let oldAuthor = try width(Text(name).font(.system(size: 9, weight: .medium)).tracking(1.2))
+        let newAuthor = try drawnWidth(name, .author, scale: 1, bold: true)
+        #expect(abs(oldAuthor - newAuthor) <= 1, "author under Bold Text: before \(oldAuthor) pt, now \(newAuthor) pt")
     }
 
     /// The pieces a line may break between keep every character of the text, spaces included.
@@ -124,3 +186,4 @@ struct CoverLetteringTests {
         }
     }
 }
+

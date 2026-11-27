@@ -266,7 +266,7 @@ struct CatalogCover: View {
     /// Clear of the square tile's curved corners: the book is this much shorter than the tile.
     static let inset: CGFloat = 4
     /// The made cover is drawn at a shelf cover's size (a phone's Reading Now cover) and shrunk, so it is the shelf's own
-    /// design, not a sketch of it. Narrower, a long name such as WOLLSTONECRAFT breaks in the middle of the word.
+    /// design, not a sketch of it.
     private static let madeWidth: CGFloat = 150
 
     var body: some View {

@@ -757,6 +757,7 @@ struct GeneratedCover: View {
                     Rectangle().fill(.white.opacity(0.5)).frame(width: 30, height: CoverLettering.rule)
                 }
                 .foregroundStyle(.white)
+                .padding(CoverLettering.padding)
                 .frame(width: space.size.width, height: space.size.height)
             }
         }

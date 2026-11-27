@@ -23,6 +23,8 @@ enum CoverLettering {
     static let authorLines = 3
     /// Room left unused at a line's end, against rounding between this measurement and SwiftUI's.
     static let slack: CGFloat = 2
+    /// Narrower than this, a cover is still being laid out (a first pass, or a transition) and gets no lettering yet.
+    static let least: CGFloat = 20
 
     /// A part's lines and the scale they are set at.
     struct Setting: Equatable {
@@ -36,24 +38,27 @@ enum CoverLettering {
     /// The title's and the author's settings on a cover of this size.
     static func layout(title: String, author: String, cover: CGSize, typeSize: DynamicTypeSize, bold: Bool) -> (title: Setting, author: Setting?) {
         let width = room(onCoverWidth: cover.width)
-        let byline = author.isEmpty ? nil : set(author.uppercased(), font: font(.author, typeSize, bold: bold), tracking: tracking(.author),
-                                                 width: width, height: font(.author, typeSize, bold: bold).lineHeight * CGFloat(authorLines))
+        guard width >= least else { return (Setting(lines: [], scale: 1), nil) }
+        let name = title.trimmingCharacters(in: .whitespacesAndNewlines), author = author.trimmingCharacters(in: .whitespacesAndNewlines)
         let authorFont = font(.author, typeSize, bold: bold)
-        let bylineHeight = byline.map { CGFloat($0.lines.count) * authorFont.lineHeight * $0.scale + spacing } ?? 0
+        let byline = author.isEmpty ? nil : set(author.uppercased(), font: authorFont, tracking: tracking(.author), width: width,
+                                                 height: authorFont.lineHeight * CGFloat(authorLines), maxLines: authorLines)
+        let bylineHeight = byline.map { height($0, font: authorFont) + spacing } ?? 0
         let tall = cover.height - 2 * padding - 2 * rule - 2 * spacing - bylineHeight
-        let title = set(title, font: font(.title, typeSize, bold: bold), tracking: tracking(.title), width: width, height: max(tall, 1))
+        let title = set(name, font: font(.title, typeSize, bold: bold), tracking: tracking(.title), width: width, height: max(tall, 1))
         return (title, byline)
     }
 
     /// Lines of `text`, broken only where the language allows, each no wider than `width`, together no taller than
-    /// `height`, at the largest scale from 1 down to `floor` where that works; at the floor, cut to fit.
-    static func set(_ text: String, font: UIFont, tracking: CGFloat, width: CGFloat, height: CGFloat) -> Setting {
+    /// `height` and no more than `maxLines`, at the largest scale from 1 down to `floor` where that works; at the floor,
+    /// cut to fit.
+    static func set(_ text: String, font: UIFont, tracking: CGFloat, width: CGFloat, height: CGFloat, maxLines: Int = .max) -> Setting {
         let width = max(width - slack, 1)
         let parts = pieces(text)
         var scale: CGFloat = 1
         while true {
             let small = font.withSize(font.pointSize * scale), spread = tracking * scale
-            let most = max(1, Int((height / small.lineHeight).rounded(.down)))
+            let most = max(1, min(maxLines, Int(((height + small.leading) / (small.lineHeight + small.leading)).rounded(.down))))
             let lines = pack(parts, font: small, tracking: spread, width: width)
             if lines.count <= most, lines.allSatisfy({ measure($0, font: small, tracking: spread) <= width }) {
                 return Setting(lines: lines, scale: scale)
@@ -69,6 +74,13 @@ enum CoverLettering {
             }
             scale = max(floor, scale - 0.02)
         }
+    }
+
+    /// How tall a part's lines stand, set in this font at their scale: a line each and the font's leading between,
+    /// as one multi-line Text sets them.
+    static func height(_ setting: Setting, font: UIFont) -> CGFloat {
+        let small = font.withSize(font.pointSize * setting.scale), count = CGFloat(setting.lines.count)
+        return count * small.lineHeight + max(count - 1, 0) * small.leading
     }
 
     /// The text cut where a line may break, by the system's line-breaking rules: each piece keeps the spaces after it.
@@ -122,14 +134,17 @@ enum CoverLettering {
     static func tracking(_ kind: Kind) -> CGFloat { kind == .author ? 1.2 : 0 }
 
     /// The title in the serif headline (the one serif moment, like a colophon) at the reader's text size; the author in
-    /// small capitals at a fixed 9 pt. Both a step heavier with Bold Text, as SwiftUI's own fonts are.
+    /// small capitals at a fixed 9 pt. With Bold Text both are as heavy as SwiftUI drew them: the semibold headline
+    /// heavy, the medium name semibold (measured against `.system(.headline, design: .serif)` and
+    /// `.system(size: 9, weight: .medium)` under Bold Text).
     static func font(_ kind: Kind, _ size: DynamicTypeSize, bold: Bool) -> UIFont {
         switch kind {
         case .title:
-            let traits = UITraitCollection(traitsFrom: [UITraitCollection(preferredContentSizeCategory: UIContentSizeCategory(size)),
-                                                        UITraitCollection(legibilityWeight: bold ? .bold : .regular)])
+            let traits = UITraitCollection.current.modifyingTraits { $0.preferredContentSizeCategory = UIContentSizeCategory(size) }
+            // The headline keeps its text style's leading; only its weight and design change.
             let headline = UIFont.preferredFont(forTextStyle: .headline, compatibleWith: traits)
-            return headline.fontDescriptor.withDesign(.serif).map { UIFont(descriptor: $0, size: 0) } ?? headline
+            let weighted = headline.fontDescriptor.addingAttributes([.traits: [UIFontDescriptor.TraitKey.weight: bold ? UIFont.Weight.heavy : .semibold]])
+            return UIFont(descriptor: weighted.withDesign(.serif) ?? weighted, size: 0)
         case .author:
             return .systemFont(ofSize: 9, weight: bold ? .semibold : .medium)
         }
@@ -144,7 +159,8 @@ struct CoverLines: View {
 
     var body: some View {
         let size = font.withSize(font.pointSize * setting.scale)
-        VStack(spacing: 0) {
+        // The font's leading between lines, as one multi-line Text puts it.
+        VStack(spacing: size.leading) {
             ForEach(Array(setting.lines.enumerated()), id: \.offset) { _, line in
                 Text(line)
                     .font(Font(size as CTFont))
