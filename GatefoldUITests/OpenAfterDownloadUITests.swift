@@ -46,18 +46,24 @@ final class OpenAfterDownloadUITests: XCTestCase {
 
     private func value(_ e: XCUIElement) -> String { (e.value as? String) ?? "" }
 
+    /// The reader's page is up, counted in reads rather than seconds: a starved CI runner can take minutes to open a
+    /// book (`ReaderReads.opened`, gatefold#122).
+    private func readerOpened(_ what: String) -> Bool {
+        ReaderReads.opened(app, what, say: { print("OPEN-AFTER-DOWNLOAD \($0)") }) != nil
+    }
+
     private func waitForValue(_ e: XCUIElement, contains text: String, timeout: TimeInterval) -> Bool {
         let p = NSPredicate(format: "value CONTAINS %@", text)
         return XCTWaiter.wait(for: [expectation(for: p, evaluatedWith: e)], timeout: timeout) == .completed
     }
 
     func testOneTapOnABookInTheCloudOpensIt() {
-        let book = launchShelf(downloadSeconds: 4)
+        let book = launchShelf(downloadSeconds: 8)
         book.tap()
         XCTAssertTrue(waitForValue(book, contains: "percent downloaded", timeout: 10), "the tile tells how far it has got: \(value(book))")
         shot("open-after-download-1-downloading")
         // No second tap: the reader comes up on its own.
-        XCTAssertTrue(element("reader.page").waitForExistence(timeout: 120), "one tap opened the book")
+        XCTAssertTrue(readerOpened("one tap"), "one tap opened the book")
         // The picture once the page is up, not mid-zoom.
         let ready = element("reader.pageReady")
         _ = XCTWaiter.wait(for: [expectation(for: NSPredicate(format: "value == '1'"), evaluatedWith: ready)], timeout: 60)
@@ -88,6 +94,6 @@ final class OpenAfterDownloadUITests: XCTestCase {
         XCTAssertFalse(element("reader.page").exists, "nothing opened behind his back")
         shot("open-after-download-3-ready")
         book.tap()
-        XCTAssertTrue(element("reader.page").waitForExistence(timeout: 120), "the next tap opens it")
+        XCTAssertTrue(readerOpened("the tap on a Ready book"), "the next tap opens it")
     }
 }

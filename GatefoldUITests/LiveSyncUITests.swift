@@ -43,14 +43,8 @@ final class LiveSyncUITests: XCTestCase {
     func test1_signInReadAndClose() throws {
         let book = signInFromACleanStart()
 
-        // In the Cloud: the first tap downloads, the next opens.
-        book.tap()
-        let onDevice = NSPredicate(format: "NOT (value CONTAINS 'Cloud') AND NOT (value CONTAINS 'downloading')")
-        XCTAssertEqual(XCTWaiter.wait(for: [expectation(for: onDevice, evaluatedWith: book)], timeout: 120), .completed, "downloaded")
-        shot("live-05b-downloaded")
-        book.tap()
-        let opened = element("reader.page")
-        XCTAssertTrue(opened.waitForExistence(timeout: 30))
+        // In the Cloud: one tap downloads it and opens it.
+        let opened = downloadAndOpen(book)
         waitForSettled()
         shot("live-06-opened")
 
@@ -296,14 +290,11 @@ final class LiveSyncUITests: XCTestCase {
         return book
     }
 
-    /// The first tap downloads a Cloud book, the next opens it.
+    /// One tap downloads a book in the Cloud and opens it once it lands (the shelf is still in front).
     private func downloadAndOpen(_ book: XCUIElement) -> XCUIElement {
         book.tap()
-        let onDevice = NSPredicate(format: "NOT (value CONTAINS 'Cloud') AND NOT (value CONTAINS 'downloading')")
-        XCTAssertEqual(XCTWaiter.wait(for: [expectation(for: onDevice, evaluatedWith: book)], timeout: 120), .completed, "downloaded")
-        book.tap()
         let opened = element("reader.page")
-        XCTAssertTrue(opened.waitForExistence(timeout: 30))
+        XCTAssertTrue(opened.waitForExistence(timeout: 150), "one tap downloaded the book and opened it")
         return opened
     }
 
