@@ -1,2 +1,2 @@
-# Known-bad: a drag that leaves the scrubber where it was. dragcheck must fail it, and the job must go red.
-stilldrag :: launch {P} -GatefoldPageTurn curl | ready 60 | wait 2 | tapxy {M} | wait 2 | dragel reader.scrubber 0.5 0.5 300 | wait 6 | dragcheck
+# Known-bad: the old missed scrub, 60 points above the scrubber (on the page). dragcheck must fail it and the job must go red.
+missed :: launch {P} -GatefoldPageTurn curl | ready 60 | wait 2 | tapxy {M} | wait 2 | dragel reader.scrubber 0.03 0.995 300 -60 | wait 12 | dragcheck
