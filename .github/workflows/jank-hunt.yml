@@ -1,0 +1,89 @@
+name: Jank hunt (scratch)
+# feel-jumps probe: iPhone only, app log captured.
+
+# Scratch branch only (2026-11-27 jank hunt): records scripted journeys on each device. Never merged.
+on:
+  push:
+    branches: ["jank-hunt/**"]
+
+permissions:
+  contents: read
+
+jobs:
+  hunt:
+    name: Hunt ${{ matrix.name }}
+    runs-on: xcode-27
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: iphone, type: com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro, files: ".github/jank/probe.txt", display: default, hinge: false }
+    env:
+      DD: ${{ github.workspace }}/../dd
+      OUT: ${{ github.workspace }}/../jank-out
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/select-xcode
+        with:
+          xcode: "27.2"
+      - name: Metal toolchain and project
+        run: |
+          xcodebuild -downloadComponent MetalToolchain
+          python3 .github/jank/gen.py "$RUNNER_TEMP/duo" ${{ matrix.files }}
+          brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
+          xcodegen generate
+      - name: Boot the simulator
+        id: sim
+        run: |
+          set -euo pipefail
+          runtime="$(xcrun simctl list runtimes --json | TYPE='${{ matrix.type }}' python3 -c 'import json,os,sys; t=os.environ["TYPE"]; r=[x for x in json.load(sys.stdin)["runtimes"] if x["platform"]=="iOS" and x["isAvailable"] and any(d["identifier"]==t for d in x.get("supportedDeviceTypes",[]))]; print(max(r, key=lambda x: [int(p) for p in x["version"].split(".")])["identifier"])')"
+          echo "runtime $runtime"
+          udid="$(.github/scripts/boot-sim.sh jank-${{ matrix.name }} '${{ matrix.type }}' "$runtime")"
+          echo "udid=$udid" >> "$GITHUB_OUTPUT"
+      - name: Build for testing
+        run: |
+          set -euo pipefail
+          xcodebuild build-for-testing -project Gatefold.xcodeproj -scheme Gatefold \
+            -destination "platform=iOS Simulator,id=${{ steps.sim.outputs.udid }}" \
+            -only-testing:GatefoldUITests/JankRuns -derivedDataPath "$DD" CODE_SIGNING_ALLOWED=NO 2>&1 | tail -15
+      - name: Hinge driver
+        if: matrix.hinge
+        run: |
+          set -eu
+          cp -R "$DD/SourcePackages/checkouts/ouro-ui-apple" "$RUNNER_TEMP/ouro-ui-apple"
+          (cd "$RUNNER_TEMP/ouro-ui-apple" && swift build -c release --product ouro-devicehub 2>&1 | tail -3)
+          hub="$(cd "$RUNNER_TEMP/ouro-ui-apple" && swift build -c release --show-bin-path)/ouro-devicehub"
+          echo "HUB=$hub" >> "$GITHUB_ENV"
+          open -a "$(xcode-select -p)/../Applications/DeviceHub.app"
+          sleep 25
+          mkdir -p "$OUT"
+          perl -e 'alarm shift; exec @ARGV' 120 "$hub" dump > "$OUT/devicehub-dump.txt" 2>&1 || echo "dump failed or timed out"
+          tail -60 "$OUT/devicehub-dump.txt"
+          perl -e 'alarm shift; exec @ARGV' 60 "$hub" press "Closed" || true
+          sleep 6
+          dir="$RUNNER_TEMP/duo"; mkdir -p "$dir"
+          nohup "$hub" serve "$dir" > "$OUT/devicehub-serve.log" 2>&1 &
+          echo "TEST_RUNNER_OURO_DUO_POSTURE_DIR=$dir" >> "$GITHUB_ENV"
+          mkdir -p /Users/Shared/jank; printf '%s' "$dir" > /Users/Shared/jank/hinge.txt
+      - name: Run the journeys
+        run: |
+          mkdir -p "$OUT"
+          xcrun simctl spawn "${{ steps.sim.outputs.udid }}" log stream --level debug --style compact --predicate 'subsystem == "bot.ouro.gatefold"' > "$OUT/app.log" 2>&1 &
+          bash .github/jank/run.sh "${{ steps.sim.outputs.udid }}" "$DD" "$OUT" "${{ matrix.display }}"
+      - name: Probe log
+        if: always()
+        run: |
+          grep -E "veil:|contents:|search|jump|riffle|snapshot|probe:|standby|landing|Back" "$OUT/app.log" | cut -c1-400 | tail -1500 || true
+      - name: Pack
+        if: always()
+        run: |
+          cd "$OUT/.." && find jank-out -name '*.xcresult' -prune -o -type f -print | head -400 > list.txt
+          tar czf "$RUNNER_TEMP/jank-${{ matrix.name }}.tgz" --exclude '*.xcresult' jank-out || true
+          ls -la "$RUNNER_TEMP"/jank-*.tgz
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: jank-${{ matrix.name }}
+          path: ${{ runner.temp }}/jank-${{ matrix.name }}.tgz
+          retention-days: 7
