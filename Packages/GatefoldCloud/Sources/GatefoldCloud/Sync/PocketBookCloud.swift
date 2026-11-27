@@ -221,11 +221,15 @@ public actor PocketBookCloud: SyncService {
     // MARK: Files
 
     public func download(_ book: CloudBook) async throws -> URL {
+        try await download(book, progress: nil)
+    }
+
+    public func download(_ book: CloudBook, progress: DownloadProgress?) async throws -> URL {
         var report = DownloadReport(hadListedLink: book.downloadURL != nil,
                                     check: book.verifiableMD5 != nil ? .md5 : (book.bytes > 0 ? .size : .none),
                                     format: DownloadReport.format(of: book), isDRM: book.isDRM)
         do {
-            let url = try await download(book, report: &report)
+            let url = try await download(book, report: &report, progress: progress)
             report.stage = nil
             downloadReports.record(report)
             return url
@@ -237,7 +241,7 @@ public actor PocketBookCloud: SyncService {
         }
     }
 
-    private func download(_ book: CloudBook, report: inout DownloadReport) async throws -> URL {
+    private func download(_ book: CloudBook, report: inout DownloadReport, progress: DownloadProgress?) async throws -> URL {
         let ext = (book.format?.lowercased()).flatMap { $0.isEmpty ? nil : $0 } ?? URL(fileURLWithPath: book.name).pathExtension.lowercased()
         let destination = booksDirectory.appendingPathComponent("\(book.fastHash).\(ext.isEmpty ? "epub" : ext)")
         let fm = FileManager.default
@@ -264,7 +268,7 @@ public actor PocketBookCloud: SyncService {
             report.httpStatus = nil
             report.stage = .transfer
             do {
-                response = try await transport.download(URLRequest(url: url), to: partial)
+                response = try await transport.download(URLRequest(url: url), to: partial, progress: progress)
             } catch {
                 try? fm.removeItem(at: partial)
                 throw CloudSession.mapTransportError(error)

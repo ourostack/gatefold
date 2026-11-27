@@ -223,6 +223,9 @@ struct LibraryView: View {
             .sheet(isPresented: $reconnecting) {
                 NavigationStack { SignInFlow(prefilledEmail: app.needsReconnect, onDone: { reconnecting = false }) }
             }
+            // Gone to something else: a book downloading lands Ready instead of opening over it.
+            .onChange(of: importing || confirmSignOut || reconnecting) { _, away in if away { library.leftShelf() } }
+            .onDisappear { library.leftShelf() }
             #if DEBUG
             .onGeometryChange(for: [CGFloat].self) { _ in [outer.size.width, outer.safeAreaInsets.leading, outer.safeAreaInsets.trailing] } action: { v in
                 readerLog.notice("shelf placement: safe width \(v[0], privacy: .public) leading \(v[1], privacy: .public) trailing \(v[2], privacy: .public)")
@@ -519,10 +522,12 @@ struct BookTile: View {
         Button {
             switch state {
             case .onDevice: onOpen(book)
-            case .cloudOnly, .failed:
+            // One tap reads it: it downloads, then opens if he is still here (`OpenAfterDownload`).
+            case .cloudOnly, .failed: app.library.tapToRead(book)
+            // A tap on a book on its way stops it, as a tap on a download does in the App Store.
+            case .downloading:
                 app.library.noteDownloadTap(book)
-                Task { await app.library.download(book) }
-            case .downloading: app.library.noteDownloadTap(book)
+                app.library.stopDownload(book)
             }
         } label: {
             VStack(alignment: .leading, spacing: 8) {
@@ -548,6 +553,9 @@ struct BookTile: View {
         }
         .buttonStyle(PressScale())
         .contextMenu {
+            if state == .downloading {
+                Button("Stop Download", systemImage: "stop.circle") { app.library.stopDownload(book) }
+            }
             if state == .onDevice {
                 Button("Read", systemImage: "book") { onOpen(book) }
                 Button("Remove from This \(UIDevice.current.userInterfaceIdiom == .pad ? "iPad" : "iPhone")", systemImage: "trash", role: .destructive) {
@@ -558,7 +566,7 @@ struct BookTile: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(book.title), \(book.author)")
         .accessibilityValue(accessibilityValue(state))
-        .accessibilityHint(state == .onDevice ? "Opens the book" : "Downloads the book")
+        .accessibilityHint(accessibilityHint(state))
         .accessibilityIdentifier("book.\(book.id)")
     }
 
@@ -567,7 +575,14 @@ struct BookTile: View {
     private func footer(_ state: DownloadState) -> some View {
         let p = book.displayProgression
         HStack(spacing: 6) {
-            if book.isFinished {
+            if state == .downloading {
+                // How far the download has got, where the Cloud can say; a sliding bar where it can't. The bar is the
+                // whole line (a word beside it didn't fit a narrow cover), on a line as tall as the words it replaces.
+                Text(verbatim: " ").frame(width: 0).hidden()
+                OuroProgress("Downloading", value: app.library.downloadProgress[book.id].map { $0 * 100 }, hideLabel: true)
+                    .frame(maxWidth: .infinity)
+                    .accessibilityHidden(true)
+            } else if book.isFinished {
                 // On the Finished shelf the shelf's own title says it.
                 if shelf != .finished { Text("Finished") }
             } else if p > 0.001 {
@@ -585,17 +600,19 @@ struct BookTile: View {
                     .accessibilityHidden(true)
                 if p <= 0.001, !book.isFinished { Text("In Cloud") }
             case .downloading:
-                Image(systemName: "arrow.down.circle.dotted")
-                    .symbolEffect(.pulse, options: .repeating)
-                    .accessibilityHidden(true)
-                if p <= 0.001, !book.isFinished { Text("Fetching…") }
+                EmptyView()
             case .failed:
                 Image(systemName: "arrow.clockwise")
                     .foregroundStyle(Color.ribbon)
                     .accessibilityHidden(true)
                 Text("Try again").foregroundStyle(Color.ribbon)
             case .onDevice:
-                if p <= 0.001, !book.isFinished { Text(book.arrivalLabel) }
+                // Downloaded while he was elsewhere, after he asked for it: waiting for his tap.
+                if app.library.isReady(book), !book.isFinished {
+                    Text("Ready").foregroundStyle(Color.ribbon)
+                } else if p <= 0.001, !book.isFinished {
+                    Text(book.arrivalLabel)
+                }
             }
         }
         .font(.caption)
@@ -610,11 +627,21 @@ struct BookTile: View {
         if book.isFinished { parts.append("finished") } else if book.displayProgression > 0.001 { parts.append("\(book.displayPercent) percent read") }
         switch state {
         case .cloudOnly: parts.append("in PocketBook Cloud")
-        case .downloading: parts.append("downloading")
+        case .downloading:
+            parts.append("downloading")
+            if let f = app.library.downloadProgress[book.id] { parts.append("\(Int((f * 100).rounded(.down))) percent downloaded") }
         case .failed: parts.append("download failed")
-        case .onDevice: break
+        case .onDevice: if app.library.isReady(book) { parts.append("ready") }
         }
         return parts.joined(separator: ", ")
+    }
+
+    private func accessibilityHint(_ state: DownloadState) -> String {
+        switch state {
+        case .onDevice: "Opens the book"
+        case .downloading: "Stops the download"
+        case .cloudOnly, .failed: "Downloads and opens the book"
+        }
     }
 }
 
@@ -924,6 +951,7 @@ private struct SyncStatusLine: View {
                 .sheet(isPresented: $reconnecting) {
                     NavigationStack { SignInFlow(prefilledEmail: email, onDone: { reconnecting = false }) }
                 }
+                .onChange(of: reconnecting) { _, away in if away { app.library.leftShelf() } }
             } else if case let .other(message)? = app.library.syncProblem, app.account != nil {
                 // Always the reader's words (`FriendlyError`), with a way to try again.
                 OuroBanner(message, tone: .warning, icon: .system("exclamationmark.icloud")) {

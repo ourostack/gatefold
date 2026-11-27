@@ -89,8 +89,17 @@ actor ScriptedTransport: HTTPTransport {
     }
 
     func download(_ request: URLRequest, to destination: URL) async throws -> HTTPURLResponse {
+        try await download(request, to: destination, progress: nil)
+    }
+
+    /// Half the body, then the rest.
+    func download(_ request: URLRequest, to destination: URL, progress: DownloadProgress?) async throws -> HTTPURLResponse {
         let (data, response) = try await send(request)
-        if (200..<300).contains(response.statusCode) { try data.write(to: destination) }
+        if (200..<300).contains(response.statusCode) {
+            progress?(0.5)
+            try data.write(to: destination)
+            progress?(1)
+        }
         return response
     }
 }
@@ -117,4 +126,12 @@ func tempDirectory() -> URL {
     let url = FileManager.default.temporaryDirectory.appendingPathComponent("gatefold-tests-\(UUID().uuidString)")
     try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
     return url
+}
+
+/// The fractions a download reported, in order.
+final class Fractions: @unchecked Sendable {
+    private let lock = NSLock()
+    private var seen: [Double] = []
+    func add(_ f: Double) { lock.withLock { seen.append(f) } }
+    var all: [Double] { lock.withLock { seen } }
 }

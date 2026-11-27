@@ -79,6 +79,8 @@ struct GatefoldApp: App {
                 }
                 app.library.flushPushes()
             case .background:
+                // He left the app: a book still downloading lands Ready, never opened in his absence.
+                app.library.leftShelf()
                 // Finish sending the place even if the app is suspended mid-request.
                 // iOS ends the grace period if the network hangs; whichever comes first ends the task once.
                 let finish = BackgroundTaskEnd()
@@ -267,6 +269,14 @@ struct RootView: View {
                 open(book)
             }
         }
+        // A book he tapped in the Cloud landed while he waited on the shelf: it opens, with no second tap.
+        .onChange(of: app.library.openRequest) { _, id in
+            guard let id else { return }
+            app.library.openRequest = nil
+            guard reader == nil, !opening, let book = app.library.book(id) else { return }
+            readerLog.notice("open: \(id, privacy: .public) landed while he waited; opening it")
+            open(book)
+        }
         .alert("Couldn't Open Book", isPresented: .constant(openError != nil)) {
             Button("OK") { openError = nil }
         } message: {
@@ -373,6 +383,7 @@ struct RootView: View {
             readerLog.notice("open: \(book.id, privacy: .public) refused (opening \(opening, privacy: .public))")
             return
         }
+        app.library.noteOpened(book)
         let asked = Date()
         if !Self.tappedSinceLaunch {
             Self.tappedSinceLaunch = true

@@ -38,6 +38,9 @@ iPad Pro 13-inch|NavigationPlaceUITests/testScrolledAfterTheLaunchReflowThenLeft
 iPad Pro 13-inch|NavigationPlaceUITests/testTheCloudsOfferOverTheOpeningCoverTakesHisTap	175	# p95 of 128, slowest 204
 iPad Pro 13-inch|NavigationPlaceUITests/testTheOpeningCoverLetsTheControlsThrough	71	# p95 of 106, slowest 147
 iPad Pro 13-inch|NavigationPlaceUITests/testWithPageNumbersOnReadInPortraitRotatedThenLeftKeepsHisFirstWords	484	# p95 of 104, slowest 612
+iPad Pro 13-inch|OpenAfterDownloadUITests/testABookThatLandsWhileHeIsAwayWaitsReady	120	# estimate until CI has run it (one tap reads a Cloud book, 2026-11-27)
+iPad Pro 13-inch|OpenAfterDownloadUITests/testATapOnABookOnItsWayStopsIt	60	# estimate until CI has run it (one tap reads a Cloud book, 2026-11-27)
+iPad Pro 13-inch|OpenAfterDownloadUITests/testOneTapOnABookInTheCloudOpensIt	90	# estimate until CI has run it (one tap reads a Cloud book, 2026-11-27)
 iPad Pro 13-inch|PageFurnitureUITests/testOffByDefaultYetVoiceOverStillHearsWhereHeIs	150	# p95 of 115, slowest 275
 iPad Pro 13-inch|PageFurnitureUITests/testOnTheIPadSpreadTwoTogglesThenAReopenKeepHisPage	228	# p95 of 112, slowest 255
 iPad Pro 13-inch|PageFurnitureUITests/testTurningNumbersOnKeepsTheWordsAndIsKept	228	# p95 of 111, slowest 247

@@ -215,7 +215,8 @@ final class AppModel {
             return FakeSyncService(
                 signedIn: LaunchOptions.signedIn,
                 scenario: LaunchOptions.fakeScenario,
-                latency: LaunchOptions.noLatency || LaunchOptions.isUITest ? .zero : .milliseconds(450)
+                latency: LaunchOptions.noLatency || LaunchOptions.isUITest ? .zero : .milliseconds(450),
+                downloadTime: LaunchOptions.downloadSeconds.map { .seconds($0) }
             )
         }
         let storage = URL.applicationSupportDirectory.appending(path: "GatefoldCloud", directoryHint: .isDirectory)

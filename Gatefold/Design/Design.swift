@@ -281,6 +281,8 @@ enum LaunchOptions {
     static var showChrome: Bool { defaults.bool(forKey: "GatefoldShowChrome") }
     static var noLatency: Bool { defaults.bool(forKey: "GatefoldNoLatency") }
     static var downloadAll: Bool { defaults.bool(forKey: "GatefoldDownloadAll") }
+    /// Fake Cloud only: each download takes this many seconds (a download under way, for tests and screenshots).
+    static var downloadSeconds: Double? { defaults.object(forKey: "GatefoldDownloadSeconds") == nil ? nil : defaults.double(forKey: "GatefoldDownloadSeconds") }
     static var sheet: String? { defaults.string(forKey: "GatefoldSheet") }
     /// Screenshots and UI tests: switch the forced posture to `GatefoldFlipTo` (default spread) after
     /// this many seconds, and back after `GatefoldFlipBackAfter` more, to film the unfold.
