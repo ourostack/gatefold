@@ -82,16 +82,22 @@ struct CatalogClient: Sendable {
         return target
     }
 
-    /// An EPUB is a ZIP archive, which starts "PK\u{3}\u{4}"; a web page or an error message doesn't.
     /// A book's cover picture from the catalog, asked for as every request is (its password answers only its own
-    /// server), or nil when there's none to show: a page, a refusal, or a picture over 4 MB.
-    func cover(at url: URL, credential: Credential? = nil) async -> UIImage? {
+    /// server), decoded no bigger than `fitting` pixels (calibre-web's thumbnail link is the full-size cover), or nil
+    /// when there's none to show: a page, a refusal, or a file over 4 MB.
+    func cover(at url: URL, credential: Credential? = nil, fitting: CGSize = CGSize(width: 300, height: 450)) async -> UIImage? {
         guard let got = try? await get(url, credential: credential, accept: "image/*"), got.0.count <= Self.coverLimit,
               let image = UIImage(data: got.0) else { return nil }
-        return await image.byPreparingForDisplay() ?? image
+        let pixels = CGSize(width: image.size.width * image.scale, height: image.size.height * image.scale)
+        guard pixels.width > fitting.width || pixels.height > fitting.height else { return await image.byPreparingForDisplay() ?? image }
+        let shrink = min(fitting.width / pixels.width, fitting.height / pixels.height)
+        let size = CGSize(width: (pixels.width * shrink).rounded(), height: (pixels.height * shrink).rounded())
+        return await image.byPreparingThumbnail(ofSize: size) ?? image
     }
 
     static let coverLimit = 4 << 20
+
+    /// An EPUB is a ZIP archive, which starts "PK\u{3}\u{4}"; a web page or an error message doesn't.
 
     static func isZip(_ file: URL) -> Bool {
         guard let handle = try? FileHandle(forReadingFrom: file) else { return false }

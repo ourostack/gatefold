@@ -18,12 +18,14 @@ import UIKit
     }
 
     /// A small picture with something on it: a dark band across a light card.
-    nonisolated private static func picture() -> Data {
-        UIGraphicsImageRenderer(size: CGSize(width: 30, height: 45)).pngData { context in
+    nonisolated private static func picture(width: CGFloat = 30, height: CGFloat = 45) -> Data {
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        return UIGraphicsImageRenderer(size: CGSize(width: width, height: height), format: format).pngData { context in
             UIColor(white: 0.95, alpha: 1).setFill()
-            context.fill(CGRect(x: 0, y: 0, width: 30, height: 45))
+            context.fill(CGRect(x: 0, y: 0, width: width, height: height))
             UIColor(red: 0.6, green: 0.1, blue: 0.1, alpha: 1).setFill()
-            context.fill(CGRect(x: 0, y: 15, width: 30, height: 15))
+            context.fill(CGRect(x: 0, y: height / 3, width: width, height: height / 3))
         }
     }
 
@@ -35,6 +37,18 @@ import UIKit
         let image = try #require(await client.cover(at: base.appending(path: "covers/1.png")))
         #expect(image.size.width * image.scale == 30)
         #expect(image.size.height * image.scale == 45)
+    }
+
+    /// calibre-web links its full-size cover as the thumbnail: it's decoded no bigger than the row needs.
+    @Test func aFullSizeCoverIsDecodedSmall() async throws {
+        let png = Self.picture(width: 1400, height: 2100)
+        StandInServer.answer(host) { request in
+            request.url?.path() == "/covers/big.png" ? (200, png) : (404, Data())
+        }
+        let image = try #require(await client.cover(at: base.appending(path: "covers/big.png")))
+        #expect(image.size.width * image.scale <= 300)
+        #expect(image.size.height * image.scale <= 450)
+        #expect(image.size.height * image.scale >= 440, "shrunk to fit, not to nothing")
     }
 
     @Test func aPageWhereTheCoverShouldBeGivesNoCover() async {
@@ -53,16 +67,36 @@ import UIKit
     /// With no picture at all, the tile is a made cover (the shelf's cloth, its title and author stamped in white),
     /// never a flat grey square: a dark cloth with light marks across its middle.
     @Test func aBookWithNoPictureGetsACoverMadeFromItsTitleAndAuthor() throws {
-        let look = try Self.look(CatalogCover(entry: entry(), client: client))
+        let look = try Self.look(CatalogCover(entry: entry(), client: client).frame(width: 64, height: 64))
         #expect(look.background < 0.5, "the tile is cloth, not a pale grey square (luminance \(look.background))")
         #expect(look.marks > 0.03, "its title and author show on it (\(look.marks) of its middle is lettering)")
     }
 
-    /// The same while a picture is still on its way, or never comes: the made cover holds its place.
-    @Test func aPictureStillOnItsWayShowsTheMadeCoverMeanwhile() throws {
-        let look = try Self.look(CatalogCover(entry: entry(thumbnail: base.appending(path: "covers/slow.png")), client: client))
+    /// A book whose picture hasn't been fetched (still on its way, or never coming) shows the made cover meanwhile.
+    @Test func aPictureNotYetFetchedShowsTheMadeCoverMeanwhile() throws {
+        let look = try Self.look(CatalogCover(entry: entry(thumbnail: base.appending(path: "covers/slow.png")), client: client)
+            .frame(width: 64, height: 64))
         #expect(look.background < 0.5, "the tile is cloth while the picture loads (luminance \(look.background))")
         #expect(look.marks > 0.03, "its title and author show meanwhile (\(look.marks))")
+    }
+
+    /// Once the picture is there, it's what shows: the light card with its band, not the cloth.
+    @Test func aFetchedPictureCoversTheMadeOne() throws {
+        let picture = try #require(UIImage(data: Self.picture()))
+        let look = try Self.look(CatalogCover(entry: entry(thumbnail: base.appending(path: "covers/1.png")), client: client, picture: picture)
+            .frame(width: 64, height: 64))
+        #expect(look.background > 0.8, "the picture's light card shows (luminance \(look.background))")
+    }
+
+    @Test func aCatalogPagesCoversAreReportedAsCountsOnly() {
+        let book = CatalogAcquisition(url: base.appending(path: "1.epub"), mediaType: "application/epub+zip", rel: "http://opds-spec.org/acquisition", length: nil, title: nil)
+        func entry(_ id: String, picture: Bool, book isBook: Bool = true) -> CatalogEntry {
+            CatalogEntry(id: id, title: "Title \(id)", author: "Someone", summary: nil, navigation: isBook ? nil : base, acquisitions: isBook ? [book] : [],
+                         cover: nil, thumbnail: picture ? base.appending(path: "\(id).png") : nil)
+        }
+        let page = [entry("a", picture: true), entry("b", picture: false), entry("c", picture: false, book: false)]
+        #expect(GatefoldTelemetry.coverProperties(page) == ["books": .int(2), "with_picture": .int(1)])
+        #expect(GatefoldTelemetry.coverProperties([entry("c", picture: false, book: false)]) == nil)
     }
 
     /// Renders the view and reads its middle: the commonest luminance there, and the share of pixels far from it.

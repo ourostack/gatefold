@@ -173,14 +173,16 @@ struct CatalogFeedView: View {
             feed = loaded
             entries = loaded.entries
             next = loaded.next
-            // Counts only: how many of the page's books the catalog gave a picture.
-            let books = loaded.entries.filter { $0.epub != nil }
-            GatefoldTelemetry.shared.capture("gatefold_catalog_covers", properties: [
-                "books": .int(books.count), "with_picture": .int(books.filter { ($0.thumbnail ?? $0.cover) != nil }.count),
-            ])
+            reportCovers(loaded.entries)
         } catch let error as CatalogClient.Failure {
             failure = error
         } catch {}
+    }
+
+    /// Counts only: how many of a page's books the catalog gave a picture. A page of shelves, with no books, says nothing.
+    private func reportCovers(_ page: [CatalogEntry]) {
+        guard let properties = GatefoldTelemetry.coverProperties(page) else { return }
+        GatefoldTelemetry.shared.capture("gatefold_catalog_covers", properties: properties)
     }
 
     private func loadMore() async {
@@ -192,6 +194,7 @@ struct CatalogFeedView: View {
             let seen = Set(entries.map(\.id))
             entries += more.entries.filter { !seen.contains($0.id) }
             self.next = more.next
+            reportCovers(more.entries)
         } catch let error as CatalogClient.Failure {
             getFailure = error.words
         } catch {}
@@ -231,51 +234,76 @@ struct CatalogFeedView: View {
     }
 }
 
-/// A book's cover from the catalog, small, while it loads a quiet tile.
 /// A catalog book's cover: its picture from the catalog (the thumbnail first), fetched through the catalog's own
 /// client so a catalog behind a password shows covers too, over a cover made from its title and author in the
 /// shelf's own cloth. A row never shows a blank tile: not while the picture comes, not when it fails, not when
-/// there is none. A book's shape, standing in the row's square picture tile.
+/// there is none. A book's shape, standing inside the row's square picture tile clear of its curved corners, and
+/// as tall as the band when large text lifts the picture above the words.
 struct CatalogCover: View {
     let entry: CatalogEntry
     var credential: CatalogClient.Credential?
     var client = CatalogClient()
-    @State private var picture: UIImage?
-    private var url: URL? { entry.thumbnail ?? entry.cover }
+    @State private var fetched: UIImage?
 
-    static let height = OuroItemMetrics.mediaSide(.md)
-    static let width = (height * 2 / 3).rounded()
+    init(entry: CatalogEntry, credential: CatalogClient.Credential? = nil, client: CatalogClient = CatalogClient(), picture: UIImage? = nil) {
+        self.entry = entry
+        self.credential = credential
+        self.client = client
+        _fetched = State(initialValue: picture)
+    }
+
+    private var url: URL? { entry.thumbnail ?? entry.cover }
+    /// Pictures are kept per catalog sign-in, so one fetched with a password is never shown to another catalog.
+    private var key: NSString? {
+        url.map { "\(credential?.catalog.absoluteString ?? "")|\(credential?.user ?? "")|\($0.absoluteString)" as NSString }
+    }
+    /// A kept picture shows on the first frame; only one that comes over the network fades in.
+    private var picture: UIImage? { fetched ?? key.flatMap { Self.kept.object(forKey: $0) } }
+
+    /// Clear of the square tile's curved corners: the book is this much shorter than the tile.
+    static let inset: CGFloat = 4
     /// The made cover is drawn at a shelf cover's size and shrunk, so it is the shelf's own design, not a sketch of it.
     private static let madeWidth: CGFloat = 120
 
     var body: some View {
-        ZStack {
-            GeneratedCover(title: BookTitle.display(entry.title), author: entry.author ?? "")
-                .frame(width: Self.madeWidth, height: Self.madeWidth * 3 / 2)
-                .scaleEffect(Self.width / Self.madeWidth)
-                .frame(width: Self.width, height: Self.height)
-            if let picture {
-                Image(uiImage: picture).resizable().scaledToFill()
-                    .frame(width: Self.width, height: Self.height)
-                    .transition(.opacity)
+        GeometryReader { space in
+            let height = max(space.size.height - Self.inset, 1)
+            let width = min((height * 2 / 3).rounded(), space.size.width)
+            ZStack {
+                GeneratedCover(title: BookTitle.display(entry.title), author: entry.author ?? "")
+                    .dynamicTypeSize(.large)
+                    .frame(width: Self.madeWidth, height: Self.madeWidth * 3 / 2)
+                    .scaleEffect(width / Self.madeWidth)
+                    .frame(width: width, height: height)
+                if let picture {
+                    Image(uiImage: picture).resizable().scaledToFill()
+                        .frame(width: width, height: height)
+                        .transition(.opacity)
+                }
             }
+            .frame(width: width, height: height)
+            .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
+            .animation(.easeOut(duration: 0.25), value: fetched == nil)
+            .frame(width: space.size.width, height: space.size.height)
         }
-        .frame(width: Self.width, height: Self.height)
-        .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
-        .animation(.easeOut(duration: 0.25), value: picture == nil)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .accessibilityHidden(true)
-        .task(id: url) {
-            guard let url else { return }
-            if let kept = Self.kept.object(forKey: url as NSURL) { picture = kept; return }
+        .task(id: key) {
+            guard let url, let key else { fetched = nil; return }
+            if let kept = Self.kept.object(forKey: key) { fetched = kept; return }
+            fetched = nil
             guard let loaded = await client.cover(at: url, credential: credential) else { return }
-            Self.kept.setObject(loaded, forKey: url as NSURL)
-            picture = loaded
+            Self.kept.setObject(loaded, forKey: key, cost: Int(loaded.size.width * loaded.size.height * loaded.scale * loaded.scale * 4))
+            fetched = loaded
         }
     }
 
-    /// Pictures already fetched, so scrolling back or reopening a page doesn't fetch them again.
-    @MainActor private static let kept = NSCache<NSURL, UIImage>()
+    /// Pictures already fetched, so scrolling back or reopening a page doesn't fetch them again: at most about
+    /// 40 MB of decoded pictures (a 300 x 450 picture is about 0.5 MB).
+    @MainActor private static let kept: NSCache<NSString, UIImage> = {
+        let cache = NSCache<NSString, UIImage>()
+        cache.totalCostLimit = 40 << 20
+        return cache
+    }()
 }
 
 /// What the reader types to add a catalog, and the check that it opens before it is saved.
