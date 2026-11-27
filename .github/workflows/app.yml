@@ -828,9 +828,10 @@ jobs:
       matrix:
         include:
           - shard: ipad-reviewer-smoke
-            # The PR smoke: the last page's number is the count (#30), and the reader fits its window: 169 + 80 + 77
+            # The PR smoke: the last page's number is the count (#30), and the reader fits its window: 169 + 80 + 77.
+            # On main, App Review's path too: a fresh install with no account reads a bundled classic.
             tests: >-
-              ReviewerChecksUITests/testTheLastPagesNumberIsTheCount WindowFitUITests
+              ReviewerChecksUITests/testTheLastPagesNumberIsTheCount WindowFitUITests NoAccountUITests
             skip: ""
             pr_tests: >-
               NavigationPlaceUITests/testOpenedFromTheShelfThenLeftTwiceWithoutATurnKeepsThePlace
@@ -838,7 +839,7 @@ jobs:
             # On a pull request: iPad smoke, on every app change: open, leave and reopen on his page; a tap turns back (285 s).
             pr_when: smoke
             cold: false
-            timeout: 68 # 30 + 2 x 10.4 + 5 + 12
+            timeout: 73 # 30 + 2 x 12.9 + 5 + 12
             lane: 17
           - shard: ipad-reviewer-controls
             # Main only: 900, the first two of five reopens (the other three are ipad-reviewer-controls-more)

@@ -18,6 +18,8 @@ struct LibraryBook: Identifiable, Codable, Equatable {
         case dropped
         /// Got from an OPDS catalog (`CatalogsView`).
         case catalog
+        /// One of the classics that ship in the app, from the empty shelf's Try a Few Classics.
+        case sample
     }
 
     var id: String
@@ -60,7 +62,7 @@ struct LibraryBook: Identifiable, Codable, Equatable {
         switch source {
         case .files: return "From Files"
         case .catalog: return "From a catalog"
-        case .shared, .dropped, nil: return "Added"
+        case .shared, .dropped, .sample, nil: return "Added"
         }
     }
     /// A book from the fake Cloud's bundled demo shelf.
