@@ -144,7 +144,7 @@ struct CatalogFeedView: View {
     @ViewBuilder
     private func row(_ entry: CatalogEntry) -> some View {
         if let epub = entry.epub {
-            OuroItem(entry.title, description: entry.author ?? entry.summary, variant: .outline, mediaSize: .sm) {
+            OuroItem(entry.title, description: entry.author ?? entry.summary, variant: .outline, mediaSize: .md) {
                 CatalogCover(entry: entry, credential: credential, client: client)
             } actions: {
                 if let bookID = aboard[entry.id] {
@@ -173,6 +173,11 @@ struct CatalogFeedView: View {
             feed = loaded
             entries = loaded.entries
             next = loaded.next
+            // Counts only: how many of the page's books the catalog gave a picture.
+            let books = loaded.entries.filter { $0.epub != nil }
+            GatefoldTelemetry.shared.capture("gatefold_catalog_covers", properties: [
+                "books": .int(books.count), "with_picture": .int(books.filter { ($0.thumbnail ?? $0.cover) != nil }.count),
+            ])
         } catch let error as CatalogClient.Failure {
             failure = error
         } catch {}
@@ -227,22 +232,50 @@ struct CatalogFeedView: View {
 }
 
 /// A book's cover from the catalog, small, while it loads a quiet tile.
+/// A catalog book's cover: its picture from the catalog (the thumbnail first), fetched through the catalog's own
+/// client so a catalog behind a password shows covers too, over a cover made from its title and author in the
+/// shelf's own cloth. A row never shows a blank tile: not while the picture comes, not when it fails, not when
+/// there is none. A book's shape, standing in the row's square picture tile.
 struct CatalogCover: View {
     let entry: CatalogEntry
     var credential: CatalogClient.Credential?
     var client = CatalogClient()
+    @State private var picture: UIImage?
     private var url: URL? { entry.thumbnail ?? entry.cover }
 
+    static let height = OuroItemMetrics.mediaSide(.md)
+    static let width = (height * 2 / 3).rounded()
+    /// The made cover is drawn at a shelf cover's size and shrunk, so it is the shelf's own design, not a sketch of it.
+    private static let madeWidth: CGFloat = 120
+
     var body: some View {
-        AsyncImage(url: url) { image in
-            image.resizable().scaledToFill()
-        } placeholder: {
-            Color.ink.opacity(0.08)
+        ZStack {
+            GeneratedCover(title: BookTitle.display(entry.title), author: entry.author ?? "")
+                .frame(width: Self.madeWidth, height: Self.madeWidth * 3 / 2)
+                .scaleEffect(Self.width / Self.madeWidth)
+                .frame(width: Self.width, height: Self.height)
+            if let picture {
+                Image(uiImage: picture).resizable().scaledToFill()
+                    .frame(width: Self.width, height: Self.height)
+                    .transition(.opacity)
+            }
         }
-        .frame(width: 40, height: 56)
-        .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+        .frame(width: Self.width, height: Self.height)
+        .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
+        .animation(.easeOut(duration: 0.25), value: picture == nil)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .accessibilityHidden(true)
+        .task(id: url) {
+            guard let url else { return }
+            if let kept = Self.kept.object(forKey: url as NSURL) { picture = kept; return }
+            guard let loaded = await client.cover(at: url, credential: credential) else { return }
+            Self.kept.setObject(loaded, forKey: url as NSURL)
+            picture = loaded
+        }
     }
+
+    /// Pictures already fetched, so scrolling back or reopening a page doesn't fetch them again.
+    @MainActor private static let kept = NSCache<NSURL, UIImage>()
 }
 
 /// What the reader types to add a catalog, and the check that it opens before it is saved.
