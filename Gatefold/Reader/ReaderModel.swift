@@ -3710,6 +3710,9 @@ final class ReaderModel {
         defer { publishBack(back) }
         jumpOnItsWay = (locator, moves, lastReported ?? page?.currentLocation)
         let move = moves
+        // If he turns or swipes after the veil has let go (a starved load), the settle stops and his page stands.
+        let hisAtStart = hisSteps
+        if markingTheMatch, LaunchOptions.isUITest { jumpLandingProbe = "" }
         let jump = await veiled(toward: locator.href) {
             _ = await self.page?.go(to: locator)
             // Into another chapter, Readium places the page by progression before the chapter has laid out, so the
@@ -3717,7 +3720,7 @@ final class ReaderModel {
             // 45096599422: a search jump into the preface showed the page before the match, its mark off screen).
             // Under the veil, so it lifts onto the match's page: found after the lift, the page Readium guessed showed
             // first, faded in over the old one, and then the page jumped again (gatefold#653).
-            if markingTheMatch { await self.settle(on: Self.matchInContext(locator), move: move) }
+            if markingTheMatch { await self.settle(on: Self.matchInContext(locator), move: move, his: hisAtStart) }
         }
         if endedQuietly(jump, back: back) { return }
         // UI tests: the words in view as the veil lifted, to tell a landing that moved after it (`jumpLandingProbe`).
