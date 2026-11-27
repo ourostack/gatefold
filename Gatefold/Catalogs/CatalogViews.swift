@@ -62,7 +62,7 @@ struct CatalogsView: View {
             .navigationDestination(for: CatalogPage.self) { page in
                 CatalogFeedView(page: page, shelf: shelf, onRead: onRead) { path.append($0) }
             }
-            .ouroSheet(isPresented: $adding, title: "Add a Catalog") {
+            .ouroSheet(isPresented: $adding, title: "Add a Catalog", detents: [.large]) {
                 AddCatalogForm(draft: draft)
             } footer: {
                 OuroButton("Add", size: .lg, fullWidth: true, loading: draft.checking, loadingLabel: "Opening the catalog") {
