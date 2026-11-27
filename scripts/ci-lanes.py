@@ -67,11 +67,14 @@ PR_NUMBER = r"endsWith\(format\('\{0\}', github\.event\.pull_request\.number\), 
 LINK = re.compile(r"\(" + PR_NUMBER + r"(?: \|\| " + PR_NUMBER.replace("(\\d)", "\\d") + r")*\) && '(\d)' \|\| ")
 GROUP = re.compile(r"^\$\{\{ github\.event_name == 'pull_request' && (?P<pr>.+) \|\| (?P<off>format\('[^']*', .+\)) \}\}$")
 PUSH = " || github.event_name == 'push' && "
-# Workflows whose laned jobs must lane main pushes too: each main commit has an App and a Real unfold run of its own
-# (their run-level group is per commit), so without lanes a burst of merges would start a full set of Macs per commit.
+# Workflows whose laned jobs must lane main pushes too: main's runs share one group per workflow, and a lane per job
+# still lines up each job behind the one before it, as it did when each main commit had a run of its own.
 MAIN_LANED = {"app.yml", "ui-tests.yml", "real-unfold-place.yml"}
-# The run-level groups that must be per commit on main pushes, never shared ('main'), or a later merge replaces a
-# waiting run and its commit gets no verdict (fast-honest-ci 2.7; 10 of 18 main runs on 2026-11-22).
+# The run-level groups main's pushes share, one per workflow, never cancelling the run in progress: one runs, one
+# waits, and a newer push replaces the waiting one. A group per commit (2026-11-22 to 11-27) queued one full run per
+# merge, 13 App runs of about 430 Mac minutes each on 2026-11-27, and TestFlight, which publishes only the newest green
+# commit, waited from build 67 on 2026-11-23. A replaced commit is covered by the newer one's verdict; auto-revert
+# reads a red range of commits (ourostack/.github tools/red-main).
 PER_COMMIT = {"app.yml": "app-", "real-unfold.yml": "real-unfold-"}
 # A main push's lane: this job's own name, alone or one per shard, place or matrix leg; never a pull request's lane.
 # Main's lanes are outside BUDGET: together they hold one main run's worth of Macs, as one batched run did.
@@ -251,9 +254,13 @@ def check(files):
             continue
         top = re.search(r"^concurrency:\n  group: >-\n((?:    .*\n)+)", text, re.M)
         group = " ".join(l.strip() for l in top.group(1).splitlines()) if top else ""
-        if f"{prefix}${{{{ github.event_name == 'pull_request' && github.ref || github.event_name == 'push' && format('main-{{0}}', github.sha) ||" not in group:
-            errors.append(f"{fname}: the run's group must give each push to main its own, "
-                          "format('main-{0}', github.sha), so a later merge never replaces it")
+        if f"{prefix}${{{{ github.event_name == 'pull_request' && github.ref || github.event_name == 'push' && 'main' ||" not in group:
+            errors.append(f"{fname}: the run's group must have main's pushes share one group, 'main', so one runs, "
+                          "one waits and a newer push replaces the waiting one")
+        cancel = re.search(r"^  cancel-in-progress: (.+)$", text, re.M)
+        if not cancel or cancel.group(1).strip() != "${{ github.event_name == 'pull_request' }}":
+            errors.append(f"{fname}: cancel-in-progress must be ${{{{ github.event_name == 'pull_request' }}}}, so a "
+                          "newer push never cancels main's run in progress")
     errors += check_shards(files.get("app.yml", ""), files.get("ui-tests.yml", ""))
     errors += check_places(files.get("real-unfold.yml", ""), files.get("real-unfold-place.yml", ""))
     for fname in ("real-unfold.yml", "real-unfold-place.yml"):
@@ -311,9 +318,10 @@ def read():
 
 
 def top(prefix):
-    """A run-level group that gives each main push its own."""
+    """A run-level group that main's pushes share, never cancelling the one in progress."""
     return (f"concurrency:\n  group: >-\n    {prefix}${{{{ github.event_name == 'pull_request' && github.ref\n"
-            "    || github.event_name == 'push' && format('main-{0}', github.sha) || github.sha }}\n")
+            "    || github.event_name == 'push' && 'main' || github.sha }}\n"
+            "  cancel-in-progress: ${{ github.event_name == 'pull_request' }}\n")
 
 
 GOOD_JOB = """jobs:
@@ -439,7 +447,11 @@ def selftest():
         "exempt build": ({**good, "app.yml": app + GOOD_JOB + "  build:\n    runs-on: xcode-27\n" + GOOD_CALLER}, None),
         "one shard set": ({**good, "ui-tests.yml": re.sub(r"format\('gatefold-macos-pr-lane-shard-\{0\}-\{1\}', inputs\.lane, .*\)\n", "format('gatefold-macos-pr-lane-shard-{0}-{1}', inputs.lane, '0')\n", GOOD_UI)}, "shard lane's {1}"),
         "place workflow": ({**good, "real-unfold.yml": top("real-unfold-") + GOOD_PLACES, "real-unfold-place.yml": GOOD_PLACE}, None),
-        "main shares a run group": ({**good, "app.yml": good["app.yml"].replace("format('main-{0}', github.sha)", "github.run_attempt == 1 && 'main'")}, "its own, format('main-{0}'"),
+        # 2026-11-27: one run per main commit queued 13 App runs of about 430 Mac minutes each, and TestFlight, which
+        # publishes the newest green commit, waited from build 67 on 2026-11-23.
+        "main gets a run per commit": ({**good, "app.yml": good["app.yml"].replace("&& 'main' ||", "&& format('main-{0}', github.sha) ||")}, "share one group, 'main'"),
+        "main cancels in progress": ({**good, "app.yml": good["app.yml"].replace("cancel-in-progress: ${{ github.event_name == 'pull_request' }}", "cancel-in-progress: true")}, "never cancels main's run in progress"),
+        "unfold cancels in progress": ({**good, "real-unfold.yml": top("real-unfold-").replace("cancel-in-progress: ${{ github.event_name == 'pull_request' }}\n", "") + GOOD_PLACES, "real-unfold-place.yml": GOOD_PLACE}, "real-unfold.yml: cancel-in-progress"),
         "unfold shares a run group": ({**good, "real-unfold.yml": GOOD_PLACES, "real-unfold-place.yml": GOOD_PLACE}, "real-unfold.yml: the run's group"),
         "main skips the lanes": ({**good, "app.yml": good["app.yml"].replace(unit_push, "")}, "must wait in a main lane too"),
         "main shard skips the lanes": ({**good, "ui-tests.yml": GOOD_UI.replace("        || github.event_name == 'push' && format('gatefold-macos-main-lane-shard-{0}', inputs.shard)\n", "")}, "must wait in a main lane too"),
@@ -481,7 +493,7 @@ def main(argv):
         for e in errors:
             print(f"::error::{e}")
         if not errors:
-            print("Every pull-request macOS job waits in a lane, App's and Real unfold's wait in a main lane each on main pushes, each main push has a run of its own, and the pull-request lanes fit the budget")
+            print("Every pull-request macOS job waits in a lane, App's and Real unfold's wait in a main lane each on main pushes, main's pushes share one group that never cancels its run in progress, and the pull-request lanes fit the budget")
         return 1 if errors else 0
     print(__doc__)
     return 2
