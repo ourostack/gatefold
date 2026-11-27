@@ -3,7 +3,7 @@
 <!--
   Gatefold's privacy manifest. scripts/store-readiness.py (CI scripts, offline) checks it against the code:
   every required-reason API the app or a linked package without its own manifest calls, and the data the
-  counts-only telemetry sends (Gatefold/Sync/GatefoldTelemetry.swift). Keep docs/privacy/ and the App Privacy
+  counts-only telemetry sends (Gatefold/Sync/GatefoldTelemetry.swift; TELEMETRY_EVENTS in the script). Keep docs/privacy/ and the App Privacy
   answers in App Store Connect saying the same thing.
 -->
 <plist version="1.0">
@@ -31,6 +31,19 @@
 		<dict>
 			<key>NSPrivacyCollectedDataType</key>
 			<string>NSPrivacyCollectedDataTypeProductInteraction</string>
+			<key>NSPrivacyCollectedDataTypeLinked</key>
+			<false/>
+			<key>NSPrivacyCollectedDataTypeTracking</key>
+			<false/>
+			<key>NSPrivacyCollectedDataTypePurposes</key>
+			<array>
+				<string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
+			</array>
+		</dict>
+		<!-- How long a book's first page and a far jump took to show, in coarse buckets; nothing about the book or the place. -->
+		<dict>
+			<key>NSPrivacyCollectedDataType</key>
+			<string>NSPrivacyCollectedDataTypePerformanceData</string>
 			<key>NSPrivacyCollectedDataTypeLinked</key>
 			<false/>
 			<key>NSPrivacyCollectedDataTypeTracking</key>

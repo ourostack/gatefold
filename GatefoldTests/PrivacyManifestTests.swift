@@ -30,6 +30,7 @@ struct PrivacyManifestTests {
         #expect(Set(kinds.compactMap { $0["NSPrivacyCollectedDataType"] as? String }) == [
             "NSPrivacyCollectedDataTypeOtherDiagnosticData",
             "NSPrivacyCollectedDataTypeProductInteraction",
+            "NSPrivacyCollectedDataTypePerformanceData",
             "NSPrivacyCollectedDataTypeDeviceID",
         ])
         for kind in kinds {

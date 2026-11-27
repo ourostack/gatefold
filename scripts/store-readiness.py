@@ -72,13 +72,21 @@ UNMANIFESTED_PACKAGES = {
 # Code that sends anything off the device to us rather than to the reader's own PocketBook Cloud.
 TELEMETRY_MARKERS = [r"posthog\.com"]
 
-# What the telemetry sends (GatefoldTelemetry.swift): stage and status counts (diagnostics), the download tap (product
-# interaction) and a random install ID (Apple's nearest kind is Device ID). None is linked to a person or tracks.
-TELEMETRY_DATA = {
-    "NSPrivacyCollectedDataTypeOtherDiagnosticData",
-    "NSPrivacyCollectedDataTypeProductInteraction",
-    "NSPrivacyCollectedDataTypeDeviceID",
+# Every event the app sends (`capture("gatefold_…"` in its code, plus the place events GatefoldTelemetry names) and
+# the App Privacy data types it is. Every event also carries a random install ID (Apple's nearest kind is Device ID)
+# and the app and iOS versions. None is linked to a person or used for tracking. A new event fails the check until it
+# is listed here, in the manifest and on the privacy page.
+TELEMETRY_EVENTS = {
+    "gatefold_download": {"NSPrivacyCollectedDataTypeOtherDiagnosticData"},
+    "gatefold_place_push": {"NSPrivacyCollectedDataTypeOtherDiagnosticData"},
+    "gatefold_place_pull": {"NSPrivacyCollectedDataTypeOtherDiagnosticData"},
+    "gatefold_download_tap": {"NSPrivacyCollectedDataTypeProductInteraction"},
+    "gatefold_open": {"NSPrivacyCollectedDataTypePerformanceData"},
+    "gatefold_jump": {"NSPrivacyCollectedDataTypePerformanceData"},
 }
+EVERY_EVENT = {"NSPrivacyCollectedDataTypeDeviceID"}
+TELEMETRY_DATA = set().union(EVERY_EVENT, *TELEMETRY_EVENTS.values())
+EVENT_NAME = r'"(gatefold_[a-z_]+)"'
 
 # Sentences the privacy page may not carry while telemetry ships.
 NOTHING_COLLECTED = [r"collects nothing", r"No analytics", r"We never see .*anything you do"]
@@ -107,7 +115,7 @@ def check(root: Path) -> list[str]:
 
     spec = (root / PROJECT_YML).read_text(errors="replace") if (root / PROJECT_YML).is_file() else ""
     app = spec.split("\n  Gatefold:\n", 1)[1].split("\n  Gatefold", 1)[0] if "\n  Gatefold:\n" in spec else ""
-    excluded = re.findall(r"^\s+excludes:\n((?:\s+- .*\n?)+)", app, re.M)
+    excluded = re.findall(r"^ +excludes:\n((?:          - .*\n?)+)", app, re.M)
     if not re.search(r"- path: Gatefold\n", app) or any(re.search(r"xcprivacy|Support", e) for e in excluded):
         problems.append(f"{PROJECT_YML}: the Gatefold target must take Gatefold/ whole, so {MANIFEST} is a resource.")
     pbx = root / PBXPROJ
@@ -146,6 +154,9 @@ def check(root: Path) -> list[str]:
             problems.append(f"{kind} needs at least one NSPrivacyCollectedDataTypePurposes entry.")
 
     sends = any(re.search(m, code) for m in TELEMETRY_MARKERS)
+    for event in sorted(set(re.findall(EVENT_NAME, code)) - TELEMETRY_EVENTS.keys()):
+        problems.append(f"The app sends the event {event}, which TELEMETRY_EVENTS doesn't list: add its App Privacy "
+                        f"data types there, to {MANIFEST} and to {PRIVACY_PAGE}.")
     page = (root / PRIVACY_PAGE).read_text(errors="replace") if (root / PRIVACY_PAGE).is_file() else ""
     dist = json.loads((root / DISTRIBUTION).read_text()) if (root / DISTRIBUTION).is_file() else {}
     privacy = [c.get("store", {}).get("privacy", {}) for c in dist.get("channels", [])]
@@ -220,6 +231,13 @@ def selftest() -> int:
         ("a project.yml that excludes the manifest fails",
          dict(manifest=_manifest(), excludes='"**/*.xcprivacy"'), ["must take Gatefold/ whole"]),
         ("tracking fails", dict(manifest=_manifest(tracking=True)), ["NSPrivacyTracking must be false"]),
+        ("an event nobody listed fails",
+         dict(manifest=_manifest(), code=telemetry + 'capture("gatefold_secret_sauce", properties: [:])\n'),
+         ["sends the event gatefold_secret_sauce"]),
+        ("a listed event passes",
+         dict(manifest=_manifest(), code=telemetry + 'capture("gatefold_jump", properties: [:])\n'), []),
+        ("a later source path naming Support is no exclude",
+         dict(manifest=_manifest(), excludes='"**/.DS_Store"\n      - path: Support/Generated.swift'), []),
         ("an undeclared UserDefaults use fails",
          dict(manifest=_manifest(api_types=[{"NSPrivacyAccessedAPIType": "NSPrivacyAccessedAPICategoryFileTimestamp",
                                              "NSPrivacyAccessedAPITypeReasons": ["C617.1"]}])),
@@ -240,7 +258,7 @@ def selftest() -> int:
          ["NSPrivacyAccessedAPICategorySystemBootTime is used by the app's code (systemUptime)"]),
         ("telemetry without its data types fails",
          dict(manifest=_manifest(collected=[]), code=telemetry),
-         ["must declare NSPrivacyCollectedDataTypeDeviceID", "must declare NSPrivacyCollectedDataTypeOtherDiagnosticData"]),
+         ["must declare NSPrivacyCollectedDataTypeDeviceID", "must declare NSPrivacyCollectedDataTypePerformanceData"]),
         ("telemetry with a page that says nothing is collected fails",
          dict(manifest=_manifest(), code=telemetry, page="<p>Gatefold collects nothing. No analytics.</p>"),
          ['says "collects nothing"', 'says "No analytics"', "must say what the diagnostic telemetry sends"]),

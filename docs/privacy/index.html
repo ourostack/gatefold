@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Gatefold Privacy</title>
-<meta name="description" content="What Gatefold Reader does with your data: your books stay between you and PocketBook Cloud, and a few anonymous counts tell us when a download or sync fails.">
+<meta name="description" content="What Gatefold Reader does with your data: your books stay between you and PocketBook Cloud, and a few anonymous counts tell us when a download or sync fails or a page is slow.">
 <link rel="icon" href="../mark.svg" type="image/svg+xml">
 <link rel="stylesheet" href="../site.css">
 </head>
@@ -12,7 +12,7 @@
 <header><a class="mark" href="../"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect x="3" y="6" width="12.5" height="20" rx="2" fill="#EDE3D0" stroke="#23201C" stroke-width="1.4"/><rect x="16.5" y="6" width="12.5" height="20" rx="2" fill="#F6F1E7" stroke="#23201C" stroke-width="1.4"/><path d="M20 4h4v14l-2-2-2 2z" fill="#9A3B26"/></svg><span>Gatefold</span></a></header>
 <main>
 <h1>Privacy, in one breath.</h1>
-<p class="lede">Your books, your place in them and your notes travel only between your device and your own PocketBook Cloud account. The one thing Gatefold sends us is a few anonymous counts when a download or a sync goes wrong, so we can fix it.</p>
+<p class="lede">Your books, your place in them and your notes travel only between your device and your own PocketBook Cloud account. The one thing Gatefold sends us is a few anonymous counts about how downloads, syncs and page loads went, so we can fix what goes wrong.</p>
 <p class="quiet">Last updated 27 November 2026. Applies to Gatefold Reader for iPhone and iPad.</p>
 
 <h2>Who Gatefold talks to</h2>
@@ -20,14 +20,21 @@
 <p>PostHog (<code>us.i.posthog.com</code>), for the diagnostic counts below. Nothing else.</p>
 
 <h2>The diagnostic counts</h2>
-<p>When you download a book or Gatefold syncs your place, the app sends a short report of how it went: which step it reached, the status or error code it got, how many tries it took, and yes-or-no facts such as whether the book was already on the device. When you tap a book to download it, it sends that a tap happened and the state the book was in. That is all.</p>
+<p>The app sends a short report at four moments:</p>
+<ul>
+<li>When it downloads a book: which step it reached, the status or error code it got, how many tries it took, the file format, and yes-or-no facts such as whether the book was already on the device.</li>
+<li>When it syncs your place: whether the send or fetch worked, the status or error code, what started it, and roughly how long ago you turned the page.</li>
+<li>When you tap a book that isn't downloaded yet: that a tap happened, the state the book was in, and roughly how long it had been downloading.</li>
+<li>When a book opens or you jump far ahead: roughly how long the page took to show.</li>
+</ul>
+<p>Each report also says which version of Gatefold and of iOS sent it, and the time. Times are rounded into wide steps, such as "under 5 seconds" or "under 2 minutes".</p>
 <ul>
 <li>Never a title, author, file name, link, highlight, note, email, password or error message.</li>
 <li>Each report carries a random ID made when you install Gatefold, so a run of failures on one phone counts once. It is not your device's advertising or vendor ID, and it is not tied to your PocketBook account.</li>
 <li>PostHog is told not to look up where you are from your IP address and not to build a profile.</li>
 <li>Deleting the app deletes the random ID. A new install gets a new one.</li>
 </ul>
-<p>This is what App Store Connect lists under App Privacy as diagnostics, product interaction and a device ID, all "not linked to you" and none used for tracking. The full list is in <a href="https://github.com/ourostack/gatefold/blob/main/Gatefold/Sync/GatefoldTelemetry.swift">GatefoldTelemetry.swift</a>.</p>
+<p>This is what App Store Connect lists under App Privacy as diagnostics, product interaction, performance data and a device ID, all "not linked to you" and none used for tracking. The full list is in <a href="https://github.com/ourostack/gatefold/blob/main/Gatefold/Sync/GatefoldTelemetry.swift">GatefoldTelemetry.swift</a>.</p>
 
 <h2>Your sign-in</h2>
 <p>When you sign in, your email and password go straight to PocketBook Cloud, which hands back a session token. Gatefold keeps that token in your device's Keychain, on this device only (it is not synced to iCloud). Your password is never stored. Signing out removes the token and the cached shelf.</p>
