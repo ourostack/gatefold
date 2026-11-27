@@ -71,6 +71,18 @@ import Testing
         publication.close()
     }
 
+    /// EPUB 2, EPUB 3 and a Kobo `.kepub.epub` (an EPUB with Kobo's spans) all open in the reader as they come in.
+    @Test(arguments: [("pride-and-prejudice", "Pride and Prejudice.epub"), ("frankenstein", "Frankenstein.epub"), ("emma", "Emma.kepub.epub")])
+    func eachKindOfEPUBOpens(resource: String, name: String) async throws {
+        let store = makeStore()
+        let result = await store.importBooks(from: [try copy(resource, into: scratch(), as: name)], source: .files)
+        let book = try #require(result.added.first)
+        let url = try #require(store.fileURL(of: book))
+        let publication = try await BookOpener.shared.open(url)
+        #expect(!publication.readingOrder.isEmpty)
+        publication.close()
+    }
+
     @Test func aFolderOfBooksBringsEachBookInIt() async throws {
         let store = makeStore()
         let dir = try scratch()
