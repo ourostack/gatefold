@@ -60,9 +60,8 @@ struct ArrivalWords: Equatable {
 
 /// How to bring books over from Apple Books, as far as Apple allows: there is no way in for another app,
 /// so this says honestly what a person can do and what stays behind.
+/// Its Choose from Files button is the sheet's footer, so the sheet's fitted height never cuts it off.
 struct AppleBooksGuide: View {
-    var onChooseFiles: () -> Void
-
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             Text("Books you added to Apple Books yourself, without DRM, can come along. Books bought in Apple's Book Store stay in Apple Books: they're locked so only it can open them.")
@@ -76,8 +75,6 @@ struct AppleBooksGuide: View {
             OuroItemGroup("Still have the file?", variant: .outline) {
                 OuroItem("Open it in Gatefold", description: "From Mail, Safari, Files or wherever you got it, tap Share, then Gatefold.", systemImage: "square.and.arrow.up")
             }
-            OuroButton("Choose from Files", systemImage: "folder", size: .lg, fullWidth: true, action: onChooseFiles)
-                .accessibilityIdentifier("appleBooks.chooseFiles")
         }
         .accessibilityIdentifier("appleBooks.guide")
     }

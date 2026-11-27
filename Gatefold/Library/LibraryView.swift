@@ -189,7 +189,10 @@ struct LibraryView: View {
             .onAppear { announce(app.lastArrival) }
             .sensoryFeedback(.success, trigger: importedCount)
             .ouroSheet(isPresented: $appleBooksGuide, title: "Books from Apple Books") {
-                AppleBooksGuide { appleBooksGuide = false; importing = true }
+                AppleBooksGuide()
+            } footer: {
+                OuroButton("Choose from Files", systemImage: "folder", size: .lg, fullWidth: true) { appleBooksGuide = false; importing = true }
+                    .accessibilityIdentifier("appleBooks.chooseFiles")
             }
             .alert("Couldn't Add That", isPresented: .constant(library.lastError != nil)) {
                 Button("OK") { library.lastError = nil }
