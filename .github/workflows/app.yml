@@ -894,7 +894,7 @@ jobs:
               ReviewerChecksUITests/testTheLastPagesNumberIsTheCount ReviewerChecksUITests/testPageNumbersAreOnOrOffInEveryBook ReviewerChecksUITests/testEveryReopenReturnsTheSameWords
             pr_tests: none
             cold: false
-            timeout: 87 # 30 + 2 x 19.9 + 5 + 12
+            timeout: 90 # 30 + 2 x 21.4 + 5 + 12
             lane: 2
           - shard: ipad-reviewer-contents
             # Main only: Contents closes on a swipe down from its header or its list's top, and on a pull past the list's

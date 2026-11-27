@@ -100,7 +100,8 @@ struct SyncSlipView: View {
 }
 
 /// The Cloud wants him to sign in again: his places are waiting on the phone until he does. One tap opens
-/// sign-in with his email filled in; Later puts it away until the book is opened again.
+/// sign-in with his email filled in; Later puts it away until the book is opened again. Shown under the top bar while
+/// the controls are up; while he reads, the ask is `SignInTab`, in the margin.
 struct SignInSlipView: View {
     let theme: ReaderTheme
     var onSignIn: () -> Void
@@ -164,7 +165,40 @@ struct SignInSlipView: View {
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("reader.signInSlip")
         .accessibilityLabel(Self.title)
-        .onAppear { AccessibilityNotification.Announcement(Self.title).post() }
+    }
+}
+
+/// The same ask while he reads: a small glass tab where the running head stands, in the page's top margin, never on a
+/// line (gatefold#654: the whole notice floated over the top of the page and hid the first line of every page he read).
+/// One tap opens sign-in, his email filled in; the controls show the whole notice, with Later.
+struct SignInTab: View {
+    let theme: ReaderTheme
+    var onSignIn: () -> Void
+
+    var body: some View {
+        Button(action: onSignIn) {
+            HStack(spacing: 5) {
+                Image(systemName: "key.fill")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(theme.accent)
+                Text("Sign in")
+                    .font(.caption.weight(.semibold))
+                    .lineLimit(1)
+                    .fixedSize()
+            }
+            .foregroundStyle(theme.text)
+            .padding(.horizontal, 10)
+            .frame(height: 26)
+            .glassEffect(.regular.tint(theme.background.opacity(0.7)).interactive(), in: Capsule(style: .continuous))
+            // A 44 pt target that reaches up into the band above the tab, never down onto the first line.
+            .padding(.top, 18)
+            .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .padding(.top, -18)
+        .accessibilityLabel(SignInSlipView.title)
+        .accessibilityHint("Opens sign-in for PocketBook Cloud")
+        .accessibilityIdentifier("reader.signInTab")
     }
 }
 

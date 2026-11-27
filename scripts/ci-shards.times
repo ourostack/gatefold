@@ -173,3 +173,4 @@ iPad Pro 13-inch|ControlsTapUITests/testContentsOpensWhenTappedAsTheControlsCome
 iPad Pro 13-inch|AskedBookOpensUITests/testTheAskedBookOpensWhenItLandsLastAndTheCountMissesIt	120	# estimate (#432)
 iPhone Duo|ControlsTapUITests/testContentsOpensWhenTappedAsTheControlsComeUp	300	# estimate until CI has run it: 40 tries took 869 s on probe run 45125426107, this is 6
 iPad Pro 13-inch|NoAccountUITests/testAFreshInstallReadsAClassicWithoutAnAccount	150	# an estimate (a cold launch, seven books copied, one open) until CI has timed it
+iPad Pro 13-inch|SignInPromptUITests/testTheAskNeverStandsOnALine	90	# estimate until CI has run it (gatefold#654)
