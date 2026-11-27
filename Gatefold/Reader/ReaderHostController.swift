@@ -2942,6 +2942,39 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         navigator.apply(decorations: [], in: "gatefold-sync")
     }
 
+    /// Where a search match's mark stands, in window points: the boxes of its words in view, as one rect. Nil until
+    /// Readium has drawn the mark (it applies decorations on its own time), or when the match isn't on screen.
+    func matchFrame() async -> CGRect? {
+        guard let host = navigator.view else { return nil }
+        let js = """
+        (() => { const vw = window.innerWidth, vh = window.innerHeight;
+          return JSON.stringify(Array.from(document.querySelectorAll('.gatefold-match')).map((e) => e.getBoundingClientRect())
+            .filter((r) => r.width > 0 && r.right > 0 && r.left < vw && r.bottom > 0 && r.top < vh)
+            .map((r) => [r.left, r.top, r.right, r.bottom])); })()
+        """
+        var webs: [WKWebView] = []
+        func walk(_ v: UIView) {
+            if let web = v as? WKWebView {
+                if !web.isHidden, web.alpha > 0.01, web.convert(web.bounds, to: host).intersects(host.bounds) { webs.append(web) }
+                return
+            }
+            v.subviews.forEach(walk)
+        }
+        walk(host)
+        var frame: CGRect?
+        for web in webs {
+            guard let window = web.window, let json = (try? await web.evaluateJavaScript(js)) as? String,
+                  let rects = try? JSONDecoder().decode([[Double]].self, from: Data(json.utf8)) else { continue }
+            for q in rects where q.count == 4 {
+                let p0 = web.convert(CGPoint(x: q[0], y: q[1]), to: window)
+                let p1 = web.convert(CGPoint(x: q[2], y: q[3]), to: window)
+                let box = CGRect(x: p0.x, y: p0.y, width: p1.x - p0.x, height: p1.y - p0.y)
+                frame = frame.map { $0.union(box) } ?? box
+            }
+        }
+        return frame
+    }
+
     /// For UI tests: how many underline boxes are on screen and drawn (opaque).
     func underlineProbe() async -> Int {
         let js = """
