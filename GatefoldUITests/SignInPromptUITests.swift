@@ -6,19 +6,24 @@ import XCTest
 final class SignInPromptUITests: XCTestCase {
     override func setUp() { continueAfterFailure = false }
 
-    /// Opens a book and turns a page: the Cloud turns the place away (fetched or sent) and wants him to sign in again.
+    /// Opens a book in its story and turns a page: the Cloud turns the place away (fetched or sent) and wants him to sign
+    /// in again. The turn waits for the page to show (`reader.pageReady`): a tap before then raises the controls instead,
+    /// and the ask is then the whole notice, not the tab (CI's iPad, #660: its page took 10.4 s, past a fixed 3 s sleep).
     /// `lineFrames`: the page also says where each of its lines stands (`reader.lineFrames`).
     private func readUntilTheCloudAsks(lineFrames: Bool = false) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments = [
             "-GatefoldUITest", "YES", "-GatefoldFakeCloud", "YES", "-GatefoldReset", "YES", "-GatefoldSkipWelcome", "YES", "-GatefoldSignedIn", "YES",
             "-GatefoldFakeScenario", "expiresWhileReading", "-GatefoldDownloadAll", "YES", "-GatefoldNoLatency", "YES",
-            "-GatefoldOpenBook", "gutenberg-alice-in-wonderland", "-GatefoldTheme", "daylight", "-GatefoldPageTurn", "slide",
+            "-GatefoldOpenBook", "gutenberg-alice-in-wonderland", "-GatefoldGoTo", "0.31", "-GatefoldTheme", "daylight",
+            "-GatefoldPageTurn", "slide",
         ] + (lineFrames ? ["-GatefoldLineFramesProbe", "YES"] : [])
         app.launch()
         let page = app.descendants(matching: .any)["reader.page"]
         XCTAssertTrue(page.waitForExistence(timeout: 60))
-        sleep(3)
+        let ready = app.descendants(matching: .any)["reader.pageReady"]
+        let shown = readsUntil(reads: 1200) { ready.exists && (ready.value as? String) == "1" }
+        XCTAssertTrue(shown.ok, "the page showed (\(shown.reads) reads)")
         page.coordinate(withNormalizedOffset: CGVector(dx: 0.97, dy: 0.5)).tap()
         return app
     }
