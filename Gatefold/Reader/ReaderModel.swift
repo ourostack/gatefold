@@ -1453,6 +1453,10 @@ final class ReaderModel {
     private(set) var underlineProbe = ""
     @ObservationIgnored private var underlineWatch: Task<Void, Never>?
 
+    /// UI tests (`reader.jumpLanding`): whether the newest search jump's veil lifted onto the page it shows half a second
+    /// after it landed, or the page moved again after the veil had lifted (gatefold#653).
+    private(set) var jumpLandingProbe = ""
+
     private func watchUnderline() {
         guard LaunchOptions.isUITest else { return }
         underlineWatch?.cancel()
@@ -3708,6 +3712,8 @@ final class ReaderModel {
         let move = moves
         let jump = await veiled(toward: locator.href) { _ = await self.page?.go(to: locator) }
         if endedQuietly(jump, back: back) { return }
+        // UI tests: the words in view as the veil lifted, to tell a landing that moved after it (`jumpLandingProbe`).
+        let lifted = markingTheMatch && LaunchOptions.isUITest ? await page?.visibleRange()?.text : nil
         if markingTheMatch {
             // Into another chapter, Readium places the page by progression before the chapter has laid out, so the
             // match can be pages on; once it has, its words are found and gone to, as a landing's are (CI App run
@@ -3718,6 +3724,15 @@ final class ReaderModel {
             watchUnderline()
         }
         await captureAnchor()
+        // UI tests: the words in view half a second after the landing, against those as the veil lifted.
+        if let lifted {
+            Task { [weak self] in
+                try? await Task.sleep(for: .milliseconds(500))
+                guard let self, self.moves == move, !self.isClosed else { return }
+                let now = await self.page?.visibleRange()?.text
+                self.jumpLandingProbe = "search: " + (lifted == now ? "lifted on its page" : "moved after the veil lifted")
+            }
+        }
     }
 
     /// A search match with the words either side of it: the match alone is often one word, too short for `settle`
