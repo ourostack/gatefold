@@ -536,14 +536,15 @@ jobs:
             timeout: 70 # 30 + 2 x 11.5 + 5 + 12
             lane: 16
           - shard: ipad-place-counting
-            # The catch-all for new placeholder tests: 85 + 40
+            # The catch-all for new placeholder tests: 85 + 40; and a change of posture plays a leaf only as the book
+            # opens or shuts, never half open to flat or scrolling (2026-11-27, estimates until CI has run them)
             tests: >-
-              CountingPlaceholderUITests NavigationPlaceUITests/testTheOpeningCoverLetsTheControlsThrough
+              CountingPlaceholderUITests NavigationPlaceUITests/testTheOpeningCoverLetsTheControlsThrough PostureLeafUITests
             skip: >-
               CountingPlaceholderUITests/testAFreshOpenOnItsSideNeverLeavesTheNumbersSlotBlank
             pr_tests: none
             cold: false
-            timeout: 55 # 30 + 2 x 3.6 + 5 + 12
+            timeout: 72 # 30 + 2 x 12.3 + 5 + 12
             lane: 16
           - shard: ipad-place-rest
             # The catch-all for new place tests: 200 + 200 + 244 + 224. The quick leave (gatefold#301) runs in ipad-place-late.

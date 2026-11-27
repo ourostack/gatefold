@@ -383,6 +383,16 @@ final class ReaderModel {
     /// The device has a hinge or a fold (a Duo), or a posture is forced: its spread opens with the unfold and shuts
     /// with the fold. Without one (an iPad) a new layout comes from turning the device, and fades in (gatefold#537).
     @ObservationIgnored var hasFold = false
+    /// When the hinge last moved, or a forced posture's switch stood in for it, since the last change of posture: only
+    /// a change of posture within a few seconds of it may play a leaf (`PostureLeaf`). A turn of the device moves no
+    /// hinge. A real unfold resizes the window 1.1 to 1.6 s after the hinge opens (real-unfold log, run 46047807595), and
+    /// the window bounds it so a jiggle of the hinge long ago can't make a later turn of the device swing a leaf.
+    @ObservationIgnored private var hingeMovedAt: ContinuousClock.Instant?
+    func noteHingeMoved() { hingeMovedAt = .now }
+    var hingeMovedLately: Bool { hingeMovedAt.map { ContinuousClock.now - $0 < .seconds(4) } ?? false }
+    /// The leaf the last change of posture plays (`PostureLeaf`), set as the layout changes: the host lifts the
+    /// unfold's leaf only when this is `.unfold`.
+    @ObservationIgnored private(set) var postureLeaf: PostureLeaf?
     var pageTurn: PageTurnStyle { preferences.effectivePageTurn(reduceMotion: reduceMotion) }
     /// A reflowable book scrolling: its page can stay at the screen's top with its text inset below the camera
     /// (`PageSafeArea.placing`). A fixed-layout page keeps Readium's own insets.
@@ -518,6 +528,8 @@ final class ReaderModel {
     var slotBlankProbe = 0
     /// UI tests: display frames an unfold's leaf stood risen, waiting on its spread (gatefold#302).
     var leafStoodFramesProbe = 0
+    /// UI tests: the leaves a change of posture has played over the page, the unfold's and the fold's.
+    var postureLeavesProbe = 0
     /// UI tests: display frames, from a turn of the device until its reflow is shown, that showed a page other than
     /// whole: a picture cut off, short of the page or out of its own proportions, a leaf over it, or the page itself
     /// mid-layout ("3 broken (cover squeezed, leaf)", gatefold#537). Never set outside UI tests.
@@ -2283,6 +2295,9 @@ final class ReaderModel {
             pendingReflowReason = reason
         }
         let clearanceChanged = new.textTopClearance != layout.textTopClearance
+        postureLeaf = PostureLeaf.plays(from: layout.posture, to: new.posture, scrolls: scrollsReflowable, hasFold: hasFold,
+                                        hingeMoved: hingeMovedLately)
+        if new.posture != layout.posture { hingeMovedAt = nil }
         layout = new
         if clearanceChanged { host?.refreshScrollInset() }
         if columnsChanged {

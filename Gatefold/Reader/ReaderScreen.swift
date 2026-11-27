@@ -277,8 +277,9 @@ struct ReaderScreen: View {
                 let reason: ReflowReason = old.posture != new.posture ? .posture : .rotation
                 withAnimation(Motion.reflow) { model.updateLayout(new, reason: reason) }
                 if old.posture != .spread, new.posture == .spread { unfold() }
-                // Folding shuts the right page over the left; a turned iPad has no leaf to shut (gatefold#537).
-                if old.posture == .spread, new.posture != .spread, model.hasFold { fold() }
+                // Folding shuts the right page over the left; a turned iPad has no leaf to shut (gatefold#537), and
+                // neither has a spread bending half open, nor a scrolling page (`PostureLeaf`).
+                if model.postureLeaf == .fold, old.posture == .spread, new.posture != .spread { fold() }
             }
         }
         .ignoresSafeArea()
@@ -290,6 +291,9 @@ struct ReaderScreen: View {
         }
         .observingHinge($hinge)
         .onChange(of: hinge) { old, new in
+            // The hinge moving opens or shuts the book, and only that plays a leaf (`PostureLeaf`). Its first report
+            // (from none, as the screen appears) is no movement.
+            if old != .none, old != new { model.noteHingeMoved() }
             // The hinge has started to move: hold a picture of the page before a Duo moves the app
             // to its other screen, so the unfold swings from the page he was reading.
             if model.layout.posture != .spread, old != new { model.host?.holdPageForUnfold() }
@@ -521,6 +525,12 @@ struct ReaderScreen: View {
                 .accessibilityIdentifier("reader.leafStoodFrames")
                 .accessibilityValue(String(model.leafStoodFramesProbe))
                 .allowsHitTesting(false)
+            Text("posture leaves")
+                .font(.system(size: 1))
+                .opacity(0.01)
+                .accessibilityIdentifier("reader.postureLeaves")
+                .accessibilityValue(String(model.postureLeavesProbe))
+                .allowsHitTesting(false)
             Text("turn frames")
                 .font(.system(size: 1))
                 .opacity(0.01)
@@ -628,6 +638,7 @@ struct ReaderScreen: View {
                     ForEach(Posture.allCases, id: \.self) { posture in
                         Button {
                             readerLog.notice("debug posture \(posture.rawValue, privacy: .public)")
+                            model.noteHingeMoved()
                             forced = posture
                         } label: {
                             Color.clear.frame(width: TestPostureSwitches.button, height: TestPostureSwitches.button).contentShape(Rectangle())
@@ -847,6 +858,7 @@ struct ReaderScreen: View {
     }
 
     private func fold() {
+        model.postureLeavesProbe += 1
         leafFolding = true
         leafAngle = 0
         leafOpacity = 1
@@ -872,6 +884,7 @@ struct ReaderScreen: View {
         Task {
             if next == .spread { await model.host?.holdPage() }
             hinge = next == .tabletop ? .partiallyOpen(angleDegrees: 110) : .none
+            model.noteHingeMoved()
             forced = next
         }
     }
@@ -896,9 +909,11 @@ struct ReaderScreen: View {
         guard let after = LaunchOptions.flipAfter else { return }
         let before = forced
         try? await Task.sleep(for: .seconds(after))
+        model.noteHingeMoved()
         forced = LaunchOptions.flipTo
         guard let back = LaunchOptions.flipBackAfter else { return }
         try? await Task.sleep(for: .seconds(back))
+        model.noteHingeMoved()
         forced = before ?? .single
     }
 }

@@ -802,9 +802,11 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
 
     private func holdTurnPicture() {
         turnPicture = nil
-        // A device that folds opens with the unfold, which brings its own pictures; a turn mid-curl keeps the
-        // curl's own handling (gatefold#534); a page not shown has nothing to picture.
-        guard weakModel?.hasFold == false, pageShown, !curl.isActive, reflowCover == nil, settlePicture == nil,
+        // A device opening or shutting (its hinge just moved) brings the unfold's or the fold's own pictures; a turn
+        // mid-curl keeps the curl's own handling (gatefold#534); a page not shown has nothing to picture. A Duo turned
+        // on its side moves no hinge: its page is pictured whole, as an iPad's is, never cut off at the new size
+        // (gatefold#648: a clipped column, a grey band and text cut off on the right in each turn).
+        guard weakModel?.hingeMovedLately == false, pageShown, !curl.isActive, reflowCover == nil, settlePicture == nil,
               let page = navigator.viewIfLoaded, page.window != nil, page.alpha > 0.5,
               let picture = page.snapshotView(afterScreenUpdates: false) else { return }
         turnPicture = (picture, page.bounds.size)
@@ -838,7 +840,9 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         guard !closed else { return }
         // One page becoming two is the unfold: the right page swings open once it has laid out.
         // A turned iPad fades to its spread (gatefold#537): the leaf is the unfold's, on a device that opens.
-        unfolding = reflow && self.columns == 1 && columns == 2 && weakModel?.hasFold == true
+        // Only the book opening from its cover lifts it, on a page of pages (`PostureLeaf`): half open to flat, or
+        // any change in scroll mode, re-lays out in place. A leaf there stood frozen over the page (Ari, 2026-11-27).
+        unfolding = reflow && self.columns == 1 && columns == 2 && weakModel?.postureLeaf == .unfold
         let newColumns = self.columns != columns
         self.columns = columns
         self.preferences = preferences
@@ -1069,6 +1073,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         }
         lift.startAnimation()
         leaf = (view, shade, lift, through)
+        weakModel?.postureLeavesProbe += 1
         readerLog.notice("unfold: the leaf starts to lift at the bell (old words through it \(through != nil, privacy: .public))")
     }
 
