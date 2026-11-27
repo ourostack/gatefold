@@ -242,6 +242,91 @@ import Testing
         #expect(phone.store.book(onPhone.id)?.locatorJSON == locator(0.2))
     }
 
+    @Test func aPlaceTakenFromTheFolderIsNeverWrittenBackAsANewOne() async throws {
+        let phone = device("iPhone"), pad = device("iPad")
+        let dir = try shared()
+        try put("emma", in: dir)
+        try await phone.folder.watch(dir)
+        try await pad.folder.watch(dir)
+        let onPhone = try #require(phone.store.books.first), onPad = try #require(pad.store.books.first)
+        phone.store.recordPlace(bookID: onPhone.id, locatorJSON: locator(0.5), totalProgression: 0.5, progression: 0, at: t0.addingTimeInterval(100))
+        await phone.folder.look()
+        await pad.folder.look()
+        #expect(pad.store.book(onPad.id)?.locatorJSON == locator(0.5))
+        // The iPad wrote no copy of the iPhone's page, which the iPhone would take for the iPad reading.
+        let padFile = dir.appending(path: FolderPlaces.directory).appending(path: FolderPlaces.fileName(deviceID: pad.folder.deviceID))
+        #expect((try? FolderPlaces.decode(Data(contentsOf: padFile)))?.places.values.map(\.locator).contains(locator(0.5)) != true)
+
+        // Back on the iPhone, he goes back to reread the opening: that stays, and reaches the iPad.
+        phone.store.recordPlace(bookID: onPhone.id, locatorJSON: locator(0.05), totalProgression: 0.05, progression: 0, at: t0.addingTimeInterval(200))
+        await phone.folder.look()
+        #expect(phone.store.book(onPhone.id)?.locatorJSON == locator(0.05))
+        await pad.folder.look()
+        #expect(pad.store.book(onPad.id)?.locatorJSON == locator(0.05))
+    }
+
+    @Test func openingABookOnAPageTakenFromTheFolderDoesntWriteItBack() async throws {
+        let phone = device("iPhone"), pad = device("iPad")
+        let dir = try shared()
+        try put("emma", in: dir)
+        try await phone.folder.watch(dir)
+        try await pad.folder.watch(dir)
+        let onPhone = try #require(phone.store.books.first), onPad = try #require(pad.store.books.first)
+        phone.store.recordPlace(bookID: onPhone.id, locatorJSON: locator(0.5), totalProgression: 0.5, progression: 0, at: t0.addingTimeInterval(10))
+        await phone.folder.look()
+        await pad.folder.look()
+        // The iPhone goes back to reread; before the iPad hears of it, Emma is opened there on the page it took.
+        phone.store.recordPlace(bookID: onPhone.id, locatorJSON: locator(0.1), totalProgression: 0.1, progression: 0, at: t0.addingTimeInterval(20))
+        await phone.folder.look()
+        pad.store.recordPlace(bookID: onPad.id, locatorJSON: locator(0.5), totalProgression: 0.5, progression: 0, at: t0.addingTimeInterval(25))
+        await pad.folder.writeNow()
+        await phone.folder.look()
+        #expect(phone.store.book(onPhone.id)?.locatorJSON == locator(0.1), "opening the book on the iPad sent the iPhone back to its old page")
+        await pad.folder.look()
+        #expect(pad.store.book(onPad.id)?.locatorJSON == locator(0.1))
+    }
+
+    @Test func aDeviceWhoseFileCouldntBeReadOnceIsStillKnown() async throws {
+        let phone = device("iPhone"), pad = device("iPad")
+        let dir = try shared()
+        try put("emma", in: dir)
+        try await phone.folder.watch(dir)
+        try await pad.folder.watch(dir)
+        let onPhone = try #require(phone.store.books.first), onPad = try #require(pad.store.books.first)
+        // The iPhone's clock runs an hour ahead of the iPad's.
+        phone.store.recordPlace(bookID: onPhone.id, locatorJSON: locator(0.5), totalProgression: 0.5, progression: 0, at: t0.addingTimeInterval(3600))
+        await phone.folder.look()
+        await pad.folder.look()
+        #expect(pad.store.book(onPad.id)?.locatorJSON == locator(0.5))
+        pad.store.recordPlace(bookID: onPad.id, locatorJSON: locator(0.8), totalProgression: 0.8, progression: 0, at: t0.addingTimeInterval(30))
+        let phoneFile = dir.appending(path: FolderPlaces.directory).appending(path: FolderPlaces.fileName(deviceID: phone.folder.deviceID))
+        await unreadable(phoneFile) { await pad.folder.look() }
+        await pad.folder.look()
+        #expect(pad.store.book(onPad.id)?.locatorJSON == locator(0.8), "the iPhone's unchanged page, unread once, was taken for a new one")
+    }
+
+    @Test func aPageKeptBeforeTheFirstLookAfterARelaunchIsSettledFirst() async throws {
+        let phone = device("iPhone"), pad = device("iPad")
+        let dir = try shared()
+        try put("emma", in: dir)
+        try await phone.folder.watch(dir)
+        try await pad.folder.watch(dir)
+        let onPhone = try #require(phone.store.books.first), onPad = try #require(pad.store.books.first)
+        pad.store.recordPlace(bookID: onPad.id, locatorJSON: locator(0.1), totalProgression: 0.1, progression: 0, at: t0)
+        await pad.folder.look()
+        await phone.folder.look()
+        phone.store.recordPlace(bookID: onPhone.id, locatorJSON: locator(0.5), totalProgression: 0.5, progression: 0, at: t0.addingTimeInterval(600))
+        await phone.folder.look()
+
+        // The iPad relaunches straight into Emma, on its old page, and turns one page before any look.
+        let relaunched = device("iPad", root: pad.root)
+        relaunched.folder.openBookID = { onPad.id }
+        relaunched.store.recordPlace(bookID: onPad.id, locatorJSON: locator(0.11), totalProgression: 0.11, progression: 0, at: t0.addingTimeInterval(1300))
+        await relaunched.folder.writeNow()
+        await phone.folder.look()
+        #expect(phone.store.book(onPhone.id)?.locatorJSON == locator(0.5))
+    }
+
     @Test func thePlacesFileIsWrittenOnlyWhenAPlaceChanged() async throws {
         let phone = device()
         let dir = try shared()

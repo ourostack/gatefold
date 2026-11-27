@@ -33,7 +33,7 @@ public struct FolderPlaceFile: Codable, Equatable, Sendable {
 
 /// Places travel through the watched folder itself, in a hidden `.gatefold` folder there. Each device
 /// writes only its own file, so iCloud Drive never sees two writers of one file and never makes
-/// conflict copies; every device reads all of them, and the newest place for a book wins.
+/// conflict copies; every device reads all of them and settles each book by what moved since it last looked (`settle`).
 public enum FolderPlaces {
     public static let directory = ".gatefold"
 
@@ -47,56 +47,58 @@ public enum FolderPlaces {
         return id
     }
 
+    /// Times keep their fractions of a second, so two pages turned in one second are two places.
     public static func encode(_ file: FolderPlaceFile) throws -> Data {
         let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
+        encoder.dateEncodingStrategy = .custom { date, encoder in
+            var box = encoder.singleValueContainer()
+            try box.encode(date.formatted(.iso8601.year().month().day().time(includingFractionalSeconds: true).timeZone(separator: .omitted)))
+        }
         encoder.outputFormatting = [.sortedKeys, .prettyPrinted]
         return try encoder.encode(file)
     }
 
     public static func decode(_ data: Data) throws -> FolderPlaceFile {
         let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
+        decoder.dateDecodingStrategy = .custom { decoder in
+            let text = try decoder.singleValueContainer().decode(String.self)
+            if let date = try? Date(text, strategy: .iso8601.year().month().day().time(includingFractionalSeconds: true).timeZone(separator: .omitted)) { return date }
+            if let date = try? Date(text, strategy: .iso8601) { return date }
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "Not an ISO 8601 time: \(text)"))
+        }
         return try decoder.decode(FolderPlaceFile.self, from: data)
     }
 
     /// Every file that reads; one that doesn't (half-synced, or damaged) is skipped until it does.
     public static func decodeAll(_ files: [Data]) -> [FolderPlaceFile] { files.compactMap { try? decode($0) } }
 
-    /// The newest place for each book across every device's file. Newest, not furthest: going back to
-    /// reread a chapter is a place too.
-    public static func newest(in files: [FolderPlaceFile]) -> [String: FolderPlace] {
-        var out: [String: FolderPlace] = [:]
-        for file in files {
-            for (digest, place) in file.places where out[digest].map({ place.updated > $0.updated }) ?? true {
-                out[digest] = place
-            }
-        }
-        return out
-    }
-
-    /// What to do with the newest place another device left for a book. Each device keeps a mark of what
-    /// it last settled: the other devices' newest place then, and its own place's time just after.
+    /// What to do with the places other devices left for one book, given this device's own place and
+    /// what it last settled (`mark`). `remotes` is each other device's own entry, by device ID: a device
+    /// writes only places it read itself, never one it took from the folder.
     ///
-    /// - Only the other device moved since: its place is taken, even going back (rereading is a place too).
-    /// - Only this device moved: its own place stays.
-    /// - Both moved: the place further on wins. One of them read on while the other had the book open on
-    ///   an old page; going by time alone, one page turned there would send the reader back here.
-    /// - Nothing settled yet: the newer place wins.
-    public static func settle(_ remote: FolderPlace?, localUpdated local: Date?, localProgression: Double, mark: FolderSyncMark?) -> FolderSettlement {
-        guard let remote else { return .keepLocal }
-        guard let mark else {
-            guard let local else { return .takeRemote(remote) }
-            // ISO 8601 keeps whole seconds: a place this device wrote comes back a fraction older, never newer.
-            return remote.updated.timeIntervalSince(local) >= 1 ? .takeRemote(remote) : .keepLocal
+    /// A device moved when its entry changed since the mark: a new time and another page (opening a book
+    /// on the same page is not a move). Times are compared only with that device's own earlier times, so
+    /// clocks that disagree don't matter, except for a device seen for the first time, which counts as
+    /// moved when its place is newer than this device's was at the mark.
+    ///
+    /// - Nobody else moved: this device's place stays.
+    /// - Others moved and this device didn't: the newest of their places is taken, even going back
+    ///   (rereading is a place too).
+    /// - Both moved: the place further on wins, so a page turned on a device that had the book open on
+    ///   an old page never sends the reader back.
+    public static func settle(_ remotes: [String: FolderPlace], local: FolderSyncMark.Seen?, mark: FolderSyncMark?) -> FolderSettlement {
+        let before = mark?.local ?? local
+        let moved = remotes.filter { id, place in
+            if let seen = mark?.others[id] { return FolderSyncMark.Seen(place).differs(from: seen) }
+            guard let before else { return true }
+            return place.updated > before.updated
         }
-        let remoteMoved = mark.remote.map { remote.updated > $0 } ?? true
-        let localMoved = local.map { now in mark.local.map { now > $0 } ?? true } ?? false
-        switch (remoteMoved, localMoved) {
-        case (false, _): return .keepLocal
-        case (true, false): return .takeRemote(remote)
-        case (true, true): return remote.progression > localProgression ? .takeRemote(remote) : .keepLocal
-        }
+        guard let newest = moved.values.max(by: { $0.updated < $1.updated }) else { return .keepLocal }
+        guard let local else { return .takeRemote(newest) }
+        let localMoved = mark.map { mark in mark.local.map { local.differs(from: $0) } ?? true } ?? false
+        guard localMoved else { return .takeRemote(newest) }
+        let furthest = moved.values.max(by: { $0.progression < $1.progression })!
+        return furthest.progression > local.progression ? .takeRemote(furthest) : .keepLocal
     }
 
     /// The places file a folder listing names: the file itself, or the placeholder iCloud Drive lists
@@ -112,14 +114,36 @@ public enum FolderPlaces {
 
 /// What a device last settled with the folder for one book (`FolderPlaces.settle`).
 public struct FolderSyncMark: Codable, Equatable, Sendable {
-    /// The newest place another device had left then; nil when there was none.
-    public var remote: Date?
-    /// This device's own place's time just after; nil when it had none.
-    public var local: Date?
+    /// A place, as far as settling needs it: when, and how far.
+    public struct Seen: Codable, Equatable, Sendable {
+        public var updated: Date
+        public var progression: Double
 
-    public init(remote: Date?, local: Date?) {
-        self.remote = remote
+        public init(updated: Date, progression: Double) {
+            self.updated = updated
+            self.progression = progression
+        }
+
+        public init(_ place: FolderPlace) { self.init(updated: place.updated, progression: place.progression) }
+
+        /// Another place: a new time and another page.
+        public func differs(from other: Seen) -> Bool {
+            updated != other.updated && abs(progression - other.progression) > 0.0005
+        }
+    }
+
+    /// Each other device's place then, by device ID.
+    public var others: [String: Seen]
+    /// This device's own place then; nil when it had none.
+    public var local: Seen?
+    /// The place this device last took from the folder: while the book is still on that page (opened
+    /// there or not), it isn't this device's own reading, so it isn't written back to the folder.
+    public var taken: Seen?
+
+    public init(others: [String: Seen] = [:], local: Seen? = nil, taken: Seen? = nil) {
+        self.others = others
         self.local = local
+        self.taken = taken
     }
 }
 

@@ -35,8 +35,14 @@ final class WatchedFolder {
     @ObservationIgnored private var pendingWrite: Task<Void, Never>?
     /// Counts each watch and stop, so a look that began before one never saves over it.
     @ObservationIgnored private var generation = 0
-    /// The other devices' newest places at the last look, by book digest.
-    @ObservationIgnored private var others: [String: FolderPlace] = [:]
+    /// Each other device's place for each book at the last look: by book digest, then device ID.
+    @ObservationIgnored private var others: [String: [String: FolderPlace]] = [:]
+    /// The generation whose places were last traded: until a look has read the other devices' files,
+    /// this device doesn't write its own (it can't yet tell a stale page from a new one).
+    @ObservationIgnored private var tradedGeneration: Int?
+    /// Looks, and writes of the places file, each wait for the one before.
+    @ObservationIgnored private var lookTail: Task<Void, Never>?
+    @ObservationIgnored private var writeTail: Task<Void, Never>?
     /// What this device's places file held when last read or written, so an unchanged file isn't written again.
     @ObservationIgnored private var lastWritten: FolderPlaceFile?
     private let library: LibraryStore
@@ -92,9 +98,15 @@ final class WatchedFolder {
         generation += 1
         others = [:]
         lastWritten = nil
-        saved = Saved(bookmark: bookmark, name: url.lastPathComponent)
-        name = url.lastPathComponent
+        let shown = Self.displayName(of: url)
+        saved = Saved(bookmark: bookmark, name: shown)
+        name = shown
         return await look(telemetry: telemetry)
+    }
+
+    /// The folder's name as Files shows it: "On My iPhone" for that folder itself, not its name on disk.
+    static func displayName(of url: URL) -> String {
+        (try? url.resourceValues(forKeys: [.localizedNameKey]).localizedName) ?? url.lastPathComponent
     }
 
     /// Stops watching. The books stay on the shelf, and the folder keeps every file.
@@ -111,7 +123,17 @@ final class WatchedFolder {
     /// Brings in books new or changed since the last look, then trades places with the other devices.
     @discardableResult
     func look(telemetry: GatefoldTelemetry = .shared) async -> LibraryStore.ImportResult {
-        guard var current = saved, !isLooking else { return .init() }
+        let before = lookTail
+        let task = Task { [weak self] () -> LibraryStore.ImportResult in
+            await before?.value
+            return await self?.lookNow(telemetry: telemetry) ?? .init()
+        }
+        lookTail = Task { _ = await task.value }
+        return await task.value
+    }
+
+    private func lookNow(telemetry: GatefoldTelemetry) async -> LibraryStore.ImportResult {
+        guard var current = saved else { return .init() }
         let started = generation
         isLooking = true
         defer { isLooking = false }
@@ -131,10 +153,10 @@ final class WatchedFolder {
         isUnreachable = false
         var kept = current.index.stamps.filter { stamps[$0.key] == $0.value }
         var result = LibraryStore.ImportResult()
-        let errorBefore = library.lastError
         var newFailures = 0
         for path in current.index.changed(in: stamps) {
             // One book at a time, so each path keeps the digest of the file it gave; one count for the look.
+            let errorBefore = library.lastError
             let one = await library.importBooks(from: [folder.appending(path: path)], source: .folder, telemetry: nil)
             if let book = one.added.first ?? one.alreadyHere.first {
                 if let digest = book.digest { current.digests[path] = digest }
@@ -144,25 +166,29 @@ final class WatchedFolder {
             } else if current.failed[path] != stamps[path] {
                 current.failed[path] = stamps[path]
                 newFailures += 1
+            } else {
+                // Failed again, unchanged: already spoken of.
+                library.lastError = errorBefore
             }
             result.added += one.added
             result.alreadyHere += one.alreadyHere
             result.linkedToCloud += one.linkedToCloud
             result.refused += one.refused
         }
-        // A book that failed again unchanged was already spoken of; several new ones are spoken of together.
-        if newFailures == 0 {
-            library.lastError = errorBefore
-        } else if newFailures > 1 {
+        // Several new failures are spoken of together.
+        if newFailures > 1 {
             library.lastError = "\(newFailures) books in “\(current.name)” didn't come aboard. Gatefold reads EPUB books; is each one?"
         }
         // Stopped, or another folder chosen, while this look went on: what it found is no longer wanted.
         guard generation == started else { return result }
         // A book gone from the folder stays on the shelf (it was copied in); its place just stops travelling.
-        current.digests = current.digests.filter { stamps[$0.key] != nil }
-        current.failed = current.failed.filter { stamps[$0.key] != nil }
-        current.index = FolderIndex(stamps: kept)
-        saved = current
+        // Only what the look owns is saved: marks settled meanwhile (`writeNow` trades while books import) stay.
+        guard var latest = saved else { return result }
+        latest.bookmark = current.bookmark
+        latest.digests = current.digests.filter { stamps[$0.key] != nil }
+        latest.failed = current.failed.filter { stamps[$0.key] != nil }
+        latest.index = FolderIndex(stamps: kept)
+        saved = latest
         if result != LibraryStore.ImportResult() {
             telemetry.capture("gatefold_books_added", properties: GatefoldTelemetry.addedProperties(source: .folder, result: result))
         }
@@ -227,45 +253,78 @@ final class WatchedFolder {
         if current.bookmark != saved?.bookmark { saved?.bookmark = current.bookmark }
         let scoped = folder.startAccessingSecurityScopedResource()
         defer { if scoped { folder.stopAccessingSecurityScopedResource() } }
-        await writeOwnPlaces(in: folder)
+        // Before this launch has read the others' files, a place here may be a stale page: trade first.
+        if tradedGeneration == generation {
+            await writeOwnPlaces(in: folder)
+        } else {
+            await tradePlaces(in: folder)
+        }
     }
 
-    /// Settles each book's place with the newest the other devices left in the folder, then writes this
+    /// This device's place for a book, as settling sees it.
+    private func local(_ book: LibraryBook) -> FolderSyncMark.Seen? {
+        book.lastOpened.map { FolderSyncMark.Seen(updated: $0, progression: book.totalProgression) }
+    }
+
+    /// Settles each book's place with the places the other devices left in the folder, then writes this
     /// device's own. The open book is never moved under the reader: it settles once it's closed.
     private func tradePlaces(in folder: URL) async {
-        let read = await Self.readPlaceFiles(in: folder, own: FolderPlaces.fileName(deviceID: deviceID))
+        let started = generation
+        let read = await Self.readPlaceFiles(in: folder, own: deviceID)
+        guard generation == started, var current = saved else { return }
         if lastWritten == nil { lastWritten = read.own }
-        others = FolderPlaces.newest(in: read.others)
+        var byBook: [String: [String: FolderPlace]] = [:]
+        for (device, file) in read.others {
+            for (digest, place) in file.places { byBook[digest, default: [:]][device] = place }
+        }
+        others = byBook
         let digests = folderDigests
-        guard var current = saved else { return }
         for book in library.books where book.isOnDevice {
             guard let digest = book.digest, digests.contains(digest) else { continue }
-            let remote = others[digest]
-            switch FolderPlaces.settle(remote, localUpdated: book.lastOpened, localProgression: book.totalProgression, mark: current.marks[digest]) {
+            let remotes = byBook[digest] ?? [:]
+            let mark = current.marks[digest]
+            // A device whose file couldn't be read this time is still known as it was.
+            let seenNow = (mark?.others ?? [:]).merging(remotes.mapValues(FolderSyncMark.Seen.init)) { $1 }
+            switch FolderPlaces.settle(remotes, local: local(book), mark: mark) {
             case let .takeRemote(place):
                 guard book.id != openBookID() else { continue }
                 library.takeFolderPlace(bookID: book.id, locatorJSON: place.locator, totalProgression: place.progression, updated: place.updated)
-                current.marks[digest] = FolderSyncMark(remote: place.updated, local: library.book(book.id)?.lastOpened)
+                current.marks[digest] = FolderSyncMark(others: seenNow, local: FolderSyncMark.Seen(place), taken: FolderSyncMark.Seen(place))
             case .keepLocal:
-                current.marks[digest] = FolderSyncMark(remote: remote?.updated ?? current.marks[digest]?.remote, local: book.lastOpened)
+                current.marks[digest] = FolderSyncMark(others: seenNow, local: local(book), taken: mark?.taken)
             }
         }
         current.marks = current.marks.filter { digests.contains($0.key) }
-        if saved != nil { saved?.marks = current.marks }
+        saved?.marks = current.marks
+        tradedGeneration = started
         await writeOwnPlaces(in: folder)
     }
 
-    /// This device's places file: each folder book's place here, except one whose place elsewhere is still
-    /// to be taken (the book was open), which keeps what it said before rather than send the others back.
+    /// This device's places file: only what was read here. A place taken from another device isn't
+    /// written back (the others would read it as a new move), and neither is the place of a book whose
+    /// newer place elsewhere is still to be taken (it was open); each keeps what this file said before.
     private func writeOwnPlaces(in folder: URL) async {
-        guard let current = saved else { return }
+        let before = writeTail
+        let task = Task { [weak self] in
+            await before?.value
+            await self?.writeOwnPlacesNow(in: folder)
+        }
+        writeTail = task
+        await task.value
+    }
+
+    private func writeOwnPlacesNow(in folder: URL) async {
+        guard let current = saved, tradedGeneration == generation else { return }
+        let started = generation
         let digests = folderDigests
         var file = FolderPlaceFile(device: deviceName)
         for book in library.books {
             guard let digest = book.digest, digests.contains(digest) else { continue }
-            if case .takeRemote = FolderPlaces.settle(others[digest], localUpdated: book.lastOpened, localProgression: book.totalProgression,
-                                                      mark: current.marks[digest]) {
-                if let before = lastWritten?.places[digest] { file.record(before, for: digest) }
+            let mark = current.marks[digest]
+            let pending = if case .takeRemote = FolderPlaces.settle(others[digest] ?? [:], local: local(book), mark: mark) { true } else { false }
+            let onTakenPage = if let taken = mark?.taken, let here = local(book) { !here.differs(from: taken) } else { false }
+            if pending || onTakenPage {
+                if let earlier = lastWritten?.places[digest] { file.record(earlier, for: digest) }
                 continue
             }
             guard let locator = book.locatorJSON, let updated = book.lastOpened else { continue }
@@ -282,25 +341,26 @@ final class WatchedFolder {
             }
             return done
         }.value
-        if wrote { lastWritten = file }
+        if wrote, generation == started { lastWritten = file }
     }
 
-    /// Every device's places file in the folder: this device's own, and the others'. A file iCloud Drive
-    /// hasn't downloaded yet is listed as a placeholder; the coordinated read downloads it.
-    nonisolated private static func readPlaceFiles(in folder: URL, own: String) async -> (own: FolderPlaceFile?, others: [FolderPlaceFile]) {
+    /// Every device's places file in the folder: this device's own, and the others' by device ID. A file
+    /// iCloud Drive hasn't downloaded yet is listed as a placeholder; the coordinated read downloads it.
+    nonisolated private static func readPlaceFiles(in folder: URL, own: String) async -> (own: FolderPlaceFile?, others: [String: FolderPlaceFile]) {
         await Task.detached(priority: .utility) {
             let dir = folder.appending(path: FolderPlaces.directory, directoryHint: .isDirectory)
             let listed = (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []
-            var mine: Data?
-            var files: [Data] = []
+            var mine: FolderPlaceFile?
+            var files: [String: FolderPlaceFile] = [:]
             for name in Set(listed.compactMap(FolderPlaces.placesFile(listedAs:))).sorted() {
+                guard let device = FolderPlaces.deviceID(fromFileName: name) else { continue }
                 var error: NSError?
                 NSFileCoordinator().coordinate(readingItemAt: dir.appending(path: name), options: [], error: &error) { readable in
-                    guard let data = try? Data(contentsOf: readable) else { return }
-                    if name == own { mine = data } else { files.append(data) }
+                    guard let data = try? Data(contentsOf: readable), let file = try? FolderPlaces.decode(data) else { return }
+                    if device == own { mine = file } else { files[device] = file }
                 }
             }
-            return (mine.flatMap { try? FolderPlaces.decode($0) }, FolderPlaces.decodeAll(files))
+            return (mine, files)
         }.value
     }
 

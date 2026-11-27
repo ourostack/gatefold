@@ -86,9 +86,10 @@ final class AppModel {
     func watchFolder(_ url: URL) async {
         if !hasOnboarded { hasOnboarded = true }
         do {
-            lastArrival = Arrival(result: try await folder.watch(url), watching: url.lastPathComponent)
+            let result = try await folder.watch(url)
+            lastArrival = Arrival(result: result, watching: folder.name ?? url.lastPathComponent)
         } catch {
-            library.lastError = "Gatefold couldn't keep hold of “\(url.lastPathComponent)”. Try choosing it again."
+            library.lastError = "Gatefold couldn't keep hold of “\(WatchedFolder.displayName(of: url))”. Try choosing it again."
         }
     }
 

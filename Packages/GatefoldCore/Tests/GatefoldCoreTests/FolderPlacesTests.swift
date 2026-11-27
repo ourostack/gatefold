@@ -25,56 +25,80 @@ import Testing
         #expect(try FolderPlaces.decode(data) == file)
     }
 
-    @Test func theNewestPlaceForEachBookWinsAcrossDevices() {
-        let phone = FolderPlaceFile(device: "iPhone", places: ["d1": place(0.2, at: 10), "d2": place(0.9, at: 50)])
-        let pad = FolderPlaceFile(device: "iPad", places: ["d1": place(0.5, at: 20, on: "iPad"), "d2": place(0.1, at: 5, on: "iPad")])
-        let newest = FolderPlaces.newest(in: [phone, pad])
-        #expect(newest["d1"]?.progression == 0.5)
-        #expect(newest["d1"]?.device == "iPad")
-        // Newer wins, not further: going back to reread a chapter is a place too.
-        #expect(newest["d2"]?.progression == 0.9)
-    }
-
     private func at(_ seconds: TimeInterval) -> Date { t0.addingTimeInterval(seconds) }
+    private func seen(_ progression: Double, at seconds: TimeInterval) -> FolderSyncMark.Seen {
+        .init(updated: at(seconds), progression: progression)
+    }
 
     @Test func withNothingSettledYetTheNewerPlaceIsTaken() {
-        let remote = place(0.5, at: 20, on: "iPad")
-        #expect(FolderPlaces.settle(remote, localUpdated: at(10), localProgression: 0.2, mark: nil) == .takeRemote(remote))
-        #expect(FolderPlaces.settle(remote, localUpdated: nil, localProgression: 0, mark: nil) == .takeRemote(remote))
-        #expect(FolderPlaces.settle(remote, localUpdated: at(30), localProgression: 0.2, mark: nil) == .keepLocal)
-        // The place this device wrote itself, coming back through the folder a fraction older (whole seconds).
-        #expect(FolderPlaces.settle(remote, localUpdated: at(20.4), localProgression: 0.5, mark: nil) == .keepLocal)
-        #expect(FolderPlaces.settle(nil, localUpdated: nil, localProgression: 0, mark: nil) == .keepLocal)
+        let pad = place(0.5, at: 20, on: "iPad")
+        #expect(FolderPlaces.settle(["pad": pad], local: seen(0.2, at: 10), mark: nil) == .takeRemote(pad))
+        #expect(FolderPlaces.settle(["pad": pad], local: nil, mark: nil) == .takeRemote(pad))
+        #expect(FolderPlaces.settle(["pad": pad], local: seen(0.2, at: 30), mark: nil) == .keepLocal)
+        #expect(FolderPlaces.settle([:], local: nil, mark: nil) == .keepLocal)
     }
 
-    @Test func onlyTheOtherDeviceMovedSoItsPlaceIsTakenEvenGoingBack() {
-        let mark = FolderSyncMark(remote: at(10), local: at(10))
-        // Gone back to reread a chapter on the iPad: a place too.
+    @Test func onlyAnotherDeviceMovedSoItsPlaceIsTakenEvenGoingBack() {
+        let mark = FolderSyncMark(others: ["pad": seen(0.5, at: 10)], local: seen(0.5, at: 10))
         let back = place(0.1, at: 60, on: "iPad")
-        #expect(FolderPlaces.settle(back, localUpdated: at(10), localProgression: 0.5, mark: mark) == .takeRemote(back))
+        #expect(FolderPlaces.settle(["pad": back], local: seen(0.5, at: 10), mark: mark) == .takeRemote(back))
     }
 
     @Test func onlyThisDeviceMovedSoItsPlaceStays() {
-        let mark = FolderSyncMark(remote: at(10), local: at(10))
-        let unchanged = place(0.5, at: 10, on: "iPad")
-        #expect(FolderPlaces.settle(unchanged, localUpdated: at(90), localProgression: 0.2, mark: mark) == .keepLocal)
-        #expect(FolderPlaces.settle(unchanged, localUpdated: at(10), localProgression: 0.5, mark: mark) == .keepLocal)
+        let mark = FolderSyncMark(others: ["pad": seen(0.5, at: 10)], local: seen(0.5, at: 10))
+        #expect(FolderPlaces.settle(["pad": place(0.5, at: 10, on: "iPad")], local: seen(0.2, at: 90), mark: mark) == .keepLocal)
     }
 
     @Test func whenBothMovedTheFurtherPlaceWins() {
-        let mark = FolderSyncMark(remote: at(10), local: at(10))
-        // The iPhone read on to half way. The iPad, still open at 10 %, turned one page later on: newer,
-        // but taking it would send the iPhone back, so the iPhone's place wins on both devices.
+        let mark = FolderSyncMark(others: ["phone": seen(0.1, at: 10)], local: seen(0.1, at: 10))
+        // The iPhone read on to half way while the iPad had the book open at 10 %; the iPad then turned one
+        // page. Newer, but further back: the iPhone's place wins on both.
         let phone = place(0.5, at: 60, on: "iPhone")
-        #expect(FolderPlaces.settle(phone, localUpdated: at(120), localProgression: 0.11, mark: mark) == .takeRemote(phone))
-        let stale = place(0.11, at: 120, on: "iPad")
-        #expect(FolderPlaces.settle(stale, localUpdated: at(60), localProgression: 0.5, mark: mark) == .keepLocal)
+        #expect(FolderPlaces.settle(["phone": phone], local: seen(0.11, at: 120), mark: mark) == .takeRemote(phone))
+        #expect(FolderPlaces.settle(["phone": place(0.05, at: 60)], local: seen(0.11, at: 120), mark: mark) == .keepLocal)
     }
 
-    @Test func aMarkWithNoRemoteYetCountsAnyRemoteAsMoved() {
-        let mark = FolderSyncMark(remote: nil, local: at(10))
-        let remote = place(0.3, at: 5, on: "iPad")
-        #expect(FolderPlaces.settle(remote, localUpdated: at(10), localProgression: 0.2, mark: mark) == .takeRemote(remote))
+    @Test func openingABookOnTheSamePageIsNotAMove() {
+        let mark = FolderSyncMark(others: ["phone": seen(0.5, at: 10)], local: seen(0.5, at: 10))
+        // The iPhone went back to reread; the iPad, opened on its old page, wrote that page again on landing.
+        let reread = place(0.05, at: 60, on: "iPhone")
+        #expect(FolderPlaces.settle(["phone": reread], local: seen(0.5, at: 70), mark: mark) == .takeRemote(reread))
+        // And the other way round: a device that only opened the book hasn't moved.
+        #expect(FolderPlaces.settle(["phone": place(0.5, at: 80)], local: seen(0.05, at: 60), mark: mark) == .keepLocal)
+    }
+
+    @Test func clocksThatDisagreeDontMatter() {
+        // The iPad's clock runs ten minutes behind the iPhone's: its new page carries an earlier time than
+        // the iPhone place it settled with, and is still a move.
+        let mark = FolderSyncMark(others: ["pad": seen(0.3, at: 600)], local: seen(0.3, at: 600))
+        let pad = place(0.4, at: 100, on: "iPad")
+        #expect(FolderPlaces.settle(["pad": pad], local: seen(0.3, at: 600), mark: mark) == .takeRemote(pad))
+    }
+
+    @Test func aDeviceSeenForTheFirstTimeMovedOnlyIfItsPlaceIsNewer() {
+        // The iPad read alone to 0.6; an iPhone joins the folder with a month-old 0.2 of its own.
+        let mark = FolderSyncMark(others: [:], local: seen(0.6, at: 1000))
+        #expect(FolderPlaces.settle(["phone": place(0.2, at: -2_600_000)], local: seen(0.6, at: 1000), mark: mark) == .keepLocal)
+        let fresh = place(0.7, at: 2000)
+        #expect(FolderPlaces.settle(["phone": fresh], local: seen(0.6, at: 1000), mark: mark) == .takeRemote(fresh))
+    }
+
+    @Test func ofSeveralDevicesTheNewestMoveIsTaken() {
+        let mark = FolderSyncMark(others: ["phone": seen(0.2, at: 10), "pad": seen(0.2, at: 10)], local: seen(0.2, at: 10))
+        let pad = place(0.3, at: 50, on: "iPad"), phone = place(0.4, at: 40)
+        #expect(FolderPlaces.settle(["phone": phone, "pad": pad], local: seen(0.2, at: 10), mark: mark) == .takeRemote(pad))
+        // One that didn't move since the mark is no newer for being listed.
+        #expect(FolderPlaces.settle(["phone": place(0.9, at: 100), "pad": pad], local: seen(0.2, at: 10),
+                                    mark: FolderSyncMark(others: ["phone": seen(0.9, at: 100), "pad": seen(0.2, at: 10)], local: seen(0.2, at: 10)))
+                == .takeRemote(pad))
+    }
+
+    @Test func timesKeepTheirFractionsOfASecond() throws {
+        let file = FolderPlaceFile(device: "iPhone", places: ["d1": place(0.4, at: 10.25)])
+        let read = try FolderPlaces.decode(FolderPlaces.encode(file))
+        #expect(abs(try #require(read.places["d1"]).updated.timeIntervalSince(at(10.25))) < 0.002)
+        let older = try FolderPlaces.decode(Data(#"{"device":"iPad","places":{"d1":{"device":"iPad","locator":"{}","progression":0.1,"updated":"2027-01-15T08:00:00Z"}},"version":1}"#.utf8))
+        #expect(older.places["d1"]?.progression == 0.1)
     }
 
     @Test func aPlacesFileICloudHasNotDownloadedIsStillFound() {
