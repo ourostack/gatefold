@@ -1053,14 +1053,15 @@ jobs:
             lane: 4
           - shard: duo-reviewer-rest
             # Main only, the catch-all for new reviewer checks: 964 + 204 (the default spread skips on the Duo), about
-            # 240 for one column on the cover screen (#303), and about 60 for showing the controls moving no line (build 53)
+            # 240 for one column on the cover screen (#303), about 60 for showing the controls moving no line (build 53),
+            # and about 45 for a sideways drag in scroll moving no line (2026-11-27)
             tests: >-
-              ReviewerChecksUITests SingleColumnUITests ControlsOverPageUITests
+              ReviewerChecksUITests SingleColumnUITests ControlsOverPageUITests SidewaysPanUITests
             skip: >-
               ReviewerChecksUITests/testEveryReopenReturnsTheSameWords ReviewerChecksUITests/testPageNumbersAreOnOrOffInEveryBook
             pr_tests: none
             cold: false
-            timeout: 80 # 30 + 2 x 16.3 + 5 + 12
+            timeout: 81 # 30 + 2 x 17.0 + 5 + 12
             lane: 3
           - shard: duo-reviewer-numbers
             # Main only: 1075, out of duo-reviewer-rest
