@@ -65,16 +65,11 @@ struct LibraryView: View {
             // The screen's safe area, measured outside the scroll view: its size is the safe size and its
             // insets the system's own, however the hardware reports them.
             GeometryReader { outer in
+            // Scrolls the shelf back to its top when a note comes, so it's seen.
+            ScrollViewReader { proxy in
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
                     header
-                        .background {
-                            ScrollViewReader { proxy in
-                                Color.clear.onChange(of: scrollToTop) {
-                                    withOuroAnimation(.layout, reduceMotion: reduceMotion) { proxy.scrollTo(Self.topID, anchor: .top) }
-                                }
-                            }
-                        }
                         .id(Self.topID)
                     arrivalNote
                     if let greeting {
@@ -212,7 +207,7 @@ struct LibraryView: View {
                         .accessibilityHidden(true)
                 }
             }
-            .onChange(of: app.openBookID == nil) { _, onShelf in if onShelf, noteWaitsForShelf { noteIsSeen() } }
+            .onChange(of: app.readerShowing) { _, showing in if !showing, noteWaitsForShelf { noteIsSeen() } }
             .onChange(of: app.lastArrival) { _, arrival in announce(arrival) }
             // A book opened in Gatefold at launch can arrive before the shelf is up to hear of it.
             .onAppear { announce(app.lastArrival) }
@@ -245,6 +240,10 @@ struct LibraryView: View {
                 readerLog.notice("shelf placement: safe width \(v[0], privacy: .public) leading \(v[1], privacy: .public) trailing \(v[2], privacy: .public)")
             }
             #endif
+            .onChange(of: scrollToTop) {
+                withOuroAnimation(.layout, reduceMotion: reduceMotion) { proxy.scrollTo(Self.topID, anchor: .top) }
+            }
+            }
             }
         }
     }
@@ -344,7 +343,7 @@ struct LibraryView: View {
         note = words
         withOuroAnimation(.layout, reduceMotion: reduceMotion) { noteShown = true }
         // Behind an open book the shelf keeps its place, and the note waits there to be seen.
-        if app.openBookID == nil { noteIsSeen() } else { noteWaitsForShelf = true }
+        if app.readerShowing { noteWaitsForShelf = true } else { noteIsSeen() }
     }
 
     /// The shelf is showing: scroll up to the note and start its clock. Like a toast, a note with nothing to do goes
@@ -353,11 +352,11 @@ struct LibraryView: View {
     private func noteIsSeen() {
         noteWaitsForShelf = false
         scrollToTop += 1
-        guard note?.bookID == nil, !LaunchOptions.holdNotes,
-              !UIAccessibility.isVoiceOverRunning, !UIAccessibility.isSwitchControlRunning else { return }
+        guard note?.bookID == nil, !LaunchOptions.holdNotes, !Self.assistiveTechOn else { return }
         noteClosing = Task { @MainActor in
             try? await Task.sleep(for: .seconds(OuroToastMetrics.defaultSeconds))
-            guard !Task.isCancelled else { return }
+            // VoiceOver or Switch Control turned on meanwhile: the note stays for them.
+            guard !Task.isCancelled, !Self.assistiveTechOn else { return }
             closeNote(.timed)
         }
     }
@@ -375,6 +374,7 @@ struct LibraryView: View {
     }
 
     private static let topID = "library.top"
+    private static var assistiveTechOn: Bool { UIAccessibility.isVoiceOverRunning || UIAccessibility.isSwitchControlRunning }
 
     /// The arrival note, folded away to nothing until books come aboard.
     private var arrivalNote: some View {

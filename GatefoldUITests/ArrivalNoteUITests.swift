@@ -58,12 +58,46 @@ final class ArrivalNoteUITests: XCTestCase {
         // Both books came aboard.
         XCTAssertEqual(any["library.bookCount"].firstMatch.label, "2", "both books on the shelf")
         // Close folds it away.
-        let close = inline.buttons["Close"].firstMatch
-        if close.exists {
+        if inline.exists {
+            let close = inline.buttons["Close"].firstMatch
+            XCTAssertTrue(close.exists, "the note has Close")
             close.tap()
             var gone = 0
             while inline.exists { gone += 1; XCTAssertLessThan(gone, 50, "Close folds the note away"); usleep(100_000) }
         }
+        app.quit()
+    }
+
+    /// A reader scrolled down the shelf still sees the note: the shelf scrolls back up to it.
+    func testANoteScrollsTheShelfBackUpToIt() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["-GatefoldUITest", "YES", "-GatefoldFakeCloud", "YES", "-GatefoldSkipWelcome", "YES",
+                               "-GatefoldSignedIn", "YES", "-GatefoldNoLatency", "YES", "-GatefoldReset", "YES",
+                               "-GatefoldHoldNotes", "YES", "-GatefoldArrive", "emma,dracula", "-GatefoldArriveAfter", "15"]
+        app.relaunch()
+        let any = app.descendants(matching: .any)
+        XCTAssertTrue(any["library.grid"].firstMatch.waitForExistence(timeout: 60), "the shelf")
+        let title = app.staticTexts["Library"].firstMatch
+        let window = app.windows.firstMatch.frame
+        // Down the shelf, past the title, before the books arrive.
+        for _ in 0..<3 where title.exists && title.frame.maxY > window.minY {
+            app.swipeUp(velocity: .fast)
+        }
+        let scrolled = !title.exists || title.frame.maxY <= window.minY
+        let inline = any["library.arrival"].firstMatch
+        XCTAssertTrue(inline.waitForExistence(timeout: 60), "a note says the books came aboard")
+        var looks = 0, last = CGRect.null, frame = CGRect.null
+        while frame.isNull {
+            looks += 1
+            XCTAssertLessThan(looks, 100, "the note settles")
+            let now = inline.frame
+            if now.height > 1, now == last { frame = now }
+            last = now
+            usleep(200_000)
+        }
+        XCTAssertTrue(window.contains(frame), "the note \(frame) is on screen (shelf scrolled first: \(scrolled))")
+        XCTAssertTrue(title.exists && window.contains(title.frame), "the title is back in view above it")
+        XCTAssertLessThan(title.frame.maxY, frame.minY + 1, "the title sits above the note")
         app.quit()
     }
 }

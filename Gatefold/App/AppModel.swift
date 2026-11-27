@@ -30,6 +30,8 @@ final class AppModel {
     private(set) var needsReconnect: String?
     /// The open reader, so coming back to the app can ask the Cloud where the other device is.
     weak var activeReader: ReaderModel?
+    /// A book is on screen over the shelf (the root's reader is up), as against one only asked for.
+    var readerShowing = false
     @ObservationIgnored private var lastForegroundRefresh = Date.distantPast
     var preferences: PreferencesStore {
         didSet { savePreferences() }

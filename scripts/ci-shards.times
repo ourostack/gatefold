@@ -173,3 +173,5 @@ iPad Pro 13-inch|ControlsTapUITests/testContentsOpensWhenTappedAsTheControlsCome
 iPhone Duo|ControlsTapUITests/testContentsOpensWhenTappedAsTheControlsComeUp	300	# estimate until CI has run it: 40 tries took 869 s on probe run 45125426107, this is 6
 iPad Pro 13-inch|ArrivalNoteUITests/testTheArrivalNoteCoversNeitherTheTitleNorTheButtons	60	# estimate (the arrival note)
 iPhone Duo|ArrivalNoteUITests/testTheArrivalNoteCoversNeitherTheTitleNorTheButtons	60	# estimate (the arrival note)
+iPad Pro 13-inch|ArrivalNoteUITests/testANoteScrollsTheShelfBackUpToIt	75	# estimate (the arrival note, scrolled)
+iPhone Duo|ArrivalNoteUITests/testANoteScrollsTheShelfBackUpToIt	75	# estimate (the arrival note, scrolled)
