@@ -2194,13 +2194,18 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     /// A tablet page takes Apple Books' bands above and below the words (`TabletPage`); a phone keeps
     /// Readium's own (the configured insets, or the notch's). A scrolling page that stays at the screen's top
     /// (`PageSafeArea.placing`) adds the room its first line needs below the camera to the top one.
+    ///
+    /// Never an inset across: a scrolling page takes this inset as its scroll view's, and one at the side (Readium's
+    /// own takes the window's whole safe area, so the folded Duo's status column, or a phone on its side) gave the page
+    /// room to pan sideways, cutting off the start of every line (Ari, 2026-11-27). The page's margins clear the sides.
     func navigatorContentInset(_ navigator: VisualNavigator) -> UIEdgeInsets? {
         let traits = self.navigator.view.traitCollection
         let clearance = weakModel?.layout.textTopClearance ?? 0
         guard traits.horizontalSizeClass == .regular, traits.verticalSizeClass == .regular,
               let bands = TabletPage.bands(pageHeight: self.navigator.view.bounds.height) else {
             if weakModel?.tabletBands != nil { weakModel?.tabletBands = nil }
-            guard clearance > 0 else { return nil }
+            // A fixed-layout book keeps Readium's own inset: its page is a picture fitted to the screen, not a column.
+            guard publication.metadata.layout != .fixed else { return nil }
             var inset = readiumPhoneInset()
             inset.top += clearance
             return inset
@@ -2210,9 +2215,12 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
     }
 
     /// Readium's own inset for a reflowable phone page, as `EPUBNavigatorViewController.spreadViewContentInset` works it out.
+    /// Top and bottom only: see `navigatorContentInset`.
     private func readiumPhoneInset() -> UIEdgeInsets {
         let view = navigator.view!
         var inset = view.window?.safeAreaInsets ?? .zero
+        inset.left = 0
+        inset.right = 0
         let sizeClass = view.traitCollection.verticalSizeClass
         let configured = Self.contentInsets[sizeClass] ?? Self.contentInsets[.regular] ?? (top: 0, bottom: 0)
         inset.top = max(inset.top, configured.top)
