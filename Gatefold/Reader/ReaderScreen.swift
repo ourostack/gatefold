@@ -223,10 +223,11 @@ struct ReaderScreen: View {
                         .transition(reduceMotion ? .opacity : .move(edge: .top).combined(with: .opacity))
                         .zIndex(2)
                 }
-                if signInAsked, !model.chromeVisible, let at = signInTabFrame(layout: layout, proxy: proxy, clearance: clearance, slipTop: slipTop) {
-                    SignInTab(theme: model.theme) { reconnecting = true }
-                        .frame(width: at.width, height: at.height, alignment: signInTabAlignment(layout: layout, proxy: proxy))
-                        .offset(x: at.minX, y: at.minY)
+                if signInAsked, !model.chromeVisible {
+                    let at = signInTabPlace(layout: layout, proxy: proxy, clearance: clearance, slipTop: slipTop)
+                    SignInTab(theme: model.theme) { reconnecting = true } onLater: { signInLater = true }
+                        .frame(width: at.frame.width, height: at.frame.height, alignment: at.alignment)
+                        .offset(x: at.frame.minX, y: at.frame.minY)
                         .transition(.opacity)
                         .zIndex(2)
                 }
@@ -832,34 +833,31 @@ struct ReaderScreen: View {
     /// The ask stands as a tab in the top margin: while he reads, with the controls down.
     private var signInTabShows: Bool { signInAsked && !model.chromeVisible }
 
-    /// Where the sign-in tab stands while he reads: in the running head's own place, which it takes over until the ask
-    /// goes (the head comes back then), so it is in the page's top margin, clear of the camera and of every line
-    /// (gatefold#654). Beside the camera, the head's side of it; under the page's own head band, the last page's head.
-    /// A scrolling page and the tabletop deck have no head: there it floats at the top centre, over text he can scroll
-    /// or turn out from under it.
-    private func signInTabFrame(layout: ReaderLayout, proxy: GeometryProxy, clearance: ChromeClearance, slipTop: CGFloat) -> CGRect? {
+    /// Where the sign-in tab stands while he reads, and how it sits in that frame: in the running head's own place, which
+    /// it takes over until the ask goes (the head comes back then), so it is in the page's top margin, clear of the camera
+    /// and of every line (gatefold#654). Beside the camera, the head's side of it, at the leading edge; else in the last
+    /// page's head band, centred. Only where neither band holds it whole (a scrolling page, the tabletop deck, a margin
+    /// set too small) does it float at the top centre, over text he can scroll or turn out from under it, or put away
+    /// with its cross.
+    private func signInTabPlace(layout: ReaderLayout, proxy: GeometryProxy, clearance: ChromeClearance, slipTop: CGFloat) -> (frame: CGRect, alignment: Alignment) {
         let camera = occlusions(in: proxy).filter { $0.height <= 120 && $0.minY < 80 }.min { $0.minY < $1.minY }
         let textTop = layout.pageFrame.minY + pageTopClearance(layout, clearance: clearance)
-        let side: CGFloat = 24
+        let side: CGFloat = 24, gap: CGFloat = 2
         let frame = layout.pageFrame
-        if model.pageTurn != .scroll, layout.deck == nil, let camera, textTop - camera.maxY >= -camera.height / 2, textTop >= 40 {
+        let paged = model.pageTurn != .scroll && layout.deck == nil
+        // Centred in the camera's band, the glass ends half its height below the band's middle.
+        if paged, let camera, camera.midY + SignInTab.height / 2 + gap <= textTop {
             let left = (frame.minX + side, min(frame.maxX - side, camera.minX - 14))
             let right = (max(frame.minX + side, camera.maxX + 14), frame.maxX - side)
             let (start, end) = left.1 - left.0 >= right.1 - right.0 ? left : right
-            return CGRect(x: start, y: camera.minY, width: max(0, end - start), height: camera.height)
+            return (CGRect(x: start, y: camera.minY, width: max(0, end - start), height: camera.height), .leading)
         }
-        if model.pageTurn != .scroll, layout.deck == nil {
+        if paged, model.textBand.top >= SignInTab.height + 2 * gap {
             let last = layout.gutter.map { g in CGRect(x: g.midX, y: frame.minY, width: frame.maxX - g.midX, height: frame.height) } ?? frame
-            return CGRect(x: last.minX + 48, y: last.minY, width: max(0, last.width - 96), height: model.textBand.top)
+            return (CGRect(x: last.minX + 48, y: last.minY, width: max(0, last.width - 96), height: model.textBand.top), .center)
         }
         let width = min(proxy.size.width - 32, 160)
-        return CGRect(x: (proxy.size.width - width) / 2, y: slipTop, width: width, height: 44)
-    }
-
-    /// The tab sits where the head's words would start: at the leading edge beside the camera, centred in a head band.
-    private func signInTabAlignment(layout: ReaderLayout, proxy: GeometryProxy) -> Alignment {
-        let camera = occlusions(in: proxy).contains { $0.height <= 120 && $0.minY < 80 }
-        return model.pageTurn != .scroll && layout.deck == nil && camera ? .leading : .center
+        return (CGRect(x: (proxy.size.width - width) / 2, y: slipTop, width: width, height: 44), .center)
     }
     private var statusBarHidden: Bool { !model.chromeVisible || coverScreen || catchUpTabShowing }
 

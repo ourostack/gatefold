@@ -78,7 +78,8 @@ final class SignInPromptUITests: XCTestCase {
             }
             let lines = settledLines(app, step)
             XCTAssertGreaterThan(lines.count, 5, "\(step): the probe found the page's lines")
-            let ask = tab.exists ? tab.frame : slip.frame
+            let later = app.descendants(matching: .any)["reader.signInTab.later"]
+            let ask = tab.exists ? tab.frame.union(later.exists ? later.frame : tab.frame) : slip.frame
             XCTAssertFalse(ask.isEmpty, "\(step): the ask is on screen")
             let shot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
             shot.name = "sign-in-ask-\(step.replacingOccurrences(of: " ", with: "-"))"
@@ -87,6 +88,12 @@ final class SignInPromptUITests: XCTestCase {
             let covered = lines.filter { $0.intersects(ask.insetBy(dx: 0, dy: 1)) }
             XCTAssertTrue(covered.isEmpty, "\(step): the ask (\(ask)) stands on \(covered.count) line(s): \(covered.prefix(3))")
         }
+        // While he reads, the ask's own cross puts it away for this open.
+        let later = app.descendants(matching: .any)["reader.signInTab.later"]
+        XCTAssertTrue(later.exists && later.isHittable, "the ask can be put away where it stands")
+        guard later.exists else { return }
+        later.tap()
+        XCTAssertTrue(readsUntil(reads: 50) { !tab.exists && !slip.exists }.ok, "the ask went away")
     }
 
     private var hung = false

@@ -170,35 +170,57 @@ struct SignInSlipView: View {
 
 /// The same ask while he reads: a small glass tab where the running head stands, in the page's top margin, never on a
 /// line (gatefold#654: the whole notice floated over the top of the page and hid the first line of every page he read).
-/// One tap opens sign-in, his email filled in; the controls show the whole notice, with Later.
+/// One tap opens sign-in, his email filled in; its cross puts the ask away until the book is opened again, as Later does.
 struct SignInTab: View {
     let theme: ReaderTheme
     var onSignIn: () -> Void
+    var onLater: () -> Void
+
+    /// The glass's height: it fits the top margin. Each target reaches `reach` up into the band above it, to 44 pt,
+    /// never down onto the first line.
+    static let height: CGFloat = 26
+    private let reach: CGFloat = 18
 
     var body: some View {
-        Button(action: onSignIn) {
-            HStack(spacing: 5) {
-                Image(systemName: "key.fill")
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(theme.accent)
-                Text("Sign in")
-                    .font(.caption.weight(.semibold))
-                    .lineLimit(1)
-                    .fixedSize()
+        HStack(spacing: 0) {
+            Button(action: onSignIn) {
+                HStack(spacing: 5) {
+                    Image(systemName: "key.fill")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(theme.accent)
+                    Text("Sign in")
+                        .font(.caption.weight(.semibold))
+                        .lineLimit(1)
+                        .fixedSize()
+                }
+                .padding(.leading, 10)
+                .padding(.trailing, 6)
+                .frame(height: Self.height)
+                .padding(.top, reach)
+                .contentShape(.rect)
             }
-            .foregroundStyle(theme.text)
-            .padding(.horizontal, 10)
-            .frame(height: 26)
-            .glassEffect(.regular.tint(theme.background.opacity(0.7)).interactive(), in: Capsule(style: .continuous))
-            // A 44 pt target that reaches up into the band above the tab, never down onto the first line.
-            .padding(.top, 18)
-            .contentShape(.rect)
+            .accessibilityLabel(SignInSlipView.title)
+            .accessibilityHint("Opens sign-in for PocketBook Cloud")
+            .accessibilityIdentifier("reader.signInTab")
+            Button(action: onLater) {
+                Image(systemName: "xmark")
+                    .font(.caption2.weight(.bold))
+                    .frame(width: 30, height: Self.height)
+                    .padding(.top, reach)
+                    .contentShape(.rect)
+            }
+            .accessibilityLabel("Later")
+            .accessibilityHint("Puts the sign-in ask away until the book is opened again")
+            .accessibilityIdentifier("reader.signInTab.later")
         }
         .buttonStyle(.plain)
-        .padding(.top, -18)
-        .accessibilityLabel(SignInSlipView.title)
-        .accessibilityHint("Opens sign-in for PocketBook Cloud")
-        .accessibilityIdentifier("reader.signInTab")
+        .foregroundStyle(theme.text)
+        .background(alignment: .bottom) {
+            Color.clear
+                .frame(height: Self.height)
+                .glassEffect(.regular.tint(theme.background.opacity(0.7)).interactive(), in: Capsule(style: .continuous))
+        }
+        .padding(.top, -reach)
     }
 }
 
