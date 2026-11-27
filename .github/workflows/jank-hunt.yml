@@ -18,7 +18,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { name: duo-closed, type: com.apple.CoreSimulator.SimDeviceType.iPhone-Duo, files: ".github/jank/after.txt", display: "1", hinge: false }
           - { name: ipad, type: com.apple.CoreSimulator.SimDeviceType.iPad-Pro-11-inch-M5-12GB, files: ".github/jank/after.txt", display: default, hinge: false }
     env:
       DD: ${{ github.workspace }}/../dd
