@@ -101,6 +101,24 @@ import Testing
         #expect(reopened.book(emma.id)?.isOnDevice == true)
     }
 
+    /// gatefold#432: a launch asked for Emma, the last of the fake Cloud's books to download, and the shelf's change
+    /// handler never fired for her landing, so she never opened. The root view now hears each landing from this stream.
+    @Test func everyBookThatLandsIsAnnouncedTheLastOneToo() async throws {
+        let (store, _) = makeStore()
+        await store.refresh()
+        let landings = store.landings()
+        let waiting = store.books.filter { !$0.isOnDevice }
+        #expect(waiting.count == FakeSyncService.seeds.count)
+        for book in waiting { await store.download(book) }
+        var heard: [String] = []
+        for await id in landings {
+            heard.append(id)
+            if heard.count == waiting.count { break }
+        }
+        #expect(heard == waiting.map(\.id))
+        #expect(heard.last == "gutenberg-emma")
+    }
+
     @Test func recordingAPlaceMovesTheBookToReadingNow() async throws {
         let (store, _) = makeStore()
         await store.refresh()

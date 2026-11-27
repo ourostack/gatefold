@@ -281,6 +281,9 @@ enum LaunchOptions {
     static var showChrome: Bool { defaults.bool(forKey: "GatefoldShowChrome") }
     static var noLatency: Bool { defaults.bool(forKey: "GatefoldNoLatency") }
     static var downloadAll: Bool { defaults.bool(forKey: "GatefoldDownloadAll") }
+    /// UI tests: the shelf's on-device count never opens the book asked for, as it failed to on CI (gatefold#432), so
+    /// only the library's word that the book landed can open it (`AskedBookOpensUITests`).
+    static var missCountOpen: Bool { defaults.bool(forKey: "GatefoldMissCountOpen") }
     static var sheet: String? { defaults.string(forKey: "GatefoldSheet") }
     /// Screenshots and UI tests: switch the forced posture to `GatefoldFlipTo` (default spread) after
     /// this many seconds, and back after `GatefoldFlipBackAfter` more, to film the unfold.
