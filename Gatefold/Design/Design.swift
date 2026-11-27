@@ -287,6 +287,8 @@ enum LaunchOptions {
         guard isUITest, let names = defaults.string(forKey: "GatefoldArrive") else { return nil }
         return names.split(separator: ",").map(String.init)
     }
+    /// UI tests: the arrival note stays until closed, so a slow runner still finds it.
+    static var holdNotes: Bool { isUITest && defaults.bool(forKey: "GatefoldHoldNotes") }
     /// How long after the start they arrive (`GatefoldArriveAfter`, seconds), so a test can be watching first.
     static var arriveAfter: Double { defaults.double(forKey: "GatefoldArriveAfter") }
     static var sheet: String? { defaults.string(forKey: "GatefoldSheet") }

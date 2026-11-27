@@ -179,6 +179,14 @@ final class GatefoldTelemetry: @unchecked Sendable {
 
     /// Books coming in from outside the Cloud: which source, and how many were new, already on the shelf, taken by a
     /// PocketBook Cloud book, or refused. Counts and the source's fixed name only: never a title, file name or digest.
+    /// How the shelf's arrival note ended: timed out, closed, Read, or replaced by another arrival.
+    enum NoteEnd: String { case timed, closed, read, replaced }
+
+    /// The arrival note's end, as counts only: how it ended and whether it offered Read, never its words or books.
+    static func noteProperties(end: NoteEnd, hadRead: Bool) -> [String: Value] {
+        ["ended": .string(end.rawValue), "had_read": .bool(hadRead)]
+    }
+
     static func addedProperties(source: LibraryBook.Source, result: LibraryStore.ImportResult) -> [String: Value] {
         ["source": .string(source.rawValue),
          "added": .int(result.added.count),

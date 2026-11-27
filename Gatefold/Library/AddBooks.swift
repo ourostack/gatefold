@@ -29,11 +29,11 @@ struct IncomingBook: Transferable {
     }
 }
 
-/// What the shelf says once books have come in: a toast, with Read when it was one book.
+/// What the shelf says once books have come in: a note under its title, with Read when it was one book.
 struct ArrivalWords: Equatable {
     var message: String
     var description: String?
-    /// The one book that came in, to open from the toast.
+    /// The one book that came in, to open from the note.
     var bookID: String?
 
     init?(_ result: LibraryStore.ImportResult) {

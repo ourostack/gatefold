@@ -26,8 +26,10 @@ struct LibraryView: View {
     @State private var note: ArrivalWords?
     @State private var noteShown = false
     @State private var noteClosing: Task<Void, Never>?
-    /// Where the shelf is scrolled, so a note scrolls it back to the top to be seen.
-    @State private var scroll = ScrollPosition(edge: .top)
+    /// A note that came while a book was open: shown, but its clock and the scroll up wait for the shelf.
+    @State private var noteWaitsForShelf = false
+    /// Bumped to scroll the shelf back to its top, where a note shows.
+    @State private var scrollToTop = 0
     @State private var confirmSignOut = false
     @State private var reconnecting = false
     /// How far the header moves down so the cover screen's camera and status column never sit on it.
@@ -66,6 +68,14 @@ struct LibraryView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
                     header
+                        .background {
+                            ScrollViewReader { proxy in
+                                Color.clear.onChange(of: scrollToTop) {
+                                    withOuroAnimation(.layout, reduceMotion: reduceMotion) { proxy.scrollTo(Self.topID, anchor: .top) }
+                                }
+                            }
+                        }
+                        .id(Self.topID)
                     arrivalNote
                     if let greeting {
                         Text(greeting)
@@ -111,7 +121,6 @@ struct LibraryView: View {
                 .opacity(width > 0 ? 1 : 0)
                 .animation(.easeOut(duration: 0.3), value: shelfState)
             }
-            .scrollPosition($scroll)
             // The scroll view spans the whole width and adds no horizontal margins of its own; the shelf
             // places itself inside the safe area, and the scroll bar keeps clear of a side column.
             .contentMargins(.horizontal, 0, for: .scrollContent)
@@ -203,6 +212,7 @@ struct LibraryView: View {
                         .accessibilityHidden(true)
                 }
             }
+            .onChange(of: app.openBookID == nil) { _, onShelf in if onShelf, noteWaitsForShelf { noteIsSeen() } }
             .onChange(of: app.lastArrival) { _, arrival in announce(arrival) }
             // A book opened in Gatefold at launch can arrive before the shelf is up to hear of it.
             .onAppear { announce(app.lastArrival) }
@@ -330,13 +340,21 @@ struct LibraryView: View {
         announced = arrival.id
         if !arrival.result.added.isEmpty || arrival.result.linkedToCloud > 0 { importedCount += 1 }
         noteClosing?.cancel()
+        if noteShown { report(.replaced) }
         note = words
-        withOuroAnimation(.layout, reduceMotion: reduceMotion) {
-            noteShown = true
-            scroll.scrollTo(edge: .top)
-        }
-        // Like a toast: a note with nothing to do goes after a few seconds; one with Read stays until it's used or closed.
-        guard words.bookID == nil else { return }
+        withOuroAnimation(.layout, reduceMotion: reduceMotion) { noteShown = true }
+        // Behind an open book the shelf keeps its place, and the note waits there to be seen.
+        if app.openBookID == nil { noteIsSeen() } else { noteWaitsForShelf = true }
+    }
+
+    /// The shelf is showing: scroll up to the note and start its clock. Like a toast, a note with nothing to do goes
+    /// after a few seconds; one with Read stays until it's used or closed, and so does any note while VoiceOver or
+    /// Switch Control is on (the toast held its clock for them too).
+    private func noteIsSeen() {
+        noteWaitsForShelf = false
+        scrollToTop += 1
+        guard note?.bookID == nil, !LaunchOptions.holdNotes,
+              !UIAccessibility.isVoiceOverRunning, !UIAccessibility.isSwitchControlRunning else { return }
         noteClosing = Task { @MainActor in
             try? await Task.sleep(for: .seconds(OuroToastMetrics.defaultSeconds))
             guard !Task.isCancelled else { return }
@@ -344,15 +362,19 @@ struct LibraryView: View {
         }
     }
 
-    /// How a note ended, reported as a count only: never the words or the books.
-    enum NoteEnd: String { case timed, closed, read }
-
-    private func closeNote(_ end: NoteEnd) {
+    private func closeNote(_ end: GatefoldTelemetry.NoteEnd) {
         noteClosing?.cancel()
+        noteWaitsForShelf = false
         guard noteShown else { return }
         withOuroAnimation(.layout, reduceMotion: reduceMotion) { noteShown = false }
-        GatefoldTelemetry.shared.capture("gatefold_arrival_note", properties: ["ended": .string(end.rawValue), "had_read": .bool(note?.bookID != nil)])
+        report(end)
     }
+
+    private func report(_ end: GatefoldTelemetry.NoteEnd) {
+        GatefoldTelemetry.shared.capture("gatefold_arrival_note", properties: GatefoldTelemetry.noteProperties(end: end, hadRead: note?.bookID != nil))
+    }
+
+    private static let topID = "library.top"
 
     /// The arrival note, folded away to nothing until books come aboard.
     private var arrivalNote: some View {
