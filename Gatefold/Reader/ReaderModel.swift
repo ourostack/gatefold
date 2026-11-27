@@ -2429,6 +2429,7 @@ final class ReaderModel {
     }
 
     func reflowDidBegin() {
+        dragsAtReflow = drags
         shownUnsettled = nil
         shownNotes += 1
         reflowCount += 1
@@ -3063,9 +3064,32 @@ final class ReaderModel {
     /// In curl and fade the page moves only by a turn (`userTurnedPage`), never under the finger, so a
     /// drag there (one that springs back, or runs up the page) is no scroll.
     func noteDrag() {
+        drags += 1
         guard keeper.reflowing != nil, pageTurn == .scroll || pageTurn == .slide else { return }
         reflowTouches += 1
     }
+    /// In scroll mode, a scroll of his that Readium hasn't reported yet: still coasting, or stopped less than Readium's
+    /// 0.3 s ago (`ReaderHostController.readScrollUnderTurn`, gatefold#650). Only a drag made since the last reflow
+    /// began: after a restore his words can stand a line down a column (a spread's left page), and reading the top
+    /// of the screen again on every turn would walk his place back a line at a time.
+    var scrollUnreported: Bool {
+        pageTurn == .scroll && touchedSinceLocation && drags > dragsAtReflow && keeper.reflowing == nil && !isClosed
+    }
+    /// Every drag on the page, and their count when the last reflow began (`scrollUnreported`).
+    @ObservationIgnored private var drags = 0
+    @ObservationIgnored private var dragsAtReflow = 0
+
+    /// His scroll's words, read as the device turned before Readium reported it: the place the turn's restore puts
+    /// back, as a turn's page is (`takeTurnUnderReflow`), not the place from before the scroll.
+    func takeScrollUnderTurn(_ words: Locator) {
+        guard !isClosed, let text = words.text.highlight else { return }
+        let anchor = ReadingAnchor(href: words.href.string, progression: words.locations.progression ?? 0,
+                                   text: ReaderJS.normalize(text))
+        if keeper.reflowing != nil { keeper.turnUnderReflow(anchor) } else { keeper.userSettled(on: anchor) }
+        anchorLocator = words.copy(locations: { $0.totalProgression = self.totalProgression(of: words) ?? $0.totalProgression })
+        readerLog.notice("reflow: his scroll, not yet reported as the device turned, is the place the restore puts back (at \(words.locations.progression ?? -1, privacy: .public))")
+    }
+
     /// A curl that sprang back turned nothing: no drag of it is left to count.
     func dragDidNotTurn() { reflowTouches = 0 }
     /// Touches on the page since the last location report; a tap that only shows or hides the controls
