@@ -82,7 +82,8 @@ final class SignInPromptUITests: XCTestCase {
                 _ = readsUntil(reads: 50) { ((app.descendants(matching: .any)["reader.lineFrames"].value as? String) ?? "") != before }
             }
             let lines = settledLines(app, step)
-            XCTAssertGreaterThan(lines.count, 5, "\(step): the probe found the page's lines")
+            // Any count: at 31% the next page ends Alice's chapter IV in 4 lines.
+            XCTAssertFalse(lines.isEmpty, "\(step): the probe found the page's lines")
             let later = app.descendants(matching: .any)["reader.signInTab.later"]
             let ask = tab.exists ? tab.frame.union(later.exists ? later.frame : tab.frame) : slip.frame
             XCTAssertFalse(ask.isEmpty, "\(step): the ask is on screen")
