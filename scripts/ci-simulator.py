@@ -395,6 +395,8 @@ QUIET_LABELS = Path(__file__).resolve().parent.parent / ".github" / "scripts" / 
 # 42 removals at 3 to 9 s each, QUIET_PARALLEL at a time: about 40 to 100 s on a loaded runner, inside the limit.
 QUIET_LIMIT = setting("CI_SIMULATOR_QUIET_LIMIT", "300")
 QUIET_PARALLEL = int(setting("CI_SIMULATOR_QUIET_PARALLEL", "4"))
+# Each removal's own bound; a setting so the offline test can make one removal outlast it.
+QUIET_CALL = setting("CI_SIMULATOR_QUIET_CALL", "20")
 
 
 def quiet_labels(labels=QUIET_LABELS):
@@ -430,6 +432,7 @@ def quiet(udid, labels=QUIET_LABELS):
     lock = threading.Lock()
     queue = list(names)
     counts = {"removed": 0, "tried": 0, "stopped": False}
+    failed = {}  # why -> the jobs whose removal failed that way
 
     def worker():
         while True:
@@ -442,14 +445,21 @@ def quiet(udid, labels=QUIET_LABELS):
                     return
                 name = queue.pop(0)
                 counts["tried"] += 1
+            bound = min(QUIET_CALL, rest)
             try:
-                ok = subprocess.run(["xcrun", "simctl", "spawn", udid, "launchctl", "remove", name],
-                                    stdin=subprocess.DEVNULL, capture_output=True,
-                                    timeout=min(20, rest)).returncode == 0
-            except (OSError, subprocess.SubprocessError):
-                ok = False
+                p = subprocess.run(["xcrun", "simctl", "spawn", udid, "launchctl", "remove", name],
+                                   stdin=subprocess.DEVNULL, capture_output=True, timeout=bound)
+                said = (p.stderr or p.stdout).decode(errors="replace").strip().splitlines()
+                why = None if p.returncode == 0 else f"exit {p.returncode}" + (f" ({said[0][:100]})" if said else "")
+            except subprocess.TimeoutExpired:
+                why = f"no answer in {int(bound)} s"
+            except (OSError, subprocess.SubprocessError) as e:
+                why = f"could not run ({type(e).__name__})"
             with lock:
-                counts["removed"] += ok
+                if why is None:
+                    counts["removed"] += 1
+                else:
+                    failed.setdefault(why, []).append(name)
 
     began = time.time()
     threads = [threading.Thread(target=worker, daemon=True) for _ in range(max(1, QUIET_PARALLEL))]
@@ -461,6 +471,10 @@ def quiet(udid, labels=QUIET_LABELS):
         print(f"quieting {udid} stopped at its limit after {counts['tried']} of {len(names)} jobs", file=sys.stderr)
     print(f"quieted {udid}: removed {counts['removed']} of {len(names)} first-boot jobs in {int(time.time() - began)} s "
           "(gatefold#209)", file=sys.stderr)
+    # Which removals failed and why, so a run's logs show whether those jobs were already gone or the simulator was
+    # too slow to answer (#673's run: 22 of 56 shards lost 1 to 11 removals, and the log didn't say which).
+    for why, jobs in sorted(failed.items()):
+        print(f"not removed from {udid}, {why}: {len(jobs)} ({', '.join(jobs)})", file=sys.stderr)
 
 
 def erase(udid, steps=ERASE_STEPS):
