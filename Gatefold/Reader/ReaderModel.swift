@@ -1462,6 +1462,11 @@ final class ReaderModel {
     private(set) var underlineProbe = ""
     @ObservationIgnored private var underlineWatch: Task<Void, Never>?
 
+    /// UI tests (`reader.jumpLanding`): whether the newest search jump's veil lifted onto its match's page and that page
+    /// still shows half a second after it landed; or the page moved again after the veil had lifted, or the veil lifted
+    /// onto a page without the match (gatefold#653).
+    private(set) var jumpLandingProbe = ""
+
     private func watchUnderline() {
         guard LaunchOptions.isUITest else { return }
         underlineWatch?.cancel()
@@ -1529,7 +1534,8 @@ final class ReaderModel {
     /// Returns the jump's step; `step` is one the caller took for it beforehand.
     @discardableResult
     private func veiled(riffle: Bool = false, forward: Bool = true, step: Int? = nil, toward: AnyURL? = nil,
-                        keepsItsOwnWatch: Bool = false, _ body: @escaping () async -> Void) async -> Int {
+                        keepsItsOwnWatch: Bool = false, recheck: (() async -> Bool)? = nil,
+                        _ body: @escaping () async -> Void) async -> Int {
         let jump = step ?? takeStep()
         // The outermost veil holds the thumb on the page it keeps up, until it lifts.
         let holdsThumb = veiledFrom == nil
@@ -1588,7 +1594,8 @@ final class ReaderModel {
         await Self.$outerVeil.withValue(Self.outerVeil ?? jump) {
             // Behind the cover placeholder there's nothing to veil.
             if let host, pageReady {
-                await host.veiledJump(riffle: riffle && !reduceMotion && pageTurn == .curl, forward: forward, jump: jump, tracked)
+                await host.veiledJump(riffle: riffle && !reduceMotion && pageTurn == .curl, forward: forward, jump: jump,
+                                      recheck: recheck, tracked)
             } else {
                 await tracked()
             }
@@ -1964,9 +1971,14 @@ final class ReaderModel {
     /// page (forced ready, no picture over it), moving it now would jump a page he can see, so his place
     /// is offered as a Jump instead (build 21 on a starved iPad: forced at 25.3 s, moved 0.5 s later).
     /// `his`: his steps when the landing began; a swipe of his since (no move counted) ends it too.
+    /// The words `settle` looks for on screen: the start of the locator's quote, nil when it is too short to tell.
+    static func settleProbe(_ locator: Locator) -> String? {
+        guard let words = locator.text.highlight.map(ReaderJS.normalize), words.count >= 8 else { return nil }
+        return String(words.prefix(24))
+    }
+
     private func settle(on locator: Locator, move: Int, his: Int? = nil, loaded: Bool = false, offerOnceInView: Bool = false) async {
-        guard let words = locator.text.highlight.map(ReaderJS.normalize), words.count >= 8 else { return }
-        let probe = String(words.prefix(24))
+        guard let words = locator.text.highlight.map(ReaderJS.normalize), let probe = Self.settleProbe(locator) else { return }
         func current() -> Bool { moves == move && his.map { hisSteps == $0 } != false && !isClosed }
         let t0 = ContinuousClock.now
         for round in 0..<4 {
@@ -3715,18 +3727,55 @@ final class ReaderModel {
         defer { publishBack(back) }
         jumpOnItsWay = (locator, moves, lastReported ?? page?.currentLocation)
         let move = moves
-        let jump = await veiled(toward: locator.href) { _ = await self.page?.go(to: locator) }
-        if endedQuietly(jump, back: back) { return }
-        if markingTheMatch {
+        // If he turns or swipes after the veil has let go (a starved load), the settle stops and his page stands.
+        let hisAtStart = hisSteps
+        if markingTheMatch, LaunchOptions.isUITest { jumpLandingProbe = "" }
+        let match = Self.matchInContext(locator)
+        // Found under the veil, the match can still slip off before it lifts: on the folded Duo the page moved on by one
+        // between the settle and the veil's picture of it (jank run 46061730708), so it is looked for again there.
+        let recheck: (() async -> Bool)? = markingTheMatch ? { [weak self] in
+            await self?.goBackToSlippedMatch(match, move: move, his: hisAtStart) ?? false
+        } : nil
+        let jump = await veiled(toward: locator.href, recheck: recheck) {
+            _ = await self.page?.go(to: locator)
             // Into another chapter, Readium places the page by progression before the chapter has laid out, so the
             // match can be pages on; once it has, its words are found and gone to, as a landing's are (CI App run
             // 45096599422: a search jump into the preface showed the page before the match, its mark off screen).
-            await settle(on: Self.matchInContext(locator), move: move)
+            // Under the veil, so it lifts onto the match's page: found after the lift, the page Readium guessed showed
+            // first, faded in over the old one, and then the page jumped again (gatefold#653).
+            if markingTheMatch { await self.settle(on: match, move: move, his: hisAtStart) }
+        }
+        if endedQuietly(jump, back: back) { return }
+        // UI tests: the words in view as the veil lifted, to tell a landing that moved after it (`jumpLandingProbe`).
+        let lifted = markingTheMatch && LaunchOptions.isUITest ? await page?.visibleRange()?.text : nil
+        if markingTheMatch {
             guard moves == move, !isClosed else { return }
             host?.underline(locator, color: theme.palette.accent, fades: false)
             watchUnderline()
         }
         await captureAnchor()
+        // UI tests: the words in view half a second after the landing, against those as the veil lifted.
+        if let lifted {
+            Task { [weak self] in
+                try? await Task.sleep(for: .milliseconds(500))
+                guard let self, self.moves == move, !self.isClosed else { return }
+                let now = await self.page?.visibleRange()?.text
+                let onMatch = Self.settleProbe(Self.matchInContext(locator)).map { ReaderJS.normalize(lifted).contains($0) } ?? true
+                self.jumpLandingProbe = "search: " + (!onMatch ? "lifted off its match"
+                    : lifted == now ? "lifted on its page" : "moved after the veil lifted")
+            }
+        }
+    }
+
+    /// Once a search's page is pictured under the veil: if its match is no longer on screen, the page goes back to it,
+    /// still under the veil, and this says it moved (gatefold#653). Not once he has moved or the book has closed.
+    private func goBackToSlippedMatch(_ match: Locator, move: Int, his: Int) async -> Bool {
+        guard let probe = Self.settleProbe(match), moves == move, hisSteps == his, !isClosed else { return false }
+        let onScreen = await page?.visibleRange()?.text.map(ReaderJS.normalize) ?? ""
+        guard moves == move, hisSteps == his, !isClosed, !onScreen.contains(probe) else { return false }
+        readerLog.notice("settle: the match slipped off its page before the veil lifted; going back to it")
+        await settle(on: match, move: move, his: his, loaded: true)
+        return true
     }
 
     /// A search match with the words either side of it: the match alone is often one word, too short for `settle`
