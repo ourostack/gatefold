@@ -49,11 +49,22 @@ final class FeelReaderUITests: XCTestCase {
     func testOpenLandscapeScroll() throws { try walk(.openLandscape, .scroll) }
     func testOpenLandscapePaged() throws { try walk(.openLandscape, .paged) }
 
+    /// A page that never comes up fails as exactly that, and Feel judges nothing on it. On main's run 46076998864
+    /// (duo-feel-closed, a load of 500 on 3 CPUs) the first page took 86.6 s, the settle's 240 reads ran out with
+    /// the page not ready and said nothing, and Feel's cover check then failed "the running heads cover no text"
+    /// on a page with no text on screen (content=0). Here the opening load is held past those 240 reads.
+    func testAPageThatNeverComesUpFailsAsThat() throws {
+        let options = XCTExpectedFailure.Options()
+        options.issueMatcher = { $0.compactDescription.contains("the page never settled") }
+        XCTExpectFailure("the opening load is held, so the page never settles", options: options)
+        try walk(.closed, .paged, also: ["-GatefoldHoldOpeningLoad", "2400"])
+    }
+
     // MARK: The walk
 
-    private func walk(_ posture: Posture, _ mode: Mode) throws {
+    private func walk(_ posture: Posture, _ mode: Mode, also: [String] = []) throws {
         try pose(posture)
-        launch(mode)
+        launch(mode, also: also)
         let at = "\(posture.rawValue), \(mode == .scroll ? "scroll" : "paged")"
         print("FEEL: \(name) window \(app.windows.firstMatch.frame) (\(at))")
 
@@ -180,12 +191,12 @@ final class FeelReaderUITests: XCTestCase {
     private static let book = "gutenberg-pride-and-prejudice"
 
     /// A fresh library, signed in to the fake cloud, opened straight into the book at 12% (past its front matter) in `mode`.
-    private func launch(_ mode: Mode) {
+    private func launch(_ mode: Mode, also: [String] = []) {
         app = XCUIApplication()
         app.launchArguments = ["-GatefoldUITest", "YES", "-GatefoldFakeCloud", "YES", "-GatefoldSkipWelcome", "YES",
                                "-GatefoldSignedIn", "YES", "-GatefoldNoLatency", "YES", "-GatefoldReset", "YES",
                                "-GatefoldDownloadAll", "YES", "-GatefoldOpenBook", Self.book, "-GatefoldGoTo", "0.12",
-                               "-GatefoldPageTurn", mode.rawValue]
+                               "-GatefoldPageTurn", mode.rawValue] + also
         app.launch()
         feel = OuroFeel(app)
         XCTAssertTrue(el("reader.page").waitForExistence(timeout: 120), "the book opened")
