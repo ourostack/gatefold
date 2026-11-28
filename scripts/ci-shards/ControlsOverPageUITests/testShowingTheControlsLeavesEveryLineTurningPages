@@ -1,0 +1,4 @@
+main|iPad Pro 13-inch
+main|iPhone Duo
+iPhone Duo	60	# estimate until CI has run it (build 53; about 40 s locally)
+iPad Pro 13-inch	60	# estimate until CI has run it (build 53; about 50 s locally)

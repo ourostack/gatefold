@@ -1,0 +1,4 @@
+main|iPad Pro 13-inch
+main|iPhone Duo
+iPad Pro 13-inch	200	# one CI pass so far, 152 s (run 43465939101); 200 until CI has timed more (gatefold#366)
+iPhone Duo	10	# skipped: iPad only (gatefold#366)

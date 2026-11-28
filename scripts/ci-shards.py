@@ -1,6 +1,6 @@
 """Checks the UI test shards' lists in app.yml against the tests in GatefoldUITests (gatefold#39).
 
-    python3 -I scripts/ci-shards.py check [--list] [--expect FILE]
+    python3 -I scripts/ci-shards.py check [--list] [--expect]
     python3 -I scripts/ci-shards.py write
     python3 -I scripts/ci-shards.py smoke DEVICE [CLASS ...]
     python3 -I scripts/ci-shards.py --selftest
@@ -15,14 +15,19 @@ main and full-list pull requests) this fails when
   - one test runs in two shards on the same device in the same tier,
   - a shard's `timeout` is under `<setup> + 2 x <slowest> + 5 + 12` rounded up, or its comment doesn't show that sum:
     <setup> is the `boot` ui-tests.yml gives the time-left action (gatefold#198), <slowest> the minutes its tests'
-    slowest passes add up to in scripts/ci-shards.times, for whichever of its two lists (main or PR) runs longer, and
+    slowest passes add up to in scripts/ci-shards/, for whichever of its two lists (main or PR) runs longer, and
     5 the test step's minutes no test gets (LAUNCH below; gatefold#260),
-  - a test that a shard runs has no slowest pass in scripts/ci-shards.times, or a line there names no test CI runs,
+  - a test that a shard runs has no slowest pass in scripts/ci-shards/, or a slowest pass there is for a device no
+    shard runs it on,
   - a UI test source has an `async` setUp, tearDown or test method (ASYNC_WHY below; gatefold#395).
---list prints every "tier|device|test" with its shard. --expect FILE fails unless that set equals the file's (the first
-word of each line; blank lines and lines starting with # ignored). CI checks against scripts/ci-shards.expect, so a
-test leaves CI only by a visible edit there: after adding or removing a test, `write` rewrites the file from the shards
-(keeping its comment header), and the diff shows what changed.
+--list prints every "tier|device|test" with its shard. --expect fails unless that set equals the one scripts/ci-shards/
+records, so a test leaves CI only by a visible edit there: after adding or removing a test, `write` rewrites those
+files from the shards, and the diff shows what changed.
+scripts/ci-shards/ holds one file per test, <Class>/<test>, so two pull requests that each add a test add two files and
+never conflict (gatefold#639, #660, #664 and #667 each conflicted on the one-file lists this replaced, and each
+conflict restarted hours of tests). A file has a line `tier|device` for each tier and device a shard runs the test in
+(`write` writes these), then `device<TAB>seconds` for its slowest pass on that device, then any notes. Its README.md
+says where the seconds come from.
 `smoke` prints the job limit for DEVICE's smoke shard when a pull request also runs the UI test classes it edits there:
 the same formula over the smoke PR list and those classes (the changes job passes it on; gatefold#260).
 Reads only; no dependencies beyond python3. It runs in the job `CI scripts, offline`, which `GatefoldCore tests` (a
@@ -40,11 +45,12 @@ RESERVE = 12  # the time-left action's default, kept for the logs after the test
 # the run (159 s at the 99th percentile of 4008 green test steps, 2026-11-08 to 11-12). It once held ci-within.py's
 # 2 min stop (its GRACE) too; since gatefold#353 the time-left action takes that from the reserve, so these 5 leave 2 spare.
 LAUNCH = 5
-TIMES_NAME = "scripts/ci-shards.times"
-TIMES = os.path.join(ROOT, TIMES_NAME)
+STORE_NAME = "scripts/ci-shards"
+STORE = os.path.join(ROOT, STORE_NAME)
+# The one-file lists the store replaced; `write` moves a leftover's slowest passes into the store (a branch from before).
+LEGACY = ("scripts/ci-shards.times", "scripts/ci-shards.expect")
 SOURCES = os.path.join(ROOT, "GatefoldUITests")
 TIERS = ("pr", "main")
-EXPECT = os.path.join(ROOT, "scripts", "ci-shards.expect")
 WRITE = "python3 -I scripts/ci-shards.py write"
 
 
@@ -242,25 +248,65 @@ def boot_of(shard_text):
     return int(m.group(1)) if m else None
 
 
-def read_times(path):
-    with open(path, encoding="utf-8") as f:
-        return read_times_text(f.read())
+def test_file(test, store=STORE):
+    """The store's file for Class/test."""
+    return os.path.join(store, *test.split("/", 1))
 
 
-def read_times_text(text):
-    """({"device|Class/test": seconds}, problems) from the times file: `device|Class/test<TAB>seconds`, then notes."""
-    times, problems = {}, []
+def read_store(store=STORE):
+    """({"device|Class/test": seconds}, {"tier|device|Class/test"}, problems) from every test's file in the store."""
+    times, runs, problems = {}, set(), []
+    if not os.path.isdir(store):
+        return times, runs, [f"{STORE_NAME}/ is missing: run `{WRITE}`"]
+    for cls in sorted(os.listdir(store)):
+        folder = os.path.join(store, cls)
+        if not os.path.isdir(folder):
+            continue  # README.md
+        for name in sorted(os.listdir(folder)):
+            with open(os.path.join(folder, name), encoding="utf-8") as f:
+                t, r, p = read_test_text(f"{cls}/{name}", f.read())
+            if not t and not r and not p:
+                p = [f"{STORE_NAME}/{cls}/{name} says nothing about its test: delete it (`write` does)"]
+            times.update(t)
+            runs |= r
+            problems += p
+    return times, runs, problems
+
+
+def read_test_text(test, text):
+    """({"device|test": seconds}, {"tier|device|test"}, problems) from one test's file: `tier|device` for each place CI
+    runs it, `device<TAB>seconds` (then notes) for its slowest pass there; blank lines and # lines ignored."""
+    times, runs, problems = {}, set(), []
     for n, line in enumerate(text.splitlines(), 1):
         if not line.strip() or line.lstrip().startswith("#"):
             continue
-        cols = line.split("\t")
-        if len(cols) < 2 or not re.fullmatch(r"\d+", cols[1].strip()) or "|" not in cols[0]:
-            problems.append(f"line {n} should read `device|Class/test<TAB>seconds`: {line.strip()}")
+        where = f"{STORE_NAME}/{test} line {n}"
+        if "\t" in line:
+            cols = line.split("\t")
+            device = cols[0].strip()
+            if not device or "|" in device or not re.fullmatch(r"\d+", cols[1].strip()):
+                problems.append(f"{where} should read `device<TAB>seconds`: {line.strip()}")
+                continue
+            if f"{device}|{test}" in times:
+                problems.append(f"{where}: {device}'s slowest pass is listed twice")
+            times[f"{device}|{test}"] = int(cols[1])
             continue
-        if cols[0].strip() in times:
-            problems.append(f"line {n}: {cols[0].strip()} is listed twice")
-        times[cols[0].strip()] = int(cols[1])
-    return times, problems
+        tier, _, device = line.strip().partition("|")
+        if tier not in TIERS or not device or "|" in device:
+            problems.append(f"{where} should read `tier|device`, a tier being {' or '.join(TIERS)}, or "
+                            f"`device<TAB>seconds`: {line.strip()}")
+            continue
+        if f"{tier}|{device}|{test}" in runs:
+            problems.append(f"{where}: {tier}|{device} is listed twice")
+        runs.add(f"{tier}|{device}|{test}")
+    return times, runs, problems
+
+
+def legacy_problems(root=ROOT):
+    """A one-file list left over from a branch made before the store: its lines belong in the store."""
+    return [f"{name} is gone: each test has a file of its own in {STORE_NAME}/, so two pull requests that each add a test "
+            f"never conflict. Run `{WRITE}`, which moves this file's slowest passes there, then delete it"
+            for name in LEGACY if os.path.exists(os.path.join(root, name))]
 
 
 def tenths_up(seconds):
@@ -298,14 +344,16 @@ def limit_problems(lists, boot, times):
         timeout = int(s["timeout"]) if s.get("timeout", "").isdigit() else None
         if re.sub(r"\s+", " ", note.strip()) != want or timeout is None or not need <= timeout <= need + 1:
             out.append(f"{where}: its timeout should read `{need} # {want}`: {boot} for setup, twice its {tier} list's "
-                       f"slowest passes ({sums[tier]} s in {TIMES_NAME}), {LAUNCH} for the test run's start and its stop's "
+                       f"slowest passes ({sums[tier]} s in {STORE_NAME}/), {LAUNCH} for the test run's start and its stop's "
                        f"grace, {RESERVE} for the logs; it reads {s.get('timeout', '?')} # {note or '(no formula)'}")
     for k in sorted(missing):
-        out.append(f"{k} has no slowest pass in {TIMES_NAME}, so its shard's limit can't be checked: add a line "
-                   f"`{k}<TAB><seconds>`, its slowest passing time in CI (an estimate until CI has run it), then rerun "
+        device, test = k.split("|", 1)
+        out.append(f"{k} has no slowest pass, so its shard's limit can't be checked: add the line `{device}<TAB><seconds>` "
+                   f"to {STORE_NAME}/{test}, its slowest passing time in CI (an estimate until CI has run it), then rerun "
                    "this check for its shard's timeout line")
     for k in sorted(set(times) - used):
-        out.append(f"{k} is in {TIMES_NAME}, but no shard runs it: remove its line")
+        device, test = k.split("|", 1)
+        out.append(f"{k} has a slowest pass in {STORE_NAME}/{test}, but no shard runs it on {device}: remove that line")
     return out
 
 
@@ -338,7 +386,7 @@ def smoke(args):
         text = f.read()
     with open(SHARD, encoding="utf-8") as f:
         boot = boot_of(f.read())
-    need, want = smoke_limit(text, read_tests(SOURCES), read_times(TIMES)[0], boot, args[0], args[1:])
+    need, want = smoke_limit(text, read_tests(SOURCES), read_store()[0], boot, args[0], args[1:])
     print(need)
     print(f"{need} # {want}", file=sys.stderr)
     return 0
@@ -350,8 +398,8 @@ def check(args):
     lists = []
     problems, runs = plan(text, read_tests(SOURCES), lists)
     problems += async_problems(SOURCES)
-    times, bad = read_times(TIMES)
-    problems += [f"{TIMES_NAME} {p}" for p in bad]
+    times, recorded, bad = read_store()
+    problems += bad + legacy_problems()
     with open(SHARD, encoding="utf-8") as f:
         problems += limit_problems(lists, boot_of(f.read()), times)
     listed = []
@@ -359,10 +407,7 @@ def check(args):
         for (tier, device, t), names in sorted(runs.items()):
             print(f"{tier}|{device}|{t}\t{','.join(names)}")
     if "--expect" in args:
-        with open(args[args.index("--expect") + 1], encoding="utf-8") as f:
-            want = {l.split("\t")[0].strip() for l in f if l.strip() and not l.lstrip().startswith("#")}
-        have = {f"{tier}|{device}|{t}" for tier, device, t in runs}
-        listed += expect_problems(want, have)
+        listed += expect_problems(recorded, {f"{tier}|{device}|{t}" for tier, device, t in runs})
     for tier in TIERS:
         devices = sorted({d for (ti, d, _) in runs if ti == tier})
         print(f"{tier}: " + "; ".join(
@@ -370,7 +415,7 @@ def check(args):
     for p in problems:
         print(f"::error title=UI test shards (.github/workflows/app.yml)::{p}")
     for p in listed:
-        print(f"::error title=UI test list (scripts/ci-shards.expect)::{p}")
+        print(f"::error title=UI test list ({STORE_NAME}/)::{p}")
     if not problems and not listed:
         print("Every listed test exists, and each runs in exactly one shard per device and tier.")
     return 1 if problems or listed else 0
@@ -380,36 +425,69 @@ def expect_problems(want, have):
     """What differs between the expect file's set and the shards', each with the fix."""
     out = []
     for line in sorted(have - want):
-        out.append(f"UI test {line} runs in CI but isn't in scripts/ci-shards.expect. If you added it, run `{WRITE}` "
-                   "and commit the file.")
+        out.append(f"UI test {line} runs in CI but isn't in {STORE_NAME}/{line.split('|', 2)[2]}. If you added it, run "
+                   f"`{WRITE}` and commit the file.")
     for line in sorted(want - have):
-        out.append(f"UI test {line} is in scripts/ci-shards.expect, but no shard runs it: was it renamed, removed or "
-                   f"dropped from a shard's list in app.yml? If that's intended, run `{WRITE}` and commit the file.")
+        out.append(f"UI test {line} is in {STORE_NAME}/{line.split('|', 2)[2]}, but no shard runs it: was it renamed, "
+                   f"removed or dropped from a shard's list in app.yml? If that's intended, run `{WRITE}` and commit "
+                   "the change.")
     return out
 
 
-def write(path=EXPECT, workflow=WORKFLOW, sources=SOURCES):
-    """Rewrite the expect file from the shards, keeping its leading comment lines."""
+def write(store=STORE, workflow=WORKFLOW, sources=SOURCES, root=ROOT):
+    """Rewrite each test's `tier|device` lines in the store from the shards, keeping its other lines (its slowest
+    passes and notes). A leftover one-file times list's lines move into the store; a file left with no lines goes."""
     with open(workflow, encoding="utf-8") as f:
         problems, runs = plan(f.read(), read_tests(sources))
     if problems:
-        # A broken entry drops its tests from the set, so writing now would quietly drop them from the file too.
+        # A broken entry drops its tests from the set, so writing now would quietly drop them from the store too.
         for p in problems:
             print(f"::error title=UI test shards (.github/workflows/app.yml)::{p}")
-        print("Fix the shards first; scripts/ci-shards.expect is unchanged.")
+        print(f"Fix the shards first; {STORE_NAME}/ is unchanged.")
         return 1
-    header = []
-    if os.path.exists(path):
-        with open(path, encoding="utf-8") as f:
-            for l in f:
-                if not l.lstrip().startswith("#"):
-                    break
-                header.append(l)
-    lines = sorted(f"{tier}|{device}|{t}" for tier, device, t in runs)
-    with open(path, "w", encoding="utf-8") as f:
-        f.writelines(header)
-        f.write("".join(l + "\n" for l in lines))
-    print(f"wrote {len(lines)} tests to {os.path.relpath(path, ROOT)}")
+    places = {}
+    for tier, device, t in runs:
+        places.setdefault(t, set()).add(f"{tier}|{device}")
+    kept = {}
+    if os.path.isdir(store):
+        for cls in os.listdir(store):
+            if os.path.isdir(os.path.join(store, cls)):
+                for name in os.listdir(os.path.join(store, cls)):
+                    with open(os.path.join(store, cls, name), encoding="utf-8") as f:
+                        kept[f"{cls}/{name}"] = [l for l in f.read().splitlines()
+                                                 if "\t" in l or l.lstrip().startswith("#")]
+    moved = 0
+    old = os.path.join(root, LEGACY[0])
+    if os.path.exists(old):
+        with open(old, encoding="utf-8") as f:
+            for line in f.read().splitlines():
+                key = line.split("\t", 1)[0].strip()
+                if line.lstrip().startswith("#") or "\t" not in line or "|" not in key:
+                    continue
+                device, test = key.split("|", 1)
+                have = kept.setdefault(test, [])
+                if not any(l.split("\t", 1)[0].strip() == device for l in have if "\t" in l):
+                    have.append(device + line[len(key):])
+                    moved += 1
+    gone = 0
+    for test in sorted(set(places) | set(kept)):
+        path = test_file(test, store)
+        lines = sorted(places.get(test, ())) + kept.get(test, [])
+        if not lines:
+            os.remove(path)
+            gone += 1
+            if not os.listdir(os.path.dirname(path)):
+                os.rmdir(os.path.dirname(path))
+            continue
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("".join(l + "\n" for l in lines))
+    print(f"wrote {len(places)} tests' files in {os.path.relpath(store, root)}/" + (f", removed {gone}" if gone else ""))
+    if moved:
+        print(f"moved {moved} slowest passes from {LEGACY[0]}")
+    for name in LEGACY:
+        if os.path.exists(os.path.join(root, name)):
+            print(f"delete {name}: the store holds its lines now")
     return 0
 
 
@@ -587,8 +665,8 @@ jobs:
     # A new test, and one that went: each message names the test and the command that fixes the file (#195 read a
     # missing line as a unit-test failure).
     new, gone = expect_problems({"main|d|A/t1", "main|d|A/gone"}, {"main|d|A/t1", "main|d|A/added"})
-    assert "main|d|A/added runs in CI but isn't in scripts/ci-shards.expect" in new and WRITE in new, new
-    assert "main|d|A/gone is in scripts/ci-shards.expect, but no shard runs it" in gone and WRITE in gone, gone
+    assert "main|d|A/added runs in CI but isn't in scripts/ci-shards/A/added" in new and WRITE in new, new
+    assert "main|d|A/gone is in scripts/ci-shards/A/gone, but no shard runs it" in gone and WRITE in gone, gone
     assert expect_problems({"x"}, {"x"}) == []
     # The limit: the boot's minutes, twice the slowest passes rounded up, the run's start and stop, and the reserve
     # (gatefold#198), the slowest summed from the times file over the tier that runs longer (gatefold#260).
@@ -632,9 +710,11 @@ jobs:
     unknown = limits(ok, known={k: v for k, v in times.items() if not k.endswith("testTwo")})
     assert any("AUITests/testTwo has no slowest pass" in p for p in unknown), unknown
     stale = limits(ok, known=dict(times, **{ipad + "AUITests/testGone": 60}))
-    assert any("AUITests/testGone is in scripts/ci-shards.times, but no shard runs it" in p for p in stale), stale
-    assert read_times_text("iPad|A/t\t60\tnote\n# c\n\nbad line\n") == ({"iPad|A/t": 60}, ["line 4 should read "
-                                                                                     "`device|Class/test<TAB>seconds`: bad line"])
+    assert any("AUITests/testGone has a slowest pass in scripts/ci-shards/AUITests/testGone, but no shard runs it"
+               in p for p in stale), stale
+    got = read_test_text("A/t", "main|iPad\npr|iPad\niPad\t60\t# note\n# c\n\nbad line\n")
+    assert got[:2] == ({"iPad|A/t": 60}, {"main|iPad|A/t", "pr|iPad|A/t"}), got
+    assert len(got[2]) == 1 and got[2][0].startswith("scripts/ci-shards/A/t line 6 should read `tier|device`"), got
     over = limits(f"{need(5.8) + 2} # 30 + 2 x 5.8 + {LAUNCH} + 12")  # more than a minute over: a hang waits longer
     assert any(f"should read `{need(5.8)} #" in p for p in over), over
     # Rounding up to a tenth: 120 + 229 s is 5.817 min, so 5.9.
@@ -653,7 +733,10 @@ jobs:
     assert any("twice its main list's slowest passes (120 s" in p for p in got), got
     # A shard with a test the times file lacks isn't sized until it has the line, so the fix takes one round.
     assert not any("s1: its timeout" in p for p in unknown), unknown
-    assert any("listed twice" in p for p in read_times_text("d|A/t\t1\nd|A/t\t2\n")[1])
+    assert any("listed twice" in p for p in read_test_text("A/t", "d\t1\nd\t2\n")[2])
+    assert any("listed twice" in p for p in read_test_text("A/t", "main|d\nmain|d\n")[2])
+    assert any("should read" in p for p in read_test_text("A/t", "nightly|d\nd\tsoon\n")[2])
+    store_selftest(wf, tests)
     # The smoke shard with edited classes: its PR list plus every test of each class, a time from the other device
     # when this one has none, else UNKNOWN_SECONDS.
     smokewf = wf(f"""          - shard: s1
@@ -670,6 +753,64 @@ jobs:
     assert limit_problems([], None, {}) != []
     print("ci-shards selftest: ok")
     return 0
+
+
+def store_selftest(wf, tests):
+    """`write` builds the store from the shards and keeps each file's slowest passes; a leftover one-file list's lines
+    move in; check's reader reads back what `write` wrote."""
+    import contextlib
+    import io
+    import tempfile
+    workflow = wf("""          - shard: s1
+            tests: AUITests BUITests
+            timeout: 30
+            cold: false""")
+    with tempfile.TemporaryDirectory() as root:
+        sources, store = os.path.join(root, "GatefoldUITests"), os.path.join(root, "scripts", "ci-shards")
+        os.makedirs(sources)
+        os.makedirs(os.path.join(root, "scripts"))
+        with open(os.path.join(sources, "A.swift"), "w") as f:
+            f.write("final class AUITests: XCTestCase {\n    func testOne() {}\n    func testTwo() {}\n}\n"
+                    "final class BUITests: XCTestCase {\n    func testThree() {}\n}\n")
+        with open(os.path.join(root, "app.yml"), "w") as f:
+            f.write(workflow)
+        with open(os.path.join(root, LEGACY[0]), "w") as f:
+            f.write("# header\niPad Pro 13-inch|AUITests/testOne\t60\t# p95\niPad Pro 13-inch|AUITests/testGone\t9\n")
+        assert legacy_problems(root) and "moves this file's slowest passes" in legacy_problems(root)[0]
+        os.makedirs(os.path.join(store, "BUITests"))
+        with open(os.path.join(store, "BUITests", "testThree"), "w") as f:
+            f.write("main|stale\niPad Pro 13-inch\t30\t# kept\n")
+        with open(os.path.join(store, "README.md"), "w") as f:
+            f.write("ignored\n")
+        with contextlib.redirect_stdout(io.StringIO()):
+            assert write(store, os.path.join(root, "app.yml"), sources, root) == 0
+        times, runs, problems = read_store(store)
+        assert problems == [], problems
+        assert runs == {f"{tier}|iPad Pro 13-inch|{t}" for tier in TIERS
+                        for t in ("AUITests/testOne", "AUITests/testTwo", "BUITests/testThree")}, runs
+        assert times == {"iPad Pro 13-inch|AUITests/testOne": 60, "iPad Pro 13-inch|BUITests/testThree": 30,
+                         "iPad Pro 13-inch|AUITests/testGone": 9}, times
+        with open(os.path.join(store, "AUITests", "testOne")) as f:
+            assert f.read() == "main|iPad Pro 13-inch\npr|iPad Pro 13-inch\niPad Pro 13-inch\t60\t# p95\n"
+        # A test no shard runs keeps only its slowest pass, which check then names; with that line gone, write removes
+        # the file and its class's folder.
+        with open(os.path.join(store, "AUITests", "testGone")) as f:
+            assert f.read() == "iPad Pro 13-inch\t9\n"
+        os.rename(os.path.join(root, LEGACY[0]), os.path.join(root, "old"))
+        with open(os.path.join(store, "AUITests", "testGone"), "w") as f:
+            f.write("")
+        workflow = workflow.replace("AUITests BUITests", "BUITests")
+        with open(os.path.join(root, "app.yml"), "w") as f:
+            f.write(workflow)
+        with contextlib.redirect_stdout(io.StringIO()):
+            assert write(store, os.path.join(root, "app.yml"), sources, root) == 0
+        assert not os.path.exists(os.path.join(store, "AUITests", "testGone"))
+        # testTwo had only its run lines; testOne keeps its slowest pass, for check to name.
+        assert os.listdir(os.path.join(store, "AUITests")) == ["testOne"], os.listdir(os.path.join(store, "AUITests"))
+        assert read_store(store)[1] == {f"{tier}|iPad Pro 13-inch|BUITests/testThree" for tier in TIERS}
+        with open(os.path.join(store, "BUITests", "testEmpty"), "w") as f:
+            f.write("# only a note\n")
+        assert any("testEmpty says nothing" in p for p in read_store(store)[2]), read_store(store)[2]
 
 
 if __name__ == "__main__":
