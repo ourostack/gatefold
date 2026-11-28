@@ -57,3 +57,8 @@ com.apple.financed
 com.apple.SafariBookmarksSyncAgent
 com.apple.FamilyControlsAgent
 com.apple.calaccessd
+# Mail's daemon (gatefold#363): in the 3 probe shards that failed 6 XCTest terminates each (probes 4 and 6), maild
+# ran at about 45% of a CPU from about 6 min after the boot, with diagnosticd at about 135% of the runner's 300%; in
+# the 10 shards with 0 or 1 failure (probes 5 to 7) it never went over 20%. Probe 7 (46153386819) unloaded it in 3
+# shards and all 30 rounds passed, but maild didn't spin in its 2 control shards either. Gatefold uses no mail.
+com.apple.email.maild
