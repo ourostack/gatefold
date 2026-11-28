@@ -178,6 +178,14 @@ final class GatefoldTelemetry: @unchecked Sendable {
         return p
     }
 
+    /// How the shelf's arrival note ended: timed out, closed, Read, or replaced by another arrival.
+    enum NoteEnd: String { case timed, closed, read, replaced }
+
+    /// The arrival note's end, as counts only: how it ended and whether it offered Read, never its words or books.
+    static func noteProperties(end: NoteEnd, hadRead: Bool) -> [String: Value] {
+        ["ended": .string(end.rawValue), "had_read": .bool(hadRead)]
+    }
+
     /// A catalog page's covers: how many of its books there are and how many the catalog gave a picture, or nil for
     /// a page with no books. Counts only: never a title, address or picture.
     static func coverProperties(_ page: [CatalogEntry]) -> [String: Value]? {

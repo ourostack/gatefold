@@ -295,6 +295,16 @@ enum LaunchOptions {
     static var showChrome: Bool { defaults.bool(forKey: "GatefoldShowChrome") }
     static var noLatency: Bool { defaults.bool(forKey: "GatefoldNoLatency") }
     static var downloadAll: Bool { defaults.bool(forKey: "GatefoldDownloadAll") }
+    /// UI tests: sample books (resource names, comma-separated) arrive once the app has started, as if chosen in
+    /// Files, so the shelf's arrival note shows without the picker.
+    static var arrive: [String]? {
+        guard isUITest, let names = defaults.string(forKey: "GatefoldArrive") else { return nil }
+        return names.split(separator: ",").map(String.init)
+    }
+    /// UI tests: the arrival note stays until closed, so a slow runner still finds it.
+    static var holdNotes: Bool { isUITest && defaults.bool(forKey: "GatefoldHoldNotes") }
+    /// How long after the start they arrive (`GatefoldArriveAfter`, seconds), so a test can be watching first.
+    static var arriveAfter: Double { defaults.double(forKey: "GatefoldArriveAfter") }
     /// UI tests: the shelf's on-device count never opens the book asked for, as it failed to on CI (gatefold#432), so
     /// only the library's word that the book landed can open it (`AskedBookOpensUITests`).
     static var missCountOpen: Bool { defaults.bool(forKey: "GatefoldMissCountOpen") }

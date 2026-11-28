@@ -301,6 +301,8 @@ jobs:
           # The rotation shards only: the runner draws the spread two to four times slower than a Mac (up to 50 s
           # seen), so 90 s still fails a page left stuck for good. Empty elsewhere, which the tests read as no floor.
           TEST_RUNNER_GATEFOLD_SPREAD_FLOOR: ${{ inputs.cold && '90' || '' }}
+          # Screenshots a test takes as a pull request's proof (GatefoldUITests/ArrivalNoteUITests.swift), kept with the logs.
+          TEST_RUNNER_GATEFOLD_PROOF_SHOTS: ${{ runner.temp }}/proof
         run: |
           set -o pipefail
           # A pull request runs the PR list, and in a smoke shard the UI test classes it edits; main and full-list pull
@@ -395,6 +397,7 @@ jobs:
             ${{ runner.temp }}/hangs.log
             ${{ runner.temp }}/devicehub.log
             ${{ runner.temp }}/duo/shots
+            ${{ runner.temp }}/proof
       - uses: actions/upload-artifact@v4
         # The result bundles only when the job did not pass: they are large (gatefold#127).
         if: failure() || cancelled()

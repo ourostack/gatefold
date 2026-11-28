@@ -244,6 +244,7 @@ struct RootView: View {
         .task {
             if let tour = LaunchOptions.openTour { await openTour(tour) }
         }
+        .onChange(of: reader == nil, initial: true) { _, none in app.readerShowing = !none }
         .fullScreenCover(item: $reader) { model in
             ReaderScreen(model: model) { closeReader(model) }
             // Zooms from its cover, except when reopening onto his page's picture: a zoom there drew a
