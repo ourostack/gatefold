@@ -155,7 +155,13 @@ final class SingleColumnUITests: XCTestCase {
         let row = app.buttons.matching(NSPredicate(format: "label CONTAINS[c] %@", "Chapter XXX")).firstMatch
         let beforeJump = words
         XCTAssertTrue(ContentsRow.tap(row, in: app).ok, "the contents list chapter XXX")
-        let jumped = readsUntil(reads: 300) { words != beforeJump && !words.isEmpty }
+        // Landed: the veil down and other words on the page. Chapter XXX's load took 51 s (#500) and 114 s (#416) on
+        // CI's starved iPad, and over 90 s at a load of 550 here (#509): the veil lets go after about 30 s and the
+        // chapter shows its own loading until it comes in, so the wait is the cover's allowance, as
+        // NavigationPlaceUITests' `readsUntilMoved` waits for the same jump. `HangGuard` ends it only on a hang.
+        let veil = el("reader.veil")
+        let jumped = readsUntil(reads: ReaderReads.coverReads) { words != beforeJump && !words.isEmpty && !veil.exists }
+        print("COLUMNS Contents jump: landed \(jumped.ok) after \(jumped.reads) reads\(jumped.hung ? ", hang guard" : "")")
         XCTAssertTrue(jumped.ok, "the Contents jump moved the page within \(jumped.reads) reads\(jumped.hung ? " (hang guard)" : "")")
         hideControls()
         expectOneColumn("after a Contents jump")
