@@ -10,9 +10,9 @@ import UIKit
 /// a change of paper has no restore at all.
 @MainActor
 struct KeptMarginsTests {
-    private func basis(_ choice: PageMargins = .normal, columns: GatefoldCore.ColumnCount = .one, tabletop: Bool = false,
+    private func basis(_ choice: PageMargins = .normal, columns: GatefoldCore.ColumnCount = .one,
                        width: CGFloat) -> ReaderModel.MarginsBasis {
-        ReaderModel.MarginsBasis(choice: choice, columns: columns, tabletop: tabletop,
+        ReaderModel.MarginsBasis(choice: choice, columns: columns,
                                  band: ReaderModel.marginBand(columns: columns, viewWidth: width))
     }
 
@@ -29,10 +29,9 @@ struct KeptMarginsTests {
         #expect(ReaderModel.pageMargins(fresh: 1.4, applied: 1.1, laidFor: basis(width: 466), now: basis(.wide, width: 466)) == 1.4)
     }
 
-    @Test func newColumnsTabletopOrAnotherStepWorkThemOutAfresh() {
+    @Test func newColumnsOrAnotherStepWorkThemOutAfresh() {
         let was = basis(width: 1032)
         #expect(ReaderModel.pageMargins(fresh: 1.4, applied: 1.1, laidFor: was, now: basis(columns: .two, width: 1032)) == 1.4)
-        #expect(ReaderModel.pageMargins(fresh: 1.4, applied: 1.1, laidFor: was, now: basis(tabletop: true, width: 1032)) == 1.4)
         #expect(ReaderModel.pageMargins(fresh: 1.4, applied: 1.1, laidFor: basis(width: 402), now: basis(width: 1032)) == 1.4)
     }
 

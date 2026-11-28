@@ -356,7 +356,7 @@ final class ReaderModel {
         let openingBand = Self.marginBand(columns: .one, viewWidth: openingWidth)
         marginsLaidFor = openingBand
         appliedPageMargins = opening.pageMargins
-        marginsBasis = MarginsBasis(choice: prefs.margins, columns: .one, tabletop: false, band: openingBand)
+        marginsBasis = MarginsBasis(choice: prefs.margins, columns: .one, band: openingBand)
         do {
             hostController = try ReaderHostController(
                 model: self,
@@ -551,7 +551,7 @@ final class ReaderModel {
     var screenLayout: ScreenPageLayout? {
         let prefs = preferences
         guard prefs.pageTurn != .scroll, !readingOrderHrefs.isEmpty else { return nil }
-        let epub = Self.epubPreferences(prefs, theme: theme, columns: layout.columns, viewWidth: layout.pageFrame.width, tabletop: layout.posture == .tabletop)
+        let epub = Self.epubPreferences(prefs, theme: theme, columns: layout.columns, viewWidth: layout.pageFrame.width)
         return ScreenPageLayout(width: layout.pageFrame.width, height: layout.pageFrame.height,
                                 columnsPerScreen: layout.columns == .two ? 2 : 1, fontScale: prefs.fontScale,
                                 lineHeight: epub.lineHeight ?? 0, margins: appliedPageMargins ?? epub.pageMargins ?? 1,
@@ -2287,8 +2287,10 @@ final class ReaderModel {
     func updateLayout(_ new: ReaderLayout, reason: ReflowReason) {
         guard new != layout else { return }
         readerLog.notice("layout \(new.posture.rawValue, privacy: .public) \(new.pageFrame.width, privacy: .public)x\(new.pageFrame.height, privacy: .public)")
-        let columnsChanged = new.columns != layout.columns || (new.posture == .tabletop) != (layout.posture == .tabletop)
-        if new.posture != layout.posture || new.pageFrame.size != layout.pageFrame.size {
+        // Tabletop is the page it is flat (`ReaderLayoutResolver`): half open and back re-lays out nothing, so it names
+        // no reflow either (a reason left waiting would be taken by the next one, a new look's).
+        let columnsChanged = new.columns != layout.columns
+        if columnsChanged || new.pageFrame.size != layout.pageFrame.size {
             pendingReflowReason = reason
         }
         let clearanceChanged = new.textTopClearance != layout.textTopClearance
@@ -2327,11 +2329,10 @@ final class ReaderModel {
         let widePage: Bool
         let gutter: Double
     }
-    /// What the page's margins are worked out from: his Margins, the columns, tabletop and the width's step.
+    /// What the page's margins are worked out from: his Margins, the columns and the width's step.
     struct MarginsBasis: Equatable {
         let choice: PageMargins
         let columns: GatefoldCore.ColumnCount
-        let tabletop: Bool
         let band: MarginBand
     }
 
@@ -4118,10 +4119,10 @@ final class ReaderModel {
 
     func applyPreferences(reflow: Bool) {
         let prefs = preferences
-        var epub = Self.epubPreferences(prefs, theme: theme, columns: layout.columns, viewWidth: layout.pageFrame.width, tabletop: layout.posture == .tabletop,
+        var epub = Self.epubPreferences(prefs, theme: theme, columns: layout.columns, viewWidth: layout.pageFrame.width,
                                         language: Self.hyphenationLanguage(publication), fixedLayout: publication.metadata.layout == .fixed)
         let band = Self.marginBand(columns: layout.columns, viewWidth: layout.pageFrame.width)
-        let basis = MarginsBasis(choice: prefs.margins, columns: layout.columns, tabletop: layout.posture == .tabletop, band: band)
+        let basis = MarginsBasis(choice: prefs.margins, columns: layout.columns, band: band)
         epub.pageMargins = Self.pageMargins(fresh: epub.pageMargins, applied: appliedPageMargins, laidFor: marginsBasis, now: basis)
         if let host {
             host.apply(epub, columns: layout.columns == .two ? 2 : 1, reflow: reflow)
@@ -4139,10 +4140,10 @@ final class ReaderModel {
         publication.metadata.language ?? Language(code: .bcp47("en"))
     }
 
-    static func epubPreferences(_ prefs: ReaderPreferences, theme: ReaderTheme, columns: GatefoldCore.ColumnCount, viewWidth: CGFloat, tabletop: Bool = false, language: Language? = nil, fixedLayout: Bool = false) -> EPUBPreferences {
+    static func epubPreferences(_ prefs: ReaderPreferences, theme: ReaderTheme, columns: GatefoldCore.ColumnCount, viewWidth: CGFloat, language: Language? = nil, fixedLayout: Bool = false) -> EPUBPreferences {
         // Each choice keeps a share of the page's width (Classic Apple Books' measure on an iPad page),
-        // a spread's pages included; tabletop's half-height page keeps no more than Classic.
-        let choice: PageMargins = tabletop && prefs.margins == .wide ? .normal : prefs.margins
+        // a spread's pages included.
+        let choice: PageMargins = prefs.margins
         let view = Double(viewWidth)
         let page: Double = columns == .two ? view / 2 : view
         let margins: Double = choice.readiumFactor(pageWidth: page, viewWidth: view)

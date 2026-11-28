@@ -103,6 +103,9 @@ iPhone Duo|PositionUITests/testEveryPostureKeepsThePlace	120	# p95 of 107, slowe
 iPhone Duo|PositionUITests/testFontChangeKeepsThePlace	190	# p95 of 113, slowest 345
 iPhone Duo|PositionUITests/testRotationKeepsThePlace	116	# p95 of 106, slowest 151
 iPhone Duo|PositionUITests/testTabletopDeckTurnsAndResizes	259	# p95 of 112, slowest 444
+iPhone Duo|TabletopDeckUITests/testTheTabletopDeckFloatsAndGoesInScroll	150	# an estimate until CI has timed it (about 50 s locally)
+iPhone Duo|TabletopDeckUITests/testTheTabletopDeckFloatsAndGoesWithPages	150	# an estimate until CI has timed it (about 40 s locally)
+iPhone Duo|TabletopDeckUITests/testTheTabletopDeckFloatsAndGoesWithSlides	150	# an estimate until CI has timed it (about 40 s locally)
 iPhone Duo|QuickLeaveUITests/testTurnsThenAQuickLeaveReopenOnTheLastTurnsPage	115	# p95 of 2, slowest 115
 iPhone Duo|QuickLeaveUITests/testALeaveUnderTheReopensCoverAfterTheWatchdogKeepsHisPlace	10	# skipped: iPad only (gatefold#366)
 iPhone Duo|DuoLayoutUITests/testScrollingTextRunsToTheTopWithNoHeadOverIt	150	# an estimate until CI has timed it (about 60 s locally)

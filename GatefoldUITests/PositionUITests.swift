@@ -170,7 +170,13 @@ final class PositionUITests: XCTestCase {
         launch()
         expectAnchorKept("into tabletop") { app.buttons["debug.posture.tabletop"].tap() }
         expectPosture("tabletop")
+        // The deck comes up with the rest of the controls (a tap on the page), never stands over the page by itself.
         let larger = app.buttons["deck.larger"]
+        let centre = app.descendants(matching: .any)["reader.page"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.3))
+        for _ in 0..<3 where !larger.exists {
+            centre.tap()
+            _ = larger.waitForExistence(timeout: 4)
+        }
         XCTAssertTrue(larger.waitForExistence(timeout: 10))
         expectAnchorKept("tabletop, larger text") { tapSettled(larger) }
         tapSettled(app.buttons["deck.next"])

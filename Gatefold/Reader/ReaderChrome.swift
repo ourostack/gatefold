@@ -24,11 +24,11 @@ struct ReaderChrome: View {
     @State private var backSize: CGSize = .zero
 
     var body: some View {
-        let up = model.chromeVisible && layout.deck == nil
+        let up = model.chromeVisible
         ZStack(alignment: .bottom) {
             // No dim and no paper under the controls: the page shows as it is, every line where it was (build 53).
             // After a Jump the way back stays up for a while without the controls, low on the page.
-            if !model.chromeVisible, model.showJumpBack, model.backLocator != nil, layout.deck == nil {
+            if !model.chromeVisible, model.showJumpBack, model.backLocator != nil {
                 backButton
                     .padding(.bottom, max(insets.bottom, 12) + 8)
                     .transition(.scale.combined(with: .opacity))
@@ -42,7 +42,14 @@ struct ReaderChrome: View {
                         bookmarkButton
                     }
                 } bottom: {
-                    if layout.deck == nil { bottomBar }
+                    // Half open, the bottom half lies on the table: its controls are one deck, floating over the
+                    // page as glass and going with the rest, never an opaque panel cutting the page off (Ari,
+                    // 2026-11-27).
+                    if layout.posture == .tabletop {
+                        TabletopDeck(model: model, showAppearance: $showAppearance, showContents: $showContents)
+                    } else {
+                        bottomBar
+                    }
                 }
         }
         .animation(Motion.chrome, value: up)
@@ -375,10 +382,9 @@ struct TabletopDeck: View {
             }
         }
         .padding(.horizontal, 24)
-        .padding(.top, 22)
-        .padding(.bottom, 30)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .background(model.theme.background.mix(with: model.theme.text, by: 0.04))
+        .padding(.vertical, 20)
+        .frame(maxWidth: 560)
+        .readerGlass(model.theme.background.opacity(0.7), in: .rect(cornerRadius: 34, style: .continuous))
         .foregroundStyle(model.theme.text)
         .tint(model.theme.text)
         .sensoryFeedback(.selection, trigger: model.preferences.fontScale)

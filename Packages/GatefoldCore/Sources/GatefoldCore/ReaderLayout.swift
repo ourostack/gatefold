@@ -35,7 +35,8 @@ public enum Posture: String, CaseIterable, Sendable {
     case single
     /// Two facing pages with the gutter on the fold.
     case spread
-    /// Page above the fold, a control deck below it.
+    /// Half open, stood on a table: the page fills the screen, and its controls float over the lower half as one
+    /// deck of glass while they are up.
     case tabletop
 }
 
@@ -70,8 +71,6 @@ public struct ReaderLayout: Equatable, Sendable {
     public var pageFrame: CGRect
     /// The spine between facing pages; nothing tappable may sit here.
     public var gutter: CGRect?
-    /// The tabletop control deck.
-    public var deck: CGRect?
     public var columns: ColumnCount
     /// 0...1, a shadow at the spine that deepens as the device bends. Effect only.
     public var spineShadow: Double
@@ -87,8 +86,6 @@ public enum ReaderLayoutResolver {
     public static let minimumSpreadWidth: CGFloat = 700
     /// Clear space either side of an active fold.
     static let foldMargin: CGFloat = 12
-    /// In tabletop the page's last line stops this far above the fold, clear of the hinge's shadow.
-    static let tabletopPageInset: CGFloat = 16
 
     public static func resolve(_ input: LayoutInput) -> ReaderLayout {
         let bounds = CGRect(origin: .zero, size: input.containerSize)
@@ -106,7 +103,7 @@ public enum ReaderLayoutResolver {
         let forced = input.forced == .spread && !fitsSpread(bounds) ? .single : input.forced
         switch forced ?? posture(bounds: bounds, fold: fold, hinge: input.hinge, shown: input.shown) {
         case .single:
-            return ReaderLayout(posture: .single, pageFrame: bounds, gutter: nil, deck: nil, columns: .one, spineShadow: 0)
+            return ReaderLayout(posture: .single, pageFrame: bounds, gutter: nil, columns: .one, spineShadow: 0)
         case .spread:
             let spine: CGRect
             if let fold, fold.isVertical {
@@ -115,18 +112,11 @@ public enum ReaderLayoutResolver {
             } else {
                 spine = CGRect(x: bounds.midX - minimumGutter / 2, y: 0, width: minimumGutter, height: bounds.height)
             }
-            return ReaderLayout(posture: .spread, pageFrame: bounds, gutter: spine, deck: nil, columns: .two, spineShadow: shadow)
+            return ReaderLayout(posture: .spread, pageFrame: bounds, gutter: spine, columns: .two, spineShadow: shadow)
         case .tabletop:
-            let foldBand: CGRect
-            if let fold, !fold.isVertical {
-                foldBand = fold.frame.insetBy(dx: 0, dy: -foldMargin)
-            } else {
-                // No real fold (forced or simulated): split at the screen's midline.
-                foldBand = CGRect(x: 0, y: bounds.midY - foldMargin, width: bounds.width, height: 2 * foldMargin)
-            }
-            let page = CGRect(x: 0, y: 0, width: bounds.width, height: max(0, foldBand.minY + foldMargin - tabletopPageInset))
-            let deck = CGRect(x: 0, y: foldBand.maxY, width: bounds.width, height: max(0, bounds.maxY - foldBand.maxY))
-            return ReaderLayout(posture: .tabletop, pageFrame: page, gutter: nil, deck: deck, columns: .one, spineShadow: 0)
+            // The page it is flat, so bending the hinge re-lays out nothing: an opaque deck below the fold that never
+            // went away cut the text off mid-line (Ari, 2026-11-27). The deck floats over the page with the controls.
+            return ReaderLayout(posture: .tabletop, pageFrame: bounds, gutter: nil, columns: .one, spineShadow: 0)
         }
     }
 

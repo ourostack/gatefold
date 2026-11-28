@@ -18,7 +18,6 @@ struct ReaderLayoutTests {
         #expect(layout.posture == .single)
         #expect(layout.pageFrame == CGRect(origin: .zero, size: duoOuter))
         #expect(layout.gutter == nil)
-        #expect(layout.deck == nil)
         #expect(layout.columns == .one)
     }
 
@@ -53,7 +52,6 @@ struct ReaderLayoutTests {
         let layout = ReaderLayoutResolver.resolve(.init(containerSize: size, division: fold, hinge: .partiallyOpen(angleDegrees: 127.8)))
         #expect(layout.posture == .spread)
         #expect(layout.columns == .two)
-        #expect(layout.deck == nil)
         #expect(layout.pageFrame == CGRect(origin: .zero, size: size))
         let gutter = try! #require(layout.gutter)
         #expect(gutter.midX == fold.frame.midX)
@@ -64,15 +62,18 @@ struct ReaderLayoutTests {
         #expect(ReaderLayoutResolver.resolve(.init(containerSize: size, division: fold)).posture == .spread)
     }
 
-    /// Turned on its side first, the Duo's fold runs across the screen, and bent it stands on a table: the page above
-    /// the fold, the controls below (the hunt at 617eeb37: window 669 x 951, page 669 x 439.7, posture tabletop).
+    /// Turned on its side first, the Duo's fold runs across the screen, and bent it stands on a table: tabletop, not a
+    /// spread (the hunt at 617eeb37: window 669 x 951, page 669 x 439.7, posture tabletop).
     @Test func halfOpenWithTheFoldAcrossIsTabletop() {
         let size = CGSize(width: 669, height: 951)
         let fold = FoldRegion(frame: CGRect(x: 0, y: 455.5, width: 669, height: 40), isActive: false)
         let layout = ReaderLayoutResolver.resolve(.init(containerSize: size, division: fold, hinge: .partiallyOpen(angleDegrees: 110)))
         #expect(layout.posture == .tabletop)
-        #expect(layout.pageFrame.maxY <= fold.frame.minY)
-        #expect(layout.deck.map { $0.minY >= fold.frame.maxY } == true)
+        // The page fills the screen as it does flat, and the controls float over its lower half only while they are
+        // up: an opaque deck under the fold that never went away cut the text off mid-line (Ari, 2026-11-27).
+        #expect(layout.columns == .one)
+        #expect(layout.gutter == nil)
+        #expect(layout.pageFrame == CGRect(origin: .zero, size: size))
     }
 
     /// Real unfold at bc72d70 (job 132947504798), 2f5fd1d and c60ef7e: folded shut from tabletop, the hinge read
@@ -103,32 +104,24 @@ struct ReaderLayoutTests {
         #expect(ReaderLayoutResolver.resolve(.init(containerSize: duoOuter, hinge: .partiallyOpen(angleDegrees: 90))).posture == .single)
     }
 
-    @Test func tabletopPutsThePageAboveTheFoldAndTheDeckBelow() {
+    /// Half open, the page is the one it is flat: the same frame and columns, so bending the hinge re-lays out nothing.
+    @Test func tabletopIsThePageItIsFlat() {
         let fold = FoldRegion(frame: CGRect(x: 0, y: 460, width: 545, height: 30), isActive: true)
         let layout = ReaderLayoutResolver.resolve(.init(containerSize: duoInnerTall, division: fold, hinge: .partiallyOpen(angleDegrees: 100)))
         #expect(layout.posture == .tabletop)
-        #expect(layout.pageFrame.maxY <= 460)
-        let deck = try! #require(layout.deck)
-        #expect(deck.minY >= 490)
-        #expect(deck.minY >= 490)
-        #expect(deck.maxY == 951)
-        #expect(layout.columns == .one)
-    }
-
-    /// The last line stops 16 pt above the hinge instead of running into its shadow.
-    @Test func tabletopLeavesSixteenPointsAboveTheFold() {
-        let fold = FoldRegion(frame: CGRect(x: 0, y: 460, width: 545, height: 30), isActive: true)
-        let layout = ReaderLayoutResolver.resolve(.init(containerSize: duoInnerTall, division: fold, hinge: .partiallyOpen(angleDegrees: 100)))
-        #expect(layout.pageFrame.maxY == 444)
+        let flatFold = FoldRegion(frame: fold.frame, isActive: false)
+        let flat = ReaderLayoutResolver.resolve(.init(containerSize: duoInnerTall, division: flatFold, hinge: .fullyOpen))
+        #expect(flat.posture == .single)
+        #expect(layout.pageFrame == flat.pageFrame)
+        #expect(layout.columns == flat.columns)
         let midline = ReaderLayoutResolver.resolve(.init(containerSize: duoInnerTall, forced: .tabletop))
-        #expect(midline.pageFrame.maxY == duoInnerTall.height / 2 - 16)
+        #expect(midline.pageFrame == CGRect(origin: .zero, size: duoInnerTall))
     }
 
     @Test func openFlatTallIsOneTallPageEvenThoughTheFoldIsHorizontal() {
         let fold = FoldRegion(frame: CGRect(x: 0, y: 475.5, width: 545, height: 0), isActive: false)
         let layout = ReaderLayoutResolver.resolve(.init(containerSize: duoInnerTall, division: fold, hinge: .fullyOpen))
         #expect(layout.posture == .single)
-        #expect(layout.deck == nil)
     }
 
     @Test func iPadLandscapeWithoutAFoldIsASpreadSplitDownTheMiddle() {
@@ -147,7 +140,7 @@ struct ReaderLayoutTests {
     @Test func aForcedPostureWinsForTestsAndScreenshots() {
         let layout = ReaderLayoutResolver.resolve(.init(containerSize: duoInnerTall, forced: .tabletop))
         #expect(layout.posture == .tabletop)
-        #expect(layout.deck != nil)
+        #expect(layout.pageFrame == CGRect(origin: .zero, size: duoInnerTall))
         let spread = ReaderLayoutResolver.resolve(.init(containerSize: duoInnerWide, forced: .spread))
         #expect(spread.gutter?.midX == duoInnerWide.width / 2)
     }
@@ -187,7 +180,7 @@ struct ReaderLayoutTests {
 
 @Suite struct PageSafeAreaTests {
     func layout(_ frame: CGRect) -> ReaderLayout {
-        ReaderLayout(posture: .single, pageFrame: frame, gutter: nil, deck: nil, columns: .one, spineShadow: 0)
+        ReaderLayout(posture: .single, pageFrame: frame, gutter: nil, columns: .one, spineShadow: 0)
     }
 
     @Test func theFirstLineClearsTheCamera() {
