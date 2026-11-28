@@ -398,6 +398,10 @@ jobs:
         run: |
           python3 -I scripts/ci-lanes.py --selftest
           python3 -I scripts/ci-lanes.py check
+      - name: Every job that unpacks the downloaded build tests it whole first and downloads it again if not (gatefold#89)
+        run: |
+          python3 -I scripts/ci-downloads.py --selftest
+          python3 -I scripts/ci-downloads.py check
 
   # UI tests run in shards, each on its own runner (.github/workflows/ui-tests.yml). A shard starts with the run, or
   # when its matrix has a free slot: it boots its new simulator (alongside `build`, when it starts with the run), then
