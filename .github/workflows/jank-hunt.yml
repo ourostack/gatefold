@@ -1,0 +1,69 @@
+name: Jank hunt (scratch)
+# Scratch branch only, never merged: proof for the Feel settle fix. `before` runs the new test against the old
+# settle (FeelReaderUITests.swift from a07637e7, the test commit) and must go red; `after` runs it with the fix
+# (a8acad04) and must go green. The job's result is xcodebuild's own exit status.
+on:
+  push:
+    branches: ["jank-hunt/**"]
+
+permissions:
+  contents: read
+
+jobs:
+  proof:
+    name: Feel settle ${{ matrix.name }}
+    runs-on: xcode-27
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: before, ref: a07637e7 }
+          - { name: after, ref: "" }
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: The test file under proof
+        run: |
+          set -eu
+          if [ -n "${{ matrix.ref }}" ]; then git checkout ${{ matrix.ref }} -- GatefoldUITests/FeelReaderUITests.swift; fi
+          grep -n "never settled\|guard launch\|-> String" GatefoldUITests/FeelReaderUITests.swift || true
+      - uses: ./.github/actions/select-xcode
+        with:
+          xcode: "27.2"
+      - name: Metal toolchain and project
+        run: |
+          xcodebuild -downloadComponent MetalToolchain
+          brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
+          xcodegen generate
+      - name: Create and boot an iPhone Duo
+        id: sim
+        run: |
+          set -euo pipefail
+          runtime="$(xcrun simctl list runtimes --json | python3 -c 'import json,sys; r=[x for x in json.load(sys.stdin)["runtimes"] if x["platform"]=="iOS" and x["isAvailable"] and any(d["name"].startswith("iPhone Duo") for d in x.get("supportedDeviceTypes",[]))]; print(max(r, key=lambda x: [int(p) for p in x["version"].split(".")])["identifier"])')"
+          python3 -I scripts/ci-simulator.py settle "$runtime"
+          udid="$(.github/scripts/boot-sim.sh gatefold-duo com.apple.CoreSimulator.SimDeviceType.iPhone-Duo "$runtime")"
+          echo "udid=$udid" >> "$GITHUB_OUTPUT"
+      - name: Run the test
+        run: |
+          set +e
+          xcodebuild test -project Gatefold.xcodeproj -scheme Gatefold \
+            -destination "platform=iOS Simulator,id=${{ steps.sim.outputs.udid }}" \
+            -only-testing:GatefoldUITests/FeelReaderUITests/testAPageThatNeverComesUpFailsAsThat \
+            -resultBundlePath "$RUNNER_TEMP/proof.xcresult" CODE_SIGNING_ALLOWED=NO 2>&1 | tee "$RUNNER_TEMP/test.log" \
+            | grep -E "Test Case|error:|never settled|expected failure|FEEL:|\*\* TEST"
+          rc=${PIPESTATUS[0]}
+          echo "xcodebuild exit $rc"
+          exit $rc
+      - name: Pack
+        if: always()
+        run: |
+          xcrun simctl delete "${{ steps.sim.outputs.udid }}" || true
+          tar czf "$RUNNER_TEMP/proof-${{ matrix.name }}.tgz" -C "$RUNNER_TEMP" test.log proof.xcresult || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: feel-settle-${{ matrix.name }}
+          path: ${{ runner.temp }}/proof-${{ matrix.name }}.tgz
+          retention-days: 7
