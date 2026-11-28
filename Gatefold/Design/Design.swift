@@ -81,8 +81,9 @@ struct CoverShape: Shape {
     static let foreEdge: CGFloat = 6
 
     func path(in rect: CGRect) -> Path {
-        UnevenRoundedRectangle(topLeadingRadius: Self.spine, bottomLeadingRadius: Self.spine, bottomTrailingRadius: Self.foreEdge,
-                               topTrailingRadius: Self.foreEdge, style: .continuous).path(in: rect)
+        let (spine, fore) = (Self.spine, Self.foreEdge)
+        return UnevenRoundedRectangle(topLeadingRadius: spine, bottomLeadingRadius: spine, bottomTrailingRadius: fore, topTrailingRadius: fore, style: .continuous)
+            .path(in: rect)
     }
 }
 
