@@ -135,6 +135,10 @@ enum LaunchOptions {
     /// Tests only: the first reflow after his first move waits 120 s for its page to answer its first script, as
     /// CI's landscape spread did while its chapter loaded (gatefold#94, #133); every restore of it waits.
     static var slowRestorePage: Bool { isUITest && defaults.bool(forKey: "GatefoldSlowRestorePage") }
+    /// Tests only: each jump of a reflow's restore lands on the page before his, as on the starved Duo whose text-size
+    /// change left the restore's budget spent on the page before his (gatefold#686). The landing after the budget
+    /// (`RestoreLanding.landLate`) is not made short.
+    static var restoreLandsShort: Bool { isUITest && defaults.bool(forKey: "GatefoldRestoreLandsShort") }
     /// Tests only: a new column count reaches Readium only once the reflow's restore has finished, so Readium lays
     /// the page out again after the restore's verdict every time, as CI's loaded iPad did turned back upright: it
     /// kept its own place, a page before or after his (merge-queue runs 44355208879, 44371614305 and 44378147938,
