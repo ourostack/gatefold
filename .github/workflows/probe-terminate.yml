@@ -104,14 +104,16 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - shard: ipad-probe6-control-a
+          - shard: ipad-probe7-control-a
             variant: control
-          - shard: ipad-probe6-control-b
+          - shard: ipad-probe7-control-b
             variant: control
-          - shard: ipad-probe6-nolog-a
-            variant: nolog
-          - shard: ipad-probe6-nolog-b
-            variant: nolog
+          - shard: ipad-probe7-nomaild-a
+            variant: nomaild
+          - shard: ipad-probe7-nomaild-b
+            variant: nomaild
+          - shard: ipad-probe7-nomaild-c
+            variant: nomaild
     permissions:
       contents: read
       actions: write

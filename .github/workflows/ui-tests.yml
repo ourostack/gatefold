@@ -85,7 +85,7 @@ on:
         type: boolean
         default: false
       variant:
-        description: "Probe 5 only, gatefold#363 - control, nolog (no log stream in the simulator) or shots (screenshots, no screen recording)"
+        description: "Probe only, gatefold#363 - control, nolog (no log stream in the simulator), shots (screenshots, no screen recording) or nomaild (the simulator's maild unloaded)"
         type: string
         default: control
       timeout:
@@ -304,10 +304,17 @@ jobs:
       - name: Probe (gatefold#363) - log maild's launchd state each minute, and starve the simulator when asked
         env:
           STARVE: ${{ inputs.starve }}
+          VARIANT: ${{ inputs.variant }}
         run: |
           nohup sh -c 'while :; do echo "== $(date -u +%T)"; xcrun simctl spawn "$0" launchctl print system/com.apple.email.maild 2>&1 | grep -E "state|runs|last exit|pid|spawn type|event triggers|reason|immediate" ; sleep 60; done' "$UDID" > "$RUNNER_TEMP/maild.log" 2>&1 &
           xcrun simctl spawn "$UDID" launchctl print system/com.apple.email.maild > "$RUNNER_TEMP/maild-plist.txt" 2>&1 || true
           : > "$RUNNER_TEMP/host.log"
+          if [ "$VARIANT" = nomaild ]; then
+            # Probe 7: unload the simulator's maild before the tests (it ran at about 45% CPU, with diagnosticd at
+            # about 135%, in every shard that failed a terminate in probes 4 and 6).
+            xcrun simctl spawn "$UDID" launchctl bootout system/com.apple.email.maild && echo "probe 7: maild booted out" || echo "probe 7: bootout failed"
+            xcrun simctl spawn "$UDID" launchctl print system/com.apple.email.maild 2>&1 | head -3
+          fi
           if [ "$STARVE" = true ]; then
             xcrun simctl spawn "$UDID" launchctl kickstart system/com.apple.email.maild || echo "kickstart failed"
             for i in 1 2 3; do nohup xcrun simctl spawn "$UDID" /bin/sh -c 'while :; do :; done' > /dev/null 2>&1 & done
