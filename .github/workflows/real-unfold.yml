@@ -39,13 +39,14 @@ permissions:
   contents: read
   actions: read
 
-# Each push to main has a group of its own, as App's does, so every main commit gets its own verdict and TestFlight's
-# gate (which needs this workflow and App green on the commit) has one to read. Its places wait in a main lane each on
-# main pushes (real-unfold-place.yml), so overlapping main runs hold at most five of those Macs.
+# Main's pushes share one group, as App's do (see app.yml's `concurrency`): one runs, one waits, a newer push replaces
+# the waiting one, and the run in progress is never cancelled. Both workflows get every push at once, so the one waiting
+# in each is the same newest commit, and TestFlight's gate (which needs this workflow and App green on the commit) reads
+# it. Its places wait in a main lane each on main pushes (real-unfold-place.yml).
 concurrency:
   group: >-
     real-unfold-${{ github.event_name == 'pull_request' && github.ref
-    || github.event_name == 'push' && format('main-{0}', github.sha) || github.sha }}
+    || github.event_name == 'push' && 'main' || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:

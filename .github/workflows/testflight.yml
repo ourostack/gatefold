@@ -4,9 +4,10 @@ name: TestFlight
 # Only green: a commit publishes once every required check on it passed (.github/required-checks.txt,
 # judged by scripts/ci-green-gate.py). This workflow starts each time App or Real unfold finishes on a
 # main push and asks whether that commit is now green; the second of the two to finish publishes it.
-# A red commit never publishes. Each main commit has an App and a Real unfold run of its own, never
-# replaced by a later merge, so each gets a verdict; an older commit that turns green after a newer one
-# did is covered by that newer commit's publish. A Markdown-only push runs no App, so it stays "not green yet" and never publishes by itself.
+# A red commit never publishes. Main's pushes share one App and one Real unfold group: one runs, one
+# waits, and a newer push replaces the waiting one, whose cancelled runs leave its commit "superseded",
+# never published; the newer commit publishes when it turns green. An older commit that turns green after
+# a newer one did is covered by that newer commit's publish. A Markdown-only push runs no App, so it stays "not green yet" and never publishes by itself.
 on:
   workflow_run:
     workflows: [App, Real unfold]

@@ -45,7 +45,7 @@ jobs:
     name: Place
     runs-on: xcode-27
     # Lane (gatefold#286): one lane per place, shared by every open pull request, and on main pushes a main lane per place
-    # (each main commit has a run of its own); see "macOS lanes" in app.yml. Never cancel-in-progress.
+    # (main's runs share one group; the lane still lines up a place behind the one before it); see "macOS lanes" in app.yml. Never cancel-in-progress.
     concurrency:
       group: >-
         ${{ github.event_name == 'pull_request'

@@ -8,9 +8,9 @@ name: App
 #
 # Two tiers (gatefold#39, #198). A pull request runs the build, the unit tests, GatefoldCore and at most five UI shards,
 # picked by the paths it touches: an iPad and a Duo smoke on every app change, and the place and taps guards when it
-# touches that code (`changes` output `fired`; the lists are the Gatefold agent's). Every push to main runs the full UI
-# suite in a run of its own, never cancelled or replaced, so every main commit gets a verdict; a red main is fixed as
-# AGENTS.md says ("CI").
+# touches that code (`changes` output `fired`; the lists are the Gatefold agent's). Main runs the full UI suite on its
+# newest commit: one run at a time, never cancelled, and a newer push replaces the one waiting (see `concurrency`); a
+# red main is fixed as AGENTS.md says ("CI").
 # Each new simulator's first boot holds the runner's load at 500 to 760 for about 15 min (#198), so fewer shards per
 # pull request is the lever, not more.
 #
@@ -45,19 +45,21 @@ on:
       - "**/*.md"
   workflow_dispatch:
 
-# A newer push to a pull request cancels its older run. Each push to main has a group of its own (`main-<sha>`), so a
-# later merge never cancels or replaces it and every main commit gets its own verdict (fast-honest-ci 2.7). From
-# gatefold#246 to 2026-11-22 main pushes shared one group, and a waiting run was replaced by the next push: of the 18
-# main runs from 16:09Z to 23:57Z that day, 10 were replaced before any job ran, #600's (45067597797) among them, so
-# those commits never got a verdict of their own. The cost is held where #246 held it, at the macOS pool: on main
-# pushes each shard, Release build and Unit tests waits in a main lane of its own (see "macOS lanes" below), so a lone
-# run starts them all at once as before, and overlapping runs line up job by job, oldest first, holding at most one
-# run's worth of those Macs between them. A re-run keeps its commit's group. A manual run has a group per commit
-# of its own, and the merge queue one per commit. TestFlight is its own workflow, outside these groups.
+# A newer push to a pull request cancels its older run. Main's pushes share one group, `main`, that never cancels the
+# run in progress: one runs, one waits, and a newer push replaces the waiting one, so main always tests its newest
+# commit next. From 2026-11-22 to 11-27 each push to main had a group of its own (`main-<sha>`) so every commit got a
+# verdict, but a full run takes about 430 Mac minutes and merges came faster: on 2026-11-27 13 App runs and 6 Real
+# unfold runs were queued, and TestFlight, which publishes only the newest green commit, waited from build 67 on
+# 2026-11-23. A replaced commit is covered by the next verdict: a green one carries it to TestFlight, and auto-revert
+# reads a red run as a range of commits (ourostack/.github tools/red-main). scripts/ci-rerun-runner.py never reruns a
+# main run once a newer one exists, which would replace that newer one. On main pushes each shard, Release build and
+# Unit tests still wait in a main lane of its own (see "macOS lanes" below). A re-run keeps its group. A manual run
+# has a group per commit of its own, and the merge queue one per commit. TestFlight is its own workflow, outside these
+# groups.
 concurrency:
   group: >-
     app-${{ github.event_name == 'pull_request' && github.ref
-    || github.event_name == 'push' && format('main-{0}', github.sha) || github.sha }}
+    || github.event_name == 'push' && 'main' || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # macOS lanes (gatefold#286). The Ouro Labs enterprise has 50 macOS slots, shared by every org in it (spoonjoy too).
@@ -74,8 +76,8 @@ concurrency:
 # ourostack has all 50 slots and main still gets its share through the hosted queue; with 28 lanes 12 open pull
 # requests left about 27 Macs idle. If spoonjoy rejoins, go back to one shard set (SHARD_SETS and BUDGET in
 # scripts/ci-lanes.py).
-# Main lanes: each main commit has a run of its own, so without a lane a burst of merges would start a full run each at
-# once (#246: 7 overlapping runs, 48 to 84 Macs in a pool of 50). On a main push each shard waits in
+# Main lanes: main's runs share one group, so at most one runs, but a lane per job still lines up a run's jobs behind
+# the one before it (#246: 7 overlapping runs, 48 to 84 Macs in a pool of 50). On a main push each shard waits in
 # `gatefold-macos-main-lane-shard-<shard>`, Release build and Unit tests in `gatefold-macos-main-lane-release` and
 # `-unit`, and Real unfold's places in `-unfold-<lane>` (one per place): one lane per job, not the 18 numbered shard
 # lanes, which would hold a lone run's shards to its busiest lane, 70 to 79 min against 36 to 61 min of wall clock
