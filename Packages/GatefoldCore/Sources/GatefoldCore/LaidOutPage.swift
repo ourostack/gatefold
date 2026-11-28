@@ -17,10 +17,24 @@ public enum LaidOutPage {
         await LaidOutPage.read(read, beat: beat, current: current, reads: reads, until: shows)
     }
 
-    /// One page's look, as `read`, from the web view's own columns (`liveVisibleRange`).
+    /// One page's look, as `read`, from the web view's own columns (`liveVisibleRange`), and read again while the
+    /// scroll stands between two pages (`standsOnAPage`). Back upright with the column landing late (gatefold#678, App
+    /// run 46077756249), a read made as the scroll moved held the page before his and all of his, 2055 characters with his
+    /// words 1110 in; it called his words on screen, and the scroll then came to rest on the page before his.
     public static func readOnePage(_ read: () async -> VisibleRange?, beat: () async -> Void,
                                    current: () -> Bool = { true }, reads: Int = LaidOutPage.reads) async -> (range: VisibleRange?, reads: Int) {
-        await LaidOutPage.read(read, beat: beat, current: current, reads: reads, until: shows)
+        await LaidOutPage.read(read, beat: beat, current: current, reads: reads) { shows($0) && standsOnAPage($0) }
+    }
+
+    /// A one-page live read whose scroll is at a page's start, as every turn and jump leaves it. Its start and end are
+    /// the scroll's left edge and right edge over the columns' width, so a page's start is a whole number of page widths
+    /// in; one a fraction of a page off holds the end of one page and the start of the next. Within a fiftieth of a page,
+    /// for a layout's rounding.
+    static func standsOnAPage(_ range: VisibleRange) -> Bool {
+        let width = range.end - range.start
+        guard width > 0 else { return false }
+        let pagesIn = range.start / width
+        return abs(pagesIn - pagesIn.rounded()) < 0.02
     }
 
     private static func read(_ read: () async -> VisibleRange?, beat: () async -> Void, current: () -> Bool, reads: Int,
