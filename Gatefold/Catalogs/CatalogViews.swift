@@ -286,7 +286,8 @@ struct CatalogCover: View {
                 }
             }
             .frame(width: width, height: height)
-            .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
+            // The shelf's cover shape, a squircle, made or fetched.
+            .clipShape(CoverShape())
             .animation(.easeOut(duration: 0.25), value: fetchedPicture == nil)
             .frame(width: space.size.width, height: space.size.height)
         }

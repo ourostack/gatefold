@@ -670,7 +670,7 @@ struct CoverView: View {
     }
 
     @Environment(\.colorScheme) private var scheme
-    private static let shape = UnevenRoundedRectangle(topLeadingRadius: 3, bottomLeadingRadius: 3, bottomTrailingRadius: 6, topTrailingRadius: 6, style: .continuous)
+    private static let shape = CoverShape()
 }
 
 /// Add's glass button, a squircle; beside the cover screen's reserved column, the account badge's size, so the two

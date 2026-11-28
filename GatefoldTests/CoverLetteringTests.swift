@@ -1,3 +1,4 @@
+import GatefoldCore
 import SwiftUI
 import Testing
 import UIKit
@@ -164,19 +165,21 @@ struct CoverLetteringTests {
         #expect(CoverLettering.pieces(text).joined() == text)
     }
 
-    /// The whole cover at the grid's size, saved for the pull request's proof when GATEFOLD_PROOF_SHOTS is set.
+    /// The whole cover at the grid's size, as the shelf draws it, saved for the pull request's proof when GATEFOLD_PROOF_SHOTS is set.
     @Test func gridCoversForTheProof() throws {
         let books = [("Frankenstein", "Mary Wollstonecraft Shelley"), ("The Frankenstein", "Wollstonecraft"),
                      ("Supercalifragilistic", "Anonymous"), ("Pneumonoultramicroscopicsilicovolcanoconiosis", "Anonymous"),
                      ("吾輩は猫である", "夏目漱石"), ("Emma", "Jane Austen")]
         let strip = HStack(spacing: 12) {
             ForEach(books, id: \.0) { book in
-                GeneratedCover(title: book.0, author: book.1).frame(width: Self.grid.width, height: Self.grid.height)
+                // The shelf's own cover, as the grid draws it: the made cover in its squircle, spine and shadow.
+                CoverView(book: LibraryBook(id: book.0, title: book.0, author: book.1, origin: .imported, added: Date()), image: nil)
+                    .frame(width: Self.grid.width, height: Self.grid.height)
             }
         }
-        .padding(12)
+        .padding(24)
         .background(Color.white)
-        let renderer = ImageRenderer(content: strip.environment(\.dynamicTypeSize, .large))
+        let renderer = ImageRenderer(content: strip.environment(\.dynamicTypeSize, .large).environment(\.colorScheme, .light))
         renderer.scale = 3
         let image = try #require(renderer.uiImage)
         #expect(image.size.width > 6 * Self.grid.width)
