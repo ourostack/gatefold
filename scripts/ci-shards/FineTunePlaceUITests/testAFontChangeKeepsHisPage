@@ -1,0 +1,4 @@
+main|iPad Pro 13-inch
+main|iPhone Duo
+iPad Pro 13-inch	270	# estimate until CI has run it, from Justify's 270 on the iPad (Fine-Tune keeps the place, 2026-11-22)
+iPhone Duo	200	# estimate until CI has run it, from Justify's 200 on the Duo (Fine-Tune keeps the place, 2026-11-22)

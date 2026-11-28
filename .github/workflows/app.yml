@@ -390,10 +390,10 @@ jobs:
         run: bash scripts/test-ci-publish-testflight.sh
       - name: TestFlight records each build as a deployment, never a tag GITHUB_TOKEN is refused, and reads it back first
         run: python3 -I scripts/ci-testflight-builds.py --selftest
-      - name: UI test lists (not GatefoldCore) match scripts/ci-shards.expect; fix with `python3 -I scripts/ci-shards.py write` (gatefold#39)
+      - name: UI test lists (not GatefoldCore) match scripts/ci-shards/; fix with `python3 -I scripts/ci-shards.py write` (gatefold#39)
         run: |
           python3 -I scripts/ci-shards.py --selftest
-          python3 -I scripts/ci-shards.py check --expect scripts/ci-shards.expect
+          python3 -I scripts/ci-shards.py check --expect
       - name: Every pull-request macOS job waits in a lane, within the budget (gatefold#286)
         run: |
           python3 -I scripts/ci-lanes.py --selftest
@@ -412,15 +412,15 @@ jobs:
   # its `pr_tests` only when its `pr_when` group is in `changes`' `fired`; every other shard reports from a no-op job.
   # Each `timeout` is 30 min of setup (the simulator wait step's own limit; gatefold#198), plus twice the sum of its
   # tests' slowest passes (the tests' budget), plus 5 for the test run's start and its stop's grace, plus 12 for the
-  # logs after the tests (gatefold#141). The slowest passes are in scripts/ci-shards.times, and the sum is over the
+  # logs after the tests (gatefold#141). The slowest passes are in scripts/ci-shards/, and the sum is over the
   # shard's main or PR list, whichever runs longer (gatefold#260). The test step gets that whole budget whenever setup
   # ends within 30 min of the job's start (.github/actions/time-left); the 9 to 14 min boots in gatefold#198 leave
   # room to spare, and a green run takes no longer. Twice, because on these overloaded runners a test that passes can
   # run 2-3x its usual time; a shard that still hits its limit is a red to fix at its cause, not a limit to raise. The
   # rotation shards (`cold`) run on the job's new iPad, before anything warms it.
   # scripts/ci-shards.py (in `CI scripts, offline`, which `GatefoldCore tests` stands for) fails when a listed test does
-  # not exist, runs in two shards, or differs from scripts/ci-shards.expect, and when a timeout or its comment is not
-  # what scripts/ci-shards.times gives; each error names the test or the line to write, and the fix.
+  # not exist, runs in two shards, or differs from scripts/ci-shards/, and when a timeout or its comment is not
+  # what scripts/ci-shards/ gives; each error names the test or the line to write, and the fix.
   ipad-place:
     name: iPad place shard (${{ matrix.shard }})
     needs: changes

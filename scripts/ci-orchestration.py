@@ -12,7 +12,7 @@ import re
 import sys
 
 ORCHESTRATION = re.compile(
-    r"^(\.github/(workflows/(app|ui-tests)\.yml|actions/.+|scripts/.+)|scripts/ci-[^/]+)$"
+    r"^(\.github/(workflows/(app|ui-tests)\.yml|actions/.+|scripts/.+)|scripts/ci-[^/]+|scripts/ci-shards/.+)$"
 )
 
 
@@ -34,7 +34,7 @@ def selftest():
     check(touches([".github/workflows/ui-tests.yml"]), "ui-tests.yml")
     check(touches(["README.md", "scripts/ci-retry.py"]), "a CI script among others")
     check(touches([".github/actions/await-build/action.yml"]), "a composite action")
-    check(touches(["scripts/ci-shards.expect"]), "the shard lists")
+    check(touches(["scripts/ci-shards/AUITests/testOne"]), "the shard lists, one file per test")
     check(touches([]), "an empty list fails closed")
     check(not touches(["README.md", "docs/a.md", "Gatefold/Reader/ReaderPage.swift"]), "app code and docs")
     check(not touches([".github/workflows/panel.yml", "scripts/changelog.py"]), "other workflows and scripts")
