@@ -98,6 +98,7 @@ iPhone Duo|FineTuneTapUITests/testEveryTapFlipsPositionLabelPortrait	210	# p95 o
 iPhone Duo|PageNumberUITests/testEveryTurnMovesOnAPageAndAReopenKeepsTheNumbers	316	# p95 of 154, slowest 361
 iPhone Duo|PlaceUndoUITests/testATapAtTheLeftEdgeTurnsBackPromptly	151	# p95 of 157, slowest 204
 iPhone Duo|PlaceUndoUITests/testATapAtTheLeftEdgeTurnsBackPromptlyWithinAChapter	161	# p95 of 117, slowest 203
+iPhone Duo|PositionUITests/testATextSizeChangeWhoseRestoreLandsShortKeepsThePlace	150	# estimate until CI has run it: one text-size change, where testFontChangeKeepsThePlace makes three
 iPhone Duo|PositionUITests/testBookmarkInTheTopBarBookmarks	143	# p95 of 107, slowest 299
 iPhone Duo|PositionUITests/testEveryPostureKeepsThePlace	120	# p95 of 107, slowest 177
 iPhone Duo|PositionUITests/testFontChangeKeepsThePlace	190	# p95 of 113, slowest 345

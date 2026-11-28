@@ -1419,7 +1419,19 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             // landing is looked at again first (`RestoreLanding.looks`): on a slow host it lands late.
             let jumpBudget = ContinuousClock.now + .seconds(4)
             let landing = await RestoreLanding.land(
-                go: { _ = await self.navigator.go(to: locator, options: .init(animated: false)) },
+                go: {
+                    _ = await self.navigator.go(to: locator, options: .init(animated: false))
+                    // Tests only: the jump lands on the page before his (gatefold#686). A step back taken while the
+                    // jump is still landing can be lost (proof run 46152715243: the second jump's stayed on his
+                    // page), so it is taken again while his words are still on the page, up to 12 reads.
+                    if LaunchOptions.restoreLandsShort {
+                        for _ in 0..<12 {
+                            _ = await self.navigator.goBackward(options: .init(animated: false))
+                            try? await Task.sleep(for: .milliseconds(160))
+                            if let shown = await self.liveVisibleRange(), !shown.contains(anchor) { break }
+                        }
+                    }
+                },
                 read: { await laidOutRange(within: max(.zero, jumpBudget - ContinuousClock.now)) },
                 beat: { try? await Task.sleep(for: .milliseconds(160)) },
                 arrived: { $0.contains(anchor) },
