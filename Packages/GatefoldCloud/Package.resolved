@@ -42,8 +42,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/ourostack/ouro-ui-apple",
       "state" : {
-        "revision" : "b2b4a079a35424fccd1884be28ee2f3708c25b93",
-        "version" : "1.12.0"
+        "revision" : "45b1051ba818251b42b97aaa21065e057812ac29",
+        "version" : "1.12.1"
       }
     },
     {
