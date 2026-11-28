@@ -64,7 +64,8 @@ final class FeelReaderUITests: XCTestCase {
 
     private func walk(_ posture: Posture, _ mode: Mode, also: [String] = []) throws {
         try pose(posture)
-        launch(mode, also: also)
+        // Feel judges a page that is up: on a page that never came up its checks pass or fail on nothing.
+        guard launch(mode, also: also) else { return }
         let at = "\(posture.rawValue), \(mode == .scroll ? "scroll" : "paged")"
         print("FEEL: \(name) window \(app.windows.firstMatch.frame) (\(at))")
 
@@ -190,8 +191,9 @@ final class FeelReaderUITests: XCTestCase {
 
     private static let book = "gutenberg-pride-and-prejudice"
 
-    /// A fresh library, signed in to the fake cloud, opened straight into the book at 12% (past its front matter) in `mode`.
-    private func launch(_ mode: Mode, also: [String] = []) {
+    /// A fresh library, signed in to the fake cloud, opened straight into the book at 12% (past its front matter) in
+    /// `mode`. False, with the test failed, when the book never opened or its page never settled.
+    private func launch(_ mode: Mode, also: [String] = []) -> Bool {
         app = XCUIApplication()
         app.launchArguments = ["-GatefoldUITest", "YES", "-GatefoldFakeCloud", "YES", "-GatefoldSkipWelcome", "YES",
                                "-GatefoldSignedIn", "YES", "-GatefoldNoLatency", "YES", "-GatefoldReset", "YES",
@@ -199,8 +201,9 @@ final class FeelReaderUITests: XCTestCase {
                                "-GatefoldPageTurn", mode.rawValue] + also
         app.launch()
         feel = OuroFeel(app)
-        XCTAssertTrue(el("reader.page").waitForExistence(timeout: 120), "the book opened")
-        _ = settled()
+        let opened = el("reader.page").waitForExistence(timeout: 120)
+        XCTAssertTrue(opened, "the book opened")
+        return opened && settled() != nil
     }
 
     private func el(_ id: String) -> XCUIElement { app.descendants(matching: .any)[id].firstMatch }
@@ -209,22 +212,23 @@ final class FeelReaderUITests: XCTestCase {
 
     /// The words once the reader says its page is ready and eight reads in a row agree, counted in reads rather than
     /// seconds (a loaded runner reads less often and the rule still holds); at most 240 reads, with HangGuard's wall
-    /// time as the guard against a hang.
-    @discardableResult
-    private func settled() -> String {
+    /// time as the guard against a hang. Nil, with the test failed, when the reads run out first: it used to return
+    /// what it had and say nothing, so Feel then judged a page that wasn't up (run 46076998864).
+    private func settled() -> String? {
         var last = "", same = 0
         let guardUntil = Date().addingTimeInterval(HangGuard.seconds(reads: 240))
         for read in 0..<240 {
             guard Date() < guardUntil else {
                 XCTFail("the page never settled: \(read) reads, ready \(ready)")
-                break
+                return nil
             }
             let now = words
             same = (now == last && ready && !now.isEmpty) ? same + 1 : 0
             last = now
-            if same >= 8 { break }
+            if same >= 8 { return last }
             RunLoop.current.run(until: Date().addingTimeInterval(0.1))
         }
-        return last
+        XCTFail("the page never settled: 240 reads, ready \(ready), \(last.isEmpty ? "no words" : "words on screen")")
+        return nil
     }
 }
