@@ -27,7 +27,7 @@ packages:
   # ourostack/ouro-ui-apple#200).
   OuroUIApple:
     url: https://github.com/ourostack/ouro-ui-apple
-    minorVersion: 1.12.0
+    minorVersion: 1.12.1
   GatefoldCore:
     path: Packages/GatefoldCore
   GatefoldCloud:
