@@ -1615,7 +1615,7 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
         // iPad, Readium laid the page out in one column after the restore had found his words, and kept its own
         // place, the page before his (gatefold#482).
         let beat: () async -> Void = { try? await Task.sleep(for: .milliseconds(160)) }
-        let (shown, _) = await LaidOutPage.read({ await self.liveVisibleRange() }, beat: beat, current: stillWanted)
+        let (shown, _) = await LaidOutPage.readOnePage({ await self.liveVisibleRange() }, beat: beat, current: stillWanted)
         guard stillWanted(), let shown, shown.text != nil, !shown.contains(anchor),
               let locator = weakModel?.locator(for: anchor) else { return nil }
         // On a page he can see, the jump is held behind a picture of it and shown as one change, as the restore's is.

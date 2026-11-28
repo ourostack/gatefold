@@ -14,9 +14,20 @@ public enum LaidOutPage {
     /// it), with his place at 0.8765: a lost verdict. Readium's next report, with no move between, was 0.8696.
     public static func read(_ read: () async -> VisibleRange?, beat: () async -> Void,
                             current: () -> Bool = { true }, reads: Int = LaidOutPage.reads) async -> (range: VisibleRange?, reads: Int) {
+        await LaidOutPage.read(read, beat: beat, current: current, reads: reads, until: shows)
+    }
+
+    /// One page's look, as `read`, from the web view's own columns (`liveVisibleRange`).
+    public static func readOnePage(_ read: () async -> VisibleRange?, beat: () async -> Void,
+                                   current: () -> Bool = { true }, reads: Int = LaidOutPage.reads) async -> (range: VisibleRange?, reads: Int) {
+        await LaidOutPage.read(read, beat: beat, current: current, reads: reads, until: shows)
+    }
+
+    private static func read(_ read: () async -> VisibleRange?, beat: () async -> Void, current: () -> Bool, reads: Int,
+                             until laidOut: (VisibleRange) -> Bool) async -> (range: VisibleRange?, reads: Int) {
         var range = await read()
         var made = 1
-        while range.map({ !shows($0) }) ?? true, made < reads, current(), !Task.isCancelled {
+        while range.map({ !laidOut($0) }) ?? true, made < reads, current(), !Task.isCancelled {
             await beat()
             guard current() else { break }
             range = await read()
