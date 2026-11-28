@@ -1,0 +1,80 @@
+name: Jank hunt (scratch)
+# Scratch branch only, never merged: proof for #686's fix. `before` is the test and its hook alone (465bfd80): every
+# jump of a text-size change's restore lands a page short, and the test must go red with his words off screen. `after`
+# is the fix (cdf2373e) and must go green, with the app's log showing its landing after the budget ran (else the test
+# passed without reaching the fix). The job's result is xcodebuild's own exit status.
+on:
+  push:
+    branches: ["jank-hunt/**"]
+
+permissions:
+  contents: read
+
+jobs:
+  proof:
+    name: Restore lands short ${{ matrix.name }}
+    runs-on: xcode-27
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: before, ref: 465bfd80 }
+          - { name: after, ref: "" }
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: The app under proof
+        run: |
+          set -eu
+          if [ -n "${{ matrix.ref }}" ]; then git checkout ${{ matrix.ref }} -- Gatefold Packages; fi
+          grep -c "landLate" Gatefold/Reader/ReaderHostController.swift || true
+      - uses: ./.github/actions/select-xcode
+        with:
+          xcode: "27.2"
+      - name: Metal toolchain and project
+        run: |
+          xcodebuild -downloadComponent MetalToolchain
+          brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
+          xcodegen generate
+      - name: Start the iPhone Duo booting (as ui-tests.yml)
+        run: |
+          nohup python3 -I scripts/ci-runner-priority.py 1500 > /dev/null 2>&1 &
+          python3 -I scripts/ci-simulator.py start gatefold-duo "iPhone Duo"
+      - name: The Duo finished booting (as ui-tests.yml)
+        timeout-minutes: 30
+        env:
+          CI_SIMULATOR_BUDGET: "1740"
+        run: python3 -I scripts/ci-simulator.py wait gatefold-duo "iPhone Duo" 1200
+      - name: Run the test
+        run: |
+          set +e
+          xcrun simctl spawn "$UDID" log stream --style compact \
+            --predicate 'subsystem == "bot.ouro.gatefold" AND category == "reader"' > "$RUNNER_TEMP/reader.log" 2>&1 &
+          logger=$!
+          xcodebuild test -project Gatefold.xcodeproj -scheme Gatefold \
+            -destination "platform=iOS Simulator,id=$UDID" \
+            -only-testing:GatefoldUITests/PositionUITests/testATextSizeChangeWhoseRestoreLandsShortKeepsThePlace \
+            -resultBundlePath "$RUNNER_TEMP/proof.xcresult" CODE_SIGNING_ALLOWED=NO 2>&1 | tee "$RUNNER_TEMP/test.log" \
+            | grep -E "Test Case|error:|\*\* TEST"
+          rc=${PIPESTATUS[0]}
+          kill $logger 2>/dev/null
+          grep -E "restore:|reflow check|column break" "$RUNNER_TEMP/reader.log" | cut -c1-260 || true
+          echo "xcodebuild exit $rc"
+          if [ "$rc" -eq 0 ] && [ -z "${{ matrix.ref }}" ] && ! grep -q "after its budget" "$RUNNER_TEMP/reader.log"; then
+            echo "::error::the test passed but the log shows no landing after the budget: the fix never ran"
+            exit 1
+          fi
+          exit $rc
+      - name: Pack
+        if: always()
+        run: |
+          xcrun simctl delete "$UDID" || true
+          tar czf "$RUNNER_TEMP/proof-${{ matrix.name }}.tgz" -C "$RUNNER_TEMP" test.log reader.log proof.xcresult || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: restore-short-${{ matrix.name }}
+          path: ${{ runner.temp }}/proof-${{ matrix.name }}.tgz
+          retention-days: 7
