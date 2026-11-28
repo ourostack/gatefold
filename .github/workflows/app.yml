@@ -1085,13 +1085,13 @@ jobs:
             lane: 8
           - shard: duo-feel-closed
             # Main only: Ouro Feel over the reader on the folded Duo, scroll and paged (FeelReaderUITests): an estimate
-            # of 300 each until CI has timed them
+            # of 300 each until CI has timed them, and an estimated 180 for a page that never comes up
             tests: >-
-              FeelReaderUITests/testClosedScroll FeelReaderUITests/testClosedPaged
+              FeelReaderUITests/testClosedScroll FeelReaderUITests/testClosedPaged FeelReaderUITests/testAPageThatNeverComesUpFailsAsThat
             skip: ""
             pr_tests: none
             cold: false
-            timeout: 67 # 30 + 2 x 10.0 + 5 + 12
+            timeout: 73 # 30 + 2 x 13.0 + 5 + 12
             lane: 1
           - shard: duo-feel-open
             # Main only, the catch-all for new Feel reader tests: the open Duo in portrait and on its side, its hinge
@@ -1099,7 +1099,7 @@ jobs:
             tests: >-
               FeelReaderUITests
             skip: >-
-              FeelReaderUITests/testClosedScroll FeelReaderUITests/testClosedPaged
+              FeelReaderUITests/testClosedScroll FeelReaderUITests/testClosedPaged FeelReaderUITests/testAPageThatNeverComesUpFailsAsThat
             pr_tests: none
             cold: false
             hinge: true
