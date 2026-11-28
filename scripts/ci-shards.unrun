@@ -1,0 +1,20 @@
+# UI tests in GatefoldUITests that no shard in .github/workflows/app.yml runs on main, each `Class[/test]<TAB>why`.
+# scripts/ci-shards.py check fails when a UI test runs on main in no shard and isn't here, so a test leaves CI only by
+# a visible line in this file; it also fails on a line that names no test, has no why, or names a test a shard runs.
+CatchUpTabUITests	No shard ran it when this file was written (2026-11-27); no reason recorded. Add it to a shard, or record why.
+DemoUITests	Drives the reader slowly for screen recordings; not a check. duo-tour.yml runs it on demand.
+HangGuardTests	No shard ran it when this file was written (2026-11-27); no reason recorded. Add it to a shard, or record why.
+HighlightUITests	No shard ran it when this file was written (2026-11-27); no reason recorded. Add it to a shard, or record why.
+LiveSyncUITests	Runs against the real PocketBook Cloud on a test account; off unless the runner sets GATEFOLD_LIVE_EMAIL.
+PageCountCostUITests	Measures what counting a book's pages costs; a measurement for comparing builds, not a check.
+PageNumberTimingUITests	No shard ran it when this file was written (2026-11-27); no reason recorded. Add it to a shard, or record why.
+PageTurnPlacementUITests	No shard ran it when this file was written (2026-11-27); no reason recorded. Add it to a shard, or record why.
+PanelCaptureUITests	Takes the review panel's screenshots; not a check. panel.yml runs it on demand.
+PanelFitUITests	No shard ran it when this file was written (2026-11-27); no reason recorded. Add it to a shard, or record why.
+ReopenLandingUITests	No shard ran it when this file was written (2026-11-27); no reason recorded. Add it to a shard, or record why.
+ReopenTimingUITests	Measures how long the reopen picture stays; a measurement for comparing builds, not a check.
+ReopenUITests	No shard ran it when this file was written (2026-11-27); no reason recorded. Add it to a shard, or record why.
+SafeAreaUITests	No shard ran it when this file was written (2026-11-27); no reason recorded. Add it to a shard, or record why.
+SignInErrorUITests	No shard ran it when this file was written (2026-11-27); no reason recorded. Add it to a shard, or record why.
+SpreadTurnSettleUITests/testDefaultSpreadPicture	No shard ran it when this file was written (2026-11-27); no reason recorded. Add it to a shard, or record why.
+SyncSafetyUITests	No shard ran it when this file was written (2026-11-27); no reason recorded. Add it to a shard, or record why.

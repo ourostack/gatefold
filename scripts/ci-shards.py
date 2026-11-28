@@ -18,7 +18,10 @@ main and full-list pull requests) this fails when
     slowest passes add up to in scripts/ci-shards.times, for whichever of its two lists (main or PR) runs longer, and
     5 the test step's minutes no test gets (LAUNCH below; gatefold#260),
   - a test that a shard runs has no slowest pass in scripts/ci-shards.times, or a line there names no test CI runs,
-  - a UI test source has an `async` setUp, tearDown or test method (ASYNC_WHY below; gatefold#395).
+  - a UI test source has an `async` setUp, tearDown or test method (ASYNC_WHY below; gatefold#395),
+  - a test in GatefoldUITests (subfolders too) runs on main in no shard and isn't in scripts/ci-shards.unrun, the
+    tests CI doesn't run, each `Class[/test]<TAB>why`; or a line there names no test, has no why, or names a test a
+    shard runs. A class a list stops naming, when the lists move, fails here by name.
 --list prints every "tier|device|test" with its shard. --expect FILE fails unless that set equals the file's (the first
 word of each line; blank lines and lines starting with # ignored). CI checks against scripts/ci-shards.expect, so a
 test leaves CI only by a visible edit there: after adding or removing a test, `write` rewrites the file from the shards
@@ -45,6 +48,8 @@ TIMES = os.path.join(ROOT, TIMES_NAME)
 SOURCES = os.path.join(ROOT, "GatefoldUITests")
 TIERS = ("pr", "main")
 EXPECT = os.path.join(ROOT, "scripts", "ci-shards.expect")
+UNRUN_NAME = "scripts/ci-shards.unrun"
+UNRUN = os.path.join(ROOT, UNRUN_NAME)
 WRITE = "python3 -I scripts/ci-shards.py write"
 
 
@@ -65,23 +70,70 @@ def async_in(text, name):
             for n, line in enumerate(text.splitlines(), 1) for m in [ASYNC.search(line)] if m]
 
 
+def swift_sources(sources_dir):
+    """Every .swift file of the target, subfolders too (project.yml's `sources: [GatefoldUITests]` takes them all), as
+    paths relative to it."""
+    found = []
+    for folder, dirs, files in os.walk(sources_dir):
+        dirs.sort()
+        found += [os.path.relpath(os.path.join(folder, n), sources_dir) for n in sorted(files) if n.endswith(".swift")]
+    return found
+
+
 def async_problems(sources_dir):
     problems = []
-    for name in sorted(os.listdir(sources_dir)):
-        if name.endswith(".swift"):
-            with open(os.path.join(sources_dir, name), encoding="utf-8") as f:
-                problems += async_in(f.read(), name)
+    for name in swift_sources(sources_dir):
+        with open(os.path.join(sources_dir, name), encoding="utf-8") as f:
+            problems += async_in(f.read(), name)
     return problems
 
 
 def read_tests(sources_dir):
     """{class: [test, ...]} from the UI test sources: test methods of each XCTestCase subclass."""
     tests = {}
-    for name in sorted(os.listdir(sources_dir)):
-        if name.endswith(".swift"):
-            with open(os.path.join(sources_dir, name), encoding="utf-8") as f:
-                tests_in(f.read(), tests)
+    for name in swift_sources(sources_dir):
+        with open(os.path.join(sources_dir, name), encoding="utf-8") as f:
+            tests_in(f.read(), tests)
     return tests
+
+
+def read_unrun_text(text):
+    """({"Class" or "Class/test": why}, problems) from the unrun file: `Class[/test]<TAB>why`."""
+    unrun, problems = {}, []
+    for n, line in enumerate(text.splitlines(), 1):
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        name, _, why = line.partition("\t")
+        name = name.strip()
+        if not why.strip():
+            problems.append(f"line {n}: {name} needs a reason: `{name}<TAB><why CI doesn't run it>`")
+        if name in unrun:
+            problems.append(f"line {n}: {name} is listed twice")
+        unrun[name] = why.strip()
+    return unrun, problems
+
+
+def unrun_problems(tests, runs, unrun):
+    """Every test of every UI test class runs on main in a shard on some device (plan() holds it to one shard per
+    device), or is in the unrun file: a class no list names, or one a list stopped naming, fails here by name."""
+    on_main = {t for tier, _, t in runs if tier == "main"}
+    out = []
+    for cls in sorted(tests):
+        for t in tests[cls]:
+            name = f"{cls}/{t}"
+            if name not in on_main and cls not in unrun and name not in unrun:
+                out.append(f"GatefoldUITests has {name}, but no shard runs it on main: add it to a shard's `tests` in "
+                           f"app.yml, or, if CI must not run it, a line `{name}<TAB><why>` (or its class) in {UNRUN_NAME}")
+    for name in sorted(unrun):
+        cls, _, method = name.partition("/")
+        if cls not in tests or (method and method not in tests[cls]):
+            out.append(f"{UNRUN_NAME}: {name} names no test in GatefoldUITests: remove its line")
+            continue
+        running = sorted(t for t in ([name] if method else [f"{cls}/{m}" for m in tests[cls]]) if t in on_main)
+        if running:
+            out.append(f"{UNRUN_NAME}: {name} says CI doesn't run it, but a shard runs {', '.join(running)} on main: "
+                       "remove its line (or name only the tests no shard runs)")
+    return out
 
 
 def tests_in(text, tests):
@@ -348,8 +400,12 @@ def check(args):
     with open(WORKFLOW, encoding="utf-8") as f:
         text = f.read()
     lists = []
-    problems, runs = plan(text, read_tests(SOURCES), lists)
+    tests = read_tests(SOURCES)
+    problems, runs = plan(text, tests, lists)
     problems += async_problems(SOURCES)
+    with open(UNRUN, encoding="utf-8") as f:
+        unrun, bad = read_unrun_text(f.read())
+    problems += [f"{UNRUN_NAME} {p}" for p in bad] + unrun_problems(tests, runs, unrun)
     times, bad = read_times(TIMES)
     problems += [f"{TIMES_NAME} {p}" for p in bad]
     with open(SHARD, encoding="utf-8") as f:
@@ -372,7 +428,8 @@ def check(args):
     for p in listed:
         print(f"::error title=UI test list (scripts/ci-shards.expect)::{p}")
     if not problems and not listed:
-        print("Every listed test exists, and each runs in exactly one shard per device and tier.")
+        print("Every listed test exists, each runs in exactly one shard per device and tier, and every UI test runs "
+              f"on main or is in {UNRUN_NAME} with why.")
     return 1 if problems or listed else 0
 
 
@@ -668,6 +725,32 @@ jobs:
     unseen = dict(tests, CUITests=["testNew"])
     assert smoke_limit(smokewf, unseen, duo, 30, "iPad Pro 13-inch", ["CUITests"])[0] == need(15.0)  # 300 + 600
     assert limit_problems([], None, {}) != []
+    # Every UI test runs on main in a shard, or is in the unrun file with why (a class left out of every list, or dropped
+    # from one when the lists move, would otherwise leave CI without a word).
+    main_runs = {("main", "iPad Pro 13-inch", "AUITests/testOne"): ["s1"], ("pr", "iPad Pro 13-inch", "BUITests/testThree"): ["s3"],
+                 ("main", "iPhone Duo", "AUITests/testTwo"): ["d1"]}
+    gap = unrun_problems(tests, main_runs, {})
+    assert len(gap) == 1 and "BUITests/testThree" in gap[0] and "no shard runs it on main" in gap[0], gap
+    assert "scripts/ci-shards.unrun" in gap[0], gap
+    assert unrun_problems(tests, main_runs, {"BUITests": "a demo"}) == []
+    assert unrun_problems(tests, main_runs, {"BUITests/testThree": "a measurement"}) == []
+    stale = unrun_problems(tests, main_runs, {"BUITests": "a demo", "AUITests/testOne": "old"})
+    assert len(stale) == 1 and "AUITests/testOne" in stale[0] and "remove its line" in stale[0], stale
+    gone = unrun_problems(tests, main_runs, {"BUITests": "a demo", "ZUITests": "gone"})
+    assert len(gone) == 1 and "ZUITests" in gone[0] and "names no test" in gone[0], gone
+    # A class whose tests all run in shards stays quiet; one left out of the lists, whole, is named once per test.
+    assert len(unrun_problems(dict(tests, CUITests=["testA", "testB"]), main_runs, {"BUITests": "x"})) == 2
+    assert read_unrun_text("# c\n\nAUITests\ta demo\nBUITests/testThree\tmeasures\n") == (
+        {"AUITests": "a demo", "BUITests/testThree": "measures"}, [])
+    assert any("why" in p for p in read_unrun_text("AUITests\n")[1]), read_unrun_text("AUITests\n")
+    assert any("twice" in p for p in read_unrun_text("A\tx\nA\ty\n")[1])
+    # The sources are the whole target, subfolders too (project.yml's `sources: [GatefoldUITests]` takes them all).
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        os.makedirs(os.path.join(d, "Sub"))
+        with open(os.path.join(d, "Sub", "Deep.swift"), "w", encoding="utf-8") as f:
+            f.write("final class DeepUITests: XCTestCase {\n    func testDeep() {}\n}\n")
+        assert read_tests(d) == {"DeepUITests": ["testDeep"]}, read_tests(d)
     print("ci-shards selftest: ok")
     return 0
 
