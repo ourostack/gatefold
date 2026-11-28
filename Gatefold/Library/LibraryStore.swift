@@ -273,6 +273,20 @@ final class LibraryStore {
         save()
     }
 
+    /// Each book as it lands on the device, for the root view's open of a book asked for before it was here
+    /// (`-GatefoldOpenBook`, Shortcuts). A stream, not a count the view watches: on CI a launch asked for Emma, the
+    /// last book to download, and the view's change handler fired for the first seven landings but never for hers,
+    /// so she never opened (gatefold#432).
+    @ObservationIgnored private var landed: AsyncStream<String>.Continuation?
+
+    /// The books landing from now on, in order. One listener at a time: a new call ends the stream before it.
+    func landings() -> AsyncStream<String> {
+        landed?.finish()
+        let (stream, continuation) = AsyncStream.makeStream(of: String.self)
+        landed = continuation
+        return stream
+    }
+
     func download(_ book: LibraryBook) async {
         guard let cloud = book.cloud, state(of: book) != .downloading else { return }
         downloads[book.id] = .downloading
@@ -292,6 +306,7 @@ final class LibraryStore {
             // The Cloud's copy may differ from a file this book held before: its digest is worked out again.
             update(book.id) { $0.fileName = name; $0.digest = nil }
             downloads[book.id] = nil
+            landed?.yield(book.id)
             if covers[book.id] == nil, let meta = try? await BookOpener.shared.metadata(of: target), let cover = meta.cover {
                 storeCover(cover, id: book.id)
                 coverless.remove(book.id)

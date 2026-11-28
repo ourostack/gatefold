@@ -45,7 +45,9 @@ case "$*" in
   "simctl spawn "*)
     echo "$*" >> "$FAKE/simctl"
     # Every spawn hangs when $FAKE_SPAWN_HANGS is set (a starved simulator).
-    [ -z "${FAKE_SPAWN_HANGS:-}" ] || exec /bin/sleep 5 ;;
+    [ -z "${FAKE_SPAWN_HANGS:-}" ] || exec /bin/sleep 5
+    # Every spawn takes $FAKE_SPAWN_SLOW seconds and then works (a loaded simulator: 3 to 9 s each on CI).
+    [ -z "${FAKE_SPAWN_SLOW:-}" ] || /bin/sleep "$FAKE_SPAWN_SLOW" ;;
   *) echo "fake xcrun: unexpected $*" >&2; exit 64 ;;
 esac
 FAKE
@@ -143,6 +145,16 @@ out="$(PATH="$work/bin:$PATH" FAKE="$qd/fake" FAKE_UNAVAIL_CALLS="" FAKE_BOOT_EX
 if [ "$code" = 0 ] && grep -q "^UDID=dev1$" "$qd/env" && grep -qF "stopped at its limit" <<<"$out"; then
   echo "ok   wait: quieting that hangs stops at its limit, and the device still passes"
 else echo "FAIL wait: hanging quieting: exit $code"; echo "$out" | tail -5; fails=$((fails + 1)); fi
+# Every spawn is slow but works: all the jobs are still removed inside the limit, since the removals run side by side.
+# One at a time, 42 removals of 1 s each would stop at a 20 s limit after about 20, and the jobs it never reached run
+# through the tests (in 10% of shards on CI, which then ran at a load over 400 in 42% of cases; gatefold#404).
+qd="$work/quiet-slow"; mkdir -p "$qd/fake" "$qd/tmp"; : > "$qd/env"
+out="$(PATH="$work/bin:$PATH" FAKE="$qd/fake" FAKE_UNAVAIL_CALLS="" FAKE_BOOT_EXIT=0 FAKE_SPAWN_SLOW=1 CI_SIMULATOR_QUIET_LIMIT=20 \
+  CI_SIMULATOR_BOOT_SIM="$work/boot-sim.sh" RUNNER_TEMP="$qd/tmp" GITHUB_ENV="$qd/env" \
+  bash -c 'python3 -I "$0/ci-simulator.py" start gatefold-ipad "iPad Pro 13-inch" && python3 -I "$0/ci-simulator.py" wait gatefold-ipad "iPad Pro 13-inch" 60' "$here" 2>&1)"; code=$?
+if [ "$code" = 0 ] && grep -qF "removed $want of $want first-boot jobs" <<<"$out" && ! grep -qF "stopped at its limit" <<<"$out"; then
+  echo "ok   wait: on a slow simulator every first-boot job is still removed, inside the limit"
+else echo "FAIL wait: slow quieting: exit $code"; echo "$out" | grep -E "quiet" | tail -3; fails=$((fails + 1)); fi
 # No labels file: not quieted, and the device still passes.
 if python3 -I -c 'import importlib.util as u, pathlib, sys
 s = u.spec_from_file_location("cs", sys.argv[1]); m = u.module_from_spec(s); s.loader.exec_module(m)
