@@ -26,7 +26,8 @@ runtime that fails to mount ("Malformed bundle") can vanish after the boot, and 
 check; if the runtime went, one fresh device erased the same way. It prints the UDID to test on.
 Every boot disables the first-boot jobs in .github/scripts/quiet-sim.labels (gatefold#404), and once a device passes
 its check, `wait` and `erase` remove any still loaded (gatefold#209) on the step's time left, so XCUITest does not
-launch the app inside the first boot's load.
+launch the app inside the first boot's load. The disable at boot does not keep them off; the removal does, so it runs
+QUIET_PARALLEL at a time to finish on a loaded runner (see `quiet`).
 Offline test: bash scripts/test-ci-simulator.sh (a fake xcrun and boot-sim.sh; no simulator).
 
 Before it boots, `start` waits until the runtime's image has settled (`settle`), and every other job that boots a
@@ -58,6 +59,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from contextlib import redirect_stdout
 from pathlib import Path
@@ -390,7 +392,9 @@ def again(name, limit):
 # seconds; the one that hung past 120 s (job 129031300623) did so while `simctl list` hung too, so CoreSimulatorService
 # was not answering: a longer bound or a second shutdown would only spend more of the step on the same stall.
 QUIET_LABELS = Path(__file__).resolve().parent.parent / ".github" / "scripts" / "quiet-sim.labels"
-QUIET_LIMIT = setting("CI_SIMULATOR_QUIET_LIMIT", "120")
+# 42 removals at 3 to 9 s each, QUIET_PARALLEL at a time: about 40 to 100 s on a loaded runner, inside the limit.
+QUIET_LIMIT = setting("CI_SIMULATOR_QUIET_LIMIT", "300")
+QUIET_PARALLEL = int(setting("CI_SIMULATOR_QUIET_PARALLEL", "4"))
 
 
 def quiet_labels(labels=QUIET_LABELS):
@@ -410,26 +414,53 @@ def quiet(udid, labels=QUIET_LABELS):
     """Remove the first-boot jobs in quiet-sim.labels from a device that has passed its check (gatefold#209), so its
     first-boot load ends in minutes, not about 15. Only after the check, and only on the step's time left: it never
     fails a device or takes the time a check or a retry needs. Each call bounded; QUIET_LIMIT in all. Logs to stderr
-    (`erase` prints the UDID on stdout)."""
+    (`erase` prints the UDID on stdout).
+
+    `simctl boot --disabledJob` does not keep these jobs from running: the removal is what stops them. On a loaded
+    runner each removal took 3 to 9 s, so one at a time the old 120 s limit stopped after 13 to 41 of the 42. A job it
+    never reached was then seen running through the tests in 88% of cases (1152 of 1308), against 0.2% when it got
+    through them all, and those shards ran at a load over 400 in 45% of cases (iPad) against 10%, and failed 17.9%
+    of the time against 6.4% (App runs 2026-11-27 16:00 to 11-28 01:00 UTC, 904 shards). So QUIET_PARALLEL removals
+    run side by side, heaviest first, inside QUIET_LIMIT."""
     names = quiet_labels(labels)
     if not names:
         print(f"no {labels}; {udid} not quieted", file=sys.stderr)
         return
     end = time.time() + min(QUIET_LIMIT, left() - 5)
-    removed = tried = 0
-    for name in names:
-        rest = end - time.time()
-        if rest < 1:
-            print(f"quieting {udid} stopped at its limit after {tried} of {len(names)} jobs", file=sys.stderr)
-            break
-        tried += 1
-        try:
-            removed += subprocess.run(["xcrun", "simctl", "spawn", udid, "launchctl", "remove", name],
-                                      stdin=subprocess.DEVNULL, capture_output=True,
-                                      timeout=min(20, rest)).returncode == 0
-        except (OSError, subprocess.SubprocessError):
-            pass
-    print(f"quieted {udid}: removed {removed} of {len(names)} first-boot jobs (gatefold#209)", file=sys.stderr)
+    lock = threading.Lock()
+    queue = list(names)
+    counts = {"removed": 0, "tried": 0, "stopped": False}
+
+    def worker():
+        while True:
+            with lock:
+                rest = end - time.time()
+                if not queue:
+                    return
+                if rest < 1:
+                    counts["stopped"] = True
+                    return
+                name = queue.pop(0)
+                counts["tried"] += 1
+            try:
+                ok = subprocess.run(["xcrun", "simctl", "spawn", udid, "launchctl", "remove", name],
+                                    stdin=subprocess.DEVNULL, capture_output=True,
+                                    timeout=min(20, rest)).returncode == 0
+            except (OSError, subprocess.SubprocessError):
+                ok = False
+            with lock:
+                counts["removed"] += ok
+
+    began = time.time()
+    threads = [threading.Thread(target=worker, daemon=True) for _ in range(max(1, QUIET_PARALLEL))]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    if counts["stopped"]:
+        print(f"quieting {udid} stopped at its limit after {counts['tried']} of {len(names)} jobs", file=sys.stderr)
+    print(f"quieted {udid}: removed {counts['removed']} of {len(names)} first-boot jobs in {int(time.time() - began)} s "
+          "(gatefold#209)", file=sys.stderr)
 
 
 def erase(udid, steps=ERASE_STEPS):
