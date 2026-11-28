@@ -100,7 +100,8 @@ struct SyncSlipView: View {
 }
 
 /// The Cloud wants him to sign in again: his places are waiting on the phone until he does. One tap opens
-/// sign-in with his email filled in; Later puts it away until the book is opened again.
+/// sign-in with his email filled in; Later puts it away until the book is opened again. Shown under the top bar while
+/// the controls are up; while he reads, the ask is `SignInTab`, in the margin.
 struct SignInSlipView: View {
     let theme: ReaderTheme
     var onSignIn: () -> Void
@@ -164,7 +165,62 @@ struct SignInSlipView: View {
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("reader.signInSlip")
         .accessibilityLabel(Self.title)
-        .onAppear { AccessibilityNotification.Announcement(Self.title).post() }
+    }
+}
+
+/// The same ask while he reads: a small glass tab where the running head stands, in the page's top margin, never on a
+/// line (gatefold#654: the whole notice floated over the top of the page and hid the first line of every page he read).
+/// One tap opens sign-in, his email filled in; its cross puts the ask away until the book is opened again, as Later does.
+struct SignInTab: View {
+    let theme: ReaderTheme
+    var onSignIn: () -> Void
+    var onLater: () -> Void
+
+    /// The glass's height: it fits the top margin. Each target reaches `reach` up into the band above it, to 44 pt,
+    /// never down onto the first line.
+    static let height: CGFloat = 26
+    private let reach: CGFloat = 18
+
+    var body: some View {
+        HStack(spacing: 0) {
+            Button(action: onSignIn) {
+                HStack(spacing: 5) {
+                    Image(systemName: "key.fill")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(theme.accent)
+                    Text("Sign in")
+                        .font(.caption.weight(.semibold))
+                        .lineLimit(1)
+                        .fixedSize()
+                }
+                .padding(.leading, 10)
+                .padding(.trailing, 6)
+                .frame(height: Self.height)
+                .padding(.top, reach)
+                .contentShape(.rect)
+            }
+            .accessibilityLabel(SignInSlipView.title)
+            .accessibilityHint("Opens sign-in for PocketBook Cloud")
+            .accessibilityIdentifier("reader.signInTab")
+            Button(action: onLater) {
+                Image(systemName: "xmark")
+                    .font(.caption2.weight(.bold))
+                    .frame(width: 30, height: Self.height)
+                    .padding(.top, reach)
+                    .contentShape(.rect)
+            }
+            .accessibilityLabel("Later")
+            .accessibilityHint("Puts the sign-in ask away until the book is opened again")
+            .accessibilityIdentifier("reader.signInTab.later")
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(theme.text)
+        .background(alignment: .bottom) {
+            Color.clear
+                .frame(height: Self.height)
+                .glassEffect(.regular.tint(theme.background.opacity(0.7)).interactive(), in: Capsule(style: .continuous))
+        }
+        .padding(.top, -reach)
     }
 }
 

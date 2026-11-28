@@ -212,15 +212,23 @@ struct ReaderScreen: View {
                     .zIndex(slipOverCover ? 3.6 : 2)
                 }
 
-                if Self.showsSignInSlip(needsReconnect: app.needsReconnect != nil, later: signInLater, offerUp: model.slip != nil,
-                                        pageReady: model.pageReady, atTheEnd: model.endLeaf != nil) {
+                if signInAsked, model.chromeVisible {
                     // Ari, build 53: the Cloud wanted him to sign in again while he read, and only the shelf said so.
-                    // His places stayed on the phone. The reader says it too, in the offer's band.
+                    // His places stayed on the phone. The reader says it too: the whole notice under the top bar while
+                    // the controls are up, and while he reads a tab in the top margin (`signInTab`), never on a line
+                    // (gatefold#654: the notice stood over the first line of every page).
                     SignInSlipView(theme: model.theme) { reconnecting = true } onLater: { signInLater = true }
                         .frame(width: slipWidth)
-                        .offset(x: slipX, y: model.chromeVisible ? barTop + 8 + ReaderChrome.topBarHeight : slipTop)
-                        .animation(Motion.chrome, value: model.chromeVisible)
+                        .offset(x: slipX, y: barTop + 8 + ReaderChrome.topBarHeight)
                         .transition(reduceMotion ? .opacity : .move(edge: .top).combined(with: .opacity))
+                        .zIndex(2)
+                }
+                if signInAsked, !model.chromeVisible {
+                    let at = signInTabPlace(layout: layout, proxy: proxy, clearance: clearance, slipTop: slipTop)
+                    SignInTab(theme: model.theme) { reconnecting = true } onLater: { signInLater = true }
+                        .frame(width: at.frame.width, height: at.frame.height, alignment: at.alignment)
+                        .offset(x: at.frame.minX, y: at.frame.minY)
+                        .transition(.opacity)
                         .zIndex(2)
                 }
 
@@ -257,6 +265,10 @@ struct ReaderScreen: View {
                     }
             }
             .sensoryFeedback(.success, trigger: model.slipCount) { _, _ in model.slipKind == .landed }
+            // Once as the ask comes, whichever of its forms shows (a tab or the whole notice).
+            .onChange(of: signInAsked) { _, asked in
+                if asked { AccessibilityNotification.Announcement(SignInSlipView.title).post() }
+            }
             // Once a status column has sat under the controls at this size, the status bar stays hidden with
             // the controls up there. Without the memory, hiding it took the column away, which brought the
             // status bar back, which brought the column back, several times a second (Ari, build 39).
@@ -703,7 +715,8 @@ struct ReaderScreen: View {
                 .truncationMode(.tail)
                 .frame(width: max(0, end - start), height: camera.height, alignment: .leading)
                 .offset(x: start, y: camera.minY)
-                .opacity(hidden || !model.pageReady ? 0 : 1)
+                // The sign-in tab stands in its place while it is up (`signInTabFrame`).
+                .opacity(hidden || !model.pageReady || signInTabShows ? 0 : 1)
                 .animation(.easeOut(duration: 0.25), value: hidden)
                 // Quick enough to finish as a riffle's last leaf does (`riffleLeaves`).
                 .animation(.easeOut(duration: 0.18), value: words)
@@ -791,6 +804,8 @@ struct ReaderScreen: View {
         ZStack(alignment: .topLeading) {
             ForEach(Array(pages.enumerated()), id: \.offset) { i, r in
                 Text(heads[i])
+                    // The sign-in tab stands in the last page's head while it is up (`signInTabFrame`).
+                    .opacity(i == pages.count - 1 && signInTabShows ? 0 : 1)
                     .font(model.tabletBands.map { .system(size: $0.headSize) } ?? .caption)
                     .foregroundStyle(model.theme.head)
                     .lineLimit(1)
@@ -809,6 +824,41 @@ struct ReaderScreen: View {
     }
 
     private var catchUpTabShowing: Bool { model.aheadTab != nil && model.slipFolded && model.slip != nil }
+
+    /// The Cloud wants him to sign in again, and the reader says so (`showsSignInSlip`).
+    private var signInAsked: Bool {
+        Self.showsSignInSlip(needsReconnect: app.needsReconnect != nil, later: signInLater, offerUp: model.slip != nil,
+                             pageReady: model.pageReady, atTheEnd: model.endLeaf != nil)
+    }
+    /// The ask stands as a tab in the top margin: while he reads, with the controls down.
+    private var signInTabShows: Bool { signInAsked && !model.chromeVisible }
+
+    /// Where the sign-in tab stands while he reads, and how it sits in that frame: in the running head's own place, which
+    /// it takes over until the ask goes (the head comes back then), so it is in the page's top margin, clear of the camera
+    /// and of every line (gatefold#654). Beside the camera, the head's side of it, at the leading edge; else in the last
+    /// page's head band, centred. Only where neither band holds it whole (a scrolling page, the tabletop deck, a margin
+    /// set too small) does it float at the top centre, over text he can scroll or turn out from under it, or put away
+    /// with its cross.
+    private func signInTabPlace(layout: ReaderLayout, proxy: GeometryProxy, clearance: ChromeClearance, slipTop: CGFloat) -> (frame: CGRect, alignment: Alignment) {
+        let camera = occlusions(in: proxy).filter { $0.height <= 120 && $0.minY < 80 }.min { $0.minY < $1.minY }
+        let textTop = layout.pageFrame.minY + pageTopClearance(layout, clearance: clearance)
+        let side: CGFloat = 24, gap: CGFloat = 2
+        let frame = layout.pageFrame
+        let paged = model.pageTurn != .scroll && layout.deck == nil
+        // Centred in the camera's band, the glass ends half its height below the band's middle.
+        if paged, let camera, camera.midY + SignInTab.height / 2 + gap <= textTop {
+            let left = (frame.minX + side, min(frame.maxX - side, camera.minX - 14))
+            let right = (max(frame.minX + side, camera.maxX + 14), frame.maxX - side)
+            let (start, end) = left.1 - left.0 >= right.1 - right.0 ? left : right
+            return (CGRect(x: start, y: camera.minY, width: max(0, end - start), height: camera.height), .leading)
+        }
+        if paged, model.textBand.top >= SignInTab.height + 2 * gap {
+            let last = layout.gutter.map { g in CGRect(x: g.midX, y: frame.minY, width: frame.maxX - g.midX, height: frame.height) } ?? frame
+            return (CGRect(x: last.minX + 48, y: last.minY, width: max(0, last.width - 96), height: model.textBand.top), .center)
+        }
+        let width = min(proxy.size.width - 32, 160)
+        return (CGRect(x: (proxy.size.width - width) / 2, y: slipTop, width: width, height: 44), .center)
+    }
     private var statusBarHidden: Bool { !model.chromeVisible || coverScreen || catchUpTabShowing }
 
     func pageTopClearance(_ layout: ReaderLayout, clearance: ChromeClearance) -> CGFloat {
