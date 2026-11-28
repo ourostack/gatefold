@@ -3,6 +3,7 @@
 # python3 -I scripts/ci-shards.py write (it keeps these comment lines).
 main|iPad Pro 13-inch|ArrivalNoteUITests/testANoteScrollsTheShelfBackUpToIt
 main|iPad Pro 13-inch|ArrivalNoteUITests/testTheArrivalNoteCoversNeitherTheTitleNorTheButtons
+main|iPad Pro 13-inch|AskedBookOpensUITests/testTheAskedBookOpensWhenItLandsLastAndTheCountMissesIt
 main|iPad Pro 13-inch|ContentsCloseUITests/testAFastSwipeDownFromTheHeaderClosesContents
 main|iPad Pro 13-inch|ContentsCloseUITests/testAFastSwipeDownInTheListAtItsTopClosesContents
 main|iPad Pro 13-inch|ContentsCloseUITests/testAPullPastTheTopOfTheListClosesContents

@@ -85,6 +85,44 @@ import Testing
         #expect(reads == 1 && made == 1)
     }
 
+    /// gatefold#678 (App run 46077756249, attempt 1): turned on its side and back upright, with the new column reaching
+    /// Readium after the restore. The look at the page read his words 1110 characters into 2055: the 1106 of the page
+    /// before his and the 949 of his own, read while the web view's scroll stood between the two (the screen recording's
+    /// last frames show it moving). His words were "on screen", so nothing moved; then the scroll came to rest on the page
+    /// before his, with Readium's report at 25 of 31 and his place at 26 of 31, and the page opened on other words.
+    /// A one-page read whose scroll stands between two pages is not a page: it is read again.
+    @Test func aOnePageReadBetweenTwoPagesIsReadAgain() async {
+        let pages = 31.0
+        let before = "the page before his, all of it"
+        var made = 0
+        let read: () async -> VisibleRange? = {
+            made += 1
+            if made <= 2 {
+                return VisibleRange(href: Self.file, start: 25.5 / pages, end: 26.5 / pages,
+                                    text: "\(before) the first words of his sentence on the left page and the rest of his page")
+            }
+            return VisibleRange(href: Self.file, start: 25 / pages, end: 26 / pages, text: before)
+        }
+        let (range, reads) = await LaidOutPage.readOnePage(read, beat: {})
+        #expect(range.map { $0.contains(Self.his) } == false, "a read between two pages called the page before his his: \(String(describing: range))")
+        #expect(reads == 3 && made == 3, "read \(made) times, said \(reads)")
+    }
+
+    /// A one-page read standing on its page, the last page of a chapter (ending at 1) included, is read once.
+    @Test func aOnePageReadOnItsPageIsReadOnce() async {
+        let pages = 31.0
+        for (start, end) in [(26 / pages, 27 / pages), (0, 1 / pages), (30 / pages, 1)] {
+            var made = 0
+            let read: () async -> VisibleRange? = {
+                made += 1
+                return VisibleRange(href: Self.file, start: start, end: end, text: "the first words of his sentence on the left page")
+            }
+            let (range, reads) = await LaidOutPage.readOnePage(read, beat: {})
+            #expect(range.map { $0.contains(Self.his) } == true)
+            #expect(reads == 1 && made == 1, "page \(start)..\(end) read \(made) times")
+        }
+    }
+
     /// Overtaken (a newer reflow, his move): no more reads.
     @Test func anOvertakenLookStopsReading() async {
         let (read, made) = page(layingOut: .max)

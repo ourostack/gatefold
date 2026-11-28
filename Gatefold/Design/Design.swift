@@ -305,6 +305,9 @@ enum LaunchOptions {
     static var holdNotes: Bool { isUITest && defaults.bool(forKey: "GatefoldHoldNotes") }
     /// How long after the start they arrive (`GatefoldArriveAfter`, seconds), so a test can be watching first.
     static var arriveAfter: Double { defaults.double(forKey: "GatefoldArriveAfter") }
+    /// UI tests: the shelf's on-device count never opens the book asked for, as it failed to on CI (gatefold#432), so
+    /// only the library's word that the book landed can open it (`AskedBookOpensUITests`).
+    static var missCountOpen: Bool { defaults.bool(forKey: "GatefoldMissCountOpen") }
     static var sheet: String? { defaults.string(forKey: "GatefoldSheet") }
     /// Screenshots and UI tests: switch the forced posture to `GatefoldFlipTo` (default spread) after
     /// this many seconds, and back after `GatefoldFlipBackAfter` more, to film the unfold.

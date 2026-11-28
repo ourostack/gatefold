@@ -264,7 +264,17 @@ struct RootView: View {
             if let id {
                 readerLog.notice("open: on-device count \(count, privacy: .public); asked \(id, privacy: .public), listed \(book != nil, privacy: .public), on device \(book?.isOnDevice ?? false, privacy: .public), reader \(reader?.bookID ?? "none", privacy: .public), opening \(opening, privacy: .public)")
             }
+            if LaunchOptions.missCountOpen { return }
             if reader == nil, !opening, let book, book.isOnDevice {
+                open(book)
+            }
+        }
+        // The book asked for before it was here opens as it lands, heard from the library itself: the count above
+        // can miss the last landing (gatefold#432). Whichever comes first opens it; the other finds it opening.
+        .task {
+            for await id in app.library.landings() {
+                guard id == app.openBookID, reader == nil, !opening, let book = app.library.book(id) else { continue }
+                readerLog.notice("open: \(id, privacy: .public) landed; opening the book asked for")
                 open(book)
             }
         }
