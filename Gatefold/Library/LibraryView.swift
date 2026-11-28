@@ -670,7 +670,7 @@ struct CoverView: View {
     }
 
     @Environment(\.colorScheme) private var scheme
-    private static let shape = UnevenRoundedRectangle(topLeadingRadius: 3, bottomLeadingRadius: 3, bottomTrailingRadius: 6, topTrailingRadius: 6, style: .continuous)
+    private static let shape = CoverShape()
 }
 
 /// Add's glass button, a squircle; beside the cover screen's reserved column, the account badge's size, so the two
@@ -735,6 +735,8 @@ struct GeneratedCover: View {
     static let cloth: [UInt32] = [0x3E4A5C, 0x4E5D52, 0x5C5048, 0x46506A, 0x6A6460]
     let title: String
     let author: String
+    @Environment(\.dynamicTypeSize) private var typeSize
+    @Environment(\.legibilityWeight) private var legibility
 
     var body: some View {
         let palette = Self.cloth
@@ -742,22 +744,22 @@ struct GeneratedCover: View {
         let hue = palette[Int(title.unicodeScalars.reduce(0) { ($0 &* 31 &+ $1.value) % 9973 }) % palette.count]
         ZStack {
             Color(hex: hue)
-            VStack(spacing: 10) {
-                Rectangle().fill(.white.opacity(0.5)).frame(width: 30, height: 1)
-                Text(title)
-                    .font(.system(.headline, design: .serif))  // the one serif moment, like a colophon
-                    .multilineTextAlignment(.center)
-                    .minimumScaleFactor(0.6)
-                if !author.isEmpty {
-                    Text(author.uppercased())
-                        .font(.system(size: 9, weight: .medium))
-                        .tracking(1.2)
-                        .opacity(0.8)
+            GeometryReader { space in
+                let bold = legibility == .bold
+                let set = CoverLettering.layout(title: title, author: author, cover: space.size, typeSize: typeSize, bold: bold)
+                VStack(spacing: CoverLettering.spacing) {
+                    Rectangle().fill(.white.opacity(0.5)).frame(width: 30, height: CoverLettering.rule)
+                    CoverLines(setting: set.title, font: CoverLettering.font(.title, typeSize, bold: bold), tracking: CoverLettering.tracking(.title))
+                    if let byline = set.author {
+                        CoverLines(setting: byline, font: CoverLettering.font(.author, typeSize, bold: bold), tracking: CoverLettering.tracking(.author))
+                            .opacity(0.8)
+                    }
+                    Rectangle().fill(.white.opacity(0.5)).frame(width: 30, height: CoverLettering.rule)
                 }
-                Rectangle().fill(.white.opacity(0.5)).frame(width: 30, height: 1)
+                .foregroundStyle(.white)
+                .padding(CoverLettering.padding)
+                .frame(width: space.size.width, height: space.size.height)
             }
-            .foregroundStyle(.white)
-            .padding(12)
         }
     }
 }

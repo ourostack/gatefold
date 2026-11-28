@@ -73,6 +73,20 @@ struct Squircle: Shape {
     }
 }
 
+/// A book's cover, a squircle: continuous corners, tighter at the spine (the leading edge) than at the fore-edge, as a
+/// bound book's are. Every cover Gatefold shows, made or real, is clipped to it: on the shelf, in a catalog row, and on
+/// the reader's opening and end leaf. Ouro UI has no cover radius of its own, so this is the one.
+struct CoverShape: Shape {
+    static let spine: CGFloat = 3
+    static let foreEdge: CGFloat = 6
+
+    func path(in rect: CGRect) -> Path {
+        let (spine, fore) = (Self.spine, Self.foreEdge)
+        return UnevenRoundedRectangle(topLeadingRadius: spine, bottomLeadingRadius: spine, bottomTrailingRadius: fore, topTrailingRadius: fore, style: .continuous)
+            .path(in: rect)
+    }
+}
+
 extension Font {
     /// Chrome titles: SF, like the rest of the room. Serif lives in the book.
     static func display(_ style: Font.TextStyle, weight: Font.Weight = .bold) -> Font {
