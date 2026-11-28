@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Gatefold Privacy</title>
-<meta name="description" content="What Gatefold Reader does with your data: almost nothing, on purpose.">
+<meta name="description" content="What Gatefold Reader does with your data: your books stay between you and PocketBook Cloud, and a few anonymous counts tell us when a download or sync fails or a page is slow.">
 <link rel="icon" href="../mark.svg" type="image/svg+xml">
 <link rel="stylesheet" href="../site.css">
 </head>
@@ -12,14 +12,32 @@
 <header><a class="mark" href="../"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect x="3" y="6" width="12.5" height="20" rx="2" fill="#EDE3D0" stroke="#23201C" stroke-width="1.4"/><rect x="16.5" y="6" width="12.5" height="20" rx="2" fill="#F6F1E7" stroke="#23201C" stroke-width="1.4"/><path d="M20 4h4v14l-2-2-2 2z" fill="#9A3B26"/></svg><span>Gatefold</span></a></header>
 <main>
 <h1>Privacy, in one breath.</h1>
-<p class="lede">Gatefold collects nothing about you. Your books, your place in them and your notes travel only between your device and your own PocketBook Cloud account.</p>
-<p class="quiet">Last updated 2 November 2026. Applies to Gatefold Reader for iPhone and iPad.</p>
+<p class="lede">Your books, your place in them and your notes travel only between your device and your own PocketBook Cloud account. The one thing Gatefold sends us is a few anonymous counts about how downloads, syncs and page loads went, so we can fix what goes wrong.</p>
+<p class="quiet">Last updated 27 November 2026. Applies to Gatefold Reader for iPhone and iPad.</p>
 
 <h2>Who Gatefold talks to</h2>
-<p>Only PocketBook Cloud (<code>cloud.pocketbook.digital</code>), and only on your behalf: to sign you in, list your books, download the ones you open, fetch their covers from the links PocketBook Cloud provides, and sync your reading position, highlights, notes and bookmarks. There is no Gatefold server. We never see your books, your account or anything you do in the app.</p>
+<p>PocketBook Cloud (<code>cloud.pocketbook.digital</code>), on your behalf: to sign you in, list your books, download the ones you open, fetch their covers from the links PocketBook Cloud provides, and sync your reading position, highlights, notes and bookmarks. There is no Gatefold server. We never see your books, your account, your email or what you read.</p>
+<p>PostHog (<code>us.i.posthog.com</code>), for the diagnostic counts below. Nothing else.</p>
+
+<h2>The diagnostic counts</h2>
+<p>The app sends a short report at five moments:</p>
+<ul>
+<li>When it downloads a book: which step it reached, the status or error code it got, how many tries it took, the file format, and yes-or-no facts such as whether the book was already on the device.</li>
+<li>When it syncs your place: whether the send or fetch worked, the status or error code, what started it, and roughly how long ago you turned the page.</li>
+<li>When you tap a book that isn't downloaded yet: that a tap happened, the state the book was in, and roughly how long it had been downloading.</li>
+<li>When a book opens or you jump far ahead: roughly how long the page took to show.</li>
+<li>When you add books from Files, another app, a drag or a catalog: which of those it was, and how many books were new, already on your shelf, matched to a book in your PocketBook Cloud, or turned away.</li>
+</ul>
+<p>Each report also says which version of Gatefold and of iOS sent it, and the time. Times are rounded into wide steps, such as "under 5 seconds" or "under 2 minutes".</p>
+<ul>
+<li>Never a title, author, file name, link, highlight, note, email, password or error message.</li>
+<li>Every copy of Gatefold sends the same fixed name in place of an ID. Nothing in a report names your device or your PocketBook account.</li>
+<li>Like any website, PostHog sees the internet address a report comes from. Gatefold tells it not to work out where you are from that address and not to build a profile.</li>
+</ul>
+<p>This is what App Store Connect lists under App Privacy as diagnostics, product interaction and performance data, all "not linked to you" and none used for tracking. The full list is in <a href="https://github.com/ourostack/gatefold/blob/main/Gatefold/Sync/GatefoldTelemetry.swift">GatefoldTelemetry.swift</a>.</p>
 
 <h2>Your sign-in</h2>
-<p>When you sign in, your email and password go straight to PocketBook Cloud, which hands back a session token. Gatefold keeps that token in your device's Keychain, on this device only (it is not synced to iCloud). Your password is never stored. Signing out removes the token and the cached shelf.</p>
+<p>When you sign in, your email and password go straight to PocketBook Cloud, which hands back a session token. Gatefold keeps that token, and your password so it can sign you back in when the token runs out, in your device's Keychain, on this device only (neither is synced to iCloud). Neither ever leaves the device except to PocketBook Cloud. Signing out removes them and the cached shelf.</p>
 <p>One small Keychain note stays behind on purpose: for each book, the last reading position Gatefold sent to PocketBook Cloud, so Gatefold can recognise its own bookmark when the Cloud hands it back, even after a reinstall.</p>
 
 <h2>What stays on your device</h2>
@@ -27,7 +45,7 @@
 
 <h2>What Gatefold doesn't do</h2>
 <ul>
-<li>No analytics, crash reporting services, advertising or tracking of any kind.</li>
+<li>No advertising, no tracking across apps or websites, and no crash reporting service.</li>
 <li>No accounts of our own, and no data sold, shared or used to profile you.</li>
 <li>No access to your contacts, photos, location, camera or microphone.</li>
 </ul>
@@ -36,7 +54,7 @@
 <p>What PocketBook Cloud does with your account and library is covered by PocketBook's own privacy policy, since it's their service. Gatefold is an independent app and isn't part of it.</p>
 
 <h2>Children</h2>
-<p>Gatefold isn't aimed at children and collects nothing from anyone, children included.</p>
+<p>Gatefold isn't aimed at children. The diagnostic counts are the same for everyone and say nothing about who is reading.</p>
 
 <h2>Changes and questions</h2>
 <p>If this ever changes, this page changes first, with a new date at the top. Questions are welcome on the <a href="../support/">support page</a>. Gatefold's source code is <a href="https://github.com/ourostack/gatefold">public</a>, so every claim here can be checked.</p>

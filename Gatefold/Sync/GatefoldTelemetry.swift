@@ -9,11 +9,16 @@ import UIKit
 /// you gotta add telemetry"; 2026-11-20: the InkPad didn't pick up where Gatefold left off).
 ///
 /// It sends stages, status codes, error domains and codes, and yes/no facts. Never a title, author,
-/// file name, hash, link, email or error message. The install is a random ID, and PostHog is told not to place the event by IP.
+/// file name, hash, link, email or error message. Every copy of Gatefold sends the same client ID, so no report can be
+/// told apart by phone (App Privacy then has no Device ID, as for Drift Remote), and PostHog is told not to place the
+/// event by IP or build a profile.
 /// Off in DEBUG builds, UI tests and the fake Cloud; on in TestFlight and release builds.
 final class GatefoldTelemetry: @unchecked Sendable {
     static let shared = GatefoldTelemetry()
-    static let distinctIDKey = "GatefoldTelemetryInstallID"
+    /// The one ID every copy sends as PostHog's `distinct_id`. It names the app, never a phone or a person.
+    static let sharedClientID = "gatefold-app"
+    /// Where TestFlight builds before 1.0 kept a random install ID. Removed at launch so none lingers.
+    static let retiredInstallIDKey = "GatefoldTelemetryInstallID"
     /// Events from a moment the app can't send in (iOS ending its background time), sent at the next launch or return.
     static let deferredKey = "GatefoldTelemetryDeferred"
     static let deferredLimit = 20
@@ -42,10 +47,7 @@ final class GatefoldTelemetry: @unchecked Sendable {
         self.configuration = configuration
         self.defaults = defaults
         self.send = send
-        // Made once, before any download can race to make a second one.
-        if configuration != nil, defaults.string(forKey: Self.distinctIDKey) == nil {
-            defaults.set(UUID().uuidString, forKey: Self.distinctIDKey)
-        }
+        defaults.removeObject(forKey: Self.retiredInstallIDKey)
     }
 
     static func loadConfiguration(bundle: Bundle = .main) -> Configuration? {
@@ -259,7 +261,6 @@ final class GatefoldTelemetry: @unchecked Sendable {
 
     func capture(_ event: String, properties: [String: Value]) {
         guard let configuration else { return }
-        let distinctID = defaults.string(forKey: Self.distinctIDKey) ?? "unknown"
         var props = properties
         let info = Bundle.main.infoDictionary
         props["app"] = .string("gatefold")
@@ -268,7 +269,7 @@ final class GatefoldTelemetry: @unchecked Sendable {
         props["os_version"] = .string(ProcessInfo.processInfo.operatingSystemVersionString)
         props["$process_person_profile"] = .bool(false)
         props["$geoip_disable"] = .bool(true)
-        let payload = Payload(api_key: configuration.apiKey, event: event, distinct_id: distinctID,
+        let payload = Payload(api_key: configuration.apiKey, event: event, distinct_id: Self.sharedClientID,
                               properties: props, timestamp: ISO8601DateFormatter().string(from: Date()))
         guard let body = try? JSONEncoder().encode(payload) else { return }
         var request = URLRequest(url: configuration.captureURL)

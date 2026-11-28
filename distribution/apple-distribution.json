@@ -24,8 +24,8 @@
         "category": "BOOKS",
         "screenshots": [],
         "privacy": {
-          "policyUrl": "https://ouroboros.bot/privacy",
-          "collectsData": false
+          "policyUrl": "https://ourostack.github.io/gatefold/privacy/",
+          "collectsData": true
         },
         "exportCompliance": {
           "usesEncryption": false,
