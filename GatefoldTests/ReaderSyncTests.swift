@@ -17,6 +17,15 @@ final class ScriptedPage: ReaderPage {
     /// Whether a jump's words end up on screen. Says no for words the test wants to keep settling.
     var showsWords: (Locator) -> Bool = { _ in true }
     private var visibleText = ""
+    /// The words a page still loading reports while the opening cover is up, in place of the words it shows once
+    /// it is up (gatefold#675: Readium reported a warm page's words before it had loaded it). Nil: the same words.
+    var wordsUnderCover: String?
+    /// Lays out these words on the page, with no report of a new place.
+    func setWords(_ words: String) { visibleText = words }
+    private var wordsOnScreen: String {
+        if let early = wordsUnderCover, model?.pageReady != true { return early }
+        return visibleText
+    }
 
     init(at location: Locator) { currentLocation = location }
 
@@ -160,13 +169,13 @@ final class ScriptedPage: ReaderPage {
     func pageRange() async -> VisibleRange? {
         guard !pageUnmeasured, let here = shownLocation ?? currentLocation else { return nil }
         let start = here.locations.progression ?? 0
-        return VisibleRange(href: here.href.string, start: start, end: min(1, start + 0.03), text: visibleText)
+        return VisibleRange(href: here.href.string, start: start, end: min(1, start + 0.03), text: wordsOnScreen)
     }
 
     func visibleRange() async -> VisibleRange? {
         guard let here = currentLocation else { return nil }
         let start = here.locations.progression ?? 0
-        return VisibleRange(href: here.href.string, start: start, end: min(1, start + 0.03), text: visibleText)
+        return VisibleRange(href: here.href.string, start: start, end: min(1, start + 0.03), text: wordsOnScreen)
     }
 
     func progression(of quote: String) async -> Double? {
@@ -492,6 +501,33 @@ final class ScriptedPage: ReaderPage {
         await f.model.load()
         #expect(f.page.jumps.isEmpty, "the front-matter place was landed over")
         #expect(f.model.suggestion != nil, "the InkPad's place is offered")
+        f.model.close()
+    }
+
+    /// The page that comes up is the one read: a book tapped before its warm page was ready read its words while
+    /// Readium was still loading it, and nothing read them again as the page showed. CI's iPad came back to Pride and
+    /// Prejudice on the page it had left, but the words the reader held were the ones from before the page had
+    /// loaded (main 99fe8266, run 46088773840: "and its words are where they were"). The bookmark ribbon reads the
+    /// same words. Here the page reports its pre-load words for as long as the cover is up.
+    @Test func theWordsOfAPageAreReadAsItShows() async throws {
+        let publication = try await Self.publication()
+        let href = try #require(await Self.locate(publication, 0)).href.string
+        var marks = BookmarkList()
+        // Far from the page's own place, so only its words on screen can mark the page.
+        let mark = ReadingAnchor(href: href, progression: 0.9, text: "a line he marked")
+        _ = marks.toggle(at: mark, visible: VisibleRange(href: href, start: 0.9, end: 0.93, text: "a line he marked"),
+                         title: "a mark", totalProgression: 0.5)
+        let f = try await Self.make(remote: { _, _ in nil }, book: { $0.bookmarks = marks })
+        f.page.wordsUnderCover = "the page as Readium first lays it out"
+        // The stand-in's words once the page is up: his marked line among them.
+        f.page.setWords("the page as it shows, with a line he marked on it")
+        // Behind the shelf the open waits at its first page for the tap, so once the cover lifts, only the page
+        // showing reads its words.
+        f.model.warm()
+        for _ in 0..<200 where !f.model.pageReady { try await Task.sleep(for: .milliseconds(25)) }
+        try #require(f.model.pageReady, "the page never came up")
+        for _ in 0..<40 where !f.model.isBookmarked { try await Task.sleep(for: .milliseconds(25)) }
+        #expect(f.model.isBookmarked, "the page that came up has his mark on it, but the reader kept the words from before it loaded")
         f.model.close()
     }
 
