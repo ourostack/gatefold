@@ -58,9 +58,14 @@ def decide(failed):
 
 
 def superseded(run, newest_id):
-    """`run`: the App run ({id, conclusion, event}); `newest_id`: the newest App run of its branch and event. True when a
-    newer push cancelled it (only pull requests cancel in progress), so there is nothing to rerun."""
-    return run["conclusion"] == "cancelled" and run["event"] == "pull_request" and newest_id not in (None, run["id"])
+    """`run`: the App run ({id, conclusion, event, head_branch}); `newest_id`: the newest App run of its branch and
+    event. True when there is nothing to rerun: a pull request's run a newer push cancelled (only pull requests cancel
+    in progress), or a main push run, however it ended, once a newer main push run exists. Main's push runs share one
+    group, so that newer run covers this commit, and a rerun of this one would wait in the group and replace it."""
+    newer = newest_id not in (None, run["id"])
+    if run["event"] == "push" and run.get("head_branch") == "main":
+        return newer
+    return run["conclusion"] == "cancelled" and run["event"] == "pull_request" and newer
 
 
 def gh(*args):
@@ -95,9 +100,10 @@ def main(run_id):
     repo = "repos/{owner}/{repo}"
     run = json.loads(gh("api", f"{repo}/actions/runs/{run_id}",
                         "--jq", "{id, conclusion, event, head_branch, workflow_id}"))
-    if run["conclusion"] == "cancelled" and run["event"] == "pull_request":
+    main_push = run["event"] == "push" and run["head_branch"] == "main"
+    if main_push or (run["conclusion"] == "cancelled" and run["event"] == "pull_request"):
         newest = json.loads(gh("api", f"{repo}/actions/workflows/{run['workflow_id']}/runs", "-X", "GET",
-                               "-f", f"branch={run['head_branch']}", "-f", "event=pull_request", "-f", "per_page=1",
+                               "-f", f"branch={run['head_branch']}", "-f", f"event={run['event']}", "-f", "per_page=1",
                                "--jq", "[.workflow_runs[].id]"))
         if superseded(run, newest[0] if newest else None):
             print(f"Not rerunning: a newer push replaced it (run {newest[0]})")
@@ -161,8 +167,16 @@ def selftest():
             bad += 1
             print(f"FAIL: {[f[0] for f in failed]}: got {got} ({why}), want {want}")
     runs = [
-        # Main's run 44021756211: shards cancelled from outside end the run "cancelled"; main never cancels in progress.
-        (({"id": 1, "conclusion": "cancelled", "event": "push"}, 2), False),
+        # Main's run 44021756211: shards cancelled from outside end the run "cancelled"; when it is still main's newest
+        # push run, it is rerun.
+        (({"id": 1, "conclusion": "cancelled", "event": "push", "head_branch": "main"}, 1), False),
+        (({"id": 1, "conclusion": "failure", "event": "push", "head_branch": "main"}, 1), False),
+        # Main's push runs share one group per workflow: a newer main push run covers this commit, and a rerun of this
+        # one would wait in that group and replace the newer one (2026-11-27: the coordinator's cancels of 13 stale App
+        # runs were each rerun once).
+        (({"id": 1, "conclusion": "cancelled", "event": "push", "head_branch": "main"}, 2), True),
+        (({"id": 1, "conclusion": "failure", "event": "push", "head_branch": "main"}, 2), True),
+        (({"id": 1, "conclusion": "cancelled", "event": "push", "head_branch": "main"}, None), False),
         # A pull request's run replaced by a newer push: that newer run is the one.
         (({"id": 1, "conclusion": "cancelled", "event": "pull_request"}, 2), True),
         (({"id": 2, "conclusion": "cancelled", "event": "pull_request"}, 2), False),

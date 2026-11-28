@@ -175,3 +175,4 @@ iPad Pro 13-inch|ArrivalNoteUITests/testTheArrivalNoteCoversNeitherTheTitleNorTh
 iPhone Duo|ArrivalNoteUITests/testTheArrivalNoteCoversNeitherTheTitleNorTheButtons	60	# estimate (the arrival note)
 iPad Pro 13-inch|ArrivalNoteUITests/testANoteScrollsTheShelfBackUpToIt	75	# estimate (the arrival note, scrolled)
 iPhone Duo|ArrivalNoteUITests/testANoteScrollsTheShelfBackUpToIt	75	# estimate (the arrival note, scrolled)
+iPad Pro 13-inch|NoAccountUITests/testAFreshInstallReadsAClassicWithoutAnAccount	150	# an estimate (a cold launch, seven books copied, one open) until CI has timed it

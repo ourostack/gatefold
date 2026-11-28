@@ -285,7 +285,7 @@ struct EndLeafView: View {
     @ViewBuilder private var cover: some View {
         if let image = model.cover {
             Image(uiImage: image).resizable().scaledToFill()
-                .clipShape(.rect(topLeadingRadius: 2, bottomLeadingRadius: 2, bottomTrailingRadius: 5, topTrailingRadius: 5, style: .continuous))
+                .clipShape(CoverShape())
                 .shadow(color: .black.opacity(0.25), radius: 10, y: 6)
         } else {
             VStack(spacing: 8) {
@@ -295,7 +295,7 @@ struct EndLeafView: View {
             }
             .padding(10)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(model.theme.background.mix(with: model.theme.text, by: 0.08), in: .rect(cornerRadius: 4, style: .continuous))
+            .background(model.theme.background.mix(with: model.theme.text, by: 0.08), in: CoverShape())
         }
     }
 }
@@ -358,7 +358,7 @@ struct OpeningPlaceholder: View {
                 Image(uiImage: cover)
                     .resizable()
                     .scaledToFit()
-                    .clipShape(.rect(topLeadingRadius: 3, bottomLeadingRadius: 3, bottomTrailingRadius: 6, topTrailingRadius: 6, style: .continuous))
+                    .clipShape(CoverShape())
                     .shadow(color: .black.opacity(0.22), radius: 14, y: 8)
                     // Every open is the same move: the cover grows to fill the page, as a book's
                     // cover fills your hands, and the first page takes its place.

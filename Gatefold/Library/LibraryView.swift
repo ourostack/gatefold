@@ -30,6 +30,8 @@ struct LibraryView: View {
     @State private var noteWaitsForShelf = false
     /// Bumped to scroll the shelf back to its top, where a note shows.
     @State private var scrollToTop = 0
+    /// The classics are being copied onto the shelf (a second or so for seven books).
+    @State private var addingSamples = false
     @State private var confirmSignOut = false
     @State private var reconnecting = false
     /// How far the header moves down so the cover screen's camera and status column never sit on it.
@@ -95,7 +97,17 @@ struct LibraryView: View {
                         DustingShelf(metrics: metrics)
                             .transition(.opacity)
                     case let .empty(signedIn):
-                        EmptyShelf(signedIn: signedIn, onImport: { importing = true }, onAppleBooks: { appleBooksGuide = true }, onConnect: { app.hasOnboarded = false })
+                        EmptyShelf(signedIn: signedIn, onImport: { importing = true }, onAppleBooks: { appleBooksGuide = true },
+                                   onConnect: { app.hasOnboarded = false },
+                                   addingSamples: addingSamples,
+                                   onSamples: {
+                                       guard !addingSamples else { return }
+                                       addingSamples = true
+                                       Task {
+                                           if await !library.addSampleShelf().added.isEmpty { importedCount += 1 }
+                                           addingSamples = false
+                                       }
+                                   })
                             .padding(.top, 48)
                             .transition(.opacity)
                     case let .unreachable(problem):
@@ -734,7 +746,7 @@ struct CoverView: View {
     }
 
     @Environment(\.colorScheme) private var scheme
-    private static let shape = UnevenRoundedRectangle(topLeadingRadius: 3, bottomLeadingRadius: 3, bottomTrailingRadius: 6, topTrailingRadius: 6, style: .continuous)
+    private static let shape = CoverShape()
 }
 
 /// Add's glass button, a squircle; beside the cover screen's reserved column, the account badge's size, so the two
@@ -799,6 +811,8 @@ struct GeneratedCover: View {
     static let cloth: [UInt32] = [0x3E4A5C, 0x4E5D52, 0x5C5048, 0x46506A, 0x6A6460]
     let title: String
     let author: String
+    @Environment(\.dynamicTypeSize) private var typeSize
+    @Environment(\.legibilityWeight) private var legibility
 
     var body: some View {
         let palette = Self.cloth
@@ -806,22 +820,22 @@ struct GeneratedCover: View {
         let hue = palette[Int(title.unicodeScalars.reduce(0) { ($0 &* 31 &+ $1.value) % 9973 }) % palette.count]
         ZStack {
             Color(hex: hue)
-            VStack(spacing: 10) {
-                Rectangle().fill(.white.opacity(0.5)).frame(width: 30, height: 1)
-                Text(title)
-                    .font(.system(.headline, design: .serif))  // the one serif moment, like a colophon
-                    .multilineTextAlignment(.center)
-                    .minimumScaleFactor(0.6)
-                if !author.isEmpty {
-                    Text(author.uppercased())
-                        .font(.system(size: 9, weight: .medium))
-                        .tracking(1.2)
-                        .opacity(0.8)
+            GeometryReader { space in
+                let bold = legibility == .bold
+                let set = CoverLettering.layout(title: title, author: author, cover: space.size, typeSize: typeSize, bold: bold)
+                VStack(spacing: CoverLettering.spacing) {
+                    Rectangle().fill(.white.opacity(0.5)).frame(width: 30, height: CoverLettering.rule)
+                    CoverLines(setting: set.title, font: CoverLettering.font(.title, typeSize, bold: bold), tracking: CoverLettering.tracking(.title))
+                    if let byline = set.author {
+                        CoverLines(setting: byline, font: CoverLettering.font(.author, typeSize, bold: bold), tracking: CoverLettering.tracking(.author))
+                            .opacity(0.8)
+                    }
+                    Rectangle().fill(.white.opacity(0.5)).frame(width: 30, height: CoverLettering.rule)
                 }
-                Rectangle().fill(.white.opacity(0.5)).frame(width: 30, height: 1)
+                .foregroundStyle(.white)
+                .padding(CoverLettering.padding)
+                .frame(width: space.size.width, height: space.size.height)
             }
-            .foregroundStyle(.white)
-            .padding(12)
         }
     }
 }
@@ -873,12 +887,15 @@ private struct DustingShelf: View {
     }
 }
 
-/// Signed out with nothing on the shelf, or the Cloud really did come back empty.
+/// Signed out with nothing on the shelf, or the Cloud really did come back empty. Signed out, it also offers the
+/// classics that ship in the app, so there is something to read before any account (`LibraryStore.sampleShelf`).
 private struct EmptyShelf: View {
     let signedIn: Bool
     var onImport: () -> Void
     var onAppleBooks: () -> Void
     var onConnect: () -> Void
+    var addingSamples = false
+    var onSamples: () -> Void
 
     var body: some View {
         OuroEmptyState(
@@ -886,10 +903,17 @@ private struct EmptyShelf: View {
             systemImage: "books.vertical",
             description: signedIn
                 ? "Books you add to PocketBook Cloud will land here. EPUBs from Files are welcome too."
-                : "Slip in an EPUB from Files or iCloud Drive, open one in Gatefold from any app, or connect PocketBook Cloud to bring your e-reader's books along."
+                : "Start with a few classics, slip in an EPUB from Files or iCloud Drive, open one in Gatefold from any app, or connect PocketBook Cloud to bring your e-reader's books along."
         ) {
             VStack(spacing: 8) {
-                OuroButton("Add Books from Files", systemImage: "folder", size: .lg, action: onImport)
+                if !signedIn {
+                    OuroButton("Try a Few Classics", systemImage: "book", size: .lg, loading: addingSamples,
+                               loadingLabel: "Adding the classics", action: onSamples)
+                        .accessibilityIdentifier("library.sampleShelf")
+                        .accessibilityHint("Adds seven public-domain books that come with the app.")
+                }
+                OuroButton("Add Books from Files", systemImage: "folder", variant: signedIn ? .solid : .soft,
+                           size: signedIn ? .lg : .md, action: onImport)
                 OuroButton("From Apple Books", variant: .plain, action: onAppleBooks)
                     .accessibilityIdentifier("library.empty.appleBooks")
                 if !signedIn {
