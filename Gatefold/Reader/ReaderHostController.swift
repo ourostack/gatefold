@@ -1190,9 +1190,15 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             // A restore placing his words on the left page is not stalled: it is measuring, within its
             // own read budget. Starting it again threw that work away and began it once more (CI's cold
             // iPad: three restarts, a 91 s open, and a place job run out of time).
+            var waited = false
             while let self, self.placingGeneration == generation, generation == self.reflowGeneration {
+                waited = true
                 try? await Task.sleep(for: .milliseconds(200))
             }
+            // A placing it waited on ends with a few steps left before the restore is settled (the picture
+            // over the page fades, the columns are looked at): judged at once, a restore that had just put
+            // him back on his words was started again. Those steps get 3 s; past that, it is stalled.
+            if waited { try? await Task.sleep(for: .seconds(3)) }
             guard let self, generation == self.reflowGeneration, self.settledGeneration != generation,
                   self.weakModel != nil else { return }
             // Twelve seconds is already too long to look at a picture of the old page: show the page as
@@ -1443,6 +1449,31 @@ final class ReaderHostController: UIViewController, EPUBNavigatorDelegate, UIGes
             if landing.reads > 0 { after = landing.range }
             // Numbers only (no book text), so a real unfold's restore can be followed from the log.
             readerLog.notice("restore: jumped \(landing.jumps, privacy: .public) times, page read \(landing.reads, privacy: .public) times, at \(after?.start ?? -1, privacy: .public)..\(after?.end ?? -1, privacy: .public), his words \(after?.contains(anchor) == true, privacy: .public)")
+            // The budget spent, or the jumps, with his words off the page: the cover never lifts onto it. On a starved
+            // Duo, a text-size change's three jumps all landed on the page before his while it was still laying out,
+            // and the cover lifted there (gatefold#686). Once the page stands still, his words are gone to where they
+            // are in it now, the way the one-page break below finds them; held, as a restore placing his words is,
+            // against the 12 s watchdog. One page only: a spread's settle below goes to words off the spread itself.
+            if columns == 1, let text = anchor.text?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty,
+               after.map({ !$0.contains(anchor) }) ?? true {
+                placingGeneration = generation
+                // His words are looked for in the chapter on screen; with another one there, the saved place is gone
+                // to as it is, and looked for again once his chapter is laid out.
+                var shown: VisibleRange?
+                let late = await RestoreLanding.landLate(
+                    read: { shown = await self.liveVisibleRange(); return shown },
+                    beat: { try? await Task.sleep(for: .milliseconds(160)) },
+                    locate: { shown?.href == anchor.href ? await self.progression(of: text) : locator.locations.progression },
+                    go: { at in _ = await self.navigator.go(to: locator.copy(locations: { $0.progression = at }), options: .init(animated: false)) },
+                    arrived: { $0.contains(anchor) },
+                    current: { current() && !Task.isCancelled && !(reapplied != nil && (model.touchedSinceLocation || self.isTurning)) },
+                    href: anchor.href)
+                if placingGeneration == generation { placingGeneration = -1 }
+                guard current(), !Task.isCancelled else { return }
+                if late.reads > 0 { after = late.range }
+                let landed = after?.contains(anchor) == true
+                readerLog.notice("restore: \(landed ? "landed on his words" : "the landing failed", privacy: .public) after its budget; jumped \(late.jumps, privacy: .public) times more, page read \(late.reads, privacy: .public) times, at \(after?.start ?? -1, privacy: .public)..\(after?.end ?? -1, privacy: .public)")
+            }
         }
         // A spread keeps the reader's sentence on its left page, the page he was on.
         var target: ReadingAnchor? = held
