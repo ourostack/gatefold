@@ -15,6 +15,7 @@ every open pull request, first come first served. See "macOS lanes" at the top o
   - App's or Real unfold's run-level group lets a later push to main replace a waiting one (it must be per commit),
   - two jobs share a lane name, so one would wait on the other's lanes,
   - a shard caller doesn't pass `lane: ${{ matrix.lane }}`, or a shard has no `lane` between 1 and SHARD_LANES,
+  - one shard lane's `timeout`s add up to more than LANE_SHARE times the mean lane's,
   - the lanes add up to more than BUDGET.
 Reads only; no dependencies beyond python3. It runs in the job `CI scripts, offline`, which `GatefoldCore tests` (a
 required check) stands for.
@@ -28,6 +29,11 @@ WORKFLOWS = os.path.join(ROOT, ".github", "workflows")
 SHARD_LANES = 18
 # Odd and even pull requests each get their own set of the shard lanes (the last-digit parity in ui-tests.yml's group).
 SHARD_SETS = 2
+# A full-list run takes as long as its busiest shard lane, so no lane's shard timeouts may add up to more than this
+# times the mean lane's (the timeouts are 2x measured time plus a fixed margin). On 2026-11-27 lane 2 summed 475 min
+# of timeouts against a mean of 227 (2.1x), and 113 min of main's measured shard time against 53; after moving six
+# shards the busiest is 285 (1.26x), 60 min measured.
+LANE_SHARE = 1.4
 # Real unfold's places: the lanes 1 to 5 its caller's matrix gives them (real-unfold.yml; real-unfold-place.yml waits in them).
 PLACE_LANES = 5
 # Lanes in all, a hard cap on laned jobs: the 36 shard lanes (18 for each parity), 3 each for Release build and Unit
@@ -275,7 +281,7 @@ def check(files):
 
 
 def check_shards(app, ui):
-    errors = []
+    errors, lanes = [], {}
     if not re.search(r"^      lane:\n(?:        .*\n)*?        required: true", ui, re.M):
         errors.append("ui-tests.yml: the `lane` input must be required, so a caller can't drop it")
     for job, block in jobs(app):
@@ -290,6 +296,20 @@ def check_shards(app, ui):
             lane = re.search(r"^            lane: (\d+)\s*$", entry, re.M)
             if not lane or not 1 <= int(lane.group(1)) <= SHARD_LANES:
                 errors.append(f"app.yml: {job} shard {shard.group(1)} needs `lane:` from 1 to {SHARD_LANES}")
+                continue
+            timeout = re.search(r"^            timeout: (\d+)", entry, re.M)
+            if not timeout:
+                errors.append(f"app.yml: {job} shard {shard.group(1)} needs a literal `timeout:`, which weighs its lane")
+                continue
+            lanes.setdefault(int(lane.group(1)), []).append((int(timeout.group(1)), shard.group(1)))
+    # Fewer shards than lanes can't be balanced; the real matrix has three per lane.
+    if sum(len(v) for v in lanes.values()) >= SHARD_LANES:
+        mean = sum(t for v in lanes.values() for t, _ in v) / SHARD_LANES
+        for n, v in sorted(lanes.items()):
+            if sum(t for t, _ in v) > LANE_SHARE * mean:
+                errors.append(f"app.yml: shard lane {n}'s timeouts add up to {sum(t for t, _ in v)} min, over "
+                              f"{LANE_SHARE} x the mean lane's {mean:.0f} ({', '.join(s for _, s in v)}): a full-list run "
+                              "waits on its busiest lane, so move a shard to the lightest one")
     return errors
 
 
@@ -410,6 +430,12 @@ GOOD_CALLER = """
 """
 
 
+def spread():
+    """A shard caller with one 30-minute shard in each of the 18 lanes."""
+    return GOOD_CALLER.replace("          - shard: duo-a\n            timeout: 30\n            lane: 3\n", "".join(
+        f"          - shard: duo-{i}\n            timeout: 30\n            lane: {i}\n" for i in range(1, SHARD_LANES + 1)))
+
+
 def selftest():
     app = top("app-")
     good = {"app.yml": app + GOOD_JOB + GOOD_CALLER, "ui-tests.yml": GOOD_UI}
@@ -427,6 +453,9 @@ def selftest():
         "caller drops lane": ({**good, "app.yml": app + GOOD_JOB + GOOD_CALLER.replace("      lane: ${{ matrix.lane }}\n", "")},
                               "must pass"),
         "shard has no lane": ({**good, "app.yml": app + GOOD_JOB + GOOD_CALLER.replace("            lane: 3\n", "")}, "needs `lane:`"),
+        "balanced lanes": ({**good, "app.yml": app + GOOD_JOB + spread()}, None),
+        "a lane carries double": ({**good, "app.yml": app + GOOD_JOB + spread().replace("lane: 2\n", "lane: 1\n")}, "shard lane 1's timeouts"),
+        "shard has no timeout": ({**good, "app.yml": app + GOOD_JOB + GOOD_CALLER.replace("            timeout: 30\n", "")}, "literal `timeout:`"),
         "lane out of range": ({**good, "app.yml": app + GOOD_JOB + GOOD_CALLER.replace("lane: 3", "lane: 19")}, "needs `lane:`"),
         "optional input": ({**good, "ui-tests.yml": GOOD_UI.replace("required: true", "required: false")}, "must be required"),
         "unbounded lane": ({**good, "app.yml": app + GOOD_JOB.replace("(endsWith(format('{0}', github.event.pull_request.number), '1') || endsWith(format('{0}', github.event.pull_request.number), '4')) && '1' || '0'", "github.event.pull_request.number") + GOOD_CALLER}, "last-digit chain"),

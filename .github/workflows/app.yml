@@ -67,7 +67,11 @@ concurrency:
 # every macOS job but Build for testing waits in a shared lane, a job-level `concurrency` group with `queue: max`: a
 # lane runs one job at a time across every open pull request, first come first served, and never cancels one.
 #   - UI test shards: 18 lanes, `lane` in each matrix entry, balanced by timeout; ui-tests.yml waits in it. Odd and
-#     even pull requests (last digit) each get their own 18, so 36 shard lanes in all.
+#     even pull requests (last digit) each get their own 18, so 36 shard lanes in all. A full-list run (one that
+#     edits the CI) takes as long as its busiest lane, and each pull request on the same parity queues behind it: on
+#     2026-11-27 lane 2 held six shards, 113 min of main's measured shard time against a mean lane of 53, so four
+#     full-list pull requests took 5 to 9 hours. No lane's timeouts may sum past LANE_SHARE of the mean
+#     (scripts/ci-lanes.py); when a new shard trips it, move a shard to the lightest lane.
 #   - Release build and Unit tests: 3 lanes each, by the pull request number's last digit.
 #   - Duo tour, the cloud package, and the screenshots' build and shots: 1 lane each.
 # Real unfold's five places wait in 5 more lanes of their own (real-unfold.yml).
@@ -550,7 +554,7 @@ jobs:
             pr_tests: none
             cold: false
             timeout: 55 # 30 + 2 x 3.6 + 5 + 12
-            lane: 16
+            lane: 10
           - shard: ipad-place-rest
             # The catch-all for new place tests: 200 + 200 + 244 + 224. The quick leave (gatefold#301) runs in ipad-place-late.
             tests: >-
@@ -605,7 +609,7 @@ jobs:
             pr_tests: none
             cold: false
             timeout: 72 # 30 + 2 x 12.4 + 5 + 12
-            lane: 3
+            lane: 9
           - shard: ipad-place-finetune
             # Main only: Fine-Tune's font and text size keep the page he was reading (FineTunePlaceUITests). Estimates
             # until CI has run them, from Justify's 270 on the iPad
@@ -749,7 +753,7 @@ jobs:
             pr_tests: none
             cold: false
             timeout: 80 # 30 + 2 x 16.1 + 5 + 12
-            lane: 2
+            lane: 7
           - shard: ipad-taps-edges
             # Main only: a 20-pt brush turns nothing and taps at 3% and 97% of the window turn, both ways up
             # (gatefold#536; estimates until CI has timed them)
@@ -867,7 +871,7 @@ jobs:
             pr_tests: none
             cold: false
             timeout: 88 # 30 + 2 x 20.2 + 5 + 12
-            lane: 2
+            lane: 13
           - shard: ipad-reviewer-numbers
             # Main only: 926
             tests: >-
@@ -1078,7 +1082,7 @@ jobs:
             pr_tests: none
             cold: false
             timeout: 83 # 30 + 2 x 18.0 + 5 + 12
-            lane: 6
+            lane: 12
           - shard: duo-justify
             # Main only: Justify on and off keeps the page he was reading on the cover screen, where every new look
             # reworked the margins the book opened with, and a reopen came back on other pages (build 47). Estimates
@@ -1111,7 +1115,7 @@ jobs:
             cold: false
             hinge: true
             timeout: 95 # 30 + 2 x 24.0 + 5 + 12
-            lane: 2
+            lane: 18
           - shard: duo-place-finetune
             # Main only: Fine-Tune's font and text size keep the page he was reading on the cover screen
             # (FineTunePlaceUITests). Estimates until CI has run them, from Justify's 200 on the Duo
