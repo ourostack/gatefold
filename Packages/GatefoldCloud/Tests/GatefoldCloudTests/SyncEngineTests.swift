@@ -114,6 +114,17 @@ struct FileTests {
         #expect(await h.transport.requests("GET", "signature-download").count == 1, "a verified local copy is reused")
     }
 
+    /// The shelf shows how far a download has got (Ari, 2026-11-27: one tap downloads and opens, with its progress on the book).
+    @Test func reportsHowFarTheDownloadHasGot() async throws {
+        let h = Harness()
+        let bytes = Data(repeating: 7, count: 5000)
+        await h.transport.on("GET", "signature-download", .data(bytes))
+        let b = try WireDecoder.book(WireDecoder.loose(Data(book(md5: md5Base64(bytes)).utf8)))!
+        let seen = Fractions()
+        _ = try await h.cloud().download(b) { seen.add($0) }
+        #expect(seen.all == [0.5, 1])
+    }
+
     @Test func rejectsACorruptDownloadAndKeepsNothing() async throws {
         let h = Harness()
         await h.transport.on("GET", "signature-download", .data(Data(repeating: 1, count: 5000)))

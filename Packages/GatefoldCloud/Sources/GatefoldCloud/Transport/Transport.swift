@@ -1,9 +1,22 @@
 import Foundation
 
+/// How far a download has got: the fraction of the body received, from 0 to 1. Called from any thread, and only
+/// while the server has said how long the body is.
+public typealias DownloadProgress = @Sendable (Double) -> Void
+
 public protocol HTTPTransport: Sendable {
     func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse)
     /// Streams the body to `destination`, which must not exist yet.
     func download(_ request: URLRequest, to destination: URL) async throws -> HTTPURLResponse
+    /// As `download(_:to:)`, telling `progress` how far it has got.
+    func download(_ request: URLRequest, to destination: URL, progress: DownloadProgress?) async throws -> HTTPURLResponse
+}
+
+extension HTTPTransport {
+    /// A transport that can't tell how far it has got says nothing until the download is done.
+    public func download(_ request: URLRequest, to destination: URL, progress: DownloadProgress?) async throws -> HTTPURLResponse {
+        try await download(request, to: destination)
+    }
 }
 
 public struct URLSessionTransport: HTTPTransport {
@@ -20,14 +33,57 @@ public struct URLSessionTransport: HTTPTransport {
     }
 
     public func download(_ request: URLRequest, to destination: URL) async throws -> HTTPURLResponse {
-        let (temp, response) = try await session.download(for: request)
+        try await download(request, to: destination, progress: nil)
+    }
+
+    public func download(_ request: URLRequest, to destination: URL, progress: DownloadProgress?) async throws -> HTTPURLResponse {
+        let watcher = progress.map(ProgressWatcher.init)
+        let (temp, response) = try await session.download(for: request, delegate: watcher)
         guard let http = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
         if (200..<300).contains(http.statusCode) {
             try FileManager.default.moveItem(at: temp, to: destination)
+            watcher?.finished()
         } else {
             try? FileManager.default.removeItem(at: temp)
         }
         return http
+    }
+}
+
+/// Watches one download task's progress and passes on its fraction while its length is known: forward only, and in
+/// steps of a hundredth, so a fast transfer doesn't flood the shelf with redraws.
+private final class ProgressWatcher: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+    private let report: DownloadProgress
+    private let lock = NSLock()
+    private var observation: NSKeyValueObservation?
+    private var last = 0.0
+
+    init(_ report: @escaping DownloadProgress) { self.report = report }
+
+    func urlSession(_ session: URLSession, didCreateTask task: URLSessionTask) {
+        let observation = task.progress.observe(\.fractionCompleted) { [weak self, weak task] progress, _ in
+            // Only the book's own body counts: a refusal's page (a stale link's 403) is no progress.
+            guard !progress.isIndeterminate, let status = (task?.response as? HTTPURLResponse)?.statusCode,
+                  (200..<300).contains(status) else { return }
+            self?.pass(progress.fractionCompleted)
+        }
+        lock.withLock { self.observation = observation }
+    }
+
+    /// The body is in place: whole, whatever the last count said.
+    func finished() {
+        lock.withLock { observation?.invalidate(); observation = nil }
+        pass(1)
+    }
+
+    private func pass(_ fraction: Double) {
+        let f = min(max(fraction, 0), 1)
+        let forward: Bool = lock.withLock {
+            guard f > last, f == 1 || f - last >= 0.01 else { return false }
+            last = f
+            return true
+        }
+        if forward { report(f) }
     }
 }
 

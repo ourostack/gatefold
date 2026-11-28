@@ -63,12 +63,16 @@ public actor FakeSyncService: SyncService {
     /// Subscribers register synchronously, so no change sent after `changes()` returns is missed.
     private let subscribers = OSAllocatedUnfairLock<[UUID: AsyncStream<CloudChange>.Continuation]>(initialState: [:])
     private let latency: Duration
+    /// How long a download takes, when not three latencies (screenshots and UI tests of a download under way).
+    private let downloadTime: Duration?
     private let bundle: Bundle
     private let now: @Sendable () -> Date
 
-    public init(signedIn: Bool = false, scenario: Scenario = .normal, latency: Duration = .milliseconds(450), bundle: Bundle = .main, now: @escaping @Sendable () -> Date = { Date() }) {
+    public init(signedIn: Bool = false, scenario: Scenario = .normal, latency: Duration = .milliseconds(450), downloadTime: Duration? = nil,
+                bundle: Bundle = .main, now: @escaping @Sendable () -> Date = { Date() }) {
         self.scenario = scenario
         self.latency = latency
+        self.downloadTime = downloadTime
         self.bundle = bundle
         self.now = now
         if signedIn {
@@ -189,8 +193,17 @@ public actor FakeSyncService: SyncService {
     }
 
     public func download(_ book: CloudBook) async throws -> URL {
+        try await download(book, progress: nil)
+    }
+
+    /// Arrives in ten steps, each told to `progress`, as a transfer that knows its length does.
+    public func download(_ book: CloudBook, progress: DownloadProgress?) async throws -> URL {
         guard let seed = Self.seeds.first(where: { Self.id(for: $0) == book.id }) else { throw CloudError.notFound }
-        try await Task.sleep(for: latency * 3)
+        let steps = 10
+        for step in 1...steps {
+            try await Task.sleep(for: (downloadTime ?? latency * 3) / steps)
+            progress?(Double(step) / Double(steps))
+        }
         let source = try bundleURL(seed.resource)
         let dir = FileManager.default.temporaryDirectory.appending(path: "fake-cloud", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)

@@ -13,6 +13,16 @@ final class LibraryStore {
     private(set) var downloads: [String: DownloadState] = [:]
     /// When each download under way began, for the tap telemetry's "downloading for how long".
     private var downloadStarted: [String: Date] = [:]
+    /// How far each download under way has got (0 to 1), where its transfer can say.
+    private(set) var downloadProgress: [String: Double] = [:]
+    /// Each download under way, so a tap can stop it. The token tells a stopped download's late end from a new one's.
+    private var downloadTasks: [String: (token: UUID, task: Task<Void, Never>)] = [:]
+    /// One tap on a book in the Cloud downloads it and then opens it, if he is still waiting for it.
+    private var openAfterDownload = OpenAfterDownload()
+    /// A book to open now: it landed while he waited on the shelf. The root view opens it and clears this.
+    var openRequest: String?
+    /// The app is in front with the shelf showing and nothing over it, as a download lands.
+    @ObservationIgnored var shelfInFront: @MainActor () -> Bool = { ShelfFront.isShowing }
     private(set) var covers: [String: UIImage] = [:]
     private(set) var isRefreshing = false
     /// The Cloud has answered at least once since launch, so an empty shelf really is empty.
@@ -287,14 +297,75 @@ final class LibraryStore {
         return stream
     }
 
+    /// A tap on a book that isn't here yet means "read this": it downloads, and opens as it lands if he is still
+    /// waiting on the shelf; if he has gone elsewhere, it waits there, Ready (`OpenAfterDownload`).
+    func tapToRead(_ book: LibraryBook, telemetry: GatefoldTelemetry = .shared) {
+        noteDownloadTap(book, telemetry: telemetry)
+        openAfterDownload.tapped(book.id)
+        // Started now, so the tile says so from this frame on and a quick second tap meets it on its way.
+        startDownload(book)
+    }
+
+    /// Stops a download under way: the book waits in the Cloud again, with no error, and won't open by itself.
+    func stopDownload(_ book: LibraryBook) {
+        openAfterDownload.stopped(book.id)
+        guard let running = downloadTasks.removeValue(forKey: book.id) else { return }
+        downloads[book.id] = nil
+        downloadStarted[book.id] = nil
+        downloadProgress[book.id] = nil
+        running.task.cancel()
+    }
+
+    /// He went elsewhere (a sheet, another screen, the app into the background): no download opens by itself now.
+    func leftShelf() { openAfterDownload.left() }
+
+    /// A book opened: he isn't waiting for another to land, and this one is no longer Ready.
+    func noteOpened(_ book: LibraryBook) { openAfterDownload.opened(book.id) }
+
+    /// Downloaded while he was elsewhere, after he asked for it, and not opened since.
+    func isReady(_ book: LibraryBook) -> Bool { openAfterDownload.isReady(book.id) }
+
+    /// Downloads a book and returns when it has landed, failed or been stopped. A second call for a book already on
+    /// its way waits for that download.
     func download(_ book: LibraryBook) async {
-        guard let cloud = book.cloud, state(of: book) != .downloading else { return }
+        await startDownload(book)?.value
+    }
+
+    /// Starts a book's download, or finds the one already on its way; nil for a book with nothing to download.
+    @discardableResult
+    private func startDownload(_ book: LibraryBook) -> Task<Void, Never>? {
+        if let running = downloadTasks[book.id] { return running.task }
+        guard let cloud = book.cloud, state(of: book) != .downloading else { return nil }
+        let token = UUID()
         downloads[book.id] = .downloading
         downloadStarted[book.id] = Date()
-        defer { downloadStarted[book.id] = nil }
+        let task = Task { await fetch(book, cloud: cloud, token: token) }
+        downloadTasks[book.id] = (token, task)
+        return task
+    }
+
+    /// This download is still the book's own: not stopped, and not followed by another.
+    private func isCurrent(_ id: String, _ token: UUID) -> Bool { downloadTasks[id]?.token == token }
+
+    private func finish(_ id: String) {
+        downloadTasks[id] = nil
+        downloadStarted[id] = nil
+        downloadProgress[id] = nil
+    }
+
+    private func fetch(_ book: LibraryBook, cloud: CloudBook, token: UUID) async {
+        let id = book.id
+        let progress: DownloadProgress = { fraction in
+            Task { @MainActor [weak self] in
+                guard let self, self.isCurrent(id, token) else { return }
+                self.downloadProgress[id] = fraction
+            }
+        }
         var fetched = false
         do {
-            let temp = try await sync.download(cloud)
+            let temp = try await sync.download(cloud, progress: progress)
+            // Stopped as it landed: he asked for it not to come.
+            guard isCurrent(id, token) else { return }
             fetched = true
             let name = "\(book.id).epub"
             let target = booksDir.appending(path: name)
@@ -305,13 +376,18 @@ final class LibraryStore {
             do { try FileManager.default.linkItem(at: temp, to: target) } catch { try FileManager.default.copyItem(at: temp, to: target) }
             // The Cloud's copy may differ from a file this book held before: its digest is worked out again.
             update(book.id) { $0.fileName = name; $0.digest = nil }
+            finish(id)
             downloads[book.id] = nil
             landed?.yield(book.id)
+            if openAfterDownload.landed(id, shelfInFront: shelfInFront()) == .open { openRequest = id }
             if covers[book.id] == nil, let meta = try? await BookOpener.shared.metadata(of: target), let cover = meta.cover {
                 storeCover(cover, id: book.id)
                 coverless.remove(book.id)
             }
         } catch {
+            // Stopped: the stop has already put the book back in the Cloud.
+            guard isCurrent(id, token) else { return }
+            finish(id)
             if fetched {
                 // The Cloud's part worked; putting the book on the shelf did not. The Cloud's own stages
                 // report themselves (DownloadReports); this one is ours.
@@ -319,6 +395,7 @@ final class LibraryStore {
                 report.note(error)
                 DownloadReports.shared.record(report)
             }
+            openAfterDownload.failed(id)
             if let message = FriendlyError.message(for: error) {
                 downloads[book.id] = .failed(message)
             } else {
@@ -791,11 +868,29 @@ final class LibraryStore {
     func wipe() {
         books = []
         covers = [:]
+        for running in downloadTasks.values { running.task.cancel() }
+        downloadTasks = [:]
+        downloadStarted = [:]
+        downloadProgress = [:]
         downloads = [:]
+        openAfterDownload = OpenAfterDownload()
+        openRequest = nil
         coverless = []
         lastSynced = nil
         try? FileManager.default.removeItem(at: root)
         try? FileManager.default.createDirectory(at: booksDir, withIntermediateDirectories: true)
         try? FileManager.default.createDirectory(at: coversDir, withIntermediateDirectories: true)
+    }
+}
+
+/// Whether the shelf is what he is looking at: the app active, and nothing presented over the shelf (the reader, a
+/// sheet, the Files picker, an alert). Asked as a download lands, to open it or leave it Ready.
+enum ShelfFront {
+    @MainActor static var isShowing: Bool {
+        guard UIApplication.shared.applicationState == .active else { return false }
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.filter { $0.activationState == .foregroundActive }
+        let windows = scenes.flatMap(\.windows)
+        guard let root = (windows.first(where: \.isKeyWindow) ?? windows.first)?.rootViewController else { return false }
+        return root.presentedViewController == nil
     }
 }
