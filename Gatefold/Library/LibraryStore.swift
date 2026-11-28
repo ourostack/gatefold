@@ -342,12 +342,38 @@ final class LibraryStore {
     /// file's, never become a second book. Returns what happened, and reports it as counts.
     @discardableResult
     func importBooks(from urls: [URL], source: LibraryBook.Source = .files, telemetry: GatefoldTelemetry? = .shared) async -> ImportResult {
-        // One import at a time: two arriving together (several files opened in Gatefold at once, a share
-        // during a Files import) would otherwise both find a book new before either had shelved it.
+        await oneAtATime { await self.importNow(from: urls.map { (url: $0, id: String?.none) }, source: source, telemetry: telemetry) }
+    }
+
+    /// Public-domain books from Project Gutenberg that ship in the app (Resources/SampleBooks), the same ones the
+    /// App Store screenshots show. A reader with no PocketBook account, App Review included, gets a real shelf in one
+    /// tap (Guidelines 2.1 and 4.2).
+    static let sampleShelf = ["frankenstein", "pride-and-prejudice", "moby-dick", "dracula", "alice-in-wonderland",
+                              "sherlock-holmes", "emma"]
+
+    /// Puts the sample books on the shelf, as books of his own (`imported`, on the device). Each has a fixed ID, so a
+    /// second tap adds only the ones he has since removed, and a tap while another is still adding (two iPad windows)
+    /// waits its turn and adds nothing. The shelf lists newest first, so they go on in reverse and Frankenstein leads.
+    @discardableResult
+    func addSampleShelf(bundle: Bundle = .main, telemetry: GatefoldTelemetry? = .shared) async -> ImportResult {
+        let bundled: [(url: URL, id: String?)] = Self.sampleShelf.reversed().compactMap { resource in
+            bundle.url(forResource: resource, withExtension: "epub").map { (url: $0, id: "sample-\(resource)") }
+        }
+        return await oneAtATime {
+            // Read the shelf only once it is this tap's turn, so a tap behind another finds its books already on.
+            let missing = bundled.filter { file in !self.books.contains { $0.id == file.id } }
+            guard !missing.isEmpty else { return ImportResult() }
+            return await self.importNow(from: missing, source: .sample, telemetry: telemetry)
+        }
+    }
+
+    /// One import at a time: two arriving together (several files opened in Gatefold at once, a share during a Files
+    /// import, two taps on the classics) would otherwise both find a book new before either had shelved it.
+    private func oneAtATime(_ work: @escaping @MainActor @Sendable () async -> ImportResult) async -> ImportResult {
         let previous = importTail
         let run = Task { () -> ImportResult in
             await previous?.value
-            return await self.importNow(from: urls, source: source, telemetry: telemetry)
+            return await work()
         }
         importTail = Task { _ = await run.value }
         return await run.value
@@ -355,16 +381,17 @@ final class LibraryStore {
 
     @ObservationIgnored private var importTail: Task<Void, Never>?
 
-    private func importNow(from urls: [URL], source: LibraryBook.Source, telemetry: GatefoldTelemetry?) async -> ImportResult {
+    /// Each file comes in under a new `local-` ID, or under the fixed one beside it (the bundled classics).
+    private func importNow(from files: [(url: URL, id: String?)], source: LibraryBook.Source, telemetry: GatefoldTelemetry?) async -> ImportResult {
         var result = ImportResult()
         var refusedNames: [String] = []
         var sawPDF = false
         await backfillDigests()
-        for url in urls {
+        for (url, fixedID) in files {
             let scoped = url.startAccessingSecurityScopedResource()
             defer { if scoped { url.stopAccessingSecurityScopedResource() } }
             for item in await Self.expand(url) {
-                switch await importOne(item, source: source) {
+                switch await importOne(item, source: source, id: fixedID) {
                 case let .added(book): result.added.append(book)
                 case let .alreadyHere(book): result.alreadyHere.append(book)
                 case let .linked(book): result.alreadyHere.append(book); result.linkedToCloud += 1
@@ -409,17 +436,24 @@ final class LibraryStore {
         }.value
     }
 
-    private func importOne(_ url: URL, source: LibraryBook.Source) async -> ImportOutcome {
-        let id = "local-" + UUID().uuidString.lowercased()
+    /// With a fixed `id`, a file already at its place with no book on the shelf for it (an import the app was killed in
+    /// the middle of) is replaced. On a failure it deletes only the file it wrote.
+    private func importOne(_ url: URL, source: LibraryBook.Source, id fixedID: String? = nil) async -> ImportOutcome {
+        let id = fixedID ?? "local-" + UUID().uuidString.lowercased()
         let name = "\(id).epub"
         let target = booksDir.appending(path: name)
+        var owned = false  // whether this call put the file at `target`, so a failure deletes only its own
         do {
+            if fixedID != nil, !books.contains(where: { $0.id == id }), FileManager.default.fileExists(atPath: target.path) {
+                try FileManager.default.removeItem(at: target)
+            }
+            owned = !FileManager.default.fileExists(atPath: target.path)
             let kind = try await Self.take(url, to: target)
             guard kind == .epub || kind == .epubFolder else { return .refused(kind) }
             let found = try await Self.fingerprint(of: target)
             switch ShelfMatch.match(found, on: shelfCandidates) {
             case let .alreadyHere(existing):
-                try? FileManager.default.removeItem(at: target)
+                if owned { try? FileManager.default.removeItem(at: target) }
                 return book(existing).map { .alreadyHere($0) } ?? .cancelled
             case let .takeCloudBook(cloudID):
                 // The PocketBook book takes the file under its own name, so the Cloud's download path finds it.
@@ -443,7 +477,7 @@ final class LibraryStore {
                 return .added(book)
             }
         } catch {
-            try? FileManager.default.removeItem(at: target)
+            if owned { try? FileManager.default.removeItem(at: target) }
             if FriendlyError.isCancellation(error) { return .cancelled }
             return .refused(.other)
         }

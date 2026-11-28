@@ -23,6 +23,8 @@ struct LibraryView: View {
     /// A drop of books hovering over the shelf.
     @State private var dropTargeted = false
     @Environment(\.ouroToast) private var toast
+    /// The classics are being copied onto the shelf (a second or so for seven books).
+    @State private var addingSamples = false
     @State private var confirmSignOut = false
     @State private var reconnecting = false
     /// How far the header moves down so the cover screen's camera and status column never sit on it.
@@ -84,7 +86,17 @@ struct LibraryView: View {
                         DustingShelf(metrics: metrics)
                             .transition(.opacity)
                     case let .empty(signedIn):
-                        EmptyShelf(signedIn: signedIn, onImport: { importing = true }, onAppleBooks: { appleBooksGuide = true }, onConnect: { app.hasOnboarded = false })
+                        EmptyShelf(signedIn: signedIn, onImport: { importing = true }, onAppleBooks: { appleBooksGuide = true },
+                                   onConnect: { app.hasOnboarded = false },
+                                   addingSamples: addingSamples,
+                                   onSamples: {
+                                       guard !addingSamples else { return }
+                                       addingSamples = true
+                                       Task {
+                                           if await !library.addSampleShelf().added.isEmpty { importedCount += 1 }
+                                           addingSamples = false
+                                       }
+                                   })
                             .padding(.top, 48)
                             .transition(.opacity)
                     case let .unreachable(problem):
@@ -811,12 +823,15 @@ private struct DustingShelf: View {
     }
 }
 
-/// Signed out with nothing on the shelf, or the Cloud really did come back empty.
+/// Signed out with nothing on the shelf, or the Cloud really did come back empty. Signed out, it also offers the
+/// classics that ship in the app, so there is something to read before any account (`LibraryStore.sampleShelf`).
 private struct EmptyShelf: View {
     let signedIn: Bool
     var onImport: () -> Void
     var onAppleBooks: () -> Void
     var onConnect: () -> Void
+    var addingSamples = false
+    var onSamples: () -> Void
 
     var body: some View {
         OuroEmptyState(
@@ -824,10 +839,17 @@ private struct EmptyShelf: View {
             systemImage: "books.vertical",
             description: signedIn
                 ? "Books you add to PocketBook Cloud will land here. EPUBs from Files are welcome too."
-                : "Slip in an EPUB from Files or iCloud Drive, open one in Gatefold from any app, or connect PocketBook Cloud to bring your e-reader's books along."
+                : "Start with a few classics, slip in an EPUB from Files or iCloud Drive, open one in Gatefold from any app, or connect PocketBook Cloud to bring your e-reader's books along."
         ) {
             VStack(spacing: 8) {
-                OuroButton("Add Books from Files", systemImage: "folder", size: .lg, action: onImport)
+                if !signedIn {
+                    OuroButton("Try a Few Classics", systemImage: "book", size: .lg, loading: addingSamples,
+                               loadingLabel: "Adding the classics", action: onSamples)
+                        .accessibilityIdentifier("library.sampleShelf")
+                        .accessibilityHint("Adds seven public-domain books that come with the app.")
+                }
+                OuroButton("Add Books from Files", systemImage: "folder", variant: signedIn ? .solid : .soft,
+                           size: signedIn ? .lg : .md, action: onImport)
                 OuroButton("From Apple Books", variant: .plain, action: onAppleBooks)
                     .accessibilityIdentifier("library.empty.appleBooks")
                 if !signedIn {
