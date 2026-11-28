@@ -1,0 +1,4 @@
+main|iPad Pro 13-inch
+main|iPhone Duo
+iPad Pro 13-inch	300	# estimate until CI has run it: 40 tries took 840 s on probe run 45125426107, this is 6
+iPhone Duo	300	# estimate until CI has run it: 40 tries took 869 s on probe run 45125426107, this is 6

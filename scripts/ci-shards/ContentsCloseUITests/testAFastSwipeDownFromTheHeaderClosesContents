@@ -1,0 +1,4 @@
+main|iPad Pro 13-inch
+main|iPhone Duo
+iPad Pro 13-inch	120	# estimate until CI has run it: 49 s locally
+iPhone Duo	200	# estimate until CI has run it: 133 s locally, on a new simulator
