@@ -18,11 +18,9 @@ split() {
   : >> "$dir/place.log"; : >> "$dir/rb.log"; : >> "$dir/reader.log"
   awk -v place="$dir/place.log" -v rb="$dir/rb.log" -v reader="$dir/reader.log" '
     $4 ~ /^runningboardd\[/ {
-      if (tolower($0) ~ /termin|kill|jetsam|exit|reason|invalidat|memory|highwater|limit|launch|webcontent/) { print >> rb; fflush(rb) }
+      if (tolower($0) ~ /termin|kill|jetsam|exit|reason|invalidat|memory|highwater|limit/) { print >> rb; fflush(rb) }
       next
     }
-    $4 ~ /^(testmanagerd|SpringBoard)\[/ { print >> rb; fflush(rb); next }
-    $4 ~ /^launchd/ { if ($0 ~ /gatefold/) { print >> rb; fflush(rb) }; next }
     $5 !~ /^\[bot\.ouro\.gatefold(:|\])/ || /text:/ { next }
     $5 == "[bot.ouro.gatefold:reader]" { print >> reader; fflush(reader) }
     /place (read|write)|place:|location |reflow|landing|landed|reopen|tapped|warm:|open:|first page|pages:|turn:|spread:|veil:|settle [0-9]|REPRO|snapshot:|back:/ \
@@ -46,8 +44,7 @@ EOF
 2026-11-18 11:27:56.676 Df Gatefold[16112:da4d] [bot.ouro.gatefold:reader] main: held 9400 ms"
   want_place="2026-11-18 11:27:56.671 Df Gatefold[16112:da4d] [bot.ouro.gatefold:reader] open: positions 12
 2026-11-18 11:27:56.673 Df Gatefold[16112:da4d] [bot.ouro.gatefold:place] place write chapter 3 at 0.42"
-  want_rb="2026-11-18 11:27:56.677 Df runningboardd[34:9a] [com.apple.runningboard:process] Terminating bot.ouro.gatefold: memory limit
-2026-11-18 11:27:56.679 Df SpringBoard[20:1] [com.apple.SpringBoard:x] open: bot.ouro.gatefold place write"
+  want_rb="2026-11-18 11:27:56.677 Df runningboardd[34:9a] [com.apple.runningboard:process] Terminating bot.ouro.gatefold: memory limit"
   fail=0
   [ "$(cat "$dir/reader.log")" = "$want_reader" ] || { echo "reader.log:"; cat "$dir/reader.log"; fail=1; }
   [ "$(cat "$dir/place.log")" = "$want_place" ] || { echo "place.log:"; cat "$dir/place.log"; fail=1; }
@@ -61,7 +58,7 @@ case "${1:-}" in
   --split) split "$2" ;;
   *)
     xcrun simctl spawn "$1" log stream --style compact --predicate \
-      'subsystem == "bot.ouro.gatefold" OR process == "runningboardd" OR process == "testmanagerd" OR (process BEGINSWITH "launchd" AND eventMessage CONTAINS "gatefold") OR (process == "SpringBoard" AND (eventMessage CONTAINS[c] "terminat" OR eventMessage CONTAINS "bot.ouro.gatefold"))' \
+      'subsystem == "bot.ouro.gatefold" OR (process == "runningboardd" AND eventMessage CONTAINS "bot.ouro.gatefold")' \
       2> /dev/null | split "$2"
     ;;
 esac

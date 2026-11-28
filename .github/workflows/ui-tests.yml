@@ -84,6 +84,10 @@ on:
         description: "Probe only, gatefold#363 - starve the simulator's CPU (maild kicked, 3 busy loops inside it) before the tests"
         type: boolean
         default: false
+      variant:
+        description: "Probe 5 only, gatefold#363 - control, nolog (no log stream in the simulator) or shots (screenshots, no screen recording)"
+        type: string
+        default: control
       timeout:
         description: >-
           The job's limit in minutes: 30 of setup (the simulator wait step's own limit; gatefold#198), twice its
@@ -271,11 +275,24 @@ jobs:
           sh scripts/ci-warm-metal.sh "$UDID" "$(ls -d "$RUNNER_TEMP"/dd/Build/Products/*-iphonesimulator/Gatefold.app | head -1)" \
             "$RUNNER_TEMP/warm.log" "$((left < 180 ? left : 180))"
       - name: Keep the app's place log as it runs (file and progression only, never the book's words)
+        env:
+          VARIANT: ${{ inputs.variant }}
         run: |
           sh scripts/ci-crashes.sh mark
           # One `log stream` for the place, runningboardd and reader logs (scripts/ci-app-log.sh): each stream is another
           # client the simulator's diagnosticd matches every message against.
-          nohup sh scripts/ci-app-log.sh "$UDID" "$RUNNER_TEMP" > /dev/null 2>&1 &
+          if [ "$VARIANT" = nolog ]; then
+            echo "probe 5: no log stream in the simulator"; : > "$RUNNER_TEMP/reader.log"
+          else
+            nohup sh scripts/ci-app-log.sh "$UDID" "$RUNNER_TEMP" > /dev/null 2>&1 &
+          fi
+          if [ "$VARIANT" = shots ]; then
+            # FormatVersion 1: each test target is a top-level key.
+            for t in $(plutil -convert json -o - "$XCTESTRUN" | python3 -c 'import json,sys; print(" ".join(k for k, v in json.load(sys.stdin).items() if isinstance(v, dict) and "PreferredScreenCaptureFormat" in v))'); do
+              /usr/libexec/PlistBuddy -c "Set :$t:PreferredScreenCaptureFormat screenshots" "$XCTESTRUN"
+            done
+            plutil -p "$XCTESTRUN" | grep -i ScreenCapture
+          fi
           # Every thread of the app and its busiest neighbours while main is held past 30 s (gatefold#357): the app's
           # own watch names main's work only, and nothing when main waits on another thread or the process starves.
           nohup sh scripts/ci-hang-sample.sh "$RUNNER_TEMP/reader.log" "$RUNNER_TEMP/hangs" >> "$RUNNER_TEMP/hangs.log" 2>&1 &
@@ -290,8 +307,7 @@ jobs:
         run: |
           nohup sh -c 'while :; do echo "== $(date -u +%T)"; xcrun simctl spawn "$0" launchctl print system/com.apple.email.maild 2>&1 | grep -E "state|runs|last exit|pid|spawn type|event triggers|reason|immediate" ; sleep 60; done' "$UDID" > "$RUNNER_TEMP/maild.log" 2>&1 &
           xcrun simctl spawn "$UDID" launchctl print system/com.apple.email.maild > "$RUNNER_TEMP/maild-plist.txt" 2>&1 || true
-          # Probe 4 (gatefold#363): the host's side of XCTest's terminate, which xcodebuild carries out through CoreSimulator.
-          nohup /usr/bin/log stream --style compact --predicate 'subsystem BEGINSWITH "com.apple.CoreSimulator" OR process == "CoreSimulatorService" OR process == "simctl" OR ((process == "xcodebuild" OR subsystem BEGINSWITH "com.apple.dt") AND eventMessage CONTAINS[c] "terminat")' > "$RUNNER_TEMP/host.log" 2>&1 &
+          : > "$RUNNER_TEMP/host.log"
           if [ "$STARVE" = true ]; then
             xcrun simctl spawn "$UDID" launchctl kickstart system/com.apple.email.maild || echo "kickstart failed"
             for i in 1 2 3; do nohup xcrun simctl spawn "$UDID" /bin/sh -c 'while :; do :; done' > /dev/null 2>&1 & done

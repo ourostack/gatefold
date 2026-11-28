@@ -104,8 +104,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - shard: ipad-probe-rotate
-            starve: false
+          - shard: ipad-probe5-control
+            variant: control
+          - shard: ipad-probe5-nolog
+            variant: nolog
+          - shard: ipad-probe5-shots
+            variant: shots
     permissions:
       contents: read
       actions: write
@@ -120,6 +124,7 @@ jobs:
       pr_tests: none
       full: "true"
       cold: false
-      starve: ${{ matrix.starve }}
+      starve: false
+      variant: ${{ matrix.variant }}
       timeout: 90
       lane: 1
