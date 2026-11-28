@@ -957,7 +957,16 @@ final class ReaderModel {
         if anchorPutOff { anchorPutOff = false; Task { await captureAnchor() } }
         if let owed = standbyOwed, !isClosed { standbyOwed = nil; page?.prepareStandby(at: owed) }
         foldOnceSeen()
-        if reopenPicture == nil { pageShownAt = Date() }
+        if reopenPicture == nil {
+            pageShownAt = Date()
+            // The words as the page comes up, read again: the last report can be from before Readium had loaded the
+            // page (a book tapped before its warm page was ready), and the bookmark ribbon and a test's read of the
+            // words kept those (gatefold#675). A reopen reads them as its picture lifts, below.
+            Task { [weak self] in
+                guard let self, !self.isClosed else { return }
+                self.refreshBookmarkState(await self.page?.visibleRange())
+            }
+        }
         // Counting the book's pages waits until the open has settled (the reopen picture gone too), so
         // it never slows the first page.
         Task {
